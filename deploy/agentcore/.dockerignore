@@ -1,0 +1,16 @@
+.git
+.cursor
+.orchestrator
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/node_modules
+target-apps
+infrastructure
+docs
+*.md
+!deploy/agentcore/README.md
+.env
+.env.*
