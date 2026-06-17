@@ -1,15 +1,7 @@
 'use client';
 
-import * as React from 'react';
-import { Workflow } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/ui/sheet';
 import {
   Select,
   SelectContent,
@@ -31,7 +23,7 @@ export default function RunsPage() {
   const { data: runs, isLoading } = useRuns();
   const filter = useUiStore((s) => s.runStatusFilter);
   const setFilter = useUiStore((s) => s.setRunStatusFilter);
-  const [selected, setSelected] = React.useState<PipelineRun | null>(null);
+  const router = useRouter();
 
   const rows = (runs ?? []).filter((r) => filter === 'all' || r.status === filter);
 
@@ -51,7 +43,7 @@ export default function RunsPage() {
       <PageHeader
         eyebrow="Operate"
         title="Pipeline Runs"
-        description="Every SDLC pipeline execution across projects. Click a run to inspect its phase timeline."
+        description="Every SDLC pipeline execution across projects. Click a run to open its detail view."
         actions={
           <Select value={filter} onValueChange={(v) => setFilter(v as RunStatus | 'all')}>
             <SelectTrigger className="h-9 w-[160px]"><SelectValue /></SelectTrigger>
@@ -67,45 +59,14 @@ export default function RunsPage() {
       {isLoading ? (
         <Skeleton className="h-80 w-full rounded-lg" />
       ) : (
-        <DataTable columns={columns} rows={rows} getRowId={(r) => r.id} onRowClick={(r) => setSelected(r)} empty="No runs match this filter." />
+        <DataTable
+          columns={columns}
+          rows={rows}
+          getRowId={(r) => r.id}
+          onRowClick={(r) => router.push(`/runs/${r.id}`)}
+          empty="No runs match this filter."
+        />
       )}
-
-      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <SheetContent className="w-full sm:max-w-md">
-          {selected ? (
-            <>
-              <SheetHeader>
-                <SheetTitle className="flex items-center gap-2">
-                  <Workflow className="h-4 w-4 text-teal-500" /> {selected.projectName}
-                </SheetTitle>
-                <SheetDescription className="font-mono text-xs">{selected.id} · {selected.pipeline}</SheetDescription>
-              </SheetHeader>
-
-              <div className="mt-4 flex items-center justify-between rounded-md border border-border p-3">
-                <StatusBadge status={selected.status} />
-                <span className="text-sm text-muted-foreground">Elapsed {formatDuration(selected.elapsedSec)}</span>
-              </div>
-
-              <div className="mt-6">
-                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Phase timeline</p>
-                <ol className="relative space-y-4 border-l border-border pl-5">
-                  {selected.steps.map((step) => (
-                    <li key={step.id} className="relative">
-                      <span className="absolute -left-[23px] top-1 h-3 w-3 rounded-full border-2 border-background bg-border" />
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium capitalize text-foreground">{step.phase}</p>
-                        <StatusBadge status={step.status} size="sm" />
-                      </div>
-                      <p className="font-mono text-xs text-muted-foreground">{step.agent}</p>
-                      {step.durationSec != null ? <p className="text-xs text-muted-foreground">took {formatDuration(step.durationSec)}</p> : null}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
     </>
   );
 }

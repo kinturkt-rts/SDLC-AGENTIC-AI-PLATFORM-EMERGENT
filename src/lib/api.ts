@@ -28,6 +28,7 @@ import type {
   ContextItem,
   LogEntry,
   DashboardSummary,
+  RunStatus,
 } from '@/src/types';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
@@ -65,6 +66,17 @@ export const api = {
   },
   async getRun(id: string): Promise<PipelineRun | undefined> {
     return delay(mockRuns.find((r) => r.id === id));
+  },
+  // Run-scoped event stream. Structured as discrete LogEntry events so this can be
+  // swapped for an SSE/WebSocket subscription (GET /runs/:id/events) without UI changes.
+  async getRunLogs(runId: string): Promise<LogEntry[]> {
+    return delay(mockLogs.filter((l) => l.runId === runId));
+  },
+  // Control-plane action against a run. Mock-only: maps the intent to a new status.
+  // The real platform exposes POST /runs/:id/{pause|resume|cancel}; this NEVER runs agents.
+  async controlRun(runId: string, action: 'pause' | 'resume' | 'cancel'): Promise<{ id: string; status: RunStatus }> {
+    const status: RunStatus = action === 'pause' ? 'paused' : action === 'resume' ? 'running' : 'cancelled';
+    return delay({ id: runId, status }, 350);
   },
   async getArtifacts(): Promise<Artifact[]> {
     return delay(mockArtifacts);

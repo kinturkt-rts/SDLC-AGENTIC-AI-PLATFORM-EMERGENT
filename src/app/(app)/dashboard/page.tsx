@@ -113,7 +113,7 @@ export default function DashboardPage() {
                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">No active runs.</p>
               ) : (
                 activeRuns.map((run) => (
-                  <div key={run.id} className="flex items-center gap-3 px-2 py-3">
+                  <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 rounded-md px-2 py-3 transition-colors hover:bg-accent/40">
                     <StatusBadge status={run.status} size="sm" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
@@ -126,7 +126,7 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                       <Timer className="h-3.5 w-3.5" /> {formatDuration(run.elapsedSec)}
                     </div>
-                  </div>
+                  </Link>
                 ))
               )}
             </div>

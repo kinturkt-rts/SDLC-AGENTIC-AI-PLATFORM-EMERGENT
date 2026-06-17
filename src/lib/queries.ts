@@ -11,6 +11,7 @@ export const queryKeys = {
   pipelines: ['pipelines'] as const,
   runs: ['runs'] as const,
   run: (id: string) => ['runs', id] as const,
+  runLogs: (id: string) => ['runs', id, 'logs'] as const,
   artifacts: ['artifacts'] as const,
   checkpoints: ['checkpoints'] as const,
   mcp: ['mcp'] as const,
@@ -29,6 +30,8 @@ export const usePipelines = () => useQuery({ queryKey: queryKeys.pipelines, quer
 export const useRuns = () => useQuery({ queryKey: queryKeys.runs, queryFn: api.getRuns });
 export const useRun = (id: string) =>
   useQuery({ queryKey: queryKeys.run(id), queryFn: () => api.getRun(id), enabled: !!id });
+export const useRunLogs = (id: string) =>
+  useQuery({ queryKey: queryKeys.runLogs(id), queryFn: () => api.getRunLogs(id), enabled: !!id });
 export const useArtifacts = () => useQuery({ queryKey: queryKeys.artifacts, queryFn: api.getArtifacts });
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });

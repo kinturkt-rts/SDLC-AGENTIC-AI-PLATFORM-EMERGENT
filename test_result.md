@@ -137,6 +137,9 @@ frontend:
         -working: true
         -agent: "main"
         -comment: "Sidebar with Operate/Design/Assets/Integrations/Observe/Admin sections, collapse, active highlight. Topbar project switcher + env badge + theme toggle verified working (theme toggled dark->light)."
+        -working: true
+        -agent: "testing"
+        -comment: "Smoke test passed. Theme toggle working correctly - switches document.documentElement.className between 'dark' and 'light'. Button uses aria-label='Toggle theme' and responds to clicks."
   - task: "Dashboard with live mock data"
     implemented: true
     working: true
@@ -148,6 +151,9 @@ frontend:
         -working: true
         -agent: "main"
         -comment: "Stat cards (Active runs 2, Pending 3, Agents 7/9, MCP 5/7), active runs list, recent artifacts, pending HITL, MCP health, agent health grid all render. Note: data is client-fetched via TanStack Query with ~250ms mock delay; allow a moment after load."
+        -working: true
+        -agent: "testing"
+        -comment: "Smoke test passed. Dashboard route loads successfully with 478 chars of content, no console errors. All stat cards, active runs, artifacts, and health sections render correctly."
   - task: "Agents registry + detail, Projects + detail, Runs, Checkpoints, Pipelines, Artifacts, Context, MCP, Logs, Settings"
     implemented: true
     working: true
@@ -159,16 +165,33 @@ frontend:
         -working: true
         -agent: "main"
         -comment: "All 13 routes return 200. Cards/table toggle, status filter + run detail sheet, approve/reject toast, artifact preview dialog, log filter/search, settings API base + theme + disabled auth placeholder implemented."
+        -working: true
+        -agent: "testing"
+        -comment: "Comprehensive smoke test passed. All routes load successfully with no console errors: /runs, /checkpoints, /projects, /pipelines, /agents, /artifacts, /context, /mcp, /logs, /settings, /agents/product-agent, /projects/finops-web-app. Agents cards/table toggle working (table shows 9 rows). Artifact preview dialog opens for PRD.md and closes with Escape. Checkpoints Approve button works (pending count decreased 3→2, toast shown). Project tabs (Overview/Pipelines/Runs/Artifacts/Context) all switch content correctly."
+
+  - task: "Run Detail page /runs/[id] (phase stepper, event stream, HITL, run controls)"
+    implemented: true
+    working: true
+    file: "src/app/(app)/runs/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New page: SDLC phase stepper with per-step statuses, per-run event stream (SSE-ready), active-agent banner (running), inline HITL card (waiting_for_human), artifacts for the run, and Pause/Resume/Cancel buttons (mock api.controlRun -> local status + toast). Linked from /runs row click and dashboard Active runs. Routes verified 200 for running/paused/completed runs."
+        -working: true
+        -agent: "testing"
+        -comment: "Smoke test passed. Both test runs working correctly: (1) /runs/run-8f2a91 (running): Phase timeline and event stream render, Pause button works (toast 'Run paused' shown, status badge updates to 'Paused'). (2) /runs/run-3c77d0 (paused+HITL): 'Waiting for human' status visible in timeline, inline HITL card with Approve/Reject buttons displayed correctly. All run detail functionality working as expected."
 
 metadata:
   created_by: "main_agent"
-  version: "1.0"
-  test_sequence: 0
-  run_ui: false
+  version: "1.2"
+  test_sequence: 2
+  run_ui: true
 
 test_plan:
-  current_focus:
-    - "Health API route (read-only control plane)"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -176,10 +199,24 @@ test_plan:
 agent_communication:
     -agent: "main"
     -message: |
-      Frontend-only control plane built with typed mock data; no third-party integrations or API keys.
-      Backend surface is just GET /api/health. Please verify /api/health and /api return 200 JSON with
-      keys {service:'helmsman-control-plane', status:'ok', mode:'mock', time}. Also confirm an unknown
-      route like /api/does-not-exist returns 404 JSON. No DB/auth involved.
+      LIGHTWEIGHT FRONTEND SMOKE PASS requested by user (skip deep E2E / visual regression).
+      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com (/ redirects to /dashboard).
+      NOTE: data is client-fetched via TanStack Query with ~250ms mock delay AND the dev server is
+      memory-limited, so on a cold route load allow a few seconds (wait for content text, not just load)
+      before asserting — initial paint may briefly show skeletons.
+      Verify:
+      1) All routes load with no console errors: /dashboard /runs /checkpoints /projects /pipelines
+         /agents /artifacts /context /mcp /logs /settings, plus /agents/product-agent,
+         /projects/finops-web-app, and /runs/run-8f2a91 (running), /runs/run-3c77d0 (paused+HITL).
+      2) Theme toggle in top bar switches dark<->light (html class changes).
+      3) /agents cards<->table toggle (top-right buttons) swaps the layout.
+      4) /artifacts: clicking an artifact card with a preview (e.g. PRD.md or 0001_init_schema.sql)
+         opens a dialog; it closes via Escape/overlay.
+      5) /checkpoints: Approve/Reject on a pending card moves it to Resolved and shows a toast.
+      6) /projects/finops-web-app: tabs (Overview/Pipelines/Runs/Artifacts/Context) switch content.
+      7) /runs/run-8f2a91: Pause button updates status badge to "Paused" (mock) + toast; event stream
+         and phase stepper render. /runs/run-3c77d0 shows inline HITL Approve/Reject.
+
     -agent: "testing"
     -message: |
       Backend API testing completed successfully. All 4 test cases passed:
@@ -192,3 +229,51 @@ agent_communication:
       requests with no body content. This is functionally equivalent and CORS preflight works correctly.
       
       No critical issues found. Health API is working as expected.
+
+    -agent: "testing"
+    -message: |
+      LIGHTWEIGHT FRONTEND SMOKE PASS COMPLETED - ALL TESTS PASSED ✅
+      
+      Executed comprehensive smoke tests covering all 7 verification points requested:
+      
+      1. ✅ ROUTE LOADS + CONSOLE ERRORS: All 15 routes loaded successfully with NO console errors
+         - /dashboard, /runs, /checkpoints, /projects, /pipelines, /agents, /artifacts, /context, /mcp, /logs, /settings
+         - /agents/product-agent, /projects/finops-web-app
+         - /runs/run-8f2a91 (running), /runs/run-3c77d0 (paused+HITL)
+      
+      2. ✅ THEME TOGGLE: Working correctly on /dashboard
+         - Button with aria-label="Toggle theme" found and clicked
+         - document.documentElement.className switched from "dark" to "light"
+      
+      3. ✅ AGENTS VIEW TOGGLE: Cards/table toggle working on /agents
+         - Initial cards view displayed
+         - Clicked table button → table with 9 agent rows displayed
+         - Clicked cards button → cards grid restored, table removed
+      
+      4. ✅ ARTIFACT PREVIEW DIALOG: Working on /artifacts
+         - Clicked PRD.md artifact card
+         - Dialog opened with preview content
+         - Dialog closed successfully with Escape key
+      
+      5. ✅ HITL APPROVE/REJECT: Working on /checkpoints
+         - Clicked Approve on "Approve security scan with 2 medium findings"
+         - Success toast appeared: "Checkpoint approved"
+         - Pending count decreased from 3 to 2 (card moved to Resolved)
+      
+      6. ✅ PROJECT DETAIL TABS: All tabs working on /projects/finops-web-app
+         - Overview tab: 123 chars content
+         - Pipelines tab: 480 chars content
+         - Runs tab: 163 chars content
+         - Artifacts tab: 314 chars content
+         - Context tab: 391 chars content
+         - All tabs switch content correctly
+      
+      7. ✅ RUN DETAIL CONTROLS: Both test runs working correctly
+         - /runs/run-8f2a91 (running): Phase timeline visible, event stream visible, Pause button clicked,
+           toast "Run paused" shown, status badge updated to "Paused"
+         - /runs/run-3c77d0 (paused+HITL): "Waiting for human" status in timeline, inline HITL card
+           with Approve/Reject buttons displayed
+      
+      SUMMARY: Zero critical issues found. All routes, interactive features, and UI components working
+      as expected. The control-plane UI is production-ready for the smoke test scope.
+
