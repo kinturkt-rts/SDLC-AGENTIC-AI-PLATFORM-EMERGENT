@@ -1,0 +1,94 @@
+Customer Feedback Hub — collect feedback and auto-classify with AI
+
+Problem:
+- Product teams receive feedback via email, support tickets, and ad-hoc forms with no structure.
+- Sorting feedback into bugs vs feature requests vs praise is manual and slow.
+- Leadership wants a simple inbox with AI-assisted labels and a weekly rollup they can skim.
+
+MVP:
+- Submit feedback: product area, customer name (optional), free-text body, submitted_by (internal user id).
+- On submit, call Amazon Bedrock (Claude) to classify: category (bug | feature_request | praise | other), priority hint (low | medium | high), and a one-line summary. Store original text + AI fields in Postgres.
+- List and filter feedback by category, priority, product area, and date range.
+- Generate a weekly Markdown digest for a date range (Bedrock summarizes only stored items — no invented feedback).
+- Streamlit UI: Submit tab, Inbox tab with filters, Weekly Digest tab.
+
+Personas & auth:
+| Caller | Auth | Can do |
+|--------|------|--------|
+| Streamlit user | X-API-Key | All routes |
+| automation | same key | POST /feedback, GET /feedback |
+
+Auth: shared API key only. No JWT in v1.
+
+Data model (DDL under target-apps/customer-feedback-hub/db/sql/):
+- feedback_entries:
+  - id uuid PK
+  - product_area varchar(64) NOT NULL (e.g. billing, mobile-app, api)
+  - customer_name varchar(120) nullable
+  - body text NOT NULL
+  - submitted_by varchar(64) NOT NULL
+  - ai_category varchar(32) NOT NULL (bug | feature_request | praise | other)
+  - ai_priority varchar(16) NOT NULL (low | medium | high)
+  - ai_summary varchar(280) NOT NULL
+  - created_at timestamptz NOT NULL DEFAULT now()
+- Indexes on (product_area, created_at DESC), (ai_category, ai_priority)
+
+- weekly_digests:
+  - id uuid PK
+  - week_start date NOT NULL
+  - week_end date NOT NULL
+  - digest_markdown text NOT NULL
+  - generated_at timestamptz NOT NULL DEFAULT now()
+- Index on (week_start DESC)
+
+Seed: 5–6 feedback entries across categories and 1 digest for the prior week. Stable UUIDs.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | DB ping; 200 or 503 |
+| POST | /feedback | API key | body: product_area, body, submitted_by, customer_name?; call Bedrock classifier; INSERT; 201 + entry |
+| GET | /feedback | API key | list; ?product_area= ?category= ?priority= ?date_from= ?date_to= ?limit=50 ?offset=0 |
+| GET | /feedback/{id} | API key | 200 or 404 |
+| DELETE | /feedback/{id} | API key | hard delete; 204 or 404 |
+| POST | /digests/generate | API key | body: week_start, week_end; load entries in range; Bedrock digest; INSERT; 201 |
+| GET | /digests | API key | paginated list; default limit 20 |
+| GET | /digests/{id} | API key | 200 or 404 |
+
+Bedrock rules:
+- Classifier prompt: return JSON only with keys category, priority, summary. Categories strictly: bug, feature_request, praise, other. Never invent customer quotes.
+- Digest prompt: Markdown sections ## Overview, ## By Category, ## High Priority Items, ## Themes. Only use provided feedback rows. If none in range → ## No Data with guidance.
+- Model: us.anthropic.claude-sonnet-4-20250514-v1:0. Mock Bedrock in tests at import site.
+- Never include API keys, DATABASE_URL, or secrets in AI output.
+
+Stack:
+- Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x + psycopg[binary], boto3 for Bedrock.
+- PostgreSQL on RDS; schema customer_feedback_hub.
+- Streamlit ui/streamlit_app.py on port 8501; API on 8000.
+- app/services/bedrock_client.py and app/services/prompts.py for classifier + digest.
+- .env.example: DATABASE_URL, POSTGRES_SCHEMA, API_KEY, AWS_REGION, BEDROCK_MODEL_ID.
+
+Streamlit UI (required):
+- Tab Submit: product area select/text, customer name optional, body textarea, submitted_by; on success show AI category/priority/summary.
+- Tab Inbox: filters + table/cards; expand row for full body.
+- Tab Weekly Digest: week pickers, Generate button, render Markdown; list past digests below.
+- Handle 401 and Bedrock failures with actionable messages.
+
+Tests:
+- pytest; SQLite in-memory; mock get_bedrock_client for classify and digest paths.
+- Cover: health, submit feedback (mocked AI), list filters, generate digest empty range, 401 without key.
+
+Constraints:
+- No live Zendesk/Jira integration in v1.
+- PII limited to optional customer_name and free-text body — internal tool.
+- Read-only on infrastructure.
+
+Out of scope (Phase 2):
+- Sentiment dashboards, multi-tenant SSO, public customer portal, pgvector search.
+
+Success criteria:
+- target-apps/customer-feedback-hub/ runs with pytest green after .env + RDS setup.
+- Submit feedback in Streamlit → classified row in DB → weekly digest generates from real rows.
+- README: setup, both terminals, RDS smoke (health + list feedback).
+
+Target app slug: customer-feedback-hub
+Output directory: target-apps/customer-feedback-hub/

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "templateRoot": "target-apps/_template",
+  "patterns": {
+    "B": {
+      "copy_verbatim": [
+        "app/__init__.py",
+        "app/database.py",
+        "app/startup_checks.py",
+        "app/dependencies.py",
+        "app/routers/__init__.py",
+        "app/routers/health.py",
+        "app/models/__init__.py",
+        "app/models/pg_types.py",
+        "schemas/__init__.py",
+        "requirements.txt",
+        ".gitignore",
+        "tests/test_health.py"
+      ],
+      "copy_as": {
+        "tests/conftest_reference.py": "tests/conftest.py"
+      },
+      "seed_from_template": [
+        "app/config.py",
+        "app/main.py",
+        ".env.example"
+      ]
+    },
+    "B+": {
+      "extends": "B",
+      "copy_verbatim": [
+        "app/services/__init__.py",
+        "app/services/bedrock_client.py"
+      ]
+    },
+    "B++": {
+      "extends": "B+",
+      "copy_verbatim": [
+        "app/services/ingestion.py",
+        "app/services/pgvector_retriever.py",
+        "app/services/prompts.py"
+      ]
+    },
+    "C": {
+      "extends": "B+",
+      "copy_verbatim": [
+        "ui/streamlit_app.py",
+        "ui/requirements.txt"
+      ]
+    }
+  },
+  "customize_after_scaffold": [
+    "app/config.py",
+    "app/main.py",
+    "app/dependencies.py",
+    "tests/conftest.py",
+    ".env.example",
+    "requirements.txt",
+    "ui/streamlit_app.py"
+  ]
+}
