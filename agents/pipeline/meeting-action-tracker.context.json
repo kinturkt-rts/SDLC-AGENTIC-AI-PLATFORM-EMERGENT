@@ -1,0 +1,9 @@
+﻿{
+    "productAgentOutput":  "See prdPath for meeting-action-tracker MVP requirements.",
+    "targetApp":  "meeting-action-tracker",
+    "prdPath":  "docs/PRD/meeting-action-tracker.md",
+    "designDocPath":  "docs/design/meeting-action-tracker.md",
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/meeting-action-tracker.png"
+                     ]
+}
