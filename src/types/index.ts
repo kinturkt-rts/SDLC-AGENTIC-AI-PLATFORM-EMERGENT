@@ -188,3 +188,47 @@ export interface DashboardSummary {
   mcpHealthy: number;
   mcpTotal: number;
 }
+
+// ---- Orchestration bus ----
+export type AgentMessageType =
+  | 'task.assign'
+  | 'task.result'
+  | 'task.error'
+  | 'status.update'
+  | 'hitl.request'
+  | 'hitl.resolved';
+
+export interface AgentMessage {
+  id: string;
+  type: AgentMessageType;
+  from: AgentName;
+  to: AgentName;
+  correlationId: string; // groups a delegation thread
+  runId: string;
+  ts: string;
+  summary: string;
+}
+
+// ---- Discriminated run event stream (SSE-ready) ----
+interface RunEventBase {
+  id: string;
+  runId: string;
+  ts: string;
+}
+
+export type RunEvent =
+  | (RunEventBase & { kind: 'log'; level: LogEntry['level']; agent: AgentName; message: string })
+  | (RunEventBase & { kind: 'phase.started'; phase: SdlcPhase; agent: AgentName })
+  | (RunEventBase & { kind: 'phase.completed'; phase: SdlcPhase; agent: AgentName; durationSec: number })
+  | (RunEventBase & { kind: 'step.failed'; phase: SdlcPhase; agent: AgentName; error: string })
+  | (RunEventBase & { kind: 'hitl.requested'; phase: SdlcPhase; agent: AgentName; checkpointId: string; title: string })
+  | (RunEventBase & { kind: 'artifact.created'; agent: AgentName; artifactName: string; artifactKind: ArtifactKind })
+  | (RunEventBase & {
+      kind: 'agent.message';
+      from: AgentName;
+      to: AgentName;
+      messageType: AgentMessageType;
+      summary: string;
+    });
+
+export type RunEventKind = RunEvent['kind'];

@@ -184,11 +184,68 @@ frontend:
         -agent: "testing"
         -comment: "Smoke test passed. Both test runs working correctly: (1) /runs/run-8f2a91 (running): Phase timeline and event stream render, Pause button works (toast 'Run paused' shown, status badge updates to 'Paused'). (2) /runs/run-3c77d0 (paused+HITL): 'Waiting for human' status visible in timeline, inline HITL card with Approve/Reject buttons displayed correctly. All run detail functionality working as expected."
 
+  - task: "Pipeline graph /pipelines/[id] (read-only React Flow: phases + agents + HITL gates)"
+    implemented: true
+    working: true
+    file: "src/app/(app)/pipelines/[id]/page.tsx, src/components/flow/PipelineFlow.tsx, src/components/flow/nodes.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Read-only @xyflow/react v12 graph: horizontal phase nodes (phase + agent) with amber HITL gate nodes inserted inline after hitl phases; smoothstep edges; colorMode follows theme; non-interactive (no drag/connect/select). Phase-sequence list below. Linked from /pipelines cards (View graph). Verified visually: standard-sdlc renders 7 phases + 2 HITL gates (9 nodes, 8 edges)."
+        -working: true
+        -agent: "testing"
+        -comment: "Automated smoke test passed. Pipeline graph renders correctly: (1) Navigation from /pipelines list to /pipelines/standard-sdlc works via card click. (2) React Flow nodes load successfully after polling (9 nodes: 7 phase + 2 HITL gate). (3) 8 edges render correctly. (4) HITL gate nodes visible with 'HITL gate' text (4 instances found, 2 gates with 2 text occurrences each). (5) React Flow controls present with 3 control buttons. (6) Zoom controls functional. No console errors detected."
+  - task: "Orchestrator graph /orchestrator (hub+spoke React Flow + delegation timeline)"
+    implemented: true
+    working: true
+    file: "src/app/(app)/orchestrator/page.tsx, src/components/flow/OrchestratorFlow.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Orchestrator node centered, 8 specialists radially placed; spokes teal for online / red for offline (DevOps). Stat cards (Specialists/Online/Delegation threads/Bus messages) + delegation timeline from AgentMessages with MessageTypeBadge and correlationId deep-links. Verified visually: 9 nodes, 8 edges, 13 timeline items."
+        -working: true
+        -agent: "testing"
+        -comment: "Automated smoke test passed. Orchestrator hub+spoke graph working correctly: (1) React Flow nodes load successfully (9 nodes: 1 orchestrator + 8 specialists). (2) 8 edges render correctly. (3) Stat cards populate with correct data (Specialists: 8, Bus messages: 13). (4) Delegation timeline displays 13 items. (5) correlationId deep-link navigation works - clicking a correlationId link in the timeline navigates to /orchestrator/messages with correct query param (tested with cor-impl-8f2a91). No console errors detected."
+  - task: "Agent messages /orchestrator/messages (AgentMessage list + correlationId filter)"
+    implemented: true
+    working: true
+    file: "src/app/(app)/orchestrator/messages/page.tsx, src/components/common/MessageTypeBadge.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "DataTable of AgentMessages (type badge, from->to, summary, correlationId, runId link). correlationId Select filter + URL ?correlationId= deep-link (wrapped in Suspense for useSearchParams). Clicking a correlationId cell or timeline link filters to that thread. Routes verified 200 incl. ?correlationId=cor-req-8f2a91."
+        -working: true
+        -agent: "testing"
+        -comment: "Automated smoke test passed. Agent messages table and filtering working correctly: (1) Table renders with 13 rows initially. (2) correlationId Select filter works - selecting 'cor-req-8f2a91' reduces rows from 13 to 2. (3) URL filter works - navigating to /orchestrator/messages?correlationId=cor-sec-3c77d0 pre-filters the table and displays 'Showing thread' indicator with the correlationId. (4) All filtering functionality working as expected. No console errors detected."
+  - task: "Run detail feed upgraded to discriminated RunEvent union (SSE-ready)"
+    implemented: true
+    working: true
+    file: "src/app/(app)/runs/[id]/page.tsx, src/types/index.ts, src/mocks/runEvents.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Event stream now uses discriminated RunEvent types (log | phase.started | phase.completed | step.failed | hitl.requested | artifact.created | agent.message) via api.getRunEvents/useRunEvents. Per-kind icon+formatting renderer (RunEventItem) with TS narrowing. Replaces the prior LogEntry feed. Compiles clean; routes 200."
+        -working: true
+        -agent: "testing"
+        -comment: "Automated smoke test passed. Discriminated RunEvent feed renders multiple event kinds correctly: (1) Event stream panel found on /runs/run-8f2a91. (2) Multiple event kinds verified - found 4 distinct types: Phase events (7 instances of started/completed), Artifact events (3 instances with filenames like PRD.md, schema.sql), Log events (2 instances with info/error/warn/debug levels), Agent message events (1 instance with task.assign/result). (3) All event types render with correct formatting and icons. (4) Exceeds requirement of at least 3 distinct event types. No console errors detected."
+
 metadata:
   created_by: "main_agent"
-  version: "1.2"
+  version: "1.3"
   test_sequence: 2
-  run_ui: true
+  run_ui: false
 
 test_plan:
   current_focus: []
@@ -199,23 +256,15 @@ test_plan:
 agent_communication:
     -agent: "main"
     -message: |
-      LIGHTWEIGHT FRONTEND SMOKE PASS requested by user (skip deep E2E / visual regression).
-      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com (/ redirects to /dashboard).
-      NOTE: data is client-fetched via TanStack Query with ~250ms mock delay AND the dev server is
-      memory-limited, so on a cold route load allow a few seconds (wait for content text, not just load)
-      before asserting — initial paint may briefly show skeletons.
-      Verify:
-      1) All routes load with no console errors: /dashboard /runs /checkpoints /projects /pipelines
-         /agents /artifacts /context /mcp /logs /settings, plus /agents/product-agent,
-         /projects/finops-web-app, and /runs/run-8f2a91 (running), /runs/run-3c77d0 (paused+HITL).
-      2) Theme toggle in top bar switches dark<->light (html class changes).
-      3) /agents cards<->table toggle (top-right buttons) swaps the layout.
-      4) /artifacts: clicking an artifact card with a preview (e.g. PRD.md or 0001_init_schema.sql)
-         opens a dialog; it closes via Escape/overlay.
-      5) /checkpoints: Approve/Reject on a pending card moves it to Resolved and shows a toast.
-      6) /projects/finops-web-app: tabs (Overview/Pipelines/Runs/Artifacts/Context) switch content.
-      7) /runs/run-8f2a91: Pause button updates status badge to "Paused" (mock) + toast; event stream
-         and phase stepper render. /runs/run-3c77d0 shows inline HITL Approve/Reject.
+      EXTENSION PHASE (React Flow + orchestration). Added @xyflow/react@12 and 4 features:
+      /pipelines/[id] (read-only graph), /orchestrator (hub+spoke graph + delegation timeline),
+      /orchestrator/messages (AgentMessage list + correlationId filter), and upgraded /runs/[id]
+      event feed to discriminated RunEvent types. All verified 200 + visually confirmed rendering
+      (React Flow graphs draw correctly; offline agent spoke is red). NOTE: React Flow routes are
+      heavy (~1300 modules) so on a COLD load the memory-limited dev server can take several seconds
+      to paint nodes — poll/wait for `.react-flow__node` before asserting. Awaiting user decision on
+      whether to run an automated frontend smoke pass for these 4 new pages.
+
 
     -agent: "testing"
     -message: |
@@ -276,4 +325,69 @@ agent_communication:
       
       SUMMARY: Zero critical issues found. All routes, interactive features, and UI components working
       as expected. The control-plane UI is production-ready for the smoke test scope.
+
+    -agent: "testing"
+    -message: |
+      LIGHTWEIGHT AUTOMATED SMOKE TEST - 4 NEW REACT FLOW FEATURES - ALL TESTS PASSED ✅
+      
+      Executed comprehensive automated Playwright tests for the 4 new React Flow features plus quick regression checks.
+      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com
+      
+      TEST RESULTS (7/7 PASSED):
+      
+      1. ✅ /pipelines/standard-sdlc - Pipeline graph with HITL gates
+         - Navigation from /pipelines list works (card click)
+         - React Flow nodes load successfully (9 nodes: 7 phase + 2 HITL gate)
+         - 8 edges render correctly
+         - HITL gate nodes visible (4 text instances found)
+         - React Flow controls present (3 control buttons)
+         - Zoom controls functional
+         - No console errors
+      
+      2. ✅ /orchestrator - Hub+spoke graph + delegation timeline
+         - React Flow nodes load successfully (9 nodes: 1 orchestrator + 8 specialists)
+         - 8 edges render correctly
+         - Stat cards populate correctly (Specialists: 8, Bus messages: 13)
+         - Delegation timeline displays 13 items
+         - correlationId deep-link navigation works (tested with cor-impl-8f2a91)
+         - No console errors
+      
+      3. ✅ /orchestrator/messages - Table with correlationId filter
+         - Table renders with 13 rows initially
+         - Select filter works (cor-req-8f2a91 reduces rows from 13 to 2)
+         - URL filter works (?correlationId=cor-sec-3c77d0 pre-filters table)
+         - "Showing thread" indicator displays correctly
+         - No console errors
+      
+      4. ✅ /runs/run-8f2a91 - Discriminated RunEvent feed
+         - Event stream panel found
+         - Multiple event kinds verified (4 distinct types found):
+           * Phase events: 7 (started/completed)
+           * Artifact events: 3 (with filenames like PRD.md, schema.sql)
+           * Log events: 2 (info/error/warn/debug levels)
+           * Agent message events: 1 (task.assign/result)
+         - Exceeds requirement of 3 distinct event types
+         - No console errors
+      
+      5. ✅ Sidebar navigation
+         - "Orchestrator" link found in sidebar
+         - Navigation to /orchestrator works correctly
+      
+      6. ✅ Theme toggle
+         - Theme toggle button found (aria-label="Toggle theme")
+         - Theme switches correctly (dark ↔ light)
+      
+      7. ✅ Console errors check
+         - All 4 routes checked: /pipelines/standard-sdlc, /orchestrator, /orchestrator/messages, /runs/run-8f2a91
+         - NO console errors detected on any route
+         - Benign hydration warning "Extra attributes from the server: style" ignored as expected
+      
+      CRITICAL NOTES:
+      - React Flow routes are heavy (~1300 modules) and require polling for nodes to load
+      - Used 25-second timeout with 500ms polling interval for node detection
+      - All tests account for TanStack Query ~250ms mock delay
+      - Navigation handled with expect_navigation() for proper async handling
+      
+      SUMMARY: All 4 new React Flow features working perfectly. No critical issues found. The extension phase
+      is production-ready and all interactive features (graphs, filters, deep-links, event feed) are functional.
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { GitBranch, Flag } from 'lucide-react';
+import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
@@ -22,7 +23,8 @@ export default function PipelinesPage() {
       ) : (
         <div className="space-y-4">
           {(pipelines ?? []).map((p) => (
-            <Card key={p.id} className="p-5">
+            <Link key={p.id} href={`/pipelines/${p.id}`} className="block">
+            <Card className="p-5 transition-colors hover:border-teal-400/60">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-9 w-9 items-center justify-center rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400">
@@ -33,7 +35,7 @@ export default function PipelinesPage() {
                     <p className="text-sm text-muted-foreground">{p.description}</p>
                   </div>
                 </div>
-                <span className="shrink-0 text-xs text-muted-foreground">{p.phases.length} phases</span>
+                <span className="shrink-0 text-xs font-medium text-teal-600 dark:text-teal-400">View graph →</span>
               </div>
 
               <div className="mt-5 flex flex-wrap items-stretch gap-2">
@@ -54,6 +56,7 @@ export default function PipelinesPage() {
                 ))}
               </div>
             </Card>
+            </Link>
           ))}
         </div>
       )}

@@ -5,6 +5,7 @@ import {
   FolderKanban,
   GitBranch,
   Bot,
+  Network,
   FileBox,
   Database,
   Plug,
@@ -39,6 +40,7 @@ export const navSections: NavSection[] = [
       { label: 'Projects', href: '/projects', icon: FolderKanban },
       { label: 'Pipelines', href: '/pipelines', icon: GitBranch },
       { label: 'Agents', href: '/agents', icon: Bot },
+      { label: 'Orchestrator', href: '/orchestrator', icon: Network },
     ],
   },
   {

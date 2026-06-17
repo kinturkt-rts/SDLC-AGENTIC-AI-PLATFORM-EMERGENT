@@ -16,6 +16,8 @@ import {
   mockMcpServers,
   mockContextItems,
   mockLogs,
+  mockAgentMessages,
+  mockRunEvents,
 } from '@/src/mocks';
 import type {
   Agent,
@@ -29,6 +31,8 @@ import type {
   LogEntry,
   DashboardSummary,
   RunStatus,
+  AgentMessage,
+  RunEvent,
 } from '@/src/types';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
@@ -71,6 +75,15 @@ export const api = {
   // swapped for an SSE/WebSocket subscription (GET /runs/:id/events) without UI changes.
   async getRunLogs(runId: string): Promise<LogEntry[]> {
     return delay(mockLogs.filter((l) => l.runId === runId));
+  },
+  // Discriminated run event stream (SSE-ready). Replaces getRunLogs in the run detail feed.
+  async getRunEvents(runId: string): Promise<RunEvent[]> {
+    return delay(mockRunEvents[runId] ?? []);
+  },
+  // Agent-to-agent orchestration messages. Optional correlationId filter.
+  async getAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
+    const all = mockAgentMessages;
+    return delay(correlationId ? all.filter((m) => m.correlationId === correlationId) : all);
   },
   // Control-plane action against a run. Mock-only: maps the intent to a new status.
   // The real platform exposes POST /runs/:id/{pause|resume|cancel}; this NEVER runs agents.

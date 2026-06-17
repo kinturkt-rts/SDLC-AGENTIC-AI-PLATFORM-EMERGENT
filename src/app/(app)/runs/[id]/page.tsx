@@ -18,6 +18,7 @@ import {
   Radio,
   Check,
   X,
+  Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -27,10 +28,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
-import { useRun, useRunLogs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
+import { useRun, useRunEvents, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
-import type { RunStatus, StepStatus, PipelineStep } from '@/src/types';
+import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
 
 const STEP_ICON: Record<StepStatus, typeof Clock> = {
   queued: Clock,
@@ -50,9 +51,65 @@ const STEP_ICON_COLOR: Record<StepStatus, string> = {
   skipped: 'text-slate-400',
 };
 
+function EventRow({
+  icon: Icon,
+  color,
+  ts,
+  title,
+  detail,
+}: {
+  icon: typeof Clock;
+  color: string;
+  ts: string;
+  title: React.ReactNode;
+  detail: string;
+}) {
+  return (
+    <div className="border-b border-border/60 px-2 py-2 last:border-0">
+      <div className="flex items-center gap-2">
+        <Icon className={cn('h-3.5 w-3.5 shrink-0', color)} />
+        <span className="truncate text-foreground">{title}</span>
+        <span className="ml-auto shrink-0 text-muted-foreground">{formatRelative(ts)}</span>
+      </div>
+      <p className="mt-1 pl-5 text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
+// Renders a single discriminated RunEvent. TypeScript narrows per `kind`.
+function RunEventItem({ event }: { event: RunEvent }) {
+  switch (event.kind) {
+    case 'log':
+      return (
+        <div className="border-b border-border/60 px-2 py-2 last:border-0">
+          <div className="flex items-center gap-2">
+            <StatusBadge status={event.level} size="sm" />
+            <span className="truncate text-teal-600 dark:text-teal-400">{event.agent}</span>
+            <span className="ml-auto shrink-0 text-muted-foreground">{formatRelative(event.ts)}</span>
+          </div>
+          <p className="mt-1 pl-1 text-foreground">{event.message}</p>
+        </div>
+      );
+    case 'phase.started':
+      return <EventRow icon={PlayCircle} color="text-blue-500" ts={event.ts} title={<>Phase <span className="capitalize">{event.phase}</span> started</>} detail={event.agent} />;
+    case 'phase.completed':
+      return <EventRow icon={CheckCircle2} color="text-emerald-500" ts={event.ts} title={<>Phase <span className="capitalize">{event.phase}</span> completed</>} detail={`${event.agent} · ${formatDuration(event.durationSec)}`} />;
+    case 'step.failed':
+      return <EventRow icon={XCircle} color="text-red-500" ts={event.ts} title={<>Step failed at <span className="capitalize">{event.phase}</span></>} detail={event.error} />;
+    case 'hitl.requested':
+      return <EventRow icon={UserCheck} color="text-amber-500" ts={event.ts} title="HITL requested" detail={event.title} />;
+    case 'artifact.created':
+      return <EventRow icon={FileBox} color="text-teal-500" ts={event.ts} title={<>Artifact <span className="font-medium">{event.artifactName}</span></>} detail={`${event.artifactKind} · ${event.agent}`} />;
+    case 'agent.message':
+      return <EventRow icon={Send} color="text-blue-500" ts={event.ts} title={<><span className="font-mono">{event.messageType}</span> · {event.from} → {event.to}</>} detail={event.summary} />;
+    default:
+      return null;
+  }
+}
+
 export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: run, isLoading } = useRun(params.id);
-  const { data: logs } = useRunLogs(params.id);
+  const { data: events } = useRunEvents(params.id);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
 
@@ -75,7 +132,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     .filter((c) => c.runId === params.id)
     .map((c) => ({ ...c, status: hitlOverride[c.id] ?? c.status }));
   const waitingStep = run?.steps.find((s) => s.status === 'waiting_for_human') ?? null;
-  const runEvents = [...(logs ?? [])].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
+  const runEvents = [...(events ?? [])].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
   const isLive = status === 'running';
 
   const control = async (action: 'pause' | 'resume' | 'cancel') => {
@@ -226,16 +283,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                 {runEvents.length === 0 ? (
                   <p className="px-2 py-6 text-center text-muted-foreground">No events for this run.</p>
                 ) : (
-                  runEvents.map((e) => (
-                    <div key={e.id} className="border-b border-border/60 px-2 py-2 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status={e.level} size="sm" />
-                        <span className="text-muted-foreground">{formatRelative(e.ts)}</span>
-                        <span className="truncate text-teal-600 dark:text-teal-400">{e.agent}</span>
-                      </div>
-                      <p className="mt-1 text-foreground">{e.message}</p>
-                    </div>
-                  ))
+                  runEvents.map((e) => <RunEventItem key={e.id} event={e} />)
                 )}
               </div>
             </Card>
