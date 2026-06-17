@@ -1,0 +1,39 @@
+We want to build an internal FinOps Web App for engineering, finance, and platform teams using AWS-native services and AI assistance.
+
+Current pain:
+- Cloud cost data is fragmented across teams and tools, so monthly reporting is slow and often inconsistent.
+- Engineers do not get timely visibility into cost anomalies, idle resources, and unit economics by service.
+- Budget owners struggle to track forecast vs actual spend during the month.
+- Follow-up actions from cost reviews are not consistently captured or assigned.
+
+What we want:
+- A web app that gives near real-time visibility into cloud spend, trends, and cost drivers by account, environment, team, and service.
+- AI-assisted insights for anomaly explanations, optimization recommendations, and weekly FinOps summaries.
+- A workflow that converts approved optimization actions into Jira tickets for engineering teams.
+- Role-based access for FinOps analyst, engineering manager, team lead, and finance controller.
+
+Initial scope (MVP):
+- Cost dashboard with daily spend, month-to-date spend, and budget variance.
+- Top cost drivers view (services, tags, teams, environments).
+- Cost anomaly detection and alert feed with severity and probable cause.
+- Optimization recommendations (rightsizing, idle resources, commitment opportunities) with confidence scores.
+- Jira ticket creation from approved recommendations.
+- Weekly executive summary export (Markdown/PDF) for leadership.
+
+Data and integrations:
+- AWS Cost Explorer and CUR-derived datasets as primary cost sources.
+- CloudWatch metrics for workload activity context where needed.
+- Jira for action tracking and ownership.
+- Optional Slack notifications for anomaly alerts and weekly summaries (Phase 2).
+
+Constraints:
+- Security and compliance are critical; financial data must be role-restricted and audit-logged.
+- No hardcoded credentials; all secrets through AWS Secrets Manager.
+- Data in transit and at rest must be encrypted (TLS + KMS).
+- Keep architecture cloud-native and operationally lightweight for MVP.
+
+Success expectation:
+- Reduce monthly cost reporting effort by at least 50 percent.
+- Detect and surface high-severity anomalies within 30 minutes of data availability.
+- Increase optimization action completion rate with clear ownership and due dates.
+- Improve forecast accuracy and budget adherence across teams.

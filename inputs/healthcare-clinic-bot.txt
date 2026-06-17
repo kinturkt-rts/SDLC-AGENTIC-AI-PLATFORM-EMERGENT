@@ -1,0 +1,31 @@
+Build a healthcare clinic assistant — a FAQ chatbot with Streamlit UI for demos.
+
+Problem:
+- Patients call or email the same questions (office hours, insurance, how to book, parking).
+- Front-desk staff repeat answers; after hours there is no self-service channel.
+
+MVP:
+- Chatbot that answers common clinic questions from a curated FAQ (appointments, insurance, hours, general wellness).
+- Not a document RAG app — answers should come from structured FAQ content stored in the database, not uploaded PDFs.
+- Streamlit UI for chat and for browsing FAQs; backend API for the UI to call.
+- Light chat history so a demo conversation can continue across turns.
+- Staff can maintain FAQ content (add or update entries) for demo purposes.
+
+Must have:
+- Bedrock for conversational replies grounded in FAQ content.
+- Medical disclaimer on every answer (informational only; not medical advice; call 911 for emergencies).
+- If nothing in the FAQ matches, say so honestly and suggest calling the clinic — do not invent clinical facts.
+- Persist FAQs, chat sessions, and messages in Postgres.
+- Simple dev-friendly auth for MVP; production SSO can wait.
+
+Constraints:
+- Demo-quality POC for stakeholders — not a diagnostic tool and not production HIPAA scope.
+- Do not collect or store sensitive patient details (SSN, full DOB, detailed symptoms); redirect those users to call the clinic.
+- No pgvector, PDF upload, or OpenSearch for v1.
+
+Out of scope:
+- Appointment booking integrations, EHR/FHIR, telehealth, multi-clinic tenancy, production HIPAA hardening.
+
+Success:
+- User asks "What are your hours?" in Streamlit and gets a grounded answer from seeded FAQ content.
+- pytest passes and the app runs locally against our RDS Postgres.

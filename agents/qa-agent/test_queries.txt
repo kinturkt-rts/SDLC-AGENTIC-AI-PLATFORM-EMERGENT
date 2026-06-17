@@ -1,0 +1,43 @@
+# QA Agent - Test Queries
+# Runs pytest on target-apps/<service>/; keeps developer baseline tests; reports failures.
+# Run from repo root after: aws sso login --profile eks-admin-user
+#
+# Pipeline default: no --task needed. Auto-loads agents/pipeline/*.context.json
+#
+#   python agents/qa-agent/qa_agent.py --target-app test-medium-app
+#
+#   $env:AWS_PROFILE="eks-admin-user"
+#   $env:QA_MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0"
+
+
+# ── PIPELINE TEST #2 — QA on medium app (after developer-agent) ─────────────────
+
+python agents/qa-agent/qa_agent.py --target-app test-medium-app
+
+# With explicit pipeline context:
+python agents/qa-agent/qa_agent.py `
+  --target-app test-medium-app `
+  --context-file agents/pipeline/test-medium-app.context.json
+
+# ── PIPELINE TEST #1 — QA on easy app ────────────────────────────────────────────
+
+python agents/qa-agent/qa_agent.py --target-app test-dev
+
+# ── A2A SERVER (orchestrator delegates here on :9104) ──────────────────────────
+
+python agents/qa-agent/qa_agent.py --serve-a2a
+
+# ── MANUAL PYTEST (no agent — same commands QA agent uses) ─────────────────────
+
+cd target-apps\test-medium-app
+pytest tests/ -q
+pytest tests/ -v
+pytest tests/ --tb=short
+pytest tests/ -x
+pytest tests/ -k "auth"
+pytest tests/ --cov=app --cov-report=term-missing -q
+
+# ── FAILURE SCENARIOS QA HANDLES ───────────────────────────────────────────────
+# app_bug   → report + recommend developer-agent fix (QA does not edit app/)
+# test_bug  → QA fixes tests/ via qa_write_file, re-runs pytest
+# env_issue → report missing pip install / wrong cwd

@@ -1,0 +1,33 @@
+Build an AI meeting assistant for our internal team.
+
+Problem:
+- People waste time finding free slots across calendars.
+- Reminders are manual and easy to miss.
+- Follow-ups after meetings are inconsistent.
+
+MVP feature:
+- User asks in plain English: "Schedule a 30-min sync with Alex and Priya next week about project kickoff."
+- Agent checks calendar availability, proposes 2–3 time options, and creates the event after user picks one.
+- Agent sends meeting invites and sets reminders (15 min before + day before).
+- User can ask: "Remind me to send notes after tomorrow's standup."
+
+Must have:
+- Connect to Microsoft 365 / Outlook calendar (read + create events).
+- Chat or simple web form for requests.
+- Store meeting intent, chosen slot, and reminder jobs.
+- Audit log of what the agent scheduled or changed.
+
+Nice to have (later):
+- Slack/Teams notifications.
+- Auto-reschedule when conflicts appear.
+
+Constraints:
+- Internal users only.
+- No access to calendars outside approved org accounts.
+- Ask for confirmation before creating or deleting events.
+- Secrets in managed store only.
+
+Success:
+- Most scheduling requests completed in under 2 minutes.
+- Reminders delivered reliably.
+- Users can see a history of agent actions.

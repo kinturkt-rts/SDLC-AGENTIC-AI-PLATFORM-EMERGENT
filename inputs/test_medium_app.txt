@@ -1,0 +1,55 @@
+Team Task Board API — pipeline test #2 (medium, backend only)
+
+Purpose:
+- Stress-test product → architect → developer-agent on a richer FastAPI app.
+- Still in-memory (no database-agent in this run). Frontend deferred to Phase 2.
+
+Domain:
+- Small internal task board: **Projects** contain **Tasks**.
+- Two related resources, enums, filtering, simple API-key auth, multiple routers.
+
+Auth (simple):
+- Read endpoints (GET /health, GET /projects, GET /tasks, GET by id) are public.
+- Write endpoints (POST, PATCH, DELETE) require header `X-API-Key` matching env `API_KEY`.
+- Load `API_KEY` via pydantic-settings from `.env` / `.env.example` (placeholder only in repo).
+
+Data (in-memory only — dicts keyed by int id, auto-increment counters):
+- Project: id, name (str, 1–100 chars), status (active | archived), created_at (ISO datetime UTC)
+- Task: id, project_id (FK), title (str, 1–200 chars), status (todo | in_progress | done), priority (low | medium | high), created_at
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | no | {"status":"ok","service":"task-board"} |
+| POST | /projects | API key | create project; 201; default status active |
+| GET | /projects | no | list; query ?status=active|archived optional |
+| GET | /projects/{id} | no | 200 or 404 |
+| PATCH | /projects/{id} | API key | update name and/or status; 404 if missing |
+| POST | /projects/{project_id}/tasks | API key | create task; 404 if project missing; 422 if project archived |
+| GET | /tasks | no | list; query ?project_id= & ?status= & ?limit= (default 20, max 100) & ?offset= |
+| GET | /tasks/{id} | no | 200 or 404 |
+| PATCH | /tasks/{id} | API key | update title, status, and/or priority |
+| DELETE | /tasks/{id} | API key | 204 or 404 |
+
+Business rules:
+- Cannot add tasks to an archived project (422 with clear message).
+- PATCH task to done is idempotent.
+- List endpoints return `{items: [...], total: int, limit: int, offset: int}`.
+- Unknown query params rejected or ignored per FastAPI defaults; invalid enum → 422.
+
+Stack:
+- Python 3.12, FastAPI, Pydantic v2, pydantic-settings, uvicorn.
+- Separate routers: `app/routers/projects.py`, `app/routers/tasks.py`, `app/routers/health.py`.
+- `app/config.py`, `app/dependencies.py` (verify_api_key), `app/models.py` or `schemas/` for Pydantic.
+- In-memory store module (e.g. `app/store.py`) — not SQLAlchemy.
+
+Tests (baseline for qa-agent later):
+- pytest + TestClient; reset store between tests.
+- Cover: health, create project+task, list filters, archived-project guard, API key 401/403 on writes, 404 paths, pagination shape.
+
+Out of scope:
+- Postgres, MongoDB, Redis, Docker, frontend UI, JWT/OAuth, LLM, external HTTP.
+
+Success:
+- pytest passes from `target-apps/test-medium-app/`
+- uvicorn on :8000; /docs shows all endpoints
+- README: cd, venv, pip, .env.example copy, pytest, uvicorn, sample curl with X-API-Key

@@ -1,0 +1,79 @@
+"""Tests for apply_sql_to_rds schema resolution."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SCRIPT_PATH = _REPO_ROOT / "scripts" / "apply_sql_to_rds.py"
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location("apply_sql_to_rds", _SCRIPT_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load {_SCRIPT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["apply_sql_to_rds"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_resolve_app_schema_from_target_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POSTGRES_APP_SCHEMA", raising=False)
+    mod = _load_module()
+    assert mod.resolve_app_schema("meeting-assistant") == "meeting_assistant"
+
+
+def test_resolve_app_schema_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POSTGRES_APP_SCHEMA", "custom_schema")
+    mod = _load_module()
+    assert mod.resolve_app_schema("meeting-assistant") == "custom_schema"
+
+
+def test_split_sql_statements_ignores_semicolon_inside_string() -> None:
+    mod = _load_module()
+    sql = "INSERT INTO t (c) VALUES ('a; b'); SELECT 1;"
+    parts = mod.split_sql_statements(sql)
+    assert len(parts) == 2
+    assert "a; b" in parts[0]
+    assert parts[1] == "SELECT 1"
+
+
+def test_resolve_host_port_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POSTGRES_MCP_DB_ENDPOINT", "mydb.example.rds.amazonaws.com")
+    monkeypatch.setenv("POSTGRES_MCP_PORT", "5433")
+    mod = _load_module()
+    host, port = mod._resolve_host_port("postgresql://ignored")
+    assert host == "mydb.example.rds.amazonaws.com"
+    assert port == 5433
+
+
+def test_resolve_host_port_parses_url_when_password_contains_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POSTGRES_MCP_DB_ENDPOINT", raising=False)
+    mod = _load_module()
+    url = (
+        "postgresql://postgres:MyPass@Database_26@"
+        "agenticaidbinstance.c1u0cggiolxp.us-east-2.rds.amazonaws.com:5432/sdlc?sslmode=require"
+    )
+    host, port = mod._resolve_host_port(url)
+    assert host == "agenticaidbinstance.c1u0cggiolxp.us-east-2.rds.amazonaws.com"
+    assert port == 5432
+
+
+def test_connection_url_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://bad:pass@word@host:5432/db")
+    monkeypatch.setenv("POSTGRES_MCP_DB_ENDPOINT", "host.example.com")
+    monkeypatch.setenv("POSTGRES_MCP_DATABASE", "sdlc_agentic_ai")
+    monkeypatch.setenv("POSTGRES_MCP_DB_USER", "postgres")
+    monkeypatch.setenv("POSTGRES_MCP_DB_PASSWORD", "MyPass@Database_26")
+    monkeypatch.setenv("POSTGRES_MCP_PORT", "5432")
+    mod = _load_module()
+    url = mod._connection_url()
+    assert "MyPass%40Database_26" in url
+    assert "host.example.com:5432/sdlc_agentic_ai" in url

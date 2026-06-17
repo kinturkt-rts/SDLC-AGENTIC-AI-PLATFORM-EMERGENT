@@ -1,0 +1,67 @@
+# Product Agent - Test Queries
+
+# Verify: aws sts get-caller-identity --region us-east-2
+
+# SSO login
+
+aws sso login --profile eks-admin-user
+$env:AWS_PROFILE="eks-admin-user"
+
+
+# ── READ ────────────────────────────────────────────────────────────────────────
+
+# 1. Fetch a single ticket by ID
+python agents/product-agent/product_agent.py `
+  --task "Fetch and summarize Jira issue HAWKAI-960. Do not create anything."
+
+# 2. List all visible Jira projects
+python agents/product-agent/product_agent.py `
+  --task "List all Jira projects I have access to, showing the project key and name. Do not create anything."
+
+# ── SEARCH ──────────────────────────────────────────────────────────────────────
+
+# 3. JQL search — open stories assigned to me in a project (searchJiraIssuesUsingJql)
+python agents/product-agent/product_agent.py `
+  --task "Search Jira for all open Stories in project HAWKAI assigned to me. Show key, title, status, and assignee. Do not create anything."
+
+# 4. JQL search — tickets updated in the last 7 days
+python agents/product-agent/product_agent.py `
+  --task "Search Jira for issues in project HAWKAI updated in the last 7 days. List key, title, status, and updated date. Do not create anything."
+
+# ── WRITE ───────────────────────────────────────────────────────────────────────
+
+# 5. Add a comment to a ticket (addCommentToJiraIssue) — requires --allow-writes
+python agents/product-agent/product_agent.py `
+  --allow-writes `
+  --task "Add a comment to Jira issue HAWKAI-1113 saying: 'Reviewed by autonomous SDLC agent - no blockers identified.'"
+
+# PRD only (FinOps)
+python agents/product-agent/product_agent.py `
+  --input-file inputs/finops-web-app.txt `
+  --prd-name finops-web-app
+
+# PRD only (demo — meeting assistant)
+python agents/product-agent/product_agent.py `
+  --input-file inputs/meeting-assistant.txt `
+  --prd-name meeting-assistant
+
+# PRD only (minimal pipeline tests)
+python agents/product-agent/product_agent.py `
+  --input-file inputs/incident-triage-bot.txt `
+  --prd-name incident-triage-bot
+
+python agents/product-agent/product_agent.py `
+  --input-file inputs/release-notes-bot.txt `
+  --prd-name release-notes-bot
+
+python agents/product-agent/product_agent.py `
+  --input-file inputs/team-faq-bot.txt `
+  --prd-name team-faq-bot
+
+# PRD + Jira tickets
+python agents/product-agent/product_agent.py `
+  --input-file inputs/finops-web-app.txt `
+  --prd-name finops-web-app `
+  --project SAAP `
+  --allow-writes `
+  --create-jira-tickets

@@ -1,0 +1,27 @@
+# Database Agent - Test Queries
+# Run from repo root.
+#
+# Pipeline default: no --task needed. Reads docs/design/<targetApp>.md + prdPath from Context.
+#
+# MCP flags (compose — use both when design has Postgres + MongoDB):
+#   --with-postgres   Apply sql/ to RDS
+#   --with-mongodb    Apply nosql/ (requires MDB_MCP_* env)
+#   Both together:    --with-postgres --with-mongodb
+
+# ── FINOPS PIPELINE (recommended) ─────────────────────────────────────────────
+
+# 1) Files only — review SQL before RDS
+python agents/database-agent/database_agent.py
+
+# 2) Write files + apply to RDS
+python agents/database-agent/database_agent.py --with-postgres
+
+# 3) Both stores (when design §3/§6 includes MongoDB collections)
+python agents/database-agent/database_agent.py --with-postgres --with-mongodb
+
+# ── AD-HOC ────────────────────────────────────────────────────────────────────
+
+python agents/database-agent/database_agent.py `
+  --no-auto-context `
+  --target-app demo-api `
+  --task "Add db/sql for a simple items table."

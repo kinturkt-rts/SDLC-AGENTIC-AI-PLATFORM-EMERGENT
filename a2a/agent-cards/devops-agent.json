@@ -1,0 +1,11 @@
+{
+  "name": "devops-agent",
+  "description": "Manages CI/CD, Terraform, and deployments.",
+  "url": "http://127.0.0.1:9105/",
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "capabilities": { "streaming": true },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [{ "id": "delivery", "name": "delivery", "description": "Pipeline and infra changes", "tags": ["devops", "cicd"] }]
+}

@@ -1,0 +1,92 @@
+AI Release Notes Bot — medium pipeline test (FastAPI + Bedrock + Postgres + Streamlit)
+
+Purpose:
+- End-to-end SDLC test at **medium complexity**: product → architect → database → developer → qa.
+- Same class as incident-triage-bot: REST API + Streamlit UI + Postgres + Bedrock — **no pgvector, no JWT**.
+- Validates developer-agent Pattern **C** (FastAPI backend + `ui/streamlit_app.py` calling API over httpx).
+
+Problem:
+- Every release someone manually writes notes from merged MRs and Jira tickets.
+- Notes are late, miss breaking changes, and format varies by author.
+
+MVP:
+- User enters a **version label** (e.g. `v1.4.0`), **from/to dates**, and a list of ticket titles (paste from Jira or CSV).
+- Optional **Jira project key** field in UI for future integration; MVP works with pasted ticket list only (no live Jira API required in v1).
+- Bedrock drafts release notes in **Markdown**: Highlights, Fixes, Known issues, Breaking changes (if any).
+- User can **edit** the draft in Streamlit, **save** to Postgres, **mark published**, and view **history per version**.
+- Streamlit tabs: **Draft** (create/edit), **History** (list past drafts by version).
+
+Personas & auth (MVP):
+| Caller | Auth | Can do |
+|--------|------|--------|
+| Streamlit user | `X-API-Key` (shared secret) | All API routes via httpx |
+| automation | same API key | POST /drafts, GET /drafts |
+
+Auth: shared **API key** only (`API_KEY` in `.env`). No JWT, no user login table in v1.
+
+Data model (database-agent — DDL under `target-apps/release-notes-bot/db/sql/`):
+- `release_drafts`:
+  - `id` uuid PK
+  - `version_label` varchar(32) NOT NULL (e.g. v1.4.0)
+  - `date_from` date NOT NULL, `date_to` date NOT NULL
+  - `jira_project_key` varchar(16) nullable
+  - `ticket_input` text NOT NULL (raw pasted titles / one per line)
+  - `markdown_body` text NOT NULL (Bedrock output or user-edited)
+  - `is_published` bool NOT NULL DEFAULT false
+  - `created_by` varchar(64) NOT NULL (free-text user id from Streamlit, e.g. release-alice)
+  - `created_at` timestamptz NOT NULL DEFAULT now()
+  - `updated_at` timestamptz NOT NULL DEFAULT now()
+- Index on `(version_label, created_at DESC)`
+- Seed: 1–2 sample drafts (one published, one draft) with stable UUIDs
+
+API contracts (FastAPI — implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | Real DB ping — `{"status":"ok","checks":{"api":"ok","database":"ok"}}` or 503 |
+| POST | /drafts/generate | API key | body: version_label, date_from, date_to, ticket_input, jira_project_key?, created_by; call Bedrock; INSERT draft; 201 + draft JSON |
+| GET | /drafts | API key | list recent drafts; query `?limit=` (default 50), `?version_label=` optional filter |
+| GET | /drafts/{id} | API key | 200 or 404 |
+| PATCH | /drafts/{id} | API key | update markdown_body and/or is_published; bump updated_at |
+| DELETE | /drafts/{id} | API key | 204 soft-delete or hard-delete (pick one; document in README) |
+
+Bedrock rules:
+- System prompt: produce Markdown only — sections `## Highlights`, `## Fixes`, `## Known issues`, `## Breaking changes` (omit empty sections).
+- Never invent ticket IDs; only summarize from `ticket_input`.
+- If ticket list is empty or too vague → return markdown with `## Insufficient input` and short guidance (no hallucinated fixes).
+- Model: `us.anthropic.claude-sonnet-4-20250514-v1:0` via `app/services/bedrock_client.py` (mock in tests).
+
+Stack (developer-agent — Pattern C):
+- **Backend:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x sync + `psycopg[binary]`, uvicorn.
+- **Database:** PostgreSQL on RDS; `POSTGRES_SCHEMA=release_notes_bot`.
+- **UI:** Streamlit under `ui/streamlit_app.py` + `ui/requirements.txt` (streamlit, httpx, python-dotenv); port **8501**; API on **8000**.
+- **Auth:** `API_KEY` header; `app/startup_checks.py` fail-fast if DATABASE_URL missing/malformed.
+- Layout: `app/startup_checks.py`, `app/services/bedrock_client.py`, `app/services/prompts.py`, `app/routers/drafts.py`, `schemas/drafts.py`.
+- `.env.example` every line `KEY=value` including `DATABASE_URL=postgresql+psycopg://...?sslmode=require`.
+
+Streamlit UI (required):
+- Tab **Draft**: version, date pickers (from/to), optional Jira project key, textarea for ticket list, created_by field, **Generate** button → shows rendered Markdown preview + edit box → **Save** / **Mark published**.
+- Tab **History**: table or cards of recent drafts (version, dates, published badge, preview snippet); **Refresh**; click to load full draft.
+- Sidebar: `API_BASE_URL` (default http://localhost:8000), uses same `API_KEY` from env.
+- Clear errors when API returns 401/500 (show status + detail when present).
+
+Tests:
+- pytest + TestClient; SQLite in-memory; mock Bedrock at import site.
+- Cover: health, generate draft (mocked Bedrock), list drafts, patch published flag, 401 without API key, insufficient input path.
+- `dev_validate_app` must pass before handoff (env example + import + health smoke).
+
+Constraints:
+- Jira read-only in design only — **no Jira MCP calls in v1**; pasted ticket list is the data source.
+- No secrets in generated markdown body.
+- Internal users only; no SSO.
+- Read-only on infrastructure — no AWS resource changes.
+
+Out of scope (Phase 2):
+- Live Jira REST integration, GitLab MR import, SSO, React frontend, auto-publish to Confluence.
+
+Success criteria:
+- Full pipeline produces `target-apps/release-notes-bot/` with passing pytest.
+- `uvicorn app.main:app --reload --port 8000` + `streamlit run ui/streamlit_app.py --server.port 8501`.
+- User copies `.env.example` → `.env` (with `DATABASE_URL=` prefix), applies db/sql to RDS, generates notes from pasted tickets in under 2 minutes.
+- README: repo-root `cd target-apps/release-notes-bot`, venv, pip, Terminal 1 (API) + Terminal 2 (UI), RDS smoke test.
+
+Target app slug: **release-notes-bot**
+Output directory: **target-apps/release-notes-bot/**

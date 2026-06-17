@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Open-source MCP servers for AutonomousSDLC. Cursor uses .cursor/mcp.json; Strands agents load the same servers programmatically.",
+  "servers": {
+    "atlassian": {
+      "name": "Atlassian (Jira / Confluence)",
+      "package": "mcp-remote",
+      "transport": "remote-oauth",
+      "url": "https://mcp.atlassian.com/v1/mcp/authv2",
+      "install": "npx -y mcp-remote@latest https://mcp.atlassian.com/v1/mcp/authv2",
+      "env": {
+        "ATLASSIAN_MCP_URL": "https://mcp.atlassian.com/v1/mcp/authv2",
+        "note": "Auth via mcp-remote OAuth (~/.mcp-auth). Do not use Jira ATATT API tokens."
+      },
+      "usedBy": ["product-agent"]
+    },
+    "aws-diagram": {
+      "name": "AWS Diagram (diagrams package)",
+      "package": "awslabs.aws-diagram-mcp-server",
+      "version": "1.0.23",
+      "transport": "stdio",
+      "install": "uv tool run --from awslabs.aws-diagram-mcp-server==1.0.23 awslabs.aws-diagram-mcp-server",
+      "notes": "Requires Graphviz (dot on PATH). Use 1.0.23+ on Windows (1.0.8 SIGALRM fails). PNGs go to ARCHITECT_DIAGRAM_OUTPUT_DIR (default docs/diagrams). Relative filenames land in generated-diagrams/ — architect agent uses absolute diagramOutputFile to avoid that.",
+      "usedBy": ["architect-agent"]
+    },
+    "aws-postgres": {
+      "name": "AWS Labs Postgres MCP",
+      "package": "awslabs.postgres-mcp-server",
+      "transport": "stdio",
+      "install": "uv tool run --from awslabs.postgres-mcp-server@latest awslabs.postgres-mcp-server.exe",
+      "env": {
+        "AWS_PROFILE": "AWS profile with access to Aurora/RDS",
+        "AWS_REGION": "AWS region for database resources"
+      },
+      "notes": "Supports RDS API and wire-protocol based connections. Configure DB endpoint or cluster ARN at runtime as needed.",
+      "usedBy": ["database-agent"]
+    },
+    "mongodb": {
+      "name": "MongoDB MCP",
+      "package": "mongodb-mcp-server",
+      "transport": "stdio",
+      "install": "npx -y mongodb-mcp-server",
+      "env": {
+        "MDB_MCP_CONNECTION_STRING": "MongoDB connection string (Option A)",
+        "MDB_MCP_API_CLIENT_ID": "Atlas service account client id (Option B)",
+        "MDB_MCP_API_CLIENT_SECRET": "Atlas service account client secret (Option B)",
+        "MDB_MCP_READ_ONLY": "Set true for read-only mode"
+      },
+      "notes": "Use either connection-string auth or Atlas service-account auth; see MongoDB MCP prerequisites.",
+      "usedBy": ["database-agent"]
+    },
+    "firecrawl": {
+      "name": "Firecrawl MCP",
+      "package": "firecrawl-mcp",
+      "transport": "stdio",
+      "install": "npx -y firecrawl-mcp",
+      "env": {
+        "FIRECRAWL_API_KEY": "API key from firecrawl.dev (Firecrawl_API_Key in .env.local also accepted)"
+      },
+      "notes": "Scrape, crawl, map, and search for web-crawler-agent. Runs after architect-agent when requirements mention URL ingestion.",
+      "usedBy": ["web-crawler-agent"]
+    },
+    "gitlab": {
+      "name": "GitLab",
+      "package": "@zereight/mcp-gitlab",
+      "repository": "https://github.com/zereight/gitlab-mcp",
+      "transport": "stdio",
+      "install": "npx -y @zereight/mcp-gitlab",
+      "env": {
+        "GITLAB_PERSONAL_ACCESS_TOKEN": "GitLab PAT with api, read_api, read_repository, write_repository",
+        "GITLAB_API_URL": "https://code.junodev.net/api/v4 (Juno); use https://gitlab.com/api/v4 for GitLab.com"
+      },
+      "notes": "Native HTTP MCP at /api/v4/mcp requires GitLab Duo Premium; use this stdio server when the endpoint returns 404.",
+      "usedBy": ["developer-agent", "devops-agent", "qa-agent"]
+    },
+    "terraform": {
+      "name": "HashiCorp Terraform",
+      "package": "hashicorp/terraform-mcp-server",
+      "repository": "https://github.com/hashicorp/terraform-mcp-server",
+      "transport": "stdio",
+      "install": "docker run -i --rm hashicorp/terraform-mcp-server:latest",
+      "env": {
+        "TFE_TOKEN": "HCP Terraform / TFE API token (optional)",
+        "TFE_HOSTNAME": "app.terraform.io"
+      },
+      "usedBy": ["devops-agent", "architect-agent"]
+    }
+  }
+}

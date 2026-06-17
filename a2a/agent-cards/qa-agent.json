@@ -1,0 +1,11 @@
+{
+  "name": "qa-agent",
+  "description": "Authors tests and reports quality metrics via GitLab.",
+  "url": "http://127.0.0.1:9104/",
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "capabilities": { "streaming": true },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [{ "id": "quality", "name": "quality", "description": "Test planning and execution", "tags": ["qa", "testing"] }]
+}

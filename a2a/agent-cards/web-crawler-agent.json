@@ -1,0 +1,17 @@
+{
+  "name": "web-crawler-agent",
+  "description": "Scrapes web content via Firecrawl MCP and persists markdown + Postgres rows after architect-agent.",
+  "url": "http://127.0.0.1:9109",
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": true
+  },
+  "skills": [
+    {
+      "id": "web_scrape_and_persist",
+      "name": "web_scrape_and_persist",
+      "description": "Scrape URLs, write markdown under docs/PRD/scraped/, store rows in scraped_web_content.",
+      "tags": ["web", "scrape", "firecrawl", "postgres"]
+    }
+  ]
+}

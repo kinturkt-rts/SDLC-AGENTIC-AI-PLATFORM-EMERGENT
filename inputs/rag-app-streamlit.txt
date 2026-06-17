@@ -1,0 +1,85 @@
+Internal RAG PDF Q&A — pipeline test with Streamlit UI + pgvector (local MVP)
+
+Purpose:
+- End-to-end SDLC test: product → architect → database → developer → runnable app.
+- User uploads a PDF, system chunks + embeds + stores vectors, user asks questions in a browser UI and gets cited answers.
+- Must work locally against our existing RDS Postgres (no OpenSearch, no S3 for MVP).
+
+Current pain:
+- Policy and handbook PDFs live in shared drives; people search manually or guess.
+- No single place to upload a doc set and query with page-level citations.
+- We need a demo-quality internal tool, not a production AWS vector stack yet.
+
+What we want (MVP):
+- Upload one or more PDFs into a **collection**.
+- On upload: extract text, chunk, embed with Bedrock Titan, store chunks + vectors in **PostgreSQL pgvector**.
+- Chat / Q&A: natural-language question → similarity search → Bedrock Claude answer with citations (document title, page, snippet).
+- Admin-style list of documents per collection with ingestion status (pending | processing | success | failed).
+- Audit log of uploads and queries (who, what collection, outcome).
+- **Streamlit web UI** for upload + chat (MVP demo). UI calls the FastAPI backend over HTTP — do not duplicate business logic in Streamlit.
+
+Stack (explicit — do not substitute):
+- **Backend:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x sync + psycopg, uvicorn.
+- **Database:** PostgreSQL on RDS; app schema per feature slug; **pgvector** extension for embeddings.
+- **Vector storage:** `document_chunks` table with `embedding vector(1536)` — NOT OpenSearch, NOT Pinecone for MVP.
+- **PDF bytes (MVP):** store on local disk under configurable `PDF_STORAGE_DIR` (e.g. `./var/pdfs`) — NOT S3 for MVP.
+- **LLM (Amazon Bedrock):**
+  - Answer generation: `us.anthropic.claude-sonnet-4-20250514-v1:0`
+  - Embeddings: `amazon.titan-embed-text-v1` (1536 dimensions — must match vector column)
+- **UI:** Streamlit under `ui/streamlit_app.py` + `ui/api_client.py` (httpx), port 8501; API on port 8000.
+- **Auth (local dev):** `X-Dev-User: <user_id>:<role>` header (`viewer` | `contributor` | `admin`). Cognito JWT deferred.
+
+Data model (database-agent should implement):
+- `collections` — id, name, description, tags, owner_user_id, archived, created_at
+- `documents` — id, collection_id, title, owner_user_id, file_path or storage_key, file_hash, status, last_indexed_at
+- `document_chunks` — id, doc_id FK, page, text, embedding vector(1536), created_at; HNSW or ivfflat index on embedding (cosine)
+- `collection_roles` — user_id, collection_id, role (viewer | contributor | admin)
+- `audit_log` — actor, action, resource_type, resource_id, outcome, created_at
+- Seed dev data: at least one collection + 2 sample document rows (metadata only is fine for seed; real PDFs come from upload)
+
+API contracts (FastAPI — implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | no | {"status":"ok"} |
+| POST | /collections | contributor+ | create collection; 201 |
+| GET | /collections/{id}/documents | viewer on collection | list documents |
+| POST | /collections/{id}/documents/upload | contributor on collection | multipart PDF + title; persist bytes; run ingest (chunk+embed+insert chunks); set status success/failed |
+| GET | /documents/{doc_id}/status | viewer | ingestion status |
+| POST | /chat | viewer on every collection_id in body | body: collection_ids[], session_id, question; retrieve top-k from pgvector; if max score < CONFIDENCE_THRESHOLD return "Not found in documents"; else Bedrock answer + citations |
+| GET | /audit-logs | admin | filtered audit entries |
+
+RAG pipeline (developer-agent — must be fully wired, NOT stubs):
+1. Upload saves PDF to `PDF_STORAGE_DIR`, parses with pypdf, chunks (configurable CHUNK_SIZE / CHUNK_OVERLAP).
+2. Each chunk embedded via Bedrock Titan; INSERT into `document_chunks`.
+3. `/chat` embeds question, pgvector cosine top-k (default 5), applies CONFIDENCE_THRESHOLD (default 0.25 for MVP), generates answer via Claude with system prompt grounded in chunks only.
+4. If no chunks or low confidence → `{"answer":"Not found in documents","confidence":0,"citations":[]}` — never hallucinate.
+
+Config / env (.env.example only — never commit .env):
+- DATABASE_URL, POSTGRES_SCHEMA (or search_path in DSN)
+- BEDROCK_MODEL_ID, BEDROCK_EMBED_MODEL_ID, BEDROCK_MAX_TOKENS, AWS_REGION
+- EMBED_DIM=1536, CHUNK_SIZE=1000, CHUNK_OVERLAP=150, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.25
+- PDF_STORAGE_DIR=./var/pdfs
+- API_BASE_URL=http://127.0.0.1:8000 (for Streamlit)
+
+Streamlit UI (include UI — required for this feature):
+- Tabs or pages: Chat, Documents (upload + list), optional Collections create.
+- Sidebar: API base URL, X-Dev-User preset, collection UUID picker.
+- Chat: message history, citations expander, confidence display.
+- Documents: file uploader + title + **Upload** button calling POST upload API.
+- Show clear message when API unreachable or when answer is "Not found in documents".
+
+Tests:
+- pytest + TestClient; mock Bedrock client (deterministic fake embeddings + fake answers).
+- Test: health, upload flow (fake PDF bytes), chat returns citations when retriever mocked, chat returns not-found when no chunks, RBAC 403 cases.
+- No live AWS or RDS required in unit tests (override get_store / get_bedrock_client / retriever).
+
+Out of scope (Phase 2):
+- S3, OpenSearch Serverless, Lambda ingestion workers, Cognito JWT, DynamoDB chat history, React/Next.js frontend, Docker/ECS deploy.
+
+Success criteria:
+- From `target-apps/rag-app-streamlit/`: `pytest tests/ -q` passes.
+- `uvicorn app.main:app --reload --port 8000` + `streamlit run ui/streamlit_app.py --server.port 8501`.
+- User with real DATABASE_URL + AWS_PROFILE can upload a PDF and get a cited answer (or honest "not found" if empty index).
+- README documents: cd path, venv, pip, copy .env.example, apply db/sql, run API + UI, sample curl and Streamlit usage.
+
+Target app slug: **rag-app-streamlit**
+Output directory: **target-apps/rag-app-streamlit/**

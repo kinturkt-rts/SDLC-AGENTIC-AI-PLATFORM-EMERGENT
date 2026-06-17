@@ -1,0 +1,42 @@
+# Architect Agent - Test Queries
+# Produces PNG diagrams under docs/diagrams/generated-diagrams (see docs/diagrams/README.md).
+# Run from repo root.
+#
+# Pipeline default: no --task needed. Auto-loads agents/pipeline/<target-app>.context.json
+#
+#   python agents/architect-agent/architect_agent.py
+
+
+# ── BASIC (single service flow) ─────────────────────────────────────────────────
+
+# 1. Serverless checkout - API Gateway → Lambda → DynamoDB
+#    Expected: docs/diagrams/generated-diagrams/checkout-flow.png
+python agents/architect-agent/architect_agent.py `
+  --diagram-name checkout-flow `
+  --task "Draw an AWS architecture for a checkout service: clients call API Gateway, a Lambda function processes orders, DynamoDB stores order state. Left-to-right flow. Add brief ADR bullets (context, decision, consequences)."
+
+# ── CLASSIC WEB (3-tier) ────────────────────────────────────────────────────────
+
+# 2. Web app on EC2 behind ALB with RDS
+#    Expected: docs/diagrams/generated-diagrams/web-app-alb-ec2-rds.png
+python agents/architect-agent/architect_agent.py `
+  --diagram-name web-app-alb-ec2-rds `
+  --task "Diagram a classic AWS web application: Route 53 or users to CloudFront (optional), Application Load Balancer, EC2 instances in an Auto Scaling group, RDS PostgreSQL in private subnets. Show VPC clusters for public and private tiers."
+
+# ── EVENT-DRIVEN ────────────────────────────────────────────────────────────────
+
+# 3. Async notifications - EventBridge / SNS / SQS → Lambda
+#    Expected: docs/diagrams/generated-diagrams/incident-notification-events.png
+python agents/architect-agent/architect_agent.py `
+  --diagram-name incident-notification-events `
+  --task "Diagram an event-driven notification pipeline on AWS: an external system publishes events to EventBridge, rules fan out to SNS and SQS, Lambda consumers send email (SES) and SMS. Group components in clusters and label data flow."
+
+# ── PIPELINE (product-agent handoff) ───────────────────────────────────────────
+
+# FinOps — default task + auto context (recommended)
+# Expected: docs/diagrams/generated-diagrams/finops-web-app.png + docs/design/finops-web-app.md
+python agents/architect-agent/architect_agent.py
+
+# Explicit context file (PowerShell-friendly)
+python agents/architect-agent/architect_agent.py `
+  --context-file agents/pipeline/finops-web-app.context.json

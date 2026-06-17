@@ -1,0 +1,98 @@
+Sprint Standup Tracker — medium pipeline test (FastAPI + Bedrock + Postgres + Streamlit)
+
+Purpose:
+- End-to-end SDLC test at medium complexity: product -> architect -> database -> developer -> qa.
+- Validates developer-agent Pattern C (FastAPI backend + ui/streamlit_app.py calling API over httpx).
+- Tests golden template copy workflow: config.py, database.py, startup_checks.py, main.py, health.py, conftest.py, streamlit_app.py.
+
+Problem:
+- Engineering teams run daily standups but notes get lost in Slack threads or forgotten.
+- Managers want a weekly summary of what the team accomplished, blockers hit, and plans for next sprint.
+
+MVP:
+- Team members submit daily standup entries: what they did yesterday, what they plan today, and any blockers.
+- Bedrock summarizes the week's standups into a concise weekly report (grouped by team member).
+- Streamlit UI to submit standups, view history, and generate weekly summaries.
+
+Personas & auth (MVP):
+| Caller | Auth | Can do |
+|--------|------|--------|
+| Streamlit user | X-API-Key (shared secret) | All API routes via httpx |
+| automation | same API key | POST /standups, GET /standups, POST /summaries/generate |
+
+Auth: shared API key only (API_KEY in .env). No JWT, no user login table in v1.
+
+Data model (database-agent -- DDL under target-apps/standup-tracker/db/sql/):
+- standup_entries:
+  - id uuid PK
+  - team_member varchar(64) NOT NULL (free-text name, e.g. alice)
+  - standup_date date NOT NULL
+  - yesterday text NOT NULL (what was done)
+  - today text NOT NULL (what is planned)
+  - blockers text nullable (any blockers)
+  - created_at timestamptz NOT NULL DEFAULT now()
+- Index on (team_member, standup_date DESC)
+
+- weekly_summaries:
+  - id uuid PK
+  - week_start date NOT NULL (Monday of the week)
+  - week_end date NOT NULL (Friday of the week)
+  - summary_markdown text NOT NULL (Bedrock-generated summary)
+  - generated_at timestamptz NOT NULL DEFAULT now()
+- Index on (week_start DESC)
+
+Seed: 5-6 standup entries across 2-3 team members for the current week, plus 1 weekly summary for the previous week. Use stable UUIDs.
+
+API contracts (FastAPI -- implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | Real DB ping; 200 or 503 |
+| POST | /standups | API key | body: team_member, standup_date, yesterday, today, blockers?; INSERT; 201 + entry JSON |
+| GET | /standups | API key | list entries; query ?team_member= ?date_from= ?date_to= ?limit= (default 50) ?offset= (default 0); return {items, total, limit, offset} |
+| GET | /standups/{id} | API key | 200 or 404 |
+| DELETE | /standups/{id} | API key | hard delete; 204 |
+| POST | /summaries/generate | API key | body: week_start, week_end; fetch standups in range, call Bedrock to summarize, INSERT weekly_summary; 201 + summary JSON |
+| GET | /summaries | API key | list summaries; query ?limit= (default 20); return {items, total, limit, offset} |
+| GET | /summaries/{id} | API key | 200 or 404 |
+
+Bedrock rules:
+- System prompt: produce Markdown summary grouped by team member, with sections: ## Team Summary, ## Per-Member Updates, ## Blockers, ## Key Achievements.
+- Only summarize from actual standup entries in the date range. Never invent updates.
+- If no standups found in range -> return markdown with ## No Data and short guidance.
+- Model: us.anthropic.claude-sonnet-4-20250514-v1:0 via app/services/bedrock_client.py (mock in tests).
+
+Stack (developer-agent -- Pattern C):
+- Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x sync + psycopg[binary], uvicorn.
+- Database: PostgreSQL on RDS; POSTGRES_SCHEMA=standup_tracker.
+- UI: Streamlit under ui/streamlit_app.py + ui/requirements.txt (streamlit, httpx, python-dotenv); port 8501; API on 8000.
+- Auth: API_KEY header; app/startup_checks.py fail-fast if DATABASE_URL missing/malformed.
+- Layout: app/startup_checks.py, app/services/bedrock_client.py, app/services/prompts.py, app/routers/standups.py, app/routers/summaries.py, schemas/standups.py, schemas/summaries.py.
+- .env.example every line KEY=value including DATABASE_URL=postgresql+psycopg://...?sslmode=require.
+
+Streamlit UI (required):
+- Tab Submit Standup: text inputs for team_member name, date picker for standup_date, text areas for yesterday/today/blockers, Submit button. Show success/error.
+- Tab Standup History: filterable by team member and date range. Display as a table or expandable cards.
+- Tab Weekly Summary: date pickers for week_start/week_end, Generate Summary button -> shows rendered Markdown. List of past summaries below.
+- Clear errors when API returns 401/500 (show status + detail when present).
+
+Tests:
+- pytest + TestClient; SQLite in-memory; mock Bedrock at import site.
+- Cover: health, create standup entry, list standups with filters, generate summary (mocked Bedrock), list summaries, 401 without API key, delete standup.
+- dev_validate_app must pass before handoff (env example + import + health smoke).
+
+Constraints:
+- No Jira or Slack integration in v1 -- manual entry only.
+- No secrets in generated markdown.
+- Internal users only; no SSO.
+- Read-only on infrastructure -- no AWS resource changes.
+
+Out of scope (Phase 2):
+- Slack bot integration, calendar sync, team management CRUD, React frontend, auto-post to Confluence.
+
+Success criteria:
+- Full pipeline produces target-apps/standup-tracker/ with passing pytest.
+- uvicorn app.main:app --reload --port 8000 + streamlit run ui/streamlit_app.py --server.port 8501.
+- User copies .env.example -> .env (with DATABASE_URL= prefix), applies db/sql to RDS, submits standups and generates summaries.
+- README: repo-root cd target-apps/standup-tracker, venv, pip, Terminal 1 (API) + Terminal 2 (UI), RDS smoke test.
+
+Target app slug: standup-tracker
+Output directory: target-apps/standup-tracker/

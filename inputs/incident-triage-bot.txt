@@ -1,0 +1,29 @@
+Build a simple AI incident triage bot for on-call engineers, with a Streamlit UI for demos.
+
+Problem:
+- When an alert fires, engineers paste logs into chat and hunt for root cause manually.
+- Triage notes are inconsistent and hard to hand off to the next shift.
+
+MVP:
+- User pastes an error message or short log snippet (max ~2k chars).
+- System returns: likely cause, 3–5 suggested checks, and severity (low / medium / high).
+- Save each triage run (input, output, who ran it, timestamp) so the next shift can review history.
+- Streamlit page to paste text, submit, and view results — plus a simple way to see recent runs.
+
+Must have:
+- REST API for triage (for automation later) and the Streamlit UI calling that API.
+- Bedrock for analysis; no external tool calls or infra changes in v1.
+- Shared API key is fine for MVP; proper login can wait.
+- Persist triage history in Postgres.
+
+Constraints:
+- Read-only — do not restart services or change infrastructure.
+- Do not log raw customer data; redact emails if possible.
+- Say "insufficient context" when the input is too vague — do not guess.
+
+Out of scope:
+- PagerDuty or webhook ingestion, auto-remediation, SSO.
+
+Success:
+- Engineer pastes a typical stack trace in Streamlit and gets a useful triage answer in under 30 seconds.
+- pytest passes and the app runs locally against our RDS Postgres.

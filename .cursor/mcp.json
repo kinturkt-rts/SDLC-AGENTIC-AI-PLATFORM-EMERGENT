@@ -1,0 +1,48 @@
+{
+  "mcpServers": {
+    "Atlassian": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.atlassian.com/v1/mcp/authv2"
+      ]
+    },
+    "GitLab": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@zereight/mcp-gitlab"
+      ],
+      "envFile": "${workspaceFolder}/.env"
+    },
+    "AWS-Postgres-MCP-Server": {
+      "disabled": false,
+      "timeout": 90,
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}/scripts/postgres_mcp_stdio.py"
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      }
+    },
+    "MongoDB": {
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mongodb-mcp-server"
+      ],
+      "env": {
+        "MDB_MCP_CONNECTION_STRING": "${env:MDB_MCP_CONNECTION_STRING}",
+        "MDB_MCP_API_CLIENT_ID": "${env:MDB_MCP_API_CLIENT_ID}",
+        "MDB_MCP_API_CLIENT_SECRET": "${env:MDB_MCP_API_CLIENT_SECRET}",
+        "MDB_MCP_READ_ONLY": "${env:MDB_MCP_READ_ONLY}"
+      }
+    }
+  }
+}

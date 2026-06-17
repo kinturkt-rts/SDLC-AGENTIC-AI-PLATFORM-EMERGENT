@@ -1,0 +1,86 @@
+---
+description: Core coding standards — scope, structure, quality, and conventions for all changes
+alwaysApply: true
+---
+
+# Code Standards
+
+Cross-cutting standards for every change. Platform constraints live in `project-context.mdc` and `security-guardrails.mdc`. Language- or layer-specific rules apply when relevant:
+
+| Topic | Rule file |
+|-------|-----------|
+| FastAPI / APIs | `py-fast-api.mdc`, `python-fasapi-best-practices.mdc` |
+| Python style & tests | `python-prompt-file-best-practices.mdc` |
+| Test design | `test-quality.mdc` |
+
+## Scope and simplicity
+
+- **Minimal diff**: Change only what the task requires. No drive-by refactors, formatting sweeps, or unrelated files.
+- **No over-engineering**: Prefer the simplest correct solution. Avoid one-off abstractions, premature generics, and defensive code for impossible paths.
+- **Reuse first**: Extend existing functions, modules, and patterns before adding parallel implementations.
+
+## Where code belongs
+
+| Area | Location | Notes |
+|------|----------|--------|
+| Target services | `target-apps/<app>/` | Scaffold from `_template/`; SQL under `db/` |
+| Strands agents | `agents/<name>/` | Shared types in `agents/_shared/` |
+| Orchestrator | `orchestrator/src/` | TypeScript + BullMQ |
+| Agent prompts | `agents/<name>/*_agent.py` | `{NAME}_SYS_PROMPT` constant per agent |
+| Infra | `infrastructure/` | **No changes without explicit approval** |
+
+Do not write application code outside approved directories unless the user explicitly approves.
+
+## Structure and naming
+
+- **Match the neighborhood**: Same naming, imports, typing level, and file layout as surrounding code.
+- **Python**: `snake_case` modules/functions, `PascalCase` types, type hints on public APIs, PEP 257 docstrings on non-trivial functions/classes.
+- **TypeScript**: Follow existing `orchestrator/` style (named exports, clear module boundaries).
+- **Configuration**: Read from environment variables; never hardcode secrets, tokens, or connection strings.
+
+## Implementation quality
+
+- **Readable over clever**: Straight-line logic, descriptive names, early returns for guards and errors.
+- **Errors**: Handle expected failures explicitly; log with context; surface actionable messages. Do not swallow exceptions.
+- **Validation**: Validate external input at boundaries (HTTP, MCP, queues). Use Pydantic v2 models for FastAPI request/response shapes.
+- **Comments**: Only for non-obvious business rules or subtle technical constraints — not for what the code already says.
+- **Dependencies**: Add only when necessary; prefer stdlib and existing project packages.
+
+## Tests and verification
+
+- Add or update tests for **new behavior** in the same change (pytest under `tests/` or app `tests/` per layout).
+- Follow `test-quality.mdc` (one path per test, AAA, no conditional asserts).
+- Run relevant tests before considering work done; fix failures you introduce.
+
+## Security and reviewability
+
+- Follow `security-guardrails.mdc` (secrets, destructive ops, least privilege).
+- Summarize what changed: files touched, behavior impact, and any security-sensitive edits.
+- Generated code must be reviewable: no hidden side effects, no opaque shell one-liners without explanation.
+
+## Examples
+
+```python
+# BAD - broad catch, silent failure
+try:
+    result = fetch_ticket(id)
+except Exception:
+    return None
+
+# GOOD - specific handling, clear failure
+try:
+    result = fetch_ticket(id)
+except TicketNotFoundError:
+    raise HTTPException(status_code=404, detail="Ticket not found")
+```
+
+```python
+# BAD - unrelated refactor while fixing a bug
+def get_user(id: str) -> User:
+    cache = RedisCache()  # new dependency not requested
+    ...
+
+# GOOD - focused fix using existing patterns
+def get_user(id: str) -> User:
+    return user_repository.get_by_id(id)
+```

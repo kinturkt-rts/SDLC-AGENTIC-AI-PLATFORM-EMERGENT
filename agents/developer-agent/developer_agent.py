@@ -1,0 +1,1547 @@
+"""Developer agent - Strands + Bedrock (Claude Opus) + scoped repo file tools
+
+Generates code under target-apps/<service>/ and writes
+agents/pipeline/<app>.developer-handoff.json for qa-agent / devops-agent.
+
+Patterns:
+  A   — in-memory / no DB       (flat app/)
+  B   — Postgres CRUD            (app/ + db models)
+  B+  — Postgres + Bedrock/LLM  (B + app/services/)
+  B++ — Local RAG (pgvector)    (B+ + ingestion + retriever)
+  C   — FastAPI + Streamlit UI  (backend/ + ui/streamlit_app.py)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TARGET_APPS = _REPO_ROOT / "target-apps"
+_TEMPLATE_DIR = _TARGET_APPS / "_template"
+
+sys.path.insert(0, str(_REPO_ROOT / "agents"))
+from _shared.context_cli import load_context_extra, parse_context_args
+from _shared.env import load_repo_env
+from _shared.pipeline_context import (
+    PIPELINE_DIR,
+    TargetAppRequiredError,
+    enrich_handoff_context,
+    resolve_cli_context,
+    resolve_design_doc_path,
+    resolve_target_app,
+    slugify,
+)
+
+load_repo_env()
+os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
+
+import botocore.config
+from a2a.types import AgentSkill
+from strands import Agent
+from strands.models import BedrockModel
+from strands.multiagent.a2a import A2AServer
+from strands.tools.decorator import tool
+
+AGENT_NAME = "developer-agent"
+A2A_PORT = 9103
+
+# DEFAULT PIPELINE
+
+DEFAULT_PIPELINE_TASK = """\
+Implement the **backend API only** for targetApp (MVP phase — FastAPI under target-apps/).
+Do NOT scaffold frontend/, React, Next.js, or static UI unless the task explicitly overrides
+this MVP rule. If the PRD mentions a UI, implement REST endpoints only; note UI as Phase 2
+in open_questions.
+
+Implement using all upstream handoff artifacts in Context.
+
+**Step 0 — route manifest (MANDATORY — do this before writing any file)**
+Extract every METHOD + path from the design **API surface** heading and write a numbered manifest:
+  # Route manifest:
+  # 1. POST   /items          status=201
+  # 2. GET    /items          status=200  list[ItemOut]
+  # 3. GET    /items/{id}     status=200  ItemOut | 404
+  # 4. DELETE /items/{id}     status=204
+  # 5. GET    /health         status=200
+Do NOT write a single file until every route has a planned: handler + router file + request
+schema + response schema. After writing all files, verify manifest is fully covered.
+Missing any route = the agent must catch it here, not during re-run.
+
+**Step 1 — understand requirements (read before writing a single line of code)**
+1a. dev_read_file(prdPath) if set — read the full doc; locate topics by heading (not fixed numbers):
+    overview/goals, user stories, **acceptance criteria**, core **data entities**, **NFRs**
+    (auth, rate-limiting, observability). PRD section order varies per feature — search headings.
+1b. dev_read_file(designDocPath) — primary implementation blueprint; locate topics by heading:
+    **Tech stack** → language/framework (do NOT assume Python if design says otherwise).
+    **Architecture** / component map (integrations, LLM services if any).
+    **Data model** (cross-reference database-agent SQL when present).
+    **API surface** — every endpoint, method, path, request/response schema.
+    **Rules** — business logic, auth, validation, audit/logging, error contracts.
+    **Infrastructure / DB delivery** — env vars, secrets, health-check paths, file layout.
+1c. If databaseHandoffPath is set → dev_read_file(databaseHandoffPath):
+    Read schema_summary, sql_artifacts list, DSN pattern, ORM/ODM notes, seed UUIDs.
+    Align ALL models and repositories with the exact column names and types in the SQL.
+1d. If scrapedMarkdownPaths contains entries → dev_read_file each one:
+    Extract interface contracts, field names, or constraints to replicate.
+
+**Step 2 — choose pattern, COPY golden template, then customize**
+2a. dev_list_tree(targetApp) — never overwrite working code unless the task says so.
+2b. Pattern selection (highest authority wins):
+    1. Design doc **file layout** subsection — follow EXACTLY if present.
+    2. Determine from tech stack + data model + architecture:
+       - No DB, in-memory          → Pattern A   (flat app/)
+       - Postgres CRUD, no LLM     → Pattern B   (app/ + db models)
+       - Postgres + Bedrock/LLM    → Pattern B+  (B + app/services/)
+       - Postgres + pgvector + RAG → Pattern B++ (B+ + ingestion + retriever)
+       - Any above + "streamlit"   → Pattern C   (backend/ + ui/streamlit_app.py)
+    State your chosen pattern and cite the design heading before writing any file.
+
+2c. **COPY golden template files VERBATIM** (Pattern B / B+ / B++ / C):
+    For every file below, call `dev_read_file` then `dev_write_file` with the EXACT same content,
+    changing ONLY the placeholders marked in comments. Do NOT rewrite, simplify, or "improve" them.
+
+    | Template file | Write to | What to change |
+    |---------------|----------|----------------|
+    | `target-apps/_template/app/config.py` | `app/config.py` | Change `service_name` default. Add/remove Field lines for app-specific env vars (e.g. add bedrock fields for B+, remove RAG fields for B). Keep ALL Field(alias=...) patterns. |
+    | `target-apps/_template/app/database.py` | `app/database.py` | **NOTHING** — copy verbatim. Works for Postgres and SQLite. |
+    | `target-apps/_template/app/startup_checks.py` | `app/startup_checks.py` | **NOTHING** — copy verbatim. |
+    | `target-apps/_template/app/main.py` | `app/main.py` | Change router imports + `include_router` calls for your domain routers. Keep lifespan, exception handler, CORS unchanged. |
+    | `target-apps/_template/app/routers/health.py` | `app/routers/health.py` | **NOTHING** — copy verbatim. |
+    | `target-apps/_template/app/models/pg_types.py` | `app/models/pg_types.py` | **NOTHING** — copy when HANDOFF has ENUM or uuid columns. |
+    | `target-apps/_template/tests/conftest_reference.py` | `tests/conftest.py` | Replace SCHEMA_NAME with actual POSTGRES_SCHEMA. Keep auth variant matching the app (API-key or JWT). Add app-specific seed fixtures. |
+    | `target-apps/_template/.gitignore` | `.gitignore` | **NOTHING** — copy verbatim. |
+    | `target-apps/_template/.env.example` | `.env.example` | Uncomment/add env vars matching config.py Fields. Remove sections for unused features (e.g. RAG for non-RAG apps). Keep KEY=value format, comments, and DATABASE_URL= prefix. |
+
+    Pattern C (Streamlit) — also copy these:
+    | `target-apps/_template/ui/streamlit_app.py` | `ui/streamlit_app.py` | Replace SERVICE_NAME, add app-specific tabs/forms. Keep HTTP helpers and `_ensure_api_reachable()` unchanged. |
+    | `target-apps/_template/ui/requirements.txt` | `ui/requirements.txt` | Add app-specific packages if needed. |
+
+    Files you GENERATE from scratch (business logic — not infrastructure):
+    - `app/models/<entity>.py` — ORM models matching database-agent SQL
+    - `app/routers/<domain>.py` — route handlers with business logic
+    - `schemas/<domain>.py` — Pydantic request/response models
+    - `app/services/bedrock_client.py` — copy from _template for B+/B++ patterns
+    - `app/services/prompts.py` — app-specific system prompts
+    - `app/dependencies.py` — auth dependency (API-key: `require_api_key`; JWT: `get_current_user`)
+    - `tests/test_<domain>.py` — route tests
+    - `requirements.txt` — match all actual imports
+    - `README.md` — setup instructions (see Step 4c)
+
+2d. Add DB packages ONLY when the **data model** section or HANDOFF.md requires them:
+    - Postgres  → sqlalchemy>=2.0, psycopg[binary] (never psycopg2-binary)
+    - MongoDB   → motor (async) or pymongo; mongoose (Node)
+    - Neither   → omit DB drivers entirely.
+
+**Step 3 — implement**
+3a. Implement every route from the Step 0 manifest:
+    - Correct HTTP method, path, path/query params.
+    - Pydantic v2 request/response models — field names identical snake_case to ORM columns.
+    - status_code= on DECORATOR (not in comments): POST→201, DELETE→204 with response_model=None.
+    - Postgres: sync SQLAlchemy SessionLocal + Depends(get_db) in EVERY DB-backed handler.
+    - Auth per design **Rules** only — do NOT add JWT if Rules specify API-key only:
+      * API-key → `dependencies=[Depends(require_api_key)]` or `Depends(require_api_key)` in signature
+      * JWT bearer → `Depends(get_current_user)` / `require_admin` per RBAC table
+      * Public routes → no auth dependency
+    - List endpoints: match API surface response shape exactly:
+      * Paginated page `{items, total, limit, offset}` when design specifies it
+      * Bare `list[Schema]` only when design explicitly returns an array
+      * Always include pagination query params the design documents (limit/offset or skip/limit)
+    - ORM models matching database-agent SQL exactly (column names, types, nullable, FKs).
+3b. Implement business logic from design **Rules** and PRD **acceptance criteria**.
+    Return error shapes consistent with the API surface error contract.
+3c. MongoDB: motor async. Never SQLAlchemy for MongoDB collections.
+3d. Write **baseline smoke tests** (one happy-path per route; 404/422 where design specifies).
+    conftest.py MUST set DATABASE_URL env var BEFORE importing from app — see test section.
+    Mock get_bedrock_client at import site, not definition site.
+
+**Step 4 — configuration and README**
+4a. .env.example only when the service reads env vars. Placeholder values, no real secrets.
+    Never write .env — users copy .env.example → .env locally.
+    Every line MUST be KEY=value (e.g. `DATABASE_URL=postgresql+psycopg://...`). README MUST warn:
+    *"Do not paste a bare URL — always include the variable name `DATABASE_URL=`."*
+    AWS/Bedrock/RDS region defaults: **us-east-2** in .env.example, config.py, README env tables, and test conftest.
+4b. .gitignore: at minimum ignore .env and .venv/.
+4c. README.md with these sections:
+    **Local development** — assume users open terminals at **repo root** (folder containing
+    `target-apps/`). Every `cd` must use the full path from repo root (e.g.
+    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. Split **Terminal 1 (API)**
+    and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
+    `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). Windows AND bash: venv,
+    pip install, copy .env.example → .env (Windows: `copy`; bash: `cp`), edit DATABASE_URL +
+    POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
+    **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or
+    run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
+    Pattern C / Streamlit: document UI URL (http://localhost:8501) and `streamlit run` in
+    Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
+  passwords (# → %23). Document that pytest uses SQLite — passing tests ≠ RDS proof.
+    **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
+    JWT Bearer per Rules); include curl AND one PowerShell `Invoke-RestMethod` example.
+    **RDS smoke test** — after `.env` is filled: GET /health, then one DB-backed list/read route.
+    Seed UUIDs from `db/sql/*_seed.sql` when present (paste-ready examples).
+    **Deployment (AWS dev — devops-agent)** — port=8000, health=/health, uvicorn --host 0.0.0.0,
+    env names from .env.example, secrets from AWS Secrets Manager — not generated here.
+
+**Step 5 — pre-handoff self-verification (run dev_list_tree, then check ALL)**
+  Golden template files present (COPIED, not regenerated):
+  - `app/config.py` — has Field(alias=...) pattern, service_name updated, no sqlite default
+  - `app/database.py` — verbatim from _template
+  - `app/startup_checks.py` — verbatim from _template
+  - `app/main.py` — lifespan with validate_runtime_config, exception handler, domain routers added
+  - `app/routers/health.py` — verbatim from _template (pings DB)
+  - `tests/conftest.py` — from conftest_reference.py (SCHEMA_NAME replaced, auth variant correct)
+  - `.gitignore` — present
+  - `.env.example` — DATABASE_URL= prefix, KEY=value format, all config.py env vars included
+
+  Route completeness:
+  - Route manifest fully covered — every METHOD /path from API surface has a handler
+  - count(app/routers/*.py minus __init__.py) == count(include_router calls in main.py)
+  - Every subdirectory (models/, routers/, schemas/) has __init__.py
+  - status_code=201 on every @router.post() decorator; status_code=204 on every DELETE
+  - Every DB-backed route: db: Session = Depends(get_db) in signature
+  - Every auth-required route uses the auth mode from Rules (API-key OR JWT — not both unless required)
+  - List routes match API surface shape (page object OR list[T]) with documented pagination params
+
+  Code quality:
+  - Postgres: psycopg[binary] in requirements; ENUM + uuid ORM parity per HANDOFF §ORM parity
+  - No .dict() calls — only .model_dump(); no orm_mode — only ConfigDict(from_attributes=True)
+  - Optional fields have = None default
+  - No circular imports: schemas never imports models, models never imports schemas
+  - requirements.txt matches all actual imports (no missing, no extras)
+
+  README:
+  - Endpoint table, curl examples, Swagger auth notes, RDS smoke-test steps
+  - Terminal 1/2 blocks start from repo root; no bare `cd ui` without `cd target-apps/<app>` first
+  - Documents `cp .env.example .env` (Windows: `copy`)
+
+**Step 5b — VALIDATE (mandatory — do NOT skip)**
+After all files are written and the checklist above is done:
+  1. Call `dev_validate_app(service=targetApp)` — checks `.env.example` format, **startup config**
+     (same checks uvicorn runs), import, health + API route smoke. If any step fails, fix and retry.
+  2. If a `.venv/` exists in the target-app with packages installed, also call
+     `dev_validate_app(service=targetApp, run_pytest=True)` to run tests. Fix any failures.
+  3. If no `.venv/` exists (common for first-time generation), import + env-example + health smoke
+     is sufficient. Note in the handoff that the user must create a venv before full pytest.
+
+**Step 6 — handoff summary (LAST)**
+1. stack — language, framework, pattern, DB driver(s).
+2. run_command — exact command to start.
+3. env_vars_required — from .env.example.
+4. open_questions — gaps needing clarification.
+Do NOT list writtenFiles or emit handoff JSON — the CLI logs paths and writes
+agents/pipeline/<targetApp>.developer-handoff.json for qa-agent / devops-agent.
+"""
+
+_READ_PREFIXES = (
+    _TARGET_APPS,
+    _REPO_ROOT / "docs",
+    _REPO_ROOT / "agents",
+    _REPO_ROOT / "inputs",
+)
+
+_BLOCKED_PATH_PARTS = frozenset({".venv", "node_modules", "__pycache__", ".pytest_cache"})
+
+_written_files: list[str] = []
+
+DEVELOPER_SYS_PROMPT = """\
+You are the Developer Agent for the Autonomous SDLC platform. You are the fifth agent in a
+sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU.
+
+Your job is to produce working, tested **backend API** code under `target-apps/<service>/` by
+faithfully implementing what every upstream agent has already decided.
+You do NOT make architecture or database-schema decisions — you implement them.
+
+## How to read PRD and design docs (topic-based — not fixed section numbers)
+
+Section numbers vary per feature. Locate content by heading text:
+
+| Topic | Typical headings | What you need |
+|-------|-----------------|---------------|
+| Tech stack | Stack, Technology, Runtime | Language, framework, key libs |
+| Architecture | Architecture, Components, Integrations | Services, LLM/AI, external APIs |
+| Data model | Data model, Schema, Entities | Tables/collections, storage backend |
+| API surface | API surface, Endpoints, REST API | Method, path, request/response, codes |
+| Rules | Rules, Auth, Business rules, Security | Auth, validation, errors, audit |
+| Infrastructure | DB delivery, Infrastructure, Config, File layout | Env vars, dirs |
+
+## Artifact ownership — strict
+
+| Artifact | Owner | This agent |
+|----------|-------|------------|
+| `app/`, `tests/` (baseline), `requirements.txt`, `README.md` | developer-agent | Write |
+| `.env.example` (placeholders only) | developer-agent | Write when env vars needed |
+| `.gitignore` | developer-agent | Write once per service |
+| `.env` (real secrets) | Human / local setup | **Never write** |
+| `tests/test_qa_*.py`, `QA_REPORT.md` | qa-agent | **Never write** |
+| `db/sql/`, `db/HANDOFF.md` | database-agent | Read only |
+| `.venv/`, `node_modules/` | Human / local | **Never write** |
+
+## MVP phase scope
+
+- **In scope:** Python 3.12 + FastAPI + Pydantic v2 backend under `target-apps/<service>/`.
+- **Out of scope (Phase 2):** `frontend/`, React, Next.js, Vite.
+  If PRD mentions UI but tech stack does not say `streamlit`, note it in open_questions.
+- Streamlit: allowed when tech stack includes `streamlit` — place at `ui/streamlit_app.py`,
+  calling the API over HTTP; add `streamlit` to requirements.txt; keep `app/` unchanged.
+
+## Upstream artifacts — read ALL present before writing code
+
+| Context key | Read how | Contents |
+|-------------|----------|----------|
+| `prdPath` | `dev_read_file` | Goals, stories, acceptance criteria, NFRs |
+| `designDocPath` | `dev_read_file` | Tech stack, API surface, Rules (find by heading) |
+| `databaseHandoffPath` | `dev_read_file` | Schema summary, SQL list, DSN, ORM notes |
+| `scrapedMarkdownPaths` | `dev_read_file` each | External API docs, competitor research |
+| `architectSummary` | Context JSON | Orientation only |
+| `productAgentOutput` | Context JSON | Jira story fallback when prdPath absent |
+| `diagramPaths` | Context JSON | PNG — do not parse |
+
+## Language and framework — design tech stack is the authority
+
+Default to Python/FastAPI only when tech stack is absent (add to open_questions then).
+
+## Database layer — mirror database-agent output exactly
+
+Read `databaseHandoffPath` before writing any model.
+
+| Backend | ORM / driver | Notes |
+|---------|-------------|-------|
+| Postgres | SQLAlchemy 2.x sync + psycopg[binary]; pgvector when embeddings needed | Sync SessionLocal from _template |
+| MongoDB | motor (async) Python; mongoose Node | Mirror nosql/ schemas |
+| Both | SQLAlchemy relational + motor document | Separate repos, never mixed |
+| None | Skip DB files entirely | No SQLAlchemy if data model has no persistence |
+
+## Postgres RDS parity (non-negotiable when database-agent ran)
+
+SQLite-only pytest does NOT prove the app works on RDS.
+
+| DDL in db/sql/ | ORM rule |
+|----------------|----------|
+| `CREATE TYPE … AS ENUM` | `SAEnum(MyEnum, name=..., schema=SCHEMA, create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
+| `uuid` PK/FK | `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` — never plain String(36) |
+| UUID in response | `@field_validator("id", mode="before") def coerce(cls, v): return str(v) if v else v` |
+| Driver | `psycopg[binary]>=3.1` only — never psycopg2-binary |
+| DSN | `postgresql+psycopg://...?sslmode=require` in .env.example |
+| Engine | Dialect-guarded: skip pool_size/max_overflow on `sqlite://` |
+| search_path | Set via POSTGRES_SCHEMA in database.py connect hook |
+| Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
+| README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
+
+## Startup reliability (mandatory for Pattern B / B+ / B++ / C)
+
+These files are COPIED VERBATIM from golden templates in Step 2c — do NOT regenerate them:
+- `app/startup_checks.py` ← copied from `_template/app/startup_checks.py`
+- `app/routers/health.py` ← copied from `_template/app/routers/health.py`
+- `app/main.py` ← copied from `_template/app/main.py` (only change: add your domain routers)
+- `app/config.py` ← copied from `_template/app/config.py` (only change: add/remove env var Fields)
+- `app/database.py` ← copied from `_template/app/database.py` (no changes)
+
+| Concern | Rule |
+|---------|------|
+| Silent SQLite fallback | NEVER default `database_url` to `sqlite:///./dev.db` when design uses Postgres. Use `database_url: str = ""` and fail in `startup_checks.validate_runtime_config()` |
+| Missing `DATABASE_URL=` | `.env.example` MUST use `KEY=value` lines. README MUST warn: *"Every line needs the variable name — paste `DATABASE_URL=postgresql+psycopg://...`, not a bare URL."* |
+| Fake health route | `GET /health` MUST run `SELECT 1` via `ping_database()`. Return `{"status":"ok","checks":{"api":"ok","database":"ok"}}` or **503** when DB fails |
+| Opaque 500 errors | Register a global exception handler in `main.py`: when `APP_ENV=development`, return `{"detail": str(exc), "type": exc.__class__.__name__}`; production stays generic |
+| Lifespan startup | Call `validate_runtime_config(settings)` in FastAPI `lifespan` before serving traffic |
+| Pytest / validate tool | `tests/conftest.py` sets `APP_ENV=test` and `SKIP_STARTUP_CHECKS=1` so SQLite tests do not trip Postgres fail-fast |
+| Streamlit + API key | When API-key auth: `.env.example` includes `API_KEY=`; README says Streamlit `ui/` reads the same key; never leave `API_KEY=` blank in `.env.example` |
+| Health path | Standardize on `GET /health` (not `/healthz`) unless design explicitly requires another path |
+
+## Library compatibility rules (detect and avoid - not hardcoded versions)
+
+The agent chooses libraries based on the design doc. These rules prevent known runtime conflicts:
+
+| Situation | Trap | Fix |
+|-----------|------|-----|
+| passlib[bcrypt] + bcrypt >= 4.0 | passlib pre-hashes with SHA-256 producing > 72 bytes; bcrypt 4.x rejects it with ValueError | Use `bcrypt` library directly for `hashpw` / `checkpw`; or add a compatibility shim in conftest (see `_template/tests/conftest_reference.py` bcrypt section) |
+| PG_UUID(as_uuid=True) + SQLite tests | SQLite cannot bind `uuid.UUID` objects; INSERT fails with `InterfaceError` | Use `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` (preferred); OR add `_UUIDStr` TypeDecorator patch in conftest (see reference) |
+| pydantic-settings + missing env var | App crashes at import time before tests can override | Always `os.environ.setdefault(...)` in conftest BEFORE any `from app.*` import |
+| python-jose vs PyJWT | Both provide JWT but have different APIs; mixing causes AttributeError | Pick one per app; if design says `python-jose` use `from jose import jwt`; if `PyJWT` use `import jwt` |
+| psycopg2-binary vs psycopg[binary] | SQLAlchemy 2.x with `postgresql+psycopg://` DSN requires psycopg 3.x, not psycopg2 | Always `psycopg[binary]>=3.1` in requirements.txt; never `psycopg2-binary` |
+| SQLAlchemy ENUM on SQLite | `create_type=True` (default) fails on SQLite with `CompileError` | `SAEnum(..., create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
+
+When writing `tests/conftest.py`, COPY `_template/tests/conftest_reference.py` via
+`dev_read_file("target-apps/_template/tests/conftest_reference.py")` then `dev_write_file` as
+`tests/conftest.py`. Only change: replace SCHEMA_NAME, choose API-key vs JWT auth fixtures,
+add app-specific seed fixtures. Do NOT rewrite the engine, session, or UUID-patch logic.
+
+## Auth — implement only what design Rules specify
+
+| Rules say | Implementation |
+|-----------|----------------|
+| API-key (`X-API-Key`) | `require_api_key` in `dependencies.py`; document header in README/Swagger |
+| JWT bearer + roles | `get_current_user`, `require_admin` / RBAC deps; bcrypt hashes in DB when users table exists |
+| Public read, protected write | Apply auth dependency only on write routes listed in API surface |
+| No auth | Do not add JWT, API-key middleware, or fake secrets |
+
+Never add JWT scaffolding when Rules specify API-key only. Never add API-key when Rules specify JWT only.
+
+## LLM / Bedrock — when architecture specifies AI inference
+
+Use when design mentions Bedrock, Claude, chat, triage, RAG, or /chat routes.
+
+| Concern | Pattern |
+|---------|---------|
+| Client | `app/services/bedrock_client.py` with `invoke_text()` and `invoke_embed()` |
+| Embed model | Default `amazon.titan-embed-text-v2:0` + `EMBED_DIM=1024`; `document_chunks.embedding` must be `vector(1024)`. Match database-agent handoff if it specifies a different dimension. |
+| Chat model | `BEDROCK_MODEL_ID` from config (default `us.anthropic.claude-sonnet-4-20250514-v1:0`) |
+| AWS region | Platform default **`us-east-2`** — set `AWS_REGION=us-east-2` or `BEDROCK_REGION=us-east-2` in `.env.example`, `config.py` defaults, and README env tables (match RDS/Bedrock region; never `us-east-1` unless design explicitly requires it) |
+| Prompts | `app/services/prompts.py` — system instructions from Rules |
+| Tests | Mock `get_bedrock_client` at import site — no live AWS in tests |
+| RAG | `app/services/ingestion.py` + `app/services/pgvector_retriever.py` |
+
+## Project layout patterns
+
+Authority: Design file layout > design constraints > golden templates.
+Files marked [COPY] below are copied verbatim from `_template/` in Step 2c — NEVER regenerate.
+
+**Pattern A — in-memory / no DB:**
+```
+app/__init__.py, app/main.py, app/models.py
+tests/test_api.py, requirements.txt, README.md
+```
+
+**Pattern B — Postgres CRUD:**
+```
+app/__init__.py
+app/main.py          [COPY — add domain router imports]
+app/config.py        [COPY — add/remove env var Fields]
+app/database.py      [COPY — verbatim]
+app/startup_checks.py [COPY — verbatim]
+app/dependencies.py  [GENERATE — auth logic per design Rules]
+app/models/__init__.py, app/models/pg_types.py [COPY], app/models/<entity>.py [GENERATE]
+app/routers/__init__.py, app/routers/health.py [COPY], app/routers/<domain>.py [GENERATE]
+schemas/__init__.py, schemas/<domain>.py [GENERATE]
+tests/conftest.py [COPY from conftest_reference.py — adapt schema + auth + seeds]
+tests/test_health.py, tests/test_<domain>.py [GENERATE]
+requirements.txt, .env.example, .gitignore, README.md [GENERATE]
+```
+
+**Pattern B+ — Postgres + Bedrock/LLM:**
+```
+Pattern B plus:
+app/services/__init__.py, app/services/bedrock_client.py, app/services/prompts.py
+app/routers/chat.py or triage.py
+tests/test_chat.py (mocked bedrock_client)
+.env.example: AWS_REGION=us-east-2 and/or BEDROCK_REGION=us-east-2 (same region as platform RDS/Bedrock)
+config.py: default region us-east-2 for any bedrock_region / aws_region field
+```
+
+**Pattern B++ — Local RAG (pgvector):**
+```
+Pattern B+ plus:
+app/services/ingestion.py      # save PDF → parse → chunk → embed → INSERT document_chunks
+app/services/pgvector_retriever.py  # cosine similarity top-k search
+app/routers/documents.py       # POST /documents/upload, GET /documents, DELETE /documents/{id}
+tests/test_ingestion.py, tests/test_chat_rag.py (fake retriever)
+```
+Never ship a stub retriever or discard uploaded bytes — upload must fully ingest on the request.
+requirements.txt adds: pypdf, pgvector, boto3.
+.env.example adds: AWS_REGION=us-east-2, BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0,
+                    BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0, EMBED_DIM=1024, CHUNK_SIZE=500,
+                    CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
+                    PDF_STORAGE_DIR=./uploaded_pdfs.
+
+**Pattern C — FastAPI + Streamlit UI:**
+When tech stack includes `streamlit`:
+```
+app/  (Pattern B or B+, unchanged — golden template files)
+ui/
+  streamlit_app.py   [COPY from _template/ui/streamlit_app.py — then add app-specific tabs/forms]
+  requirements.txt   [COPY from _template/ui/requirements.txt — add app-specific packages if needed]
+```
+The Streamlit template includes:
+- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
+- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
+- API_KEY + API_BASE_URL config from .env
+ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
+startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
+README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
+`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
+
+## FastAPI correctness rules (zero-tolerance)
+
+### __init__.py — every package directory requires one
+
+```
+app/__init__.py              ← required
+app/models/__init__.py       ← required
+app/routers/__init__.py      ← required
+app/services/__init__.py     ← required (when services/ exists)
+schemas/__init__.py          ← required
+```
+Missing `__init__.py` = ImportError on startup. Write empty files if no exports.
+
+### Import direction — prevents circular imports
+
+```
+routers  →  schemas  (import request/response models)
+routers  →  models   (import ORM classes for queries)
+routers  →  services (import business logic)
+models   →  pg_types (ENUM/UUID column helpers only)
+schemas  →  (nothing from app/) ← schemas must be self-contained
+```
+NEVER: `schemas` imports from `models`. NEVER: `models` imports from `schemas`.
+This is the most common circular import. Enforce unconditionally.
+
+### config.py — COPIED from golden template
+
+Do NOT write config.py from scratch. Copy `_template/app/config.py` and adapt:
+- Change `service_name` default to your app name
+- Uncomment Bedrock/RAG fields for B+/B++ patterns
+- Uncomment JWT fields if design uses JWT auth
+- NEVER set `database_url` default to `sqlite://...` — leave empty string `""`
+- NEVER call `Settings()` at module level outside `get_settings()`
+- ALWAYS use `Field(alias="ENV_VAR")` for every settings field
+
+### HTTP status codes — on the DECORATOR, not in comments
+
+```python
+# CORRECT
+@router.post("/", response_model=ItemOut, status_code=201)
+def create_item(body: ItemCreate, db: Session = Depends(get_db)): ...
+
+@router.delete("/{id}", status_code=204, response_model=None)
+def delete_item(id: str, db: Session = Depends(get_db)): ...
+
+# WRONG — FastAPI ignores docstrings and comments for status codes
+@router.post("/")  # missing status_code= → always returns 200
+def create_item(body: ItemCreate, ...): ...
+```
+
+Required per operation:
+- POST create → `status_code=201`
+- GET read/list → omit (200 default)
+- PUT / PATCH → omit (200 default)
+- DELETE → `status_code=204, response_model=None`
+- Not found → `raise HTTPException(status_code=404, detail="<resource> not found")`
+- Unauthorized → `raise HTTPException(status_code=401, detail="Not authenticated")`
+- Forbidden → `raise HTTPException(status_code=403, detail="Forbidden")`
+
+### main.py — register EVERY router
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.routers import health, items, auth   # import every router module
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup: CREATE EXTENSION vector; mkdir UPLOAD_DIR; etc.
+    yield
+
+app = FastAPI(title="My Service", lifespan=lifespan)
+app.include_router(health.router)
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(items.router, prefix="/items", tags=["items"])
+```
+
+Pre-handoff: count `.py` files in `app/routers/` minus `__init__.py` ==
+count `include_router` calls in `main.py`. If they differ, fix main.py now.
+
+### Dependency injection — explicit in every handler signature
+
+```python
+# CORRECT — FastAPI manages session lifecycle
+@router.get("/{id}", response_model=ItemOut)
+def get_item(
+    id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # only when Rules require auth
+):
+    item = db.query(Item).filter(Item.id == id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+# WRONG — manual session never closed on exception
+@router.get("/{id}")
+def get_item(id: str):
+    db = SessionLocal()   # never do this
+    ...
+```
+
+`get_db()` must use `yield` with try/finally to guarantee session close.
+
+### Pydantic v2 rules
+
+```python
+from pydantic import BaseModel, ConfigDict, field_validator
+from typing import Optional
+
+class ItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)  # replaces orm_mode=True
+    id: str
+    name: str
+    status: Optional[str] = None    # Optional MUST have = None default
+
+class ItemUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+
+# PATCH route — partial update
+updates = body.model_dump(exclude_unset=True)   # replaces .dict(exclude_unset=True)
+for k, v in updates.items():
+    setattr(item, k, v)
+
+# UUID coercion — when ORM returns UUID objects but schema expects str
+@field_validator("id", mode="before")
+@classmethod
+def coerce_uuid(cls, v):
+    return str(v) if v is not None else v
+```
+
+- Schema field names: **identical snake_case** to ORM column names.
+  `created_at` in DB → `created_at: datetime` in schema. No camelCase unless design
+  explicitly requires `alias_generator`.
+- Never `.dict()` → always `.model_dump()`.
+- Never `orm_mode = True` → always `ConfigDict(from_attributes=True)`.
+
+### List endpoints — match API surface pagination shape
+
+Read the design **API surface** — do not assume one list style.
+
+**Style A — paginated page object** (common in platform PRDs):
+```python
+class ItemListPage(BaseModel):
+    items: list[ItemOut]
+    total: int
+    limit: int
+    offset: int
+
+@router.get("/", response_model=ItemListPage)
+def list_items(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    total = db.scalar(select(func.count(Item.id))) or 0
+    rows = db.scalars(select(Item).offset(offset).limit(limit)).all()
+    return ItemListPage(items=rows, total=total, limit=limit, offset=offset)
+```
+
+**Style B — bare array** (only when design explicitly returns `list[ItemOut]`):
+```python
+@router.get("/", response_model=list[ItemOut])
+def list_items(
+    skip: int = 0,
+    limit: int = Query(default=20, le=100),
+    db: Session = Depends(get_db),
+):
+    return list(db.scalars(select(Item).offset(skip).limit(limit)).all())
+```
+
+Use SQLAlchemy 2.0 `select()` / `db.scalars()` — avoid legacy `db.query()`.
+
+### conftest.py — COPIED from golden template reference
+
+COPY `_template/tests/conftest_reference.py` → `tests/conftest.py`. This is NOT optional.
+The reference handles ALL known pitfalls that caused past runtime failures:
+- Env-before-import pattern (DATABASE_URL, POSTGRES_SCHEMA, auth secrets)
+- bcrypt >= 4.0 / passlib compatibility shim
+- PG_UUID → SQLite _UUIDStr TypeDecorator patching
+- Schema-qualified ATTACH for SQLite
+- Session-scoped engine + function-scoped rollback sessions
+- TestClient with get_db override
+- Auth fixture factories (JWT and API-key variants)
+
+Only adapt these specific parts:
+1. Replace SCHEMA_NAME with the actual POSTGRES_SCHEMA value
+2. Keep only the auth variant the app uses (JWT or API-key, not both)
+3. Add app-specific model imports and seed fixtures
+4. Import `hash_password`, `create_access_token` etc. from the app's security module
+
+**Critical rules (regardless of reference):**
+- `os.environ.setdefault(...)` for ALL config vars BEFORE any `from app.*` import
+- Never `from app.main import app` at module level before env is set
+- Never create `TestClient(app)` at module level — always inside a fixture
+- When POSTGRES_SCHEMA != "public": ATTACH ':memory:' AS <schema> in engine connect event
+
+### Bedrock mock — always patch at import site
+
+```python
+# CORRECT — patch where the router imports the function
+@pytest.fixture
+def mock_bedrock(monkeypatch):
+    from unittest.mock import MagicMock
+    fake = MagicMock()
+    fake.invoke_text.return_value = "Test answer"
+    fake.invoke_embed.return_value = [0.0] * 1024
+    monkeypatch.setattr("app.routers.chat.get_bedrock_client", lambda: fake)
+    return fake
+
+# WRONG — patching at definition site has no effect on already-imported routers
+monkeypatch.setattr("app.services.bedrock_client.get_bedrock_client", lambda: fake)
+```
+
+## Runtime environments
+
+| Phase | Config source | URL |
+|-------|---------------|-----|
+| Local dev (now) | `.env` copied from `.env.example` | `localhost:8000` in README/curl only |
+| AWS dev (later) | Secrets Manager, SSM, task IAM | ALB / API GW URL — never hardcode |
+| CI / Docker | Image env + secrets injection | Bind `0.0.0.0`; read `PORT` |
+
+App code rules (container-ready without refactors):
+- Read `PORT` from env (default 8000) in config.py.
+- No `localhost` or fixed hostnames in Python code — env vars only.
+- Health probe at `GET /health` always required — must ping DB (see Startup reliability).
+- Entry: `uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}` for containers.
+
+## Code quality standards
+
+- Type hints on every public function.
+- Pydantic v2 at all HTTP boundaries — never raw `dict` bodies.
+- `ConfigDict(from_attributes=True)` on every ORM → response schema.
+- HTTP status codes on decorator, not comments (see FastAPI correctness rules above).
+- One router per domain when API surface has multiple domains.
+- `get_settings()` with `@lru_cache` for all config — no scattered `os.getenv` in handlers.
+- Tests: AAA pattern; one behavior per test; no conditional asserts; reset state between tests.
+- `GET /health` with real DB `SELECT 1` check always required (503 when DB down).
+- dependencies.txt: only packages actually imported — no speculative extras.
+
+## Security guardrails
+
+- Never hardcode passwords, API keys, tokens, or connection strings.
+- Never create or modify `.env` — only `.env.example` with placeholders.
+- Never log secrets, full JWTs, or PII in application code.
+- Parameterized SQL only — never f-string or concatenate user input into SQL.
+- No `eval()`, `exec()`, `pickle.loads()`, or `subprocess` with user-controlled strings.
+- Generic error messages to clients — no stack traces or internal paths in HTTP responses.
+- Auth: implement only when Rules require it. RBAC: 401 unauthenticated, 403 forbidden.
+- CORS: explicit origin list; never `allow_origins=["*"]` with credentials.
+- Write ONLY under `target-apps/`. Do not modify `db/sql/`. Do not claim Jira/GitLab actions.
+
+## Pre-handoff self-review (mandatory after all writes, before summary)
+
+1. `dev_list_tree(targetApp)` — verify file list is minimal and complete.
+2. Route manifest check: every METHOD /path from API surface is handled.
+3. Router count check: count(routers/*.py - __init__.py) == count(include_router in main.py).
+4. Every subdirectory has `__init__.py`.
+5. Every POST has status_code=201 on decorator; every DELETE has status_code=204.
+6. Every DB-backed route has Depends(get_db); auth routes use Rules-specified deps (API-key or JWT).
+7. List routes match API surface (page object or list[T]) with documented pagination params.
+8. conftest.py sets env before app import; no module-level TestClient.
+9. No circular imports: schemas → nothing from app/; models → enums only.
+10. requirements.txt matches actual imports — no psycopg2-binary, no missing packages.
+11. .env.example has every env var config.py reads; .gitignore has .env and .venv/.
+12. Postgres apps: every ENUM mapped with SAEnum+with_variant; every uuid with PG_UUID.
+13. deploymentHandoff is populated by the CLI in developer-handoff.json — do not paste handoff JSON in your reply.
+14. startup_checks.py + lifespan validate_runtime_config; GET /health pings DB; dev exception handler when APP_ENV=development.
+15. .env.example every line is KEY=value; README warns about DATABASE_URL= prefix.
+16. Bedrock/RDS region vars default to us-east-2 in config.py, .env.example, README env tables, and test conftest setdefaults.
+"""
+
+def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
+    raw = relative_path.strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("path is required")
+    candidate = (
+        (_REPO_ROOT / raw).resolve()
+        if not Path(raw).is_absolute()
+        else Path(raw).resolve()
+    )
+    if not str(candidate).startswith(str(_REPO_ROOT.resolve())):
+        raise ValueError(f"path must stay inside repo: {relative_path}")
+    if write:
+        if not str(candidate).startswith(str(_TARGET_APPS.resolve())):
+            raise ValueError("writes only allowed under target-apps/")
+        return candidate
+    allowed = (
+        any(str(candidate).startswith(str(p.resolve())) for p in _READ_PREFIXES)
+        or candidate == _REPO_ROOT.resolve()
+    )
+    if not allowed:
+        raise ValueError(f"read not allowed for path: {relative_path}")
+    return candidate
+
+
+def _service_dir(service: str) -> Path:
+    return _TARGET_APPS / slugify(service)
+
+
+def _ensure_service_exists(service: str) -> Path:
+    """Ensure target-apps/<service>/ exists. Layout is design-driven — no auto-copy."""
+    dest = _service_dir(service)
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
+
+
+def _validate_dev_write_path(file_path: Path) -> str | None:
+    """Return an error string if this path must not be written by developer-agent."""
+    parts = set(file_path.parts)
+    if parts & _BLOCKED_PATH_PARTS:
+        return "Error: cannot write under .venv/, node_modules/, or cache directories"
+    name = file_path.name
+    if name == "QA_REPORT.md":
+        return "Error: QA_REPORT.md is owned by qa-agent — do not write"
+    if file_path.parent.name == "tests" and name.startswith("test_qa_"):
+        return "Error: tests/test_qa_*.py is owned by qa-agent — write baseline tests only"
+    if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
+        return (
+            "Error: cannot write .env or .env.* secret files — "
+            "write .env.example with placeholders; users copy to .env locally"
+        )
+    return None
+
+
+def _env_var_names_from_example(written_files: list[str]) -> list[str]:
+    """Parse KEY names from a written .env.example."""
+    for rel in written_files:
+        if not rel.endswith(".env.example"):
+            continue
+        path = _REPO_ROOT / rel
+        if not path.is_file():
+            continue
+        names: list[str] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped:
+                names.append(stripped.split("=", 1)[0].strip())
+        return names
+    return []
+
+
+def _deployment_handoff(app: str, written_files: list[str]) -> dict[str, Any]:
+    """Structured hints for devops-agent (Docker/ECS/EKS — implemented later)."""
+    env_names = _env_var_names_from_example(written_files)
+    if "PORT" not in env_names:
+        env_names = ["PORT", *env_names]
+    return {
+        "targetEnvironment": "aws-dev",
+        "port": 8000,
+        "healthCheckPath": "/health",
+        "containerEntrypoint": "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}",
+        "envVarNames": env_names,
+        "secretsSource": "AWS Secrets Manager, SSM, or ECS task IAM role — not committed .env",
+        "dockerReady": True,
+        "notes": (
+            f"devops-agent owns Dockerfile, CI/CD, and AWS deploy for target-apps/{app}/. "
+            "App code must not hardcode localhost or fixed cloud hostnames."
+        ),
+    }
+
+# Agent Tools
+
+@tool
+def dev_list_tree(service: str, subpath: str = "") -> str:
+    """List files under target-apps/<service>/ (optionally under subpath)."""
+    root = _ensure_service_exists(service)
+    base = (root / subpath).resolve()
+    if not str(base).startswith(str(root.resolve())):
+        return "Error: subpath escapes service directory"
+    if not base.exists():
+        return f"Error: not found: {base.relative_to(_REPO_ROOT).as_posix()}"
+    lines: list[str] = []
+    for path in sorted(base.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts:
+            lines.append(path.relative_to(_REPO_ROOT).as_posix())
+    return "\n".join(lines) if lines else "(no files)"
+
+
+@tool
+def dev_read_file(path: str) -> str:
+    """Read a repo file. Allowed: target-apps/, docs/, agents/, inputs/.
+    Use to read PRD, design doc, database handoff, and scraped markdown."""
+    try:
+        file_path = _resolve_repo_path(path, write=False)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    if not file_path.is_file():
+        return f"Error: not a file: {path}"
+    try:
+        return file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: binary or non-utf8 file: {path}"
+
+
+@tool
+def dev_write_file(path: str, content: str) -> str:
+    """Write a file under target-apps/ only. Path relative to repo root.
+
+    Blocked: .env (use .env.example), QA_REPORT.md, tests/test_qa_*.py,
+    .venv/, node_modules/, cache dirs.
+    Example: target-apps/my-svc/app/routers/items.py
+    """
+    try:
+        file_path = _resolve_repo_path(path, write=True)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    blocked = _validate_dev_write_path(file_path)
+    if blocked:
+        return blocked
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8", newline="\n")
+    rel = file_path.relative_to(_REPO_ROOT).as_posix()
+    if rel not in _written_files:
+        _written_files.append(rel)
+    return f"Wrote {rel} ({len(content)} bytes)"
+
+
+def _parse_dotenv_file(path: Path) -> dict[str, str]:
+    """Parse KEY=value lines from .env.example (ignores comments and malformed lines)."""
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, val = stripped.split("=", 1)
+        values[key.strip()] = val.strip()
+    return values
+
+
+def _validate_env_example(service_dir: Path) -> list[str]:
+    """Return error lines for malformed .env.example (common cause of silent SQLite fallback)."""
+    env_example = service_dir / ".env.example"
+    if not env_example.is_file():
+        return ["ENV_EXAMPLE FAILED: .env.example not found"]
+
+    errors: list[str] = []
+    text = env_example.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    has_database_url_key = False
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            errors.append(
+                f"  line {idx}: missing '=' — use KEY=value (e.g. DATABASE_URL=postgresql+psycopg://...)"
+            )
+            continue
+        key, _ = stripped.split("=", 1)
+        if key.strip() == "DATABASE_URL":
+            has_database_url_key = True
+
+    if not has_database_url_key:
+        # Postgres apps almost always need this; bare URL lines are the #1 user mistake.
+        postgres_hint = any(
+            "postgresql" in ln.lower() or "psycopg" in ln.lower()
+            for ln in lines
+            if ln.strip() and not ln.strip().startswith("#")
+        )
+        if postgres_hint:
+            errors.append(
+                "  found a Postgres URL without DATABASE_URL= prefix — users will paste this wrong"
+            )
+        else:
+            errors.append("  DATABASE_URL= line missing from .env.example")
+
+    if errors:
+        return ["ENV_EXAMPLE FAILED:"] + errors
+    return ["ENV_EXAMPLE OK"]
+
+
+def _python_for_service(service_dir: Path) -> str:
+    import platform
+
+    if platform.system() == "Windows":
+        venv_python = service_dir / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_python = service_dir / ".venv" / "bin" / "python"
+    return str(venv_python) if venv_python.is_file() else "python"
+
+
+def _validation_env(service_dir: Path) -> dict[str, str]:
+    """Test env: SQLite for smoke tests; schema/keys from .env.example when present."""
+    env = {**os.environ}
+    example_vars = _parse_dotenv_file(service_dir / ".env.example")
+    env.update(example_vars)
+    env["APP_ENV"] = "test"
+    env["SKIP_STARTUP_CHECKS"] = "1"
+    env["DATABASE_URL"] = "sqlite:///:memory:"
+    if not env.get("API_KEY"):
+        env["API_KEY"] = "test-key"
+    env.setdefault("JWT_SECRET_KEY", "test-secret-not-for-prod")
+    env.setdefault("JWT_EXPIRE_MINUTES", "60")
+    env.setdefault("AWS_REGION", "us-east-2")
+    return env
+
+
+_STARTUP_CONFIG_SCRIPT = """
+from app.config import get_settings
+from app.startup_checks import validate_runtime_config
+validate_runtime_config(get_settings())
+print("STARTUP_CONFIG OK")
+"""
+
+
+_HEALTH_SMOKE_SCRIPT = """
+import os, json
+from fastapi.testclient import TestClient
+from app.main import app
+
+try:
+    from app.database import Base, engine
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"DB_SETUP_WARNING: {e} (tables may not be created)")
+
+with TestClient(app) as client:
+    # 1. Health check
+    for path in ("/health", "/healthz"):
+        resp = client.get(path)
+        if resp.status_code in (200, 503):
+            print(f"HEALTH_OK path={path} status={resp.status_code} body={resp.json()}")
+            break
+    else:
+        raise SystemExit("No working health endpoint at /health or /healthz")
+
+    # 2. Auto-discover GET routes from OpenAPI and smoke-test them
+    api_key = os.environ.get("API_KEY", "test-key")
+    headers = {"X-API-Key": api_key}
+    tested = 0
+    openapi = client.get("/openapi.json")
+    if openapi.status_code == 200:
+        spec = openapi.json()
+        for route_path, methods in spec.get("paths", {}).items():
+            if route_path in ("/health", "/healthz", "/", "/openapi.json", "/docs", "/redoc"):
+                continue
+            if "get" not in methods:
+                continue
+            if "{" in route_path:
+                continue
+            resp = client.get(route_path, headers=headers)
+            status = resp.status_code
+            ok = status in (200, 401, 403, 404, 422)
+            tag = "API_ROUTE_OK" if ok else "API_ROUTE_WARN"
+            print(f"{tag} GET {route_path} status={status}")
+            tested += 1
+            if tested >= 3:
+                break
+    if tested == 0:
+        print("API_ROUTE_SKIPPED: no GET list routes found in OpenAPI spec (optional)")
+"""
+
+
+@tool
+def dev_validate_app(service: str, run_pytest: bool = False) -> str:
+    """Validate the generated app can start and optionally pass tests.
+
+    Checks:
+      1. .env.example format (DATABASE_URL= prefix, KEY=value lines)
+      2. startup_checks.validate_runtime_config with APP_ENV=development + .env.example values
+         (catches Postgres schema vs SQLite mismatch before user copies .env wrong)
+      3. `python -c "from app.main import app"` succeeds (catches import errors)
+      4. TestClient smoke: GET /health + optional authenticated list route
+      5. If run_pytest=True: `python -m pytest tests/ -x -q --tb=short`
+
+    Note: does NOT start uvicorn or Streamlit. User must run API (Terminal 1) before UI (Terminal 2).
+    Returns stdout+stderr so the LLM can read errors and fix files.
+    Call after all files are written. If errors are returned, fix them and call again.
+    """
+    import subprocess
+
+    service_dir = _service_dir(service)
+    if not service_dir.is_dir():
+        return f"Error: target-apps/{service}/ does not exist"
+
+    reqs = service_dir / "requirements.txt"
+    if not reqs.is_file():
+        return f"Error: target-apps/{service}/requirements.txt not found - write it first"
+
+    python_cmd = _python_for_service(service_dir)
+    env = _validation_env(service_dir)
+    output_parts: list[str] = []
+
+    # --- Step 0: structural check — golden template files must exist ---
+    required_files = [
+        "app/__init__.py",
+        "app/main.py",
+        "app/config.py",
+        "app/database.py",
+        "app/startup_checks.py",
+        "app/routers/__init__.py",
+        "app/routers/health.py",
+    ]
+    missing = [f for f in required_files if not (service_dir / f).is_file()]
+    if missing:
+        output_parts.append("STRUCTURE FAILED — missing golden template files:")
+        for f in missing:
+            output_parts.append(f"  - {f}")
+        output_parts.append(
+            "These files should be COPIED from _template/. "
+            "Call dev_read_file + dev_write_file for each missing file."
+        )
+        return "\n".join(output_parts)
+    output_parts.append("STRUCTURE OK")
+
+    env_results = _validate_env_example(service_dir)
+    output_parts.extend(env_results)
+    if env_results[0].startswith("ENV_EXAMPLE FAILED"):
+        return "\n".join(output_parts)
+
+    # --- Step 1b: startup config (mirrors real uvicorn lifespan with .env.example) ---
+    if (service_dir / "app" / "startup_checks.py").is_file():
+        startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}
+        startup_env["APP_ENV"] = "development"
+        startup_env.pop("SKIP_STARTUP_CHECKS", None)
+        try:
+            result = subprocess.run(
+                [python_cmd, "-c", _STARTUP_CONFIG_SCRIPT],
+                cwd=str(service_dir),
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=startup_env,
+            )
+            if result.returncode != 0:
+                output_parts.append(
+                    "STARTUP_CONFIG FAILED (uvicorn would refuse to start):\n{}{}".format(
+                        result.stdout, result.stderr
+                    )
+                )
+                output_parts.append(
+                    "Hint: POSTGRES_SCHEMA apps need DATABASE_URL=postgresql+psycopg://... in .env.example"
+                )
+                return "\n".join(output_parts)
+            output_parts.append("STARTUP_CONFIG OK")
+        except subprocess.TimeoutExpired:
+            output_parts.append("STARTUP_CONFIG TIMEOUT")
+            return "\n".join(output_parts)
+
+    # --- Step 2: import check ---
+    import_cmd = [python_cmd, "-c", "from app.main import app; print('IMPORT_OK')"]
+    try:
+        result = subprocess.run(
+            import_cmd,
+            cwd=str(service_dir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        if result.returncode != 0:
+            output_parts.append("IMPORT FAILED (exit code {}):\n{}{}".format(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+            ))
+            return "\n".join(output_parts)
+        output_parts.append("IMPORT OK")
+    except FileNotFoundError:
+        return (
+            f"Error: python not found at {python_cmd}. "
+            f"No .venv in target-apps/{service}/ - create venv and install requirements first, "
+            "or the host python will be used."
+        )
+    except subprocess.TimeoutExpired:
+        output_parts.append("IMPORT TIMEOUT (>30s) - possible circular import or startup hang")
+        return "\n".join(output_parts)
+
+    # --- Step 2: health smoke test ---
+    health_cmd = [python_cmd, "-c", _HEALTH_SMOKE_SCRIPT]
+    try:
+        result = subprocess.run(
+            health_cmd,
+            cwd=str(service_dir),
+            capture_output=True,
+            text=True,
+            timeout=45,
+            env=env,
+        )
+        if result.returncode != 0:
+            output_parts.append(
+                "HEALTH FAILED:\n{}{}".format(result.stdout, result.stderr)
+            )
+            return "\n".join(output_parts)
+        output_parts.append(result.stdout.strip() or "HEALTH OK")
+    except subprocess.TimeoutExpired:
+        output_parts.append("HEALTH TIMEOUT (>45s)")
+        return "\n".join(output_parts)
+
+    # --- Step 3: optional pytest ---
+    if run_pytest:
+        tests_dir = service_dir / "tests"
+        if not tests_dir.is_dir():
+            output_parts.append("PYTEST SKIPPED: no tests/ directory")
+        else:
+            pytest_cmd = [python_cmd, "-m", "pytest", "tests/", "-x", "-q", "--tb=short"]
+            try:
+                result = subprocess.run(
+                    pytest_cmd,
+                    cwd=str(service_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    env=env,
+                )
+                stdout = result.stdout[-3000:] if len(result.stdout) > 3000 else result.stdout
+                stderr = result.stderr[-1500:] if len(result.stderr) > 1500 else result.stderr
+                if result.returncode == 0:
+                    output_parts.append(f"PYTEST OK:\n{stdout}")
+                else:
+                    output_parts.append(f"PYTEST FAILED (exit {result.returncode}):\n{stdout}\n{stderr}")
+            except subprocess.TimeoutExpired:
+                output_parts.append("PYTEST TIMEOUT (>120s)")
+
+    return "\n".join(output_parts)
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(items))
+
+
+def _strip_duplicate_handoff_sections(text: str) -> str:
+    """Remove file lists and handoff JSON if the model still emitted them."""
+    patterns = (
+        r"\n## Files written\r?\n.*",
+        r"\n## Context handoff\r?\n```json\r?\n.*?\r?\n```\s*",
+        r"\n### 2\. Files Written\r?\n```.*?```\s*",
+        r"\n### 6\. Handoff JSON\r?\n\s*```json\r?\n.*?\r?\n```\s*",
+        r"\n```json\r?\n\s*\{\s*\"writtenFiles\".*?\r?\n```\s*",
+    )
+    out = text
+    for pattern in patterns:
+        out = re.sub(pattern, "", out, flags=re.DOTALL)
+    return out.strip()
+
+
+def _write_developer_handoff(app: str, handoff: dict[str, Any]) -> str:
+    """Persist handoff JSON for qa-agent / devops-agent; return repo-relative path."""
+    PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
+    path = PIPELINE_DIR / f"{slugify(app)}.developer-handoff.json"
+    path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+    return path.relative_to(_REPO_ROOT).as_posix()
+
+
+def _max_output_tokens() -> int:
+    return int(os.getenv("DEVELOPER_AGENT_MAX_TOKENS", "32768"))
+
+
+def _thinking_enabled() -> bool:
+    return os.getenv("DEVELOPER_AGENT_THINKING", "").strip().lower() in ("1", "true", "yes")
+
+
+def _thinking_budget_tokens() -> int:
+    return int(os.getenv("DEVELOPER_AGENT_THINKING_BUDGET", "8192"))
+
+
+class _DeveloperCallbackHandler:
+    """Stream tool calls and optional thinking to stderr."""
+
+    def __init__(self, *, show_thinking: bool) -> None:
+        self.tool_count = 0
+        self._show_thinking = show_thinking
+
+    def __call__(self, **kwargs: Any) -> None:
+        reasoning_text = kwargs.get("reasoningText")
+        if self._show_thinking and reasoning_text:
+            print(reasoning_text, end="", file=sys.stderr)
+        tool_use = (
+            kwargs.get("event", {})
+            .get("contentBlockStart", {})
+            .get("start", {})
+            .get("toolUse")
+        )
+        if tool_use:
+            self.tool_count += 1
+            print(
+                f"\n[developer-agent] Tool #{self.tool_count}: {tool_use['name']}",
+                file=sys.stderr,
+            )
+
+
+def _coding_model() -> BedrockModel:
+    model_id = os.getenv(
+        "CODING_MODEL_ID",
+        os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"),
+    )
+    read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
+    model_kwargs: dict[str, Any] = {
+        "model_id": model_id,
+        "region_name": os.getenv("AWS_REGION", "us-east-2"),
+        "max_tokens": _max_output_tokens(),
+        "streaming": True,
+        "boto_client_config": botocore.config.Config(
+            read_timeout=read_timeout,
+            connect_timeout=10,
+            retries={"mode": "standard", "max_attempts": 2},
+        ),
+    }
+    if _thinking_enabled():
+        model_kwargs["additional_request_fields"] = {
+            "thinking": {"type": "adaptive", "budget_tokens": _thinking_budget_tokens()},
+        }
+    return BedrockModel(**model_kwargs)
+
+
+def _build_agent() -> Agent:
+    return Agent(
+        agent_id=AGENT_NAME,
+        name=AGENT_NAME,
+        description=(
+            "Implements backend API code under target-apps/ from PRD, design doc, "
+            "database-agent handoff, and scraped research. "
+            "Patterns: A (in-memory), B (Postgres), B+ (Postgres+Bedrock), "
+            "B++ (local RAG pgvector), C (FastAPI+Streamlit)."
+        ),
+        model=_coding_model(),
+        system_prompt=DEVELOPER_SYS_PROMPT,
+        tools=[dev_list_tree, dev_read_file, dev_write_file, dev_validate_app],
+        callback_handler=_DeveloperCallbackHandler(show_thinking=_thinking_enabled()),
+    )
+
+
+def _user_message(task: str, context: dict[str, Any] | None) -> str:
+    if not context:
+        return task
+    return f"{task}\n\nContext:\n{json.dumps(context, indent=2)}"
+
+
+def _resolve_target_app(name: str | None, context: dict[str, Any] | None) -> str:
+    return resolve_target_app(name, context, env_var="DEVELOPER_TARGET_APP")
+
+
+def _enrich_developer_context(ctx: dict[str, Any]) -> None:
+    """Add developer-specific paths that enrich_handoff_context doesn't cover."""
+    app = slugify(str(ctx["targetApp"]))
+    service_dir = _REPO_ROOT / "target-apps" / app
+
+    # Database-agent handoff file
+    if not ctx.get("databaseHandoffPath"):
+        for candidate in (
+            service_dir / "db" / "HANDOFF.md",
+            service_dir / "db" / "handoff.md",
+            service_dir / "db" / "database_handoff.md",
+            _REPO_ROOT / "agents" / "pipeline" / f"{app}.db-handoff.md",
+        ):
+            if candidate.is_file():
+                ctx["databaseHandoffPath"] = candidate.relative_to(_REPO_ROOT).as_posix()
+                break
+
+    # Scraped content from web-crawler-agent
+    if not ctx.get("scrapedMarkdownPaths"):
+        scraped_dir = _REPO_ROOT / "docs" / "PRD" / "scraped" / app
+        if scraped_dir.is_dir():
+            paths = [
+                p.relative_to(_REPO_ROOT).as_posix()
+                for p in sorted(scraped_dir.rglob("*.md"))
+                if p.is_file()
+            ]
+            if paths:
+                ctx["scrapedMarkdownPaths"] = paths
+
+    if not ctx.get("dbBackend"):
+        has_sql = bool(ctx.get("preferredSqlPath") or ctx.get("dbOutputDir"))
+        has_nosql = bool(
+            (service_dir / "db" / "nosql").is_dir()
+            or ctx.get("preferredNoSqlPath")
+        )
+        if has_sql and has_nosql:
+            ctx["dbBackend"] = "postgres+mongodb"
+        elif has_nosql:
+            ctx["dbBackend"] = "mongodb"
+        elif has_sql:
+            ctx["dbBackend"] = "postgres"
+
+    if not ctx.get("templateDir") and _TEMPLATE_DIR.is_dir() and any(_TEMPLATE_DIR.iterdir()):
+        ctx["templateDir"] = _TEMPLATE_DIR.relative_to(_REPO_ROOT).as_posix()
+
+
+def _build_context(
+    *,
+    target_app: str,
+    jira_key: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    service_path = _ensure_service_exists(target_app)
+    ctx: dict[str, Any] = {
+        "targetApp": target_app,
+        "targetAppDir": service_path.relative_to(_REPO_ROOT).as_posix(),
+    }
+    if jira_key:
+        ctx["jiraKey"] = jira_key
+    if extra:
+        ctx.update(extra)
+    return ctx
+
+
+def run_task(
+    task: str,
+    context: dict[str, Any] | None = None,
+    *,
+    target_app: str | None = None,
+    jira_key: str | None = None,
+) -> tuple[str, list[str], str | None]:
+    global _written_files
+    _written_files = []
+
+    app = _resolve_target_app(target_app, context)
+    ctx = context if context is not None else _build_context(target_app=app, jira_key=jira_key)
+    ctx.setdefault("targetApp", app)
+    ctx.setdefault("targetAppDir", _ensure_service_exists(app).relative_to(_REPO_ROOT).as_posix())
+
+    enrich_handoff_context(ctx, include_db_paths=True)
+    _enrich_developer_context(ctx)
+
+    if jira_key:
+        ctx.setdefault("jiraKey", jira_key)
+
+    agent = _build_agent()
+    summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
+
+    written = _dedupe_preserve_order(_written_files)
+    handoff_rel: str | None = None
+    if written:
+        has_env_example = any(p.endswith(".env.example") for p in written)
+        handoff: dict[str, Any] = {
+            "writtenFiles": written,
+            "targetApp": app,
+            "jiraKey": ctx.get("jiraKey"),
+            "dbBackend": ctx.get("dbBackend"),
+            "designDocPath": ctx.get("designDocPath"),
+            "prdPath": ctx.get("prdPath"),
+            "databaseHandoffPath": ctx.get("databaseHandoffPath"),
+            "runCommandLocal": f"cd target-apps/{app} && uvicorn app.main:app --reload --port 8000",
+            "testCommand": f"cd target-apps/{app} && pytest tests/ -q",
+            "deploymentHandoff": _deployment_handoff(app, written),
+        }
+        handoff["runCommand"] = handoff["runCommandLocal"]
+        if has_env_example:
+            handoff["userSetupCommand"] = (
+                f"cd target-apps/{app} && cp .env.example .env  "
+                "# Windows: copy .env.example .env — then edit real values locally"
+            )
+            handoff["envVarsRequired"] = _env_var_names_from_example(written)
+        handoff_rel = _write_developer_handoff(app, handoff)
+
+    return summary, written, handoff_rel
+
+
+def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
+    skills = [
+        AgentSkill(
+            id="implement_feature",
+            name="implement_feature",
+            description=(
+                "Implement backend API + optional Streamlit UI under target-apps/. "
+                "Patterns A/B/B+/B++/C. Stack driven by design doc tech stack section."
+            ),
+            tags=["development", "fastapi", "python", "streamlit", "rag", "bedrock"],
+        )
+    ]
+    agent = _build_agent()
+    A2AServer(agent, host=host, port=port, skills=skills).serve()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Developer agent — Strands + Bedrock + file tools"
+    )
+    parser.add_argument(
+        "--task",
+        help="Optional task override. Default: full pipeline task.",
+    )
+    parser.add_argument(
+        "--target-app",
+        help="Service folder under target-apps/ (from --target-app, context targetApp, or PIPELINE_TARGET_APP)",
+    )
+    parser.add_argument(
+        "--no-auto-context",
+        action="store_true",
+        help="Do not load agents/pipeline/<target-app>.context.json automatically.",
+    )
+    parser.add_argument("--jira-key", help="Jira key (e.g. SAAP-3)")
+    load_context_extra(parser)
+    parser.add_argument(
+        "--serve-a2a", action="store_true", help=f"Start A2A server on :{A2A_PORT}"
+    )
+    parser.add_argument("--port", type=int, default=A2A_PORT)
+    parser.add_argument("--host", default="127.0.0.1")
+    args = parser.parse_args()
+
+    if args.serve_a2a:
+        serve_a2a(host=args.host, port=args.port)
+        return
+
+    if not args.task:
+        args.task = DEFAULT_PIPELINE_TASK
+
+    try:
+        extra, target = resolve_cli_context(
+            args.target_app,
+            parse_context_args(args),
+            no_auto_context=args.no_auto_context,
+            env_var="DEVELOPER_TARGET_APP",
+    )
+    except TargetAppRequiredError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if extra.get("_contextFile"):
+        print(f"[developer-agent] Context (auto): {extra['_contextFile']}", file=sys.stderr)
+
+    enrich_handoff_context(extra, include_db_paths=True)
+    _enrich_developer_context(extra)
+
+    ctx = _build_context(target_app=target, jira_key=args.jira_key, extra=extra or None)
+
+    model_id = os.getenv("CODING_MODEL_ID", os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"))
+    print(f"[developer-agent] Model      : {model_id}", file=sys.stderr)
+    if _thinking_enabled():
+        print(
+            f"[developer-agent] Thinking   : on (budget {_thinking_budget_tokens()} tokens)",
+            file=sys.stderr,
+        )
+    print(f"[developer-agent] Target app : {ctx['targetAppDir']}", file=sys.stderr)
+    print(f"[developer-agent] Design doc : {resolve_design_doc_path(ctx)}", file=sys.stderr)
+    if ctx.get("prdPath") or ctx.get("prd_path"):
+        print(f"[developer-agent] PRD        : {ctx.get('prdPath') or ctx.get('prd_path')}", file=sys.stderr)
+    if ctx.get("databaseHandoffPath"):
+        print(
+            f"[developer-agent] DB handoff : {ctx['databaseHandoffPath']}",
+            file=sys.stderr,
+        )
+    elif ctx.get("preferredSqlPath") or ctx.get("dbOutputDir"):
+        print(
+            "[developer-agent] DB handoff : (not found — run database-agent first; "
+            "expected target-apps/<app>/db/HANDOFF.md)",
+            file=sys.stderr,
+        )
+    if ctx.get("preferredSqlPath"):
+        print(f"[developer-agent] SQL dir    : {ctx['preferredSqlPath']}", file=sys.stderr)
+    if ctx.get("scrapedMarkdownPaths"):
+        print(
+            f"[developer-agent] Scraped docs : {len(ctx['scrapedMarkdownPaths'])} file(s)",
+            file=sys.stderr,
+        )
+    print("[developer-agent] Running...", file=sys.stderr)
+
+    result, written, handoff_rel = run_task(
+        args.task,
+        ctx,
+        target_app=target,
+        jira_key=args.jira_key,
+    )
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    print(result)
+    if written:
+        print(
+            f"[developer-agent] Wrote {len(written)} file(s) under {ctx['targetAppDir']}/",
+            file=sys.stderr,
+        )
+    else:
+        service_dir = _service_dir(str(ctx.get("targetApp", target)))
+        has_files = service_dir.is_dir() and any(service_dir.rglob("*.py"))
+        msg = (
+            "No new files written (existing code detected — agent may have reviewed only)."
+            if has_files
+            else "WARNING: no files written under target-apps/."
+        )
+        print(f"[developer-agent] {msg}", file=sys.stderr)
+    if handoff_rel:
+        print(f"[developer-agent] Handoff   : {handoff_rel}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,58 @@
+---
+description: Security and operational guardrails for the SDLC Agentic AI Platform
+alwaysApply: true
+---
+
+# Security Guardrails
+
+The platform must prioritize secure, controlled, and auditable behavior across all agents, tools, workflows, and generated code.
+
+## Infrastructure & Cloud Safety
+
+- Never create, modify, or delete AWS infrastructure without explicit user approval
+- Never provision paid cloud resources automatically
+- Never modify IAM users, roles, policies, networking, billing, or security groups without approval
+- Prefer local execution and development workflows over cloud execution whenever possible
+- All infrastructure changes must be reviewed before execution
+
+## Secrets & Sensitive Data
+
+- Never expose, print, log, commit, or hardcode secrets, credentials, tokens, API keys, or connection strings
+- Never modify `.env`, credential files, or secret-management configurations
+- Use environment variables and approved secret-management practices only
+- Avoid storing sensitive information in generated code, logs, tests, prompts, or documentation
+
+## Repository & File Safety
+
+- Only write application code under approved directories such as `target-apps/`
+- Never write outside repository boundaries unless explicitly approved
+- Never overwrite critical configuration or deployment files without confirmation
+- Always inspect existing files before modifying them
+
+## Destructive Operations
+
+- Always request approval before destructive operations
+- Never delete databases, schemas, tables, files, repositories, or infrastructure automatically
+- Never execute force-delete, recursive-delete, or irreversible commands without confirmation
+- Avoid commands that may impact shared environments or production systems
+
+## Agent & Tool Governance
+
+- Use the minimum required permissions and tools for each task
+- Do not execute autonomous recursive loops or uncontrolled multi-agent execution
+- Minimize token usage, reasoning usage, and external API calls where possible
+- Use reasoning or extended-thinking modes only for complex planning, debugging, architecture, or security analysis tasks
+
+## Secure Development Standards
+
+- Follow secure coding practices and OWASP recommendations
+- Validate inputs and sanitize external data
+- Prefer least-privilege access patterns
+- Generate tests for new functionality where applicable
+- Avoid insecure defaults, unsafe shell execution, and unrestricted file access
+
+## Auditability
+
+- Ensure generated actions and code changes are traceable and reviewable
+- Summarize modified files, executed actions, and security-sensitive changes
+- Maintain clear separation between development, testing, and deployment responsibilities

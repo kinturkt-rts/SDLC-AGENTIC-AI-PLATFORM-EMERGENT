@@ -1,0 +1,8 @@
+{
+  "targetApp": "contacts-api",
+  "prdPath": "docs/PRD/contacts-api.md",
+  "designDocPath": "docs/design/contacts-api.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/contacts-api.png"
+  ]
+}

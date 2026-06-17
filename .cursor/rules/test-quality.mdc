@@ -1,0 +1,42 @@
+---
+description: Test quality standards — one path per test, no conditional asserts, AAA pattern
+globs:
+  - "tests/**/*.py"
+  - "target-apps/**/tests/**/*.py"
+  - "orchestrator/**/*.test.ts"
+  - "orchestrator/**/*.spec.ts"
+  - "**/*.test.{ts,tsx}"
+  - "**/*.spec.{ts,tsx}"
+alwaysApply: false
+---
+
+# Test Quality
+
+Applies when editing tests under `tests/`, `target-apps/<app>/tests/`, or `orchestrator/` test files. Agent fixture files (e.g. `agents/*/test_*.txt`) are out of scope.
+
+## Required patterns
+
+- **One path per test**: No branching (`if`/`else`, loops) that can skip asserts. Each test exercises exactly one behavior.
+- **No conditional asserts**: Never wrap `assert` in `if`. A test must not pass without running its assertions.
+- **AAA**: Arrange, Act, Assert — clearly separated (blank line or comment blocks are fine).
+- **Behavior over implementation**: Assert outcomes (HTTP status, response body, DB state), not private methods or call order unless unavoidable.
+
+## Python (pytest + FastAPI)
+
+- Use `pytest` under `target-apps/<app>/tests/` or repo `tests/`; share fixtures via `conftest.py`.
+- Prefer `TestClient` / `httpx.AsyncClient` for API tests; one scenario per test function.
+- Use `@pytest.mark.parametrize` for input variants — each row is still one logical path.
+- Name tests `test_<behavior>_<expected_outcome>`.
+
+## Anti-patterns (reject)
+
+- Assert inside a branch that may not run.
+- Multiple unrelated behaviors in one test.
+- Over-mocking (mock only true boundaries: DB, external APIs, clock).
+- Tests that depend on execution order or shared mutable global state.
+- Skipping assertions with `pytest.skip` unless the environment truly cannot run (document why).
+
+## Definition of done for test changes
+
+- New or changed behavior has a failing-then-passing test (or explicit user waiver).
+- Run the narrowest relevant command, e.g. `pytest target-apps/<app>/tests -q`.

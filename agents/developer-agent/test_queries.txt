@@ -1,0 +1,57 @@
+# Developer Agent - Test Queries
+# Implements code under target-apps/<service>/ (no GitLab MCP).
+# Run from repo root after: aws sso login --profile eks-admin-user
+#
+# Pipeline default: no --task needed. Auto-loads agents/pipeline/*.context.json
+#
+#   python agents/developer-agent/developer_agent.py
+#
+#   $env:AWS_PROFILE="eks-admin-user"
+#   $env:CODING_MODEL_ID="us.anthropic.claude-opus-4-6"
+
+
+# ── PIPELINE TEST #2 — MEDIUM (product → architect → dev, skip DB) ─────────────
+
+# Task board API: 10 endpoints, API-key auth, 2 routers, in-memory store
+# Expected: target-apps/test-medium-app/ with routers/, config, store, tests
+.\scripts\run-pipeline-test.ps1 -Level medium
+
+# Or manual:
+python agents/product-agent/product_agent.py --input-file inputs/test_medium_app.txt --prd-name test-medium-app
+python agents/architect-agent/architect_agent.py --target-app test-medium-app
+python agents/developer-agent/developer_agent.py --target-app test-medium-app
+
+# ── PIPELINE TEST #3 — WITH DB (later) ─────────────────────────────────────────
+
+.\scripts\run-pipeline-test.ps1 -Level db
+
+# ── SCAFFOLD + HEALTH API ───────────────────────────────────────────────────────
+
+# 1. New service from template with a sample items API
+#    Expected: target-apps/demo-api/ with app/, tests/, requirements.txt
+python agents/developer-agent/developer_agent.py `
+  --target-app demo-api `
+  --task "Scaffold from target-apps/_template if needed. Add GET /items returning a JSON list and POST /items accepting name+price. Include Pydantic schemas and tests."
+
+# ── JIRA-STORY STYLE (ASAAP Bedrock) ────────────────────────────────────────────
+
+# 2. Meeting assistant — after database-agent (pipeline handoff)
+python agents/developer-agent/developer_agent.py `
+  --target-app meeting-assistant `
+  --context-file agents/pipeline/meeting-assistant.context.json
+
+# ── PIPELINE CONTEXT (architect + database handoff) ────────────────────────────
+
+# FinOps — default task + auto context (after architect + database-agent)
+python agents/developer-agent/developer_agent.py
+
+# FinOps with explicit context
+python agents/developer-agent/developer_agent.py `
+  --context-file agents/pipeline/finops-web-app.context.json
+
+# Custom ad-hoc task (override default)
+python agents/developer-agent/developer_agent.py `
+  --no-auto-context `
+  --target-app checkout-api `
+  --context-json '{"jiraKey":"ASAAP-CHECKOUT","productAgentOutput":"Checkout: validate cart, process payment, confirm order.","architectSummary":"API Gateway -> Lambda -> DynamoDB","diagramPaths":["docs/diagrams/generated-diagrams/checkout-flow-test.png"]}' `
+  --task "Create FastAPI skeleton for checkout-api: routers for validate, pay, confirm stubs returning 501 with TODO and Pydantic models. Add README with run instructions."

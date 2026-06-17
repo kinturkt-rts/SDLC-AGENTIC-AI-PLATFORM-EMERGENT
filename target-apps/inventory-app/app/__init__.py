@@ -1,0 +1,1 @@
+"""Inventory Desk — application package."""

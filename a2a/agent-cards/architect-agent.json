@@ -1,0 +1,11 @@
+{
+  "name": "architect-agent",
+  "description": "Produces AWS architecture PNGs (docs/diagrams/generated-diagrams/) and per-feature solution design (docs/design/<app>.md).",
+  "url": "http://127.0.0.1:9102/",
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "capabilities": { "streaming": true },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [{ "id": "architecture", "name": "architecture", "description": "Design system architecture", "tags": ["architecture", "adr"] }]
+}

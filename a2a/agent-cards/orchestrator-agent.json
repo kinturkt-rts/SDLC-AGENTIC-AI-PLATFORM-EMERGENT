@@ -1,0 +1,11 @@
+{
+  "name": "orchestrator-agent",
+  "description": "Routes SDLC tasks and delegates to specialist agents via A2A.",
+  "url": "http://127.0.0.1:9100/",
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "capabilities": { "streaming": true },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [{ "id": "orchestrate", "name": "orchestrate", "description": "Delegate work to specialist agents", "tags": ["orchestration"] }]
+}

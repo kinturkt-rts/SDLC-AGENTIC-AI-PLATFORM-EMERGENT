@@ -1,0 +1,11 @@
+---
+description: FastAPI target service conventions for AutonomousSDLC
+globs: target-apps/_template/**/*
+alwaysApply: false
+---
+
+# Target app template
+
+- Python 3.12+, FastAPI, Pydantic v2
+- Layout: `app/`, `schemas/`, `tests/`
+- Clone this folder for new services (`payment-service`, `user-service`, etc.)

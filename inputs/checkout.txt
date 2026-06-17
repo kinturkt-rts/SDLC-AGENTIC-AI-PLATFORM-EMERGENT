@@ -1,0 +1,6 @@
+We need checkout for the store. People drop off when payment feels slow or they can't tell if the order went through.
+
+Customers should be able to pay (card is fine for v1) and see status — created, waiting on payment, paid, failed, cancelled. Support keeps asking us what happened so we need something they can look up too.
+
+Don't want duplicate charges if someone clicks twice or the payment provider sends the webhook twice.
+Should be fast enough that checkout doesn't feel broken. Needs to be secure since it's money. Other teams will want an API later for fulfillment and order history.

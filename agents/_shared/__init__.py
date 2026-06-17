@@ -1,0 +1,1 @@
+"""Shared runtime for Strands agents (MCP, A2A, Bedrock)."""

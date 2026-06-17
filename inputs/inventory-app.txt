@@ -1,0 +1,85 @@
+Inventory Desk — minimal full-stack backend app (FastAPI + Postgres + login)
+
+App idea (one paragraph):
+A small warehouse team uses **Inventory Desk** to manage a product catalog and stock levels.
+The **admin** (shop manager) signs in, creates categories and products, and can delete items.
+**Staff** sign in to view inventory and record stock movements (sales, restocks) but cannot
+change catalog structure. Everyone uses the REST API (Swagger for demos); no browser UI in MVP.
+
+Purpose:
+- End-to-end SDLC showcase: product → architect → database-agent → developer-agent → qa-agent.
+- A real minimal app — not random endpoints — with persisted data, login, roles, and CRUD.
+
+Personas & auth:
+| Role | Login | Can do |
+|------|-------|--------|
+| admin | username/password (seeded) | Full CRUD on categories & products; adjust stock; delete product when qty=0 |
+| staff | username/password (seeded) | Read all; POST adjust-stock only |
+| anonymous | — | GET /health only |
+
+Auth implementation (MVP):
+- `POST /auth/login` body `{username, password}` → `{access_token, token_type, role, expires_in}`.
+- JWT bearer (`Authorization: Bearer <token>`) on protected routes; HS256 with `JWT_SECRET_KEY` from env.
+- Passwords stored hashed (bcrypt or passlib) — seed users in database-agent dev seed SQL only.
+- 401 if missing/invalid token; 403 if role insufficient (e.g. staff POST /categories → 403).
+
+Seed users (database-agent seed — dev only, document in README):
+- admin / Admin123! (role admin) — change in production
+- staff / Staff123! (role staff)
+
+Data model (Postgres — database-agent owns DDL under target-apps/inventory-app/db/sql/):
+- users: id uuid PK, username text UNIQUE NOT NULL, password_hash text NOT NULL,
+  role enum (admin | staff) NOT NULL, is_active bool DEFAULT true, created_at timestamptz
+- categories: id uuid PK, name text NOT NULL (1–80), slug text UNIQUE NOT NULL, created_at timestamptz
+- products: id uuid PK, category_id uuid FK→categories ON DELETE RESTRICT,
+  sku text UNIQUE NOT NULL, name text NOT NULL (1–120), unit_price numeric(10,2) NOT NULL >= 0,
+  qty_on_hand int NOT NULL DEFAULT 0 >= 0, created_at timestamptz, updated_at timestamptz
+- stock_movements: id uuid PK, product_id uuid FK→products ON DELETE CASCADE,
+  delta int NOT NULL, reason enum (sale | restock | adjustment), note text nullable (max 500),
+  performed_by uuid FK→users nullable, created_at timestamptz
+
+API contracts:
+| Method | Path | Auth | Behavior |
+| GET | /health | none | {"status":"ok","service":"inventory-desk"} |
+| POST | /auth/login | none | validate credentials; return JWT + role; 401 bad password |
+| POST | /categories | admin | create; 201; slug from name if omitted |
+| GET | /categories | admin, staff | paginated list ?limit=&offset= |
+| GET | /categories/{id} | admin, staff | 200 + product_count or 404 |
+| PATCH | /categories/{id} | admin | update; 409 slug clash |
+| POST | /products | admin | create; 404 unknown category; 409 duplicate sku |
+| GET | /products | admin, staff | list; ?category_id= & ?sku= & ?low_stock=true (qty<=5) |
+| GET | /products/{id} | admin, staff | 200 or 404 |
+| PATCH | /products/{id} | admin | update name, price, category; never qty directly |
+| POST | /products/{id}/adjust-stock | admin, staff | {delta, reason, note?}; txn: movement row + qty update; 422 if qty<0; set performed_by |
+| GET | /products/{id}/movements | admin, staff | history newest first, paginated |
+| DELETE | /products/{id} | admin | 204 if qty=0 else 409 |
+
+Business rules:
+- qty_on_hand changes only via adjust-stock (transactional).
+- Lists return `{items, total, limit, offset}`.
+- staff cannot POST/PATCH/DELETE categories or products.
+- Deactivate user (`is_active=false`) → login returns 401.
+
+Stack (developer-agent):
+- Python 3.12, FastAPI, Pydantic v2, pydantic-settings, uvicorn, python-jose or PyJWT, passlib[bcrypt].
+- SQLAlchemy 2.x sync + psycopg; `_template` SessionLocal + search_path `inventory_app`.
+- Layout: `app/routers/auth.py`, `health.py`, `categories.py`, `products.py`;
+  `app/models/`, `app/schemas/`, `app/services/auth.py`, `app/dependencies.py` (get_current_user, require_admin).
+- `.env.example`: DATABASE_URL, POSTGRES_SCHEMA=inventory_app, JWT_SECRET_KEY, JWT_EXPIRE_MINUTES=60, PORT=8000
+
+Tests (developer baseline):
+- pytest + TestClient; DB fixture with rollback or in-memory SQLite only if design allows — prefer Postgres test schema.
+- login admin/staff, role 403 on staff create category, adjust-stock updates qty, negative stock 422,
+  delete blocked when qty>0, pagination shape, 401 without token.
+
+Out of scope:
+- Streamlit/React UI, OAuth/SSO, Redis sessions, email reset, Bedrock, S3, Docker (devops-agent later).
+
+Success:
+- Runnable mini-app: login → browse products → staff adjusts stock → admin adds SKU.
+- database-agent: sql + seed users + HANDOFF.md
+- developer-agent: pytest green; README with login curl examples + local/AWS sections
+- handoff_json includes deploymentHandoff for devops-agent
+
+Target app slug: inventory-app
+Output directory: target-apps/inventory-app/

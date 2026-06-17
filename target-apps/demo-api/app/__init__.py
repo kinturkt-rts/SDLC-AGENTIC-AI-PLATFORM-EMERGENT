@@ -1,0 +1,1 @@
+"""FastAPI service package — clone this folder for new target-apps services."""

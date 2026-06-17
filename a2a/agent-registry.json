@@ -1,0 +1,41 @@
+{
+  "protocol": "a2a",
+  "agents": {
+    "orchestrator-agent": {
+      "url": "http://127.0.0.1:9100",
+      "port": 9100
+    },
+    "product-agent": {
+      "url": "http://127.0.0.1:9101",
+      "port": 9101
+    },
+    "architect-agent": {
+      "url": "http://127.0.0.1:9102",
+      "port": 9102
+    },
+    "developer-agent": {
+      "url": "http://127.0.0.1:9103",
+      "port": 9103
+    },
+    "qa-agent": {
+      "url": "http://127.0.0.1:9104",
+      "port": 9104
+    },
+    "devops-agent": {
+      "url": "http://127.0.0.1:9105",
+      "port": 9105
+    },
+    "security-agent": {
+      "url": "http://127.0.0.1:9106",
+      "port": 9106
+    },
+    "database-agent": {
+      "url": "http://127.0.0.1:9108",
+      "port": 9108
+    },
+    "web-crawler-agent": {
+      "url": "http://127.0.0.1:9109",
+      "port": 9109
+    }
+  }
+}

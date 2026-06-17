@@ -1,0 +1,27 @@
+We want to build an internal AI Operations Assistant for cloud teams using Amazon Bedrock and agent-based workflows.
+
+Current pain:
+- Teams manually investigate CloudWatch alarms and spend too much time collecting logs and context.
+- Incident summaries are inconsistent and handoffs across teams are slow.
+- There is no standard way to capture actions and follow-up tasks after incidents.
+
+What we want:
+- An assistant that can answer operational questions, summarize incidents, and suggest next actions.
+- It should use Bedrock models and support agent-style orchestration (planner + specialist agents).
+- It should connect with AWS services for operational context: CloudWatch logs/metrics and optionally Jira for task tracking.
+- It should support role-based usage (SRE, on-call engineer, engineering manager).
+
+Initial scope:
+- Incident summary generation from provided incident context.
+- Recommended remediation checklist generation.
+- Ability to convert approved actions into Jira tickets.
+- Simple chat/API interface for internal users.
+
+Constraints:
+- Security and compliance are critical because logs may contain sensitive operational data.
+- We prefer AWS-native services and minimal operational overhead.
+- The solution should be production-ready in phases (MVP first, then scaling).
+
+Success expectation:
+- Faster incident triage and clearer action tracking.
+- Better consistency in incident reporting and follow-up ownership.
