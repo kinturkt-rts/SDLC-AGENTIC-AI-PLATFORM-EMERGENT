@@ -30,10 +30,37 @@ Equivalent test wrapper:
 | 3 | database-agent | SQL under `target-apps/<feature>/db/sql/` |
 | 3b | apply_sql_to_rds.py | **Applies SQL to RDS Postgres** (when DB step runs) |
 | 4 | developer-agent | FastAPI app under `target-apps/<feature>/` |
-| 5 | qa-agent | Extra tests + review |
-| 6 | local verify | Import smoke + `pytest` in app folder |
+| 5 | local verify | Import smoke + `pytest` in app folder |
 
-**RDS apply and QA are ON by default** when the database and developer steps run. You do **not** need `-WithPostgres` or `-WithQa` anymore (those flags still work as aliases).
+QA and GitHub publish are **opt-in** (`-WithQa` or `-WithGithub`).
+
+### GitHub SDLC mirror (`-WithGithub`)
+
+Mirrors **developer pushes branch → QA tests and comments on PR**:
+
+| Step | Agent | What it does |
+|------|--------|----------------|
+| 1–4 | (same as above) | product → architect → database → developer |
+| 5 | local verify | Quick pytest before publish |
+| 6 | **devops-agent** | `git` commit on `sdlc/<feature>`, push, open GitHub PR |
+| 7 | **qa-agent** | Full pytest + edge tests locally; post PR review via GitHub MCP |
+
+```powershell
+# .env: GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_OWNER, GITHUB_REPO
+# Optional: gh auth login (for PR creation via gh CLI)
+
+.\scripts\run-sdlc.ps1 `
+  -Feature meeting-action-tracker `
+  -InputFile inputs\meeting-action-tracker.txt `
+  -SkipProduct -SkipArchitect -SkipDb -SkipPostgres `
+  -WithGithub `
+  -GithubOwner your-org `
+  -GithubRepo your-monorepo
+```
+
+Handoffs: `agents/pipeline/<feature>.devops-handoff.json` → `qa-handoff.json`
+
+**Note:** QA runs pytest on your **local checkout** (same files as the branch). It does not clone from GitHub to test.
 
 ---
 

@@ -1,0 +1,77 @@
+Vendor Compliance Tracker — contracts, compliance docs, renewal workflow, risk dashboard
+
+Client story:
+Maria (Procurement) missed a contract renewal; Legal needs proof of current insurance/SOC docs on file.
+40 vendors; everything is in email today. v1 is internal only — no vendor portal.
+
+MVP:
+- Register vendors and contracts; attach compliance documents with expiry.
+- Renewal workflow per contract: not_started → in_review → renewed | terminated | lapsed.
+- Dashboard: contracts/documents expiring 30/60/90 days; expired; vendors missing required doc types.
+- Admin vs viewer roles; viewers cannot download raw files (metadata only) if sensitive.
+
+Personas & auth:
+| Role | Auth | Can do |
+|------|------|--------|
+| admin | JWT | CRUD vendors, contracts, documents, workflow transitions, file upload |
+| viewer | JWT | Read vendors/contracts/doc metadata, dashboards; no upload/delete |
+| anonymous | — | /health |
+
+Auth: JWT bearer. Seed admin + 2 viewers.
+
+Data model (DDL under target-apps/vendor-compliance-tracker/db/sql/):
+- users: id uuid PK, username, password_hash, role (admin|viewer), is_active, created_at
+- vendors: id uuid PK, legal_name varchar(200), category enum (software|services|facilities|other),
+  primary_contact_name, primary_contact_email, risk_tier enum (low|medium|high) default medium,
+  is_active bool, created_at, updated_at
+- contracts: id uuid PK, vendor_id FK cascade, title varchar(160), start_date, end_date,
+  annual_value numeric(14,2) nullable, auto_renew bool, renewal_status enum
+  (not_started|in_review|renewed|terminated|lapsed), owner_user_id FK→users, notes text, created_at
+- compliance_doc_types: id serial PK, code varchar(32) unique (insurance_cert|soc2|msa|w9), label, required bool
+- compliance_documents: id uuid PK, vendor_id FK, contract_id FK nullable, doc_type_id FK,
+  version int default 1, file_path varchar(512), file_name varchar(255), expiry_date date,
+  uploaded_by FK→users, superseded_by uuid FK→compliance_documents nullable, created_at
+- renewal_events: id uuid PK, contract_id FK, from_status, to_status, note text, actor_id FK→users, created_at
+- Indexes: contracts(end_date, renewal_status), compliance_documents(vendor_id, expiry_date),
+  compliance_documents(vendor_id, doc_type_id) where superseded_by is null
+
+Required doc types (seed): insurance_cert + soc2 required for software/services vendors.
+
+Business rules:
+- Cannot set renewal_status=renewed unless end_date extended (PATCH end_date in same txn).
+- Uploading new doc of same type+vendor supersedes prior (set superseded_by, bump version).
+- Dashboard `/alerts/expiring` returns {contracts:[], documents:[]} with ?days=30|60|90.
+- `/vendors/{id}/compliance-gaps` lists required doc types with no current (non-superseded) doc.
+- viewer GET /documents/{id}/download → 403; admin → file stream.
+- Terminated contract cannot transition except admin reopen → in_review.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | DB ping |
+| POST | /auth/login | none | JWT |
+| POST | /vendors | admin | 201 |
+| GET | /vendors | admin, viewer | ?category= ?risk_tier= ?q= search paginated |
+| GET | /vendors/{id} | admin, viewer | nested active contracts + doc summary |
+| PATCH | /vendors/{id} | admin | |
+| POST | /vendors/{id}/contracts | admin | 201 |
+| GET | /contracts | admin, viewer | ?expiring_within_days= ?renewal_status= |
+| PATCH | /contracts/{id} | admin | end_date, auto_renew, owner |
+| POST | /contracts/{id}/renewal-transition | admin | body {to_status, note}; append renewal_events |
+| POST | /vendors/{id}/documents | admin | multipart: file, doc_type_code, expiry_date, contract_id? |
+| GET | /vendors/{id}/documents | admin, viewer | list current versions |
+| GET | /documents/{id}/download | admin | file |
+| GET | /alerts/expiring | admin, viewer | ?days=30 default |
+| GET | /vendors/{id}/compliance-gaps | admin, viewer | |
+
+Stack: FastAPI, SQLAlchemy, psycopg, local uploads under `data/uploads/` (gitignored), Streamlit UI
+tabs: Vendor Registry, Contract Timeline, Compliance Gaps, Expiring Alerts.
+
+Seed: 6 vendors, 10 contracts (3 expiring within 30d), 12 documents (2 expired), renewal history rows.
+
+Tests: role 403 on upload, supersede logic, gap detection, renewal txn, expiring query boundaries,
+viewer download blocked, workflow invalid transition 422.
+
+Out of scope: DocuSign, ERP, email alerts, Bedrock risk scoring.
+
+Target app slug: vendor-compliance-tracker
+Output directory: target-apps/vendor-compliance-tracker/

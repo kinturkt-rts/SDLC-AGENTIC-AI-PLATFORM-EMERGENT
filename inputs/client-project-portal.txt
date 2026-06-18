@@ -1,0 +1,81 @@
+Client Project Portal — multi-tenant client orgs, projects, deliverables, invoices
+
+Client story:
+Tom (Client Services) runs fixed-fee/T&M projects; clients email for status and invoices.
+Pilot: 3 client orgs, each sees only their projects, milestones, deliverables, invoice status.
+
+MVP:
+- Organizations (clients) with client users and internal staff users.
+- Projects → milestones, deliverables (with files), invoices.
+- Client can comment on deliverables; PM accepts/rejects.
+- Strict data isolation between organizations.
+
+Personas & auth:
+| Role | Auth | Scope |
+|------|------|-------|
+| client_user | JWT | organization_id claim; read own org projects only |
+| pm | JWT | projects where project.manager_id = me |
+| account_manager | JWT | projects for clients where am is owner |
+| admin | JWT | all |
+| anonymous | — | /health |
+
+JWT payload must include: user_id, role, organization_id (nullable for internal), employee_display_name.
+
+Data model (DDL under target-apps/client-project-portal/db/sql/):
+- organizations: id uuid PK, name, industry, primary_contact_email, account_manager_id FK→users
+- users: id uuid PK, username, password_hash, role enum, organization_id FK nullable,
+  full_name, is_active, created_at
+- projects: id uuid PK, organization_id FK, name, description, start_date, target_end_date,
+  status enum (planning|active|on_hold|completed), manager_id FK→users, created_at
+- milestones: id uuid PK, project_id FK, title, due_date, status enum, client_visible_note text nullable,
+  sort_order int
+- deliverables: id uuid PK, project_id FK, title, description, due_date,
+  status enum (draft|submitted|accepted|rejected), file_path nullable, file_name nullable,
+  submitted_at timestamptz nullable, decided_at timestamptz nullable
+- deliverable_comments: id uuid PK, deliverable_id FK, author_id FK→users, body text, is_client_visible bool default true, created_at
+- invoices: id uuid PK, project_id FK, invoice_number unique, amount numeric(12,2), issue_date,
+  due_date, status enum (draft|sent|paid|overdue), paid_at timestamptz nullable
+- Indexes: projects(organization_id, status), milestones(project_id, sort_order)
+
+Tenant isolation (critical — test heavily):
+- Every query joins through organization_id or project_id scope from JWT.
+- client_user requesting another org's project id → 404 (not 403, avoid leaking existence).
+- Internal users without assignment to project → 404 for client-scoped IDs.
+
+Business rules:
+- deliverable accepted only from submitted; rejected requires comment.
+- Cron-less overdue: GET list marks invoice overdue when due_date < today AND status=sent.
+- Milestone % = done count / total for client dashboard.
+- draft deliverables invisible to client_user until submitted.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | DB ping |
+| POST | /auth/login | none | JWT with org scope |
+| GET | /portal/dashboard | client_user | active projects + milestone % + open invoices |
+| GET | /portal/projects/{id} | client_user | detail if belongs to org |
+| GET | /portal/deliverables/{id}/download | client_user | if submitted+ |
+| POST | /portal/deliverables/{id}/comments | client_user | |
+| POST | /internal/organizations | admin, account_manager | |
+| POST | /internal/projects | admin, account_manager | |
+| POST | /internal/projects/{id}/milestones | pm, admin | |
+| PATCH | /internal/milestones/{id} | pm, admin | |
+| POST | /internal/projects/{id}/deliverables | pm, admin | |
+| POST | /internal/deliverables/{id}/submit | pm, admin | draft→submitted |
+| POST | /internal/deliverables/{id}/decide | pm, admin | body {accepted|rejected, comment?} |
+| POST | /internal/projects/{id}/invoices | pm, admin | |
+| PATCH | /internal/invoices/{id} | pm, admin | mark sent/paid |
+| GET | /internal/projects | internal roles | scoped lists |
+
+Stack: FastAPI, SQLAlchemy, dependency `get_current_user` + `require_org_access(project_id)`,
+Streamlit: `streamlit_app.py` with login role routing (client portal vs internal console).
+
+Seed: 3 orgs, 2 client users, 3 PMs, 6 projects, 20 milestones, 8 deliverables, 6 invoices.
+
+Tests: cross-tenant 404, client cannot see draft, accept/reject guards, milestone %, invoice overdue,
+pm scope limited to assigned projects, admin sees all.
+
+Out of scope: Stripe, SSO, time tracking, per-org branding.
+
+Target app slug: client-project-portal
+Output directory: target-apps/client-project-portal/

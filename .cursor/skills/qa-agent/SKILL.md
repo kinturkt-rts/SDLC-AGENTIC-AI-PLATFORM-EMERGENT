@@ -7,7 +7,7 @@ description: Test plans, pytest coverage, and GitLab MR test feedback. Use when 
 
 ## What this agent does
 
-Designs test plans and pytest cases; comments on merge requests via GitLab MCP. Flags regressions and missing edge cases.
+Designs test plans and pytest cases; posts results on GitHub pull requests (or GitLab MR when configured).
 
 ## Runtime
 
@@ -21,7 +21,8 @@ Designs test plans and pytest cases; comments on merge requests via GitLab MCP. 
 
 ## MCP tools (optional)
 
-- **GitLab**: post MR test summary when configured (not required for local pytest)
+- **GitHub**: PR review comment when `-WithGithub` pipeline ran devops-agent first
+- **GitLab**: legacy MR comment when `mergeRequestIid` in context
 
 ## Run standalone
 

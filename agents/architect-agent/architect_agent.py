@@ -108,7 +108,13 @@ and developer-agent. The AWS diagram PNG is separate; do not repeat long narrati
 - **developer-agent** uses sections **4** and **5** for FastAPI routes and guards.
 - Reference PRD as `FR-x` / `NFR-x` instead of copying PRD text.
 - No open-questions table (unknowns → one line under Summary as "TBD: ...").
-- No CI/CD, CDK, or front-end sections.
+- No CI/CD or CDK sections.
+- **Do not omit client UI** when PRD section 11 or `deliveryProfile.requiresStreamlit` is true.
+
+## UI in Stack (mandatory when PRD/brief requires it)
+When the PRD or `deliveryProfile` requires Streamlit, section **2. Stack** MUST include:
+`| UI | Streamlit | ui/streamlit_app.py calls FastAPI over HTTP (port 8501) |`
+When React/Next is required (Phase 2), note `frontend/` in Stack — developer implements only when explicitly in profile.
 
 ## Output rules
 1. Output **ONLY** Markdown starting with `# <Feature> — Solution Design`.
@@ -242,6 +248,17 @@ def _generate_design_markdown(
             f"{prd_text.strip()}\n"
             "--- END PRD ---\n\n"
         )
+    delivery_profile = context.get("deliveryProfile")
+    if delivery_profile:
+        user_message += (
+            "## Delivery profile (MANDATORY — do not drop UI)\n"
+            f"{json.dumps(delivery_profile, indent=2)}\n\n"
+        )
+        if delivery_profile.get("requiresStreamlit"):
+            user_message += (
+                "When requiresStreamlit is true, section 2 Stack MUST list Streamlit and "
+                "`ui/streamlit_app.py`. Do not specify API-only.\n\n"
+            )
     target = context.get("targetApp") or context.get("target_app")
     if target:
         user_message += f"## Target FastAPI service folder\n`target-apps/{target}/`\n\n"

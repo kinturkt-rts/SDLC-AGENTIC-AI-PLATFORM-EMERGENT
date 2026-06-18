@@ -1,0 +1,18 @@
+{
+  "productAgentOutput": "See prdPath for client-project-portal MVP requirements.",
+  "targetApp": "client-project-portal",
+  "prdPath": "docs/PRD/client-project-portal.md",
+  "designDocPath": "docs/design/client-project-portal.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/client-project-portal.png"
+  ],
+  "deliveryProfile": {
+    "uiRequired": true,
+    "requiresStreamlit": true,
+    "requiresReact": false,
+    "uiPattern": "streamlit",
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "inputPath": "inputs/client-project-portal.txt"
+}

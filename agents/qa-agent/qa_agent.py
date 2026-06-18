@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ _TARGET_APPS = _REPO_ROOT / "target-apps"
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
+from _shared.mcp_clients import MCP_FACTORIES, github_personal_access_token
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     enrich_handoff_context,
@@ -191,10 +193,17 @@ Windows one-liner from repo root:
 - Write ONLY under `target-apps/<service>/tests/` and `QA_REPORT.md` via `qa_write_file`.
 - Read `app/` via `qa_read_file` to diagnose failures — do not modify app/ unless task overrides.
 
-## GitLab (optional)
+## GitHub PR review (when devops-agent opened a PR)
 
-When GitLab MCP is available and `mergeRequestIid` is in Context, post a short test summary comment.
-Skip silently when GitLab is not configured.
+When `pullRequestNumber`, `githubOwner`, and `githubRepo` are in Context (from devops-handoff):
+1. Complete Steps 1–5 (local pytest on the same checkout — mirrors QA testing a dev branch).
+2. Post results on the PR using GitHub MCP `pull_request_review_write`:
+   - method: `create`
+   - event: `COMMENT` if all tests pass; `REQUEST_CHANGES` if app_bug failures remain
+   - body: markdown summary with baseline_summary, failed_tests, new_tests_written, commands
+3. If GitHub MCP is unavailable, skip silently and keep handoff_json only.
+
+Legacy GitLab: when `mergeRequestIid` is set, post comment via GitLab MCP if available.
 
 ## Response format
 
@@ -485,7 +494,34 @@ def _qa_model() -> BedrockModel:
     )
 
 
-def _build_agent() -> Agent:
+def _load_mcp_tools(mcp_names: list[str]) -> tuple[list[Any], ExitStack]:
+    stack: ExitStack = ExitStack()
+    tools: list[Any] = []
+    for name in mcp_names:
+        client = MCP_FACTORIES[name]()
+        stack.enter_context(client)
+        tools.extend(client.list_tools_sync())
+    return tools, stack
+
+
+def _github_mcp_enabled() -> bool:
+    try:
+        github_personal_access_token()
+        return True
+    except ValueError:
+        return False
+
+
+def _build_agent(*, extra_tools: list[Any] | None = None) -> Agent:
+    tools: list[Any] = [
+        qa_list_tree,
+        qa_read_file,
+        qa_write_file,
+        qa_run_pytest,
+        qa_run_coverage,
+    ]
+    if extra_tools:
+        tools.extend(extra_tools)
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
@@ -495,15 +531,36 @@ def _build_agent() -> Agent:
         ),
         model=_qa_model(),
         system_prompt=QA_SYS_PROMPT,
-        tools=[
-            qa_list_tree,
-            qa_read_file,
-            qa_write_file,
-            qa_run_pytest,
-            qa_run_coverage,
-        ],
+        tools=tools,
         callback_handler=_QACallbackHandler(),
     )
+
+
+def _enrich_devops_handoff(ctx: dict[str, Any]) -> None:
+    """Merge devops-handoff.json into context for GitHub PR review."""
+    app = slugify(str(ctx["targetApp"]))
+    handoff_path = _REPO_ROOT / "agents" / "pipeline" / f"{app}.devops-handoff.json"
+    if not handoff_path.is_file():
+        return
+    try:
+        data = json.loads(handoff_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(data, dict):
+        return
+    for key in (
+        "pullRequestNumber",
+        "pullRequestUrl",
+        "githubOwner",
+        "githubRepo",
+        "githubBaseBranch",
+        "featureBranch",
+        "branch",
+    ):
+        if data.get(key) is not None:
+            ctx.setdefault(key, data[key])
+    if data.get("branch") and not ctx.get("featureBranch"):
+        ctx["featureBranch"] = data["branch"]
 
 
 def _user_message(task: str, context: dict[str, Any] | None) -> str:
@@ -584,11 +641,19 @@ def run_task(
     ctx.setdefault("targetApp", app)
     enrich_handoff_context(ctx, include_db_paths=False)
     _enrich_qa_context(ctx)
+    _enrich_devops_handoff(ctx)
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    agent = _build_agent()
-    summary = str(agent(_user_message(task, ctx)))
+    use_github = _github_mcp_enabled() and ctx.get("pullRequestNumber") and ctx.get("githubOwner")
+    if use_github:
+        mcp_tools, stack = _load_mcp_tools(["github"])
+        agent = _build_agent(extra_tools=mcp_tools)
+        with stack:
+            summary = str(agent(_user_message(task, ctx)))
+    else:
+        agent = _build_agent()
+        summary = str(agent(_user_message(task, ctx)))
 
     if _written_files:
         files_block = "\n".join(f"- `{p}`" for p in _written_files)
@@ -609,7 +674,10 @@ def run_task(
         "designDocPath": ctx.get("designDocPath"),
         "prdPath": ctx.get("prdPath"),
     }
-    summary += f"\n\n## QA handoff\n```json\n{json.dumps(handoff, indent=2)}\n```\n"
+    handoff_path = _REPO_ROOT / "agents" / "pipeline" / f"{slugify(app)}.qa-handoff.json"
+    handoff_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+    summary += f"\n\n## QA handoff\nSaved: `{handoff_path.relative_to(_REPO_ROOT).as_posix()}`\n```json\n{json.dumps(handoff, indent=2)}\n```\n"
 
     return summary, list(_written_files)
 

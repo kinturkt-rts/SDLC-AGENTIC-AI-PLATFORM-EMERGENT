@@ -71,7 +71,21 @@
         "GITLAB_API_URL": "https://code.junodev.net/api/v4 (Juno); use https://gitlab.com/api/v4 for GitLab.com"
       },
       "notes": "Native HTTP MCP at /api/v4/mcp requires GitLab Duo Premium; use this stdio server when the endpoint returns 404.",
-      "usedBy": ["developer-agent", "devops-agent", "qa-agent"]
+      "usedBy": ["devops-agent", "qa-agent"]
+    },
+    "github": {
+      "name": "GitHub",
+      "package": "@modelcontextprotocol/server-github",
+      "transport": "stdio",
+      "install": "npx -y @modelcontextprotocol/server-github",
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub PAT with repo scope (or use gh auth login for devops_create_pull_request)",
+        "GITHUB_OWNER": "Default org/user for SDLC publish",
+        "GITHUB_REPO": "Monorepo name for -WithGithub pipeline",
+        "GITHUB_BASE_BRANCH": "PR target branch (default main)"
+      },
+      "notes": "Cursor may use GitHub Copilot HTTP MCP; Strands agents use this stdio server. devops-agent also supports gh CLI for PR creation.",
+      "usedBy": ["devops-agent", "qa-agent"]
     },
     "terraform": {
       "name": "HashiCorp Terraform",

@@ -12,6 +12,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.env import load_repo_env
 from _shared.pipeline_context import diagram_path_for_app
+from _shared.delivery_profile import build_delivery_profile_from_paths
 
 load_repo_env()
 
@@ -278,6 +279,17 @@ Observability, Compliance/Data retention, Operability.)
 | # | Question | Suggested owner |
 |---|----------|-----------------|
 
+## 11. Delivery & Client Surface
+| Concern | Choice | Implementation notes |
+|---------|--------|---------------------|
+| Client UI | Streamlit / API-only (Swagger) / React (Phase 2) | **Must match the input brief** — do not downgrade UI to API-only when the brief requires a UI |
+| API | FastAPI under `target-apps/<slug>/` | REST + OpenAPI |
+| UI location | `ui/streamlit_app.py` when Streamlit | HTTP client to API only — never import `app/` from Streamlit |
+| Auth for UI | Same as API (JWT Bearer or API key per brief) | Streamlit stores token in session state |
+
+When the input brief mentions **Streamlit**, set Client UI to **Streamlit** and add an FR that the Streamlit app
+implements the primary user journeys (login, role-based views, error display).
+
 ## Appendix: Assumptions
 (Bullet list of everything not explicitly in the source brief)
 """
@@ -473,20 +485,42 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
         agent = _build_agent(mcp.list_tools_sync())
         A2AServer(agent, host=host, port=port, skills=skills).serve()
 
-def _write_pipeline_context(*, prd_base: str, prd_path: Path) -> None:
+def _write_pipeline_context(
+    *,
+    prd_base: str,
+    prd_path: Path,
+    input_path: Path | None = None,
+) -> None:
     """Write agents/pipeline/<slug>.context.json so downstream agents auto-discover this product."""
     pipeline_dir = _REPO_ROOT / "agents" / "pipeline"
     pipeline_dir.mkdir(parents=True, exist_ok=True)
     slug = _slugify(prd_base)
+    prd_rel = str(prd_path.relative_to(_REPO_ROOT).as_posix())
+    input_rel = (
+        str(input_path.relative_to(_REPO_ROOT).as_posix()) if input_path else None
+    )
+    delivery_profile = build_delivery_profile_from_paths(
+        _REPO_ROOT,
+        prd_path=prd_rel,
+        input_path=input_rel,
+    )
     ctx = {
         "targetApp": slug,
-        "prdPath": str(prd_path.relative_to(_REPO_ROOT).as_posix()),
+        "prdPath": prd_rel,
         "designDocPath": f"docs/design/{slug}.md",
         "diagramPaths": [diagram_path_for_app(slug)],
+        "deliveryProfile": delivery_profile,
     }
+    if input_rel:
+        ctx["inputPath"] = input_rel
     ctx_path = pipeline_dir / f"{slug}.context.json"
     ctx_path.write_text(json.dumps(ctx, indent=2) + "\n", encoding="utf-8")
     print(f"[product-agent] Pipeline context: {ctx_path.relative_to(_REPO_ROOT)}", file=sys.stderr)
+    if delivery_profile.get("requiresStreamlit"):
+        print(
+            "[product-agent] deliveryProfile: requiresStreamlit=true (architect + developer must deliver ui/)",
+            file=sys.stderr,
+        )
 
 
 def main() -> None:
@@ -561,7 +595,7 @@ def main() -> None:
         prd_path.write_text(prd_markdown, encoding="utf-8", newline="\n")
         print(f"[product-agent] Saved PRD: {prd_path}", file=sys.stderr)
 
-        _write_pipeline_context(prd_base=prd_base, prd_path=prd_path)
+        _write_pipeline_context(prd_base=prd_base, prd_path=prd_path, input_path=input_path)
 
         if args.create_jira_tickets:
             if not args.allow_writes:

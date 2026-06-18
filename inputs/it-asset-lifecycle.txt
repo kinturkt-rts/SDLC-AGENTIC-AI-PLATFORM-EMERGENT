@@ -1,0 +1,78 @@
+IT Asset Lifecycle — hardware/software assets, assignments, license seats, warranty alerts
+
+Client story:
+Kevin (IT Ops) loses track of laptops and Adobe seats after offboarding. Finance wants asset value
+by department without giving finance users assign rights.
+
+MVP:
+- Asset catalog (laptops, monitors, licenses) with warranty and cost.
+- Assign/return with single active assignment per asset.
+- License seat limits with used-seat count.
+- Dashboard: unreturned assets for inactive employees, warranty expiring, over-allocated licenses.
+
+Personas & auth:
+| Role | Auth | Can do |
+|------|------|--------|
+| it_admin | JWT | Full CRUD + assign/return + retire |
+| it_staff | JWT | Assign/return, read all, cannot delete assets |
+| finance_readonly | JWT | Read assets, assignments, reports/valuation only |
+| anonymous | — | /health |
+
+Data model (DDL under target-apps/it-asset-lifecycle/db/sql/):
+- users: id uuid PK, username, password_hash, role, is_active
+- employees: id uuid PK, full_name, email unique, department varchar(64), manager_id FK nullable,
+  is_active bool default true, deactivated_at timestamptz nullable
+- assets: id uuid PK, asset_type enum (laptop|monitor|phone|license|other),
+  manufacturer varchar(80), model varchar(80), serial_number varchar(120) unique nullable,
+  license_key_encrypted text nullable, license_key_last4 varchar(4) nullable,
+  seats_purchased int nullable, purchase_date date, purchase_cost numeric(12,2),
+  warranty_end_date date nullable, status enum (in_stock|assigned|repair|retired),
+  created_at, updated_at
+- assignments: id uuid PK, asset_id FK, employee_id FK, assigned_at timestamptz,
+  returned_at timestamptz nullable, assigned_by FK→users, return_condition_note text nullable,
+  active bool generated or enforced partial unique on (asset_id) where returned_at is null
+- assignment_history: append-only log mirroring assign/return events (audit)
+- Indexes: assets(warranty_end_date, status), assets(asset_type), employees(is_active)
+
+License seat logic:
+- For asset_type=license: seats_in_use = count active assignments for that asset_id.
+- Assign returns 422 if seats_in_use >= seats_purchased.
+- Non-license assets: max one active assignment.
+
+Business rules:
+- Return sets returned_at, asset status → in_stock or repair (body flag).
+- Retire asset only if no active assignment and status != assigned.
+- Deactivate employee (PATCH) does not auto-return — surfaces on GET /alerts/offboarding.
+- finance_readonly: GET only; mask license_key in JSON (only last4).
+- Valuation report: sum(purchase_cost) grouped by department for assigned assets.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | DB ping |
+| POST | /auth/login | none | JWT |
+| POST | /assets | it_admin | license requires seats_purchased |
+| GET | /assets | all auth | filters type, status, warranty_expiring_within_days |
+| PATCH | /assets/{id} | it_admin | |
+| POST | /assets/{id}/assign | it_admin, it_staff | body employee_id; seat check |
+| POST | /assets/{id}/return | it_admin, it_staff | body {condition: in_stock|repair, note?} |
+| POST | /assets/{id}/retire | it_admin | |
+| GET | /employees | it_admin, it_staff | include active_assignment_count |
+| PATCH | /employees/{id}/deactivate | it_admin | sets is_active false |
+| GET | /alerts/offboarding | it_admin, it_staff | inactive employees with active assignments |
+| GET | /alerts/warranty | all auth | ?days=30 |
+| GET | /alerts/license-overages | it_admin | seats_in_use > seats_purchased (should be empty if logic correct) |
+| GET | /reports/valuation-by-department | finance_readonly, it_admin | |
+
+Stack: FastAPI, SQLAlchemy, optional Fernet for license_key_encrypted from env `ASSET_ENCRYPTION_KEY`,
+Streamlit: Asset Catalog, Assign/Return, Alerts, Finance Valuation (role-gated).
+
+Seed: 25 assets (5 licenses with seat limits), 12 employees (2 inactive with assigned assets),
+20 assignment history rows.
+
+Tests: double assign 422, seat limit, finance 403 on assign, offboarding alert, warranty filter,
+retire blocked when assigned, masked license in API response, valuation totals.
+
+Out of scope: Intune/Jamf, barcode, depreciation schedules, procurement POs.
+
+Target app slug: it-asset-lifecycle
+Output directory: target-apps/it-asset-lifecycle/

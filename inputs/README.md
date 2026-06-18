@@ -24,6 +24,53 @@ Use **`inputs/<feature-slug>.txt`** where `<feature-slug>` matches `targetApp` /
 | `team-faq-bot.txt` | Lightweight FAQ chatbot (single text file) |
 | `contacts-api.txt` | Contact Directory Postgres CRUD + API-key auth-no JWT) |
 
+## Hard apps — pipeline stress tests (Tier 9–11)
+
+These briefs are **hybrid**: a short client story at the top, then **full agent spec** (DDL, API tables,
+state machines, RBAC, tests) comparable to `inventory-app.txt` and `meeting-action-tracker.txt`.
+They are intentionally harder than medium E2E apps (#5–#8).
+
+| Tier | File | Feature | Complexity drivers |
+|------|------|---------|-------------------|
+| 9 | `employee-leave-manager.txt` | Leave + approvals + balances | State machine, balance ledger, overlap rules, half-days, manager chain |
+| 9 | `vendor-compliance-tracker.txt` | Vendor compliance | Doc versioning/supersede, renewal workflow, gap detection, file ACLs |
+| 10 | `field-service-dispatch.txt` | Field dispatch | SLA breach, assignment uniqueness, parts lines, role-scoped status updates |
+| 10 | `audit-finding-tracker.txt` | Audit findings | Strict workflow matrix, optimistic locking, append-only history, evidence |
+| 11 | `client-project-portal.txt` | Client portal | **Multi-tenant row isolation**, dual JWT personas, deliverable review flow |
+| 11 | `it-asset-lifecycle.txt` | IT assets | License seat pools, offboarding alerts, encryption/masking, finance read-only |
+
+**Difficulty scale (this repo):**
+| Tier | Examples | Typical scope |
+|------|----------|----------------|
+| 1–2 | `test_dev.txt`, `test_medium_app.txt` | In-memory API, no DB |
+| 3–4 | `contacts-api.txt`, `inventory-app.txt` | Postgres + JWT or API key |
+| 5–8 | `release-notes-bot`, `customer-feedback-hub` | Bedrock + Streamlit + Postgres |
+| **9–11** | Files above | Multi-entity workflows, file upload, tenant isolation, audit logs |
+
+```powershell
+# Hardest first (multi-tenant)
+.\scripts\run-sdlc.ps1 -Feature client-project-portal -InputFile inputs\client-project-portal.txt
+
+# Workflow + evidence
+.\scripts\run-sdlc.ps1 -Feature audit-finding-tracker -InputFile inputs\audit-finding-tracker.txt
+```
+
+**Note:** The first draft of these files was client-email only (~30 lines) — too thin for agents.
+Current versions include explicit API contracts and data models so product/architect/database/developer
+agents have the same signal density as golden tests.
+
+### Delivery profile (UI must not be dropped)
+
+When a brief or PRD mentions **Streamlit**, product-agent writes `deliveryProfile.requiresStreamlit: true`
+into `agents/pipeline/<feature>.context.json`. The pipeline then:
+
+1. **Architect** — design §2 Stack must include Streamlit (verify step fails if omitted)
+2. **Developer** — must ship `ui/streamlit_app.py` (verify step fails if missing)
+3. **Developer prompt** — Pattern C is mandatory when `deliveryProfile` requires it, even if design slipped
+
+Re-sync profile after editing inputs:  
+`python agents/_shared/delivery_profile.py --context-file agents/pipeline/<feature>.context.json --sync --input-file inputs/<feature>.txt`
+
 ## Progressive pipeline tests (agentic flow)
 
 Use these to validate the SDLC chain in increasing complexity. Backend only (no frontend) in MVP.

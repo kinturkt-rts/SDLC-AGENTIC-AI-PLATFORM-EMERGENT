@@ -16,6 +16,14 @@
       ],
       "envFile": "${workspaceFolder}/.env"
     },
+    "GitHub": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "envFile": "${workspaceFolder}/.env"
+    },
     "AWS-Postgres-MCP-Server": {
       "disabled": false,
       "timeout": 90,

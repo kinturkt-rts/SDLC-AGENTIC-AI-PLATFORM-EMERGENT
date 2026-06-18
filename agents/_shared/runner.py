@@ -29,7 +29,7 @@ AGENT_DESCRIPTIONS: dict[str, str] = {
     "orchestrator-agent": "Routes SDLC tasks across specialist agents via BullMQ and A2A.",
     "product-agent": "Converts business requirements into Jira epics and user stories.",
     "architect-agent": "Produces architecture decisions, ADRs, and API contracts.",
-    "developer-agent": "Implements features in target-apps and opens GitLab merge requests.",
+    "developer-agent": "Implements features in target-apps/ (local files; use devops-agent for GitHub publish).",
     "qa-agent": "Authors and runs tests; reports coverage and defects.",
     "devops-agent": "Manages Terraform, CI/CD pipelines, and deployments.",
     "security-agent": "Runs static analysis, dependency audits, and compliance checks.",
