@@ -71,6 +71,16 @@ into `agents/pipeline/<feature>.context.json`. The pipeline then:
 Re-sync profile after editing inputs:  
 `python agents/_shared/delivery_profile.py --context-file agents/pipeline/<feature>.context.json --sync --input-file inputs/<feature>.txt`
 
+### Seed login guardrails (JWT apps)
+
+Pipeline and developer-agent now verify dev seed passwords so **pytest green ≠ RDS 401**:
+
+1. **database-agent** — real `bcrypt` hashes in `*_seed.sql` (single quotes, no dollar-quoting)
+2. **`verify_seed_bcrypt.py`** — after RDS apply: SQL file check; optional `--check-rds` when `target-apps/<app>/.env` exists
+3. **developer-agent** — `tests/test_seed_bcrypt.py` + `dev_validate_app` SEED_BCRYPT step
+4. **Manual after pipeline:** copy `.env.example` → `.env`, then  
+   `python agents/_shared/verify_seed_bcrypt.py --target-app <app> --check-rds`
+
 ## Progressive pipeline tests (agentic flow)
 
 Use these to validate the SDLC chain in increasing complexity. Backend only (no frontend) in MVP.

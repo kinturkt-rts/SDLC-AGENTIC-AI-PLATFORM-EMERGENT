@@ -201,6 +201,19 @@ function Invoke-LocalVerify {
             else {
                 Write-Host "  pytest OK" -ForegroundColor Green
             }
+
+            Write-Host "  seed bcrypt verify (SQL files)" -ForegroundColor DarkGray
+            & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Seed bcrypt verification failed - README login will fail on RDS even if pytest passes."
+            }
+            if (Test-Path (Join-Path $targetDir ".env")) {
+                Write-Host "  seed bcrypt verify (RDS stored hash)" -ForegroundColor DarkGray
+                & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "RDS seed password mismatch - run apply_sql_to_rds.py or fix seed SQL."
+                }
+            }
         }
         finally {
             # Restore previous DATABASE_URL to avoid polluting the shell session
@@ -252,6 +265,7 @@ Auth per design Rules only (API-key and/or JWT+bcrypt  - not both unless design 
 If deliveryProfile.requiresStreamlit is true: Pattern C mandatory - ui/streamlit_app.py + ui/requirements.txt;
 login via API; JWT in st.session_state or API_KEY header per auth mode; role-based tabs per PRD; README Terminal 1+2.
 tests/conftest.py: SQLite with schema ATTACH when models use POSTGRES_SCHEMA.
+When db/sql/*seed*.sql has JWT users: add tests/test_seed_bcrypt.py (from _template/tests/test_seed_bcrypt_reference.py); conftest password must match seed SQL comment.
 README: Windows+bash setup, .env copy, uvicorn, Swagger auth header, seed UUIDs, RDS smoke-test steps (GET /health + one DB list route).
 When multiple roles or /portal vs /internal: README must include Role & endpoint quick reference (example seed username per route).
 Baseline pytest must pass.
@@ -349,6 +363,21 @@ if (-not $SkipDb) {
     # Explicit RDS apply (idempotent)  - ensures schema exists even if agent apply was skipped
     if ($applyPostgres) {
         Invoke-RdsApply
+        Write-Host "`n=== Verify seed bcrypt hashes (SQL files) ===" -ForegroundColor Green
+        python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Seed bcrypt verification failed - placeholder password hashes will break RDS login."
+        }
+        $appEnv = Join-Path $appDir ".env"
+        if (Test-Path $appEnv) {
+            Write-Host "`n=== Verify seed bcrypt on RDS ===" -ForegroundColor Green
+            python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot --check-rds
+            if ($LASTEXITCODE -ne 0) {
+                throw "RDS seed password verification failed - Swagger/Streamlit login will 401."
+            }
+        } else {
+            Write-Host "  (skip RDS hash check - copy .env.example to .env, then re-run verify with --check-rds)" -ForegroundColor DarkGray
+        }
     }
 }
 

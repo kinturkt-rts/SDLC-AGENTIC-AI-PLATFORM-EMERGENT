@@ -1,0 +1,38 @@
+---
+description: Git commit message and command conventions — no AI attribution trailers
+alwaysApply: true
+---
+
+# Git Commits
+
+## Commit messages
+
+- Use **short, simple** one-line messages when possible. Example: `fix seed bcrypt hashes`, `add audit-finding-tracker sql scripts`.
+- Use conventional prefixes when natural: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`.
+- Do **not** add multi-paragraph commit bodies unless the user explicitly asks.
+
+## Forbidden trailers and attribution
+
+Never add any of these to commits or PRs:
+
+- `Co-authored-by: ...` (including Cursor, Copilot, or any AI/tool)
+- `Made-with: Cursor` or similar tool attribution
+- Any other AI-assistant or bot co-author trailers
+
+## Standard commit commands only
+
+Generate plain `git` commands — no hooks, wrappers, or extras unless the user asks:
+
+```bash
+git add <paths>
+git commit -m "short message here"
+```
+
+```powershell
+git add <paths>
+git commit -m "short message here"
+```
+
+Do **not** append trailers via `-m` body blocks, `git commit --amend` message edits, or HEREDOC bodies that include `Co-authored-by`.
+
+Only create commits when the user explicitly requests it. Never push unless explicitly asked.

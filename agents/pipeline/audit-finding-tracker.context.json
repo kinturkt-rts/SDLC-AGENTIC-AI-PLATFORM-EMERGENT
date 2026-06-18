@@ -1,0 +1,18 @@
+﻿{
+    "productAgentOutput":  "See prdPath for audit-finding-tracker MVP requirements.",
+    "targetApp":  "audit-finding-tracker",
+    "prdPath":  "docs/PRD/audit-finding-tracker.md",
+    "designDocPath":  "docs/design/audit-finding-tracker.md",
+    "inputPath":  "inputs/audit-finding-tracker.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  false,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/audit-finding-tracker.png"
+                     ]
+}

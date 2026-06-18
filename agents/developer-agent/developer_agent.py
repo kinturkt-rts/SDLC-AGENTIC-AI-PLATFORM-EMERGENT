@@ -164,6 +164,10 @@ Missing any route = the agent must catch it here, not during re-run.
 3d. Write **baseline smoke tests** (one happy-path per route; 404/422 where design specifies).
     conftest.py MUST set DATABASE_URL env var BEFORE importing from app — see test section.
     Mock get_bedrock_client at import site, not definition site.
+    **JWT + db/sql/*seed*.sql:** add `tests/test_seed_bcrypt.py` (copy from
+    `target-apps/_template/tests/test_seed_bcrypt_reference.py`). conftest `hash_password(...)`
+    MUST use the **same plaintext** documented in the seed SQL comment — never a different password.
+    Passing pytest without test_seed_bcrypt.py is a false green for RDS login.
 
 **Step 4 — configuration and README**
 4a. .env.example only when the service reads env vars. Placeholder values, no real secrets.
@@ -233,10 +237,16 @@ Missing any route = the agent must catch it here, not during re-run.
   - Terminal 1/2 blocks start from repo root; no bare `cd ui` without `cd target-apps/<app>` first
   - Documents `cp .env.example .env` (Windows: `copy`)
 
+  Seed auth parity (JWT apps with db/sql/*seed*.sql):
+  - `tests/test_seed_bcrypt.py` present and passes
+  - README password matches seed SQL comment exactly
+  - conftest seed password string matches seed SQL comment (not a different dev password)
+
 **Step 5b — VALIDATE (mandatory — do NOT skip)**
 After all files are written and the checklist above is done:
   1. Call `dev_validate_app(service=targetApp)` — checks `.env.example` format, **startup config**
-     (same checks uvicorn runs), import, health + API route smoke. If any step fails, fix and retry.
+     (same checks uvicorn runs), import, health + API route smoke, **seed bcrypt in sql/** when JWT seeds exist.
+     If any step fails, fix and retry.
   2. If a `.venv/` exists in the target-app with packages installed, also call
      `dev_validate_app(service=targetApp, run_pytest=True)` to run tests. Fix any failures.
   3. If no `.venv/` exists (common for first-time generation), import + env-example + health smoke
@@ -1051,9 +1061,10 @@ def dev_validate_app(service: str, run_pytest: bool = False) -> str:
       1. .env.example format (DATABASE_URL= prefix, KEY=value lines)
       2. startup_checks.validate_runtime_config with APP_ENV=development + .env.example values
          (catches Postgres schema vs SQLite mismatch before user copies .env wrong)
-      3. `python -c "from app.main import app"` succeeds (catches import errors)
-      4. TestClient smoke: GET /health + optional authenticated list route
-      5. If run_pytest=True: `python -m pytest tests/ -x -q --tb=short`
+      3. Seed SQL bcrypt parity when db/sql/*seed*.sql documents a dev password (placeholder hashes fail here)
+      4. `python -c "from app.main import app"` succeeds (catches import errors)
+      5. TestClient smoke: GET /health + optional authenticated list route
+      6. If run_pytest=True: `python -m pytest tests/ -x -q --tb=short`
 
     Note: does NOT start uvicorn or Streamlit. User must run API (Terminal 1) before UI (Terminal 2).
     Returns stdout+stderr so the LLM can read errors and fix files.
@@ -1099,6 +1110,41 @@ def dev_validate_app(service: str, run_pytest: bool = False) -> str:
     output_parts.extend(env_results)
     if env_results[0].startswith("ENV_EXAMPLE FAILED"):
         return "\n".join(output_parts)
+
+    # --- Step 1a: seed SQL bcrypt (file-level — catches placeholder hashes before RDS login 401) ---
+    seed_sql = list((service_dir / "db" / "sql").glob("*seed*.sql")) if (service_dir / "db" / "sql").is_dir() else []
+    if seed_sql:
+        verify_script = _REPO_ROOT / "agents" / "_shared" / "verify_seed_bcrypt.py"
+        if verify_script.is_file():
+            try:
+                result = subprocess.run(
+                    [
+                        python_cmd,
+                        str(verify_script),
+                        "--target-app",
+                        service,
+                        "--repo-root",
+                        str(_REPO_ROOT),
+                    ],
+                    cwd=str(service_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    output_parts.append(
+                        "SEED_BCRYPT FAILED (RDS login will 401; pytest may still pass via conftest):\n"
+                        f"{result.stdout}{result.stderr}"
+                    )
+                    output_parts.append(
+                        "Fix db/sql/*seed*.sql: generate hash with bcrypt.hashpw(..., bcrypt.gensalt(12)); "
+                        "add tests/test_seed_bcrypt.py from _template/tests/test_seed_bcrypt_reference.py"
+                    )
+                    return "\n".join(output_parts)
+                output_parts.append("SEED_BCRYPT OK")
+            except subprocess.TimeoutExpired:
+                output_parts.append("SEED_BCRYPT TIMEOUT")
+                return "\n".join(output_parts)
 
     # --- Step 1b: startup config (mirrors real uvicorn lifespan with .env.example) ---
     if (service_dir / "app" / "startup_checks.py").is_file():

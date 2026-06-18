@@ -100,6 +100,12 @@ Under `dbOutputDir` (default `target-apps/<service>/db/`):
   Use `seedMinRows`–`seedMaxRows` from Context: **every RDS table in §3 must get that many INSERT rows**
   (realistic names/emails/dates; stable UUIDs only where tests need them; respect FK order; `ON CONFLICT DO NOTHING`).
   Do not leave any §3 table empty in seed unless design §6.2 explicitly excludes it.
+- **JWT seed users:** every `password_hash` in `*_seed.sql` MUST be a real bcrypt digest (cost 12)
+  generated with the `bcrypt` library for the documented dev password in the SQL comment
+  (e.g. `-- Password for all seed users: "AuditPass123!"`). **Never invent placeholder hashes**
+  — the host runs `agents/_shared/verify_seed_bcrypt.py` after RDS apply; bad hashes block the pipeline.
+  Put one `-- Hash: $2b$12$...` comment line matching the INSERT values. Plaintext passwords only in comments/README, not in INSERT literals.
+  **SQL quoting:** use single-quoted bcrypt literals (`'$2b$12$...'`). Never dollar-quote bcrypt (`$tag$2b$12$...$tag$`) — PostgreSQL drops the leading `$` and login breaks.
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 
 ## RDS apply (host — not your job when `applyToRdsAfterWrite` is true)
