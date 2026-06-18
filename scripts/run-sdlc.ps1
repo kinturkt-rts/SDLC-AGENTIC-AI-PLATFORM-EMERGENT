@@ -142,7 +142,7 @@ function Invoke-DeliveryVerify {
     Write-Host "`n=== Delivery profile verify ($Stage) ===" -ForegroundColor Green
     python agents/_shared/delivery_profile.py --context-file $ContextFile --repo-root $RepoRoot --check $Stage
     if ($LASTEXITCODE -ne 0) {
-        throw "deliveryProfile check failed ($Stage). UI required by brief/PRD was dropped — fix design or developer output."
+        throw "deliveryProfile check failed ($Stage). UI required by brief/PRD was dropped - fix design or developer output."
     }
 }
 
@@ -249,10 +249,11 @@ Postgres parity (mandatory): psycopg[binary] + postgresql+psycopg:// in .env.exa
 ENUM columns use sqlalchemy.Enum(create_type=False, native_enum=True) with sqlite String variant;
 uuid columns use PG_UUID(as_uuid=False).with_variant(String(36), sqlite); Pydantic response schemas coerce UUID to str.
 Auth per design Rules only (API-key and/or JWT+bcrypt  - not both unless design requires).
-If deliveryProfile.requiresStreamlit is true: Pattern C mandatory — ui/streamlit_app.py + ui/requirements.txt;
+If deliveryProfile.requiresStreamlit is true: Pattern C mandatory - ui/streamlit_app.py + ui/requirements.txt;
 login via API; JWT in st.session_state or API_KEY header per auth mode; role-based tabs per PRD; README Terminal 1+2.
 tests/conftest.py: SQLite with schema ATTACH when models use POSTGRES_SCHEMA.
 README: Windows+bash setup, .env copy, uvicorn, Swagger auth header, seed UUIDs, RDS smoke-test steps (GET /health + one DB list route).
+When multiple roles or /portal vs /internal: README must include Role & endpoint quick reference (example seed username per route).
 Baseline pytest must pass.
 "@.Trim()
 
@@ -362,7 +363,7 @@ if (-not $SkipDeveloper) {
     if ($LASTEXITCODE -ne 0) { throw "developer-agent failed" }
 }
 
-# 5) Local verify (before publish — do not push broken code)
+# 5) Local verify (before publish - do not push broken code)
 if (-not $SkipVerify -and -not $SkipDeveloper) {
     Invoke-LocalVerify -TargetFeature $Feature
 }

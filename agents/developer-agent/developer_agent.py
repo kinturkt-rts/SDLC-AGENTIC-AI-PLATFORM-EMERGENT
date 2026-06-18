@@ -187,8 +187,16 @@ Missing any route = the agent must catch it here, not during re-run.
   passwords (# → %23). Document that pytest uses SQLite — passing tests ≠ RDS proof.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
     JWT Bearer per Rules); include curl AND one PowerShell `Invoke-RestMethod` example.
-    **RDS smoke test** — after `.env` is filled: GET /health, then one DB-backed list/read route.
-    Seed UUIDs from `db/sql/*_seed.sql` when present (paste-ready examples).
+    **Role & endpoint quick reference (required when Rules define multiple roles or /portal vs /internal paths):**
+    README MUST include a table: endpoint (or journey) | required role(s) | example seed username |
+    expected result (200) | common wrong user (401/403). Derive usernames from `db/sql/*seed*.sql`
+    — do not invent names. Example rows: `GET /portal/dashboard` → client_user → `client_acme`;
+    `GET /internal/projects` → pm/admin → `pm1` or `admin1`. Include password once in Seed Users
+    section and reference it from the table. Document JWT flow: login first, paste token in Authorize
+    (not API_KEY unless Rules say API-key auth).
+    **RDS smoke test** — after `.env` is filled: GET /health, then one DB-backed list/read route
+    **per role surface** when portal/internal split exists (e.g. portal dashboard as client_user,
+    internal list as pm/admin). Seed UUIDs from `db/sql/*_seed.sql` when present (paste-ready examples).
     **Deployment (AWS dev — devops-agent)** — port=8000, health=/health, uvicorn --host 0.0.0.0,
     env names from .env.example, secrets from AWS Secrets Manager — not generated here.
 
@@ -221,6 +229,7 @@ Missing any route = the agent must catch it here, not during re-run.
 
   README:
   - Endpoint table, curl examples, Swagger auth notes, RDS smoke-test steps
+  - When multi-role or portal/internal routes: **Role & endpoint quick reference** table with seed usernames
   - Terminal 1/2 blocks start from repo root; no bare `cd ui` without `cd target-apps/<app>` first
   - Documents `cp .env.example .env` (Windows: `copy`)
 

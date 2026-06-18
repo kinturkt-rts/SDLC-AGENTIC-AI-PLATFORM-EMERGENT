@@ -1,0 +1,124 @@
+---
+description: Deploy Strands agents to Amazon Bedrock AgentCore Runtime per AWS docs
+globs: agents/**/*,deploy/agentcore/**/*
+alwaysApply: false
+---
+
+# Bedrock AgentCore Runtime Deployment
+
+Official reference: [Host agent or tools with AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html).
+
+This platform deploys **Strands** agents from `agents/<name>/*_agent.py` via `deploy/agentcore/` — one shared entrypoint, Dockerfile, and requirements file per [deploy/agentcore/README.md](deploy/agentcore/README.md).
+
+## When to use AgentCore vs local
+
+| Mode | Use when |
+|------|----------|
+| Local (`python agents/*_agent.py`, `--serve-a2a` on port 910x) | Development, debugging, pipeline runs |
+| AgentCore Runtime | Managed hosting, session isolation, production invoke |
+
+**Never** provision AWS runtimes, IAM roles, ECR repos, or deploy without **explicit user approval** (see `security-guardrails.mdc`).
+
+## Service contract (required)
+
+AgentCore expects a protocol-specific server. Match port and mount path exactly ([service contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-service-contract.html)):
+
+| Protocol | Port | Mount | This repo |
+|----------|------|-------|-----------|
+| HTTP | 8080 | `/invocations`, `/ws` | Not used |
+| **A2A** | **9000** | `/` (root) | **Default** — `agents/_shared/agentcore_serve.py` |
+| MCP | 8000 | `/mcp` | Optional for tool servers |
+| AG-UI | 8080 | `/invocations`, `/ws` | Not used |
+
+A2A requirements for this monorepo:
+
+- Bind `0.0.0.0:9000` (`AGENTCORE_A2A_HOST`, `AGENTCORE_A2A_PORT`)
+- FastAPI + Strands `A2AServer` with `serve_at_root=True`
+- Health check at `/ping`
+- Set `AGENTCORE_RUNTIME_URL` after deploy for agent-card URLs
+- Container image: `linux/arm64`
+
+## Strands + AgentCore patterns
+
+**HTTP entrypoint** (AWS sample — use for simple single-file agents):
+
+```python
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
+app = BedrockAgentCoreApp()
+
+@app.entrypoint
+def agent_invocation(payload, context):
+    result = agent(payload.get("prompt", ""))
+    return {"result": result.message}
+
+app.run()
+```
+
+**This repo (A2A, multi-agent monorepo):** keep logic in `*_agent.py`; wire via `deploy/agentcore/agentcore_runtime/bundles.py`. Run with `AGENTCORE_AGENT=<name> python deploy/agentcore/a2a_server.py`. Do **not** duplicate prompts, tools, or MCP wiring in deploy code.
+
+Use `--deployment-type container` (not `direct_code_deploy`) because agents import `agents/` and spawn MCP subprocesses (`uv`, `npx`).
+
+## Deploy workflow (user-approved only)
+
+1. Install toolkit: `pip install bedrock-agentcore-starter-toolkit`
+2. Local smoke test from repo root:
+   ```powershell
+   pip install -r deploy/agentcore/requirements.txt
+   $env:AGENTCORE_AGENT = "architect-agent"
+   python deploy/agentcore/a2a_server.py
+   curl http://localhost:9000/ping
+   ```
+3. Configure once per agent ([getting started](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-getting-started.html)):
+   ```powershell
+   agentcore configure `
+     --entrypoint deploy/agentcore/a2a_server.py `
+     --requirements-file deploy/agentcore/requirements.txt `
+     --protocol A2A `
+     --deployment-type container `
+     --name architect-agent `
+     --region us-east-2 `
+     --disable-memory `
+     --non-interactive
+   ```
+4. Deploy (CodeBuild builds ARM64 — no local Docker by default):
+   ```powershell
+   agentcore deploy --agent architect-agent `
+     --env AGENTCORE_AGENT=architect-agent `
+     --env AWS_REGION=us-east-2 `
+     --env MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
+   ```
+5. Pass MCP secrets via `--env` at deploy time — never commit or hardcode ([runtime permissions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)).
+
+One **runtime per agent** in AWS; reuse the same entrypoint and Dockerfile with different `AGENTCORE_AGENT`.
+
+## IAM and security
+
+- **Deployer**: AgentCore CLI policies are dev-only; use least-privilege custom policies in production ([security best practices](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-security-best-practices.html)).
+- **Execution role**: `bedrock:InvokeModel`, CloudWatch Logs, X-Ray; scope to specific runtime ARNs — not `*`.
+- **Trust policy**: `bedrock-agentcore.amazonaws.com` with `aws:SourceAccount` + `aws:SourceArn` conditions.
+- **Production auth**: Prefer JWT (`GetWorkloadAccessTokenForJWT`); deny `GetWorkloadAccessTokenForUserId` / `InvokeAgentRuntimeForUser` when JWT is available.
+- **Invoke**: callers need `bedrock-agentcore:InvokeAgentRuntime`; use UUID session IDs ([invoke agent](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-invoke-agent.html)).
+- **Outbound auth**: use AgentCore Identity for third-party OAuth/API keys — not env vars in code.
+- **Sessions**: each session runs in an isolated microVM; filesystem is ephemeral unless configured — do not rely on local disk for artifacts.
+
+## Adding a new agent
+
+1. Implement `agents/<name>/*_agent.py` with local `serve_a2a()`.
+2. Register factory in `deploy/agentcore/agentcore_runtime/bundles.py` → `BUNDLE_FACTORIES`.
+3. Add A2A port in `a2a/agent-registry.json`.
+4. Deploy with `AGENTCORE_AGENT=<name>` — no new entrypoint or Dockerfile.
+
+## Common mistakes
+
+```python
+# BAD — wrong port/protocol for A2A
+uvicorn.run(app, host="127.0.0.1", port=9102)
+
+# GOOD — AgentCore A2A contract
+run_agentcore_a2a(agent, skills)  # 0.0.0.0:9000, /ping, serve_at_root=True
+```
+
+- Do not run `agentcore deploy` or create IAM/ECR without user approval.
+- Do not modify `.env`; pass secrets at deploy via `--env`.
+- Do not use CLI-generated IAM policies in production.
+- For VPC-private RDS (Postgres MCP), add `--vpc` on `agentcore configure`.
