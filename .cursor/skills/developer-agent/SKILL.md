@@ -83,6 +83,18 @@ State the chosen pattern and cite the design heading before writing any file.
 | `architectSummary` | architect-agent | Short orientation |
 | `jiraKey` | orchestrator | Traceability in docstrings/README |
 
+## Golden template scaffolding
+
+Step 2c: call `dev_scaffold(service=targetApp, pattern=B|B+|B++|C)` **once** before domain code.
+Manifest: `target-apps/_template/scaffold-manifest.json`.
+
+| After scaffold | LLM still writes via dev_write_file |
+|---|---|
+| database.py, startup_checks.py, health.py, bedrock_client.py, .gitignore | config.py, main.py, dependencies.py, conftest.py, .env.example |
+| ui/streamlit_app.py (Pattern C) | Domain models, routers, schemas, tests, README |
+
+Do **not** dev_read_file + dev_write_file for files the scaffold already copied (~10 fewer tool rounds).
+
 ## Artifacts generated (Pattern B example)
 
 ```

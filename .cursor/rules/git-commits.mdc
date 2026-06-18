@@ -1,0 +1,11 @@
+---
+description: Git commit message conventions for this repository
+alwaysApply: true
+---
+
+# Git commits
+
+- Use **short, simple** commit messages (one line when possible). Example: `remove Backend folder`, `add contacts-api sql scripts`.
+- Do **not** add multi-paragraph commit bodies unless the user explicitly asks.
+- Never add `Co-authored-by`, `Made-with: Cursor`, or any Cursor/AI attribution to commits or PRs.
+- Use conventional commit prefixes when natural: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`.

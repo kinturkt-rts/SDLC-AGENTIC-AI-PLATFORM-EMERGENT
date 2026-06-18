@@ -1,0 +1,90 @@
+Meeting Action Tracker — internal tool for capturing meetings and follow-ups
+
+Problem:
+- Teams hold many syncs per week but action items live in scattered notes or Slack threads.
+- Managers cannot see what is open, overdue, or blocked across meetings without chasing people.
+- There is no lightweight place to log a meeting recap and tie action items to owners and due dates.
+
+MVP:
+- Log a meeting with title, date, attendees (free-text list), and optional notes.
+- Add action items linked to a meeting: description, assignee name, due date, status (open | done | blocked).
+- Browse and filter action items by assignee, status, and due date range.
+- Streamlit UI for logging meetings, viewing an action board, and marking items done.
+- FastAPI backend on port 8000; Streamlit on port 8501 calling the API over HTTP.
+
+Personas & auth:
+| Caller | Auth | Can do |
+|--------|------|--------|
+| Streamlit user | X-API-Key (shared secret) | All API routes |
+| automation script | same API key | POST/GET/PATCH routes |
+
+Auth: shared API key only (API_KEY in .env). No JWT, no user accounts table in v1.
+
+Data model (DDL under target-apps/meeting-action-tracker/db/sql/):
+- meetings:
+  - id uuid PK
+  - title varchar(120) NOT NULL
+  - meeting_date date NOT NULL
+  - attendees text NOT NULL (comma-separated or one per line)
+  - notes text nullable
+  - created_at timestamptz NOT NULL DEFAULT now()
+- Index on (meeting_date DESC)
+
+- action_items:
+  - id uuid PK
+  - meeting_id uuid FK → meetings ON DELETE CASCADE
+  - description text NOT NULL
+  - assignee varchar(64) NOT NULL (free-text, e.g. alice)
+  - due_date date nullable
+  - status varchar(16) NOT NULL DEFAULT 'open' (open | done | blocked)
+  - created_at timestamptz NOT NULL DEFAULT now()
+  - updated_at timestamptz NOT NULL DEFAULT now()
+- Index on (assignee, status, due_date)
+
+Seed: 2 meetings in the current month, 6–8 action items across 3 assignees (mix of open, done, blocked, one overdue). Stable UUIDs, ON CONFLICT DO NOTHING.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | Real DB ping; 200 with checks or 503 |
+| POST | /meetings | API key | body: title, meeting_date, attendees, notes?; 201 + meeting JSON |
+| GET | /meetings | API key | list; ?date_from= ?date_to= ?limit=50 ?offset=0; {items, total, limit, offset} |
+| GET | /meetings/{id} | API key | 200 with nested action_items or 404 |
+| DELETE | /meetings/{id} | API key | 204 cascades action items or 404 |
+| POST | /actions | API key | body: meeting_id, description, assignee, due_date?, status?; 201 |
+| GET | /actions | API key | list; ?assignee= ?status= ?due_before= ?due_after= ?limit=50 ?offset=0; paginated |
+| GET | /actions/{id} | API key | 200 or 404 |
+| PATCH | /actions/{id} | API key | update description, assignee, due_date, status; bump updated_at |
+| DELETE | /actions/{id} | API key | 204 or 404 |
+
+Stack:
+- Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x sync + psycopg[binary], uvicorn.
+- PostgreSQL on RDS; schema name meeting_action_tracker.
+- Streamlit under ui/streamlit_app.py + ui/requirements.txt (streamlit, httpx, python-dotenv).
+- Fail-fast startup if DATABASE_URL missing or invalid.
+- .env.example: every line KEY=value; DATABASE_URL=postgresql+psycopg://...?sslmode=require.
+
+Streamlit UI (required):
+- Tab Log Meeting: form for title, date, attendees, notes; after save, optional quick-add of 1–3 action items.
+- Tab Action Board: filter by assignee and status; cards with due date; buttons to mark done or blocked.
+- Tab Overdue: list open items where due_date < today.
+- Show clear errors on 401/422/500 (status + detail).
+
+Tests:
+- pytest + TestClient; SQLite in-memory in conftest; mock not required (no Bedrock).
+- Cover: health, create meeting, create action, list filters, patch status, 401 without key, delete meeting cascades.
+
+Constraints:
+- No calendar sync, no Slack, no email reminders in v1.
+- No SSO; internal demo only.
+- Do not modify cloud infrastructure.
+
+Out of scope (Phase 2):
+- Jira ticket creation, Outlook/Google Calendar import, email nudges, React frontend.
+
+Success criteria:
+- Pipeline produces target-apps/meeting-action-tracker/ with passing pytest.
+- User runs uvicorn + streamlit after copying .env.example → .env and applying db/sql to RDS.
+- README documents repo-root paths, Terminal 1 (API) + Terminal 2 (UI), Swagger auth, RDS smoke test.
+
+Target app slug: meeting-action-tracker
+Output directory: target-apps/meeting-action-tracker/
