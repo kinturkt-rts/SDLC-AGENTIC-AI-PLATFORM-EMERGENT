@@ -1,5 +1,4 @@
-# Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> verify
-# QA step disabled by default for now — use -WithQa to re-enable qa-agent.
+# Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> qa -> verify
 #
 # DEFAULT (Postgres app, full chain):
 #   .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
@@ -49,11 +48,11 @@ $ctxPath = Join-Path $RepoRoot ($ContextFile -replace "/", "\")
 $ctxDir = Split-Path $ctxPath -Parent
 if (-not (Test-Path $ctxDir)) { New-Item -ItemType Directory -Path $ctxDir -Force | Out-Null }
 
-# Full chain defaults: RDS apply when DB runs; QA off until re-enabled (use -WithQa)
+# Full chain defaults: RDS apply when DB runs; QA when developer runs
 $applyPostgres = (-not $SkipDb) -and (-not $SkipPostgres)
-$runQa = $false
-if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
+$runQa = (-not $SkipDeveloper) -and (-not $SkipQa)
 if ($WithPostgres) { $applyPostgres = $true }
+if ($WithQa) { $runQa = $true }
 
 if ($WithJira -and $SkipProduct) {
     throw "-WithJira requires the product step (do not use -SkipProduct). Re-run product-agent manually with --create-jira-tickets if PRD already exists."
@@ -300,14 +299,14 @@ if (-not $SkipDeveloper) {
     if ($LASTEXITCODE -ne 0) { throw "developer-agent failed" }
 }
 
-# 5) QA -> pytest + edge-case tests (disabled by default — pass -WithQa to run)
-# if ($runQa) {
-#     Write-Host "`n=== 5/6 qa-agent (pytest + coverage gaps) ===" -ForegroundColor Green
-#     python agents/qa-agent/qa_agent.py `
-#         --target-app $Feature `
-#         --context-file $ContextFile
-#     if ($LASTEXITCODE -ne 0) { Write-Warning "qa-agent reported issues  - review before shipping." }
-# }
+# 5) QA -> pytest + edge-case tests
+if ($runQa) {
+    Write-Host "`n=== 5/6 qa-agent (pytest + coverage gaps) ===" -ForegroundColor Green
+    python agents/qa-agent/qa_agent.py `
+        --target-app $Feature `
+        --context-file $ContextFile
+    if ($LASTEXITCODE -ne 0) { Write-Warning "qa-agent reported issues  - review before shipping." }
+}
 
 # 6) Local verify
 if (-not $SkipVerify -and -not $SkipDeveloper) {

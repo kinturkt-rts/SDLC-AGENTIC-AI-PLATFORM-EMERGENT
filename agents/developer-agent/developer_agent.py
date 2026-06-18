@@ -24,11 +24,8 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TARGET_APPS = _REPO_ROOT / "target-apps"
 _TEMPLATE_DIR = _TARGET_APPS / "_template"
-_DEV_AGENT_DIR = Path(__file__).resolve().parent
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
-sys.path.insert(0, str(_DEV_AGENT_DIR))
-from scaffold import format_scaffold_report, scaffold_service
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.pipeline_context import (
@@ -105,19 +102,25 @@ Missing any route = the agent must catch it here, not during re-run.
        - Any above + "streamlit"   → Pattern C   (backend/ + ui/streamlit_app.py)
     State your chosen pattern and cite the design heading before writing any file.
 
-2c. **Scaffold golden template (Pattern B / B+ / B++ / C) — ONE tool call, not manual copies:**
-    Call `dev_scaffold(service=targetApp, pattern=<chosen>)` once after Step 0 manifest.
-    This copies all infrastructure files from `target-apps/_template/` per scaffold-manifest.json.
-    Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
-    startup_checks.py, health.py, bedrock_client.py, etc.).
+2c. **COPY golden template files VERBATIM** (Pattern B / B+ / B++ / C):
+    For every file below, call `dev_read_file` then `dev_write_file` with the EXACT same content,
+    changing ONLY the placeholders marked in comments. Do NOT rewrite, simplify, or "improve" them.
 
-    Then `dev_write_file` ONLY the files listed under "Customize next" in the scaffold report:
-    - `app/config.py` — service_name + env Fields (keep Field(alias=...) pattern)
-    - `app/main.py` — add domain router imports + include_router calls
-    - `app/dependencies.py` — auth per Rules (API-key or JWT)
-    - `tests/conftest.py` — replace SCHEMA_NAME, match auth mode, add seed fixtures
-    - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix
-    - `ui/streamlit_app.py` (Pattern C) — tabs/forms only; keep HTTP helpers
+    | Template file | Write to | What to change |
+    |---------------|----------|----------------|
+    | `target-apps/_template/app/config.py` | `app/config.py` | Change `service_name` default. Add/remove Field lines for app-specific env vars (e.g. add bedrock fields for B+, remove RAG fields for B). Keep ALL Field(alias=...) patterns. |
+    | `target-apps/_template/app/database.py` | `app/database.py` | **NOTHING** — copy verbatim. Works for Postgres and SQLite. |
+    | `target-apps/_template/app/startup_checks.py` | `app/startup_checks.py` | **NOTHING** — copy verbatim. |
+    | `target-apps/_template/app/main.py` | `app/main.py` | Change router imports + `include_router` calls for your domain routers. Keep lifespan, exception handler, CORS unchanged. |
+    | `target-apps/_template/app/routers/health.py` | `app/routers/health.py` | **NOTHING** — copy verbatim. |
+    | `target-apps/_template/app/models/pg_types.py` | `app/models/pg_types.py` | **NOTHING** — copy when HANDOFF has ENUM or uuid columns. |
+    | `target-apps/_template/tests/conftest_reference.py` | `tests/conftest.py` | Replace SCHEMA_NAME with actual POSTGRES_SCHEMA. Keep auth variant matching the app (API-key or JWT). Add app-specific seed fixtures. |
+    | `target-apps/_template/.gitignore` | `.gitignore` | **NOTHING** — copy verbatim. |
+    | `target-apps/_template/.env.example` | `.env.example` | Uncomment/add env vars matching config.py Fields. Remove sections for unused features (e.g. RAG for non-RAG apps). Keep KEY=value format, comments, and DATABASE_URL= prefix. |
+
+    Pattern C (Streamlit) — also copy these:
+    | `target-apps/_template/ui/streamlit_app.py` | `ui/streamlit_app.py` | Replace SERVICE_NAME, add app-specific tabs/forms. Keep HTTP helpers and `_ensure_api_reachable()` unchanged. |
+    | `target-apps/_template/ui/requirements.txt` | `ui/requirements.txt` | Add app-specific packages if needed. |
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
@@ -185,13 +188,15 @@ Missing any route = the agent must catch it here, not during re-run.
     env names from .env.example, secrets from AWS Secrets Manager — not generated here.
 
 **Step 5 — pre-handoff self-verification (run dev_list_tree, then check ALL)**
-  Golden template files present (from dev_scaffold + customize):
-  - `dev_scaffold` was called for the chosen pattern
-  - `app/config.py` — Field(alias=...) pattern, service_name updated, no sqlite default
-  - `app/database.py`, `app/startup_checks.py`, `app/routers/health.py` — from scaffold (unchanged)
-  - `app/main.py` — lifespan + validate_runtime_config + domain routers
-  - `tests/conftest.py` — SCHEMA_NAME replaced, auth variant correct
-  - `.gitignore`, `.env.example` — present with DATABASE_URL= prefix
+  Golden template files present (COPIED, not regenerated):
+  - `app/config.py` — has Field(alias=...) pattern, service_name updated, no sqlite default
+  - `app/database.py` — verbatim from _template
+  - `app/startup_checks.py` — verbatim from _template
+  - `app/main.py` — lifespan with validate_runtime_config, exception handler, domain routers added
+  - `app/routers/health.py` — verbatim from _template (pings DB)
+  - `tests/conftest.py` — from conftest_reference.py (SCHEMA_NAME replaced, auth variant correct)
+  - `.gitignore` — present
+  - `.env.example` — DATABASE_URL= prefix, KEY=value format, all config.py env vars included
 
   Route completeness:
   - Route manifest fully covered — every METHOD /path from API surface has a handler
@@ -327,18 +332,14 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
 
-## Golden template scaffolding (mandatory for Pattern B / B+ / B++ / C)
+## Startup reliability (mandatory for Pattern B / B+ / B++ / C)
 
-Call `dev_scaffold(service, pattern)` once — copies infrastructure from `target-apps/_template/`
-via `scaffold-manifest.json`. Do NOT manually rewrite scaffolded files.
-
-| Tool | When |
-|------|------|
-| `dev_scaffold` | Step 2c — one call copies database.py, startup_checks.py, health.py, etc. |
-| `dev_write_file` | Customize config/main/conftest/.env.example + domain models/routers/schemas |
-
-Infra files (`database.py`, `startup_checks.py`, `health.py`) must match `_template/` unless
-the golden template itself was updated in the repo.
+These files are COPIED VERBATIM from golden templates in Step 2c — do NOT regenerate them:
+- `app/startup_checks.py` ← copied from `_template/app/startup_checks.py`
+- `app/routers/health.py` ← copied from `_template/app/routers/health.py`
+- `app/main.py` ← copied from `_template/app/main.py` (only change: add your domain routers)
+- `app/config.py` ← copied from `_template/app/config.py` (only change: add/remove env var Fields)
+- `app/database.py` ← copied from `_template/app/database.py` (no changes)
 
 | Concern | Rule |
 |---------|------|
@@ -397,7 +398,7 @@ Use when design mentions Bedrock, Claude, chat, triage, RAG, or /chat routes.
 ## Project layout patterns
 
 Authority: Design file layout > design constraints > golden templates.
-Infrastructure marked [SCAFFOLD] is copied by `dev_scaffold` — NEVER regenerate with dev_write_file.
+Files marked [COPY] below are copied verbatim from `_template/` in Step 2c — NEVER regenerate.
 
 **Pattern A — in-memory / no DB:**
 ```
@@ -408,17 +409,17 @@ tests/test_api.py, requirements.txt, README.md
 **Pattern B — Postgres CRUD:**
 ```
 app/__init__.py
-app/main.py          [SCAFFOLD seed — add domain router imports]
-app/config.py        [SCAFFOLD seed — add/remove env var Fields]
-app/database.py      [SCAFFOLD — do not edit]
-app/startup_checks.py [SCAFFOLD — do not edit]
-app/dependencies.py  [SCAFFOLD seed — auth per Rules]
-app/models/__init__.py, app/models/pg_types.py [SCAFFOLD], app/models/<entity>.py [GENERATE]
-app/routers/__init__.py, app/routers/health.py [SCAFFOLD], app/routers/<domain>.py [GENERATE]
+app/main.py          [COPY — add domain router imports]
+app/config.py        [COPY — add/remove env var Fields]
+app/database.py      [COPY — verbatim]
+app/startup_checks.py [COPY — verbatim]
+app/dependencies.py  [GENERATE — auth logic per design Rules]
+app/models/__init__.py, app/models/pg_types.py [COPY], app/models/<entity>.py [GENERATE]
+app/routers/__init__.py, app/routers/health.py [COPY], app/routers/<domain>.py [GENERATE]
 schemas/__init__.py, schemas/<domain>.py [GENERATE]
-tests/conftest.py [SCAFFOLD from conftest_reference — adapt schema + auth + seeds]
-tests/test_health.py [SCAFFOLD], tests/test_<domain>.py [GENERATE]
-requirements.txt, .env.example, .gitignore [SCAFFOLD seed], README.md [GENERATE]
+tests/conftest.py [COPY from conftest_reference.py — adapt schema + auth + seeds]
+tests/test_health.py, tests/test_<domain>.py [GENERATE]
+requirements.txt, .env.example, .gitignore, README.md [GENERATE]
 ```
 
 **Pattern B+ — Postgres + Bedrock/LLM:**
@@ -451,8 +452,8 @@ When tech stack includes `streamlit`:
 ```
 app/  (Pattern B or B+, unchanged — golden template files)
 ui/
-  streamlit_app.py   [SCAFFOLD — then add app-specific tabs/forms]
-  requirements.txt   [SCAFFOLD — add app-specific packages if needed]
+  streamlit_app.py   [COPY from _template/ui/streamlit_app.py — then add app-specific tabs/forms]
+  requirements.txt   [COPY from _template/ui/requirements.txt — add app-specific packages if needed]
 ```
 The Streamlit template includes:
 - `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
@@ -488,9 +489,9 @@ schemas  →  (nothing from app/) ← schemas must be self-contained
 NEVER: `schemas` imports from `models`. NEVER: `models` imports from `schemas`.
 This is the most common circular import. Enforce unconditionally.
 
-### config.py — seeded by dev_scaffold
+### config.py — COPIED from golden template
 
-Do NOT write config.py from scratch. Start from scaffolded `app/config.py` and adapt:
+Do NOT write config.py from scratch. Copy `_template/app/config.py` and adapt:
 - Change `service_name` default to your app name
 - Uncomment Bedrock/RAG fields for B+/B++ patterns
 - Uncomment JWT fields if design uses JWT auth
@@ -637,9 +638,9 @@ def list_items(
 
 Use SQLAlchemy 2.0 `select()` / `db.scalars()` — avoid legacy `db.query()`.
 
-### conftest.py — seeded by dev_scaffold (from conftest_reference.py)
+### conftest.py — COPIED from golden template reference
 
-`dev_scaffold` copies `conftest_reference.py` → `tests/conftest.py`. Adapt SCHEMA_NAME and auth.
+COPY `_template/tests/conftest_reference.py` → `tests/conftest.py`. This is NOT optional.
 The reference handles ALL known pitfalls that caused past runtime failures:
 - Env-before-import pattern (DATABASE_URL, POSTGRES_SCHEMA, auth secrets)
 - bcrypt >= 4.0 / passlib compatibility shim
@@ -843,38 +844,6 @@ def dev_list_tree(service: str, subpath: str = "") -> str:
         if path.is_file() and "__pycache__" not in path.parts:
             lines.append(path.relative_to(_REPO_ROOT).as_posix())
     return "\n".join(lines) if lines else "(no files)"
-
-
-@tool
-def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
-    """Copy golden template infrastructure into target-apps/<service>/.
-
-    Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++, C.
-    Manifest: target-apps/_template/scaffold-manifest.json
-
-    Args:
-        service: target app slug (e.g. standup-tracker)
-        pattern: B | B+ | B++ | C
-        force: when True, overwrite existing scaffold files from _template/
-    """
-    dest = _ensure_service_exists(service)
-    try:
-        result = scaffold_service(
-            template_dir=_TEMPLATE_DIR,
-            service_dir=dest,
-            pattern=pattern,
-            force=force,
-        )
-    except (ValueError, FileNotFoundError) as exc:
-        return f"SCAFFOLD ERROR: {exc}"
-
-    prefix = f"target-apps/{slugify(service)}/"
-    for rel in result["copied"]:
-        full = f"{prefix}{rel}"
-        if full not in _written_files:
-            _written_files.append(full)
-
-    return format_scaffold_report(result, service=slugify(service))
 
 
 @tool
@@ -1101,8 +1070,8 @@ def dev_validate_app(service: str, run_pytest: bool = False) -> str:
         for f in missing:
             output_parts.append(f"  - {f}")
         output_parts.append(
-            "These files should come from dev_scaffold(pattern=...). "
-            "Call dev_scaffold then customize config/main/conftest only."
+            "These files should be COPIED from _template/. "
+            "Call dev_read_file + dev_write_file for each missing file."
         )
         return "\n".join(output_parts)
     output_parts.append("STRUCTURE OK")
@@ -1319,7 +1288,7 @@ def _build_agent() -> Agent:
         ),
         model=_coding_model(),
         system_prompt=DEVELOPER_SYS_PROMPT,
-        tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_validate_app],
+        tools=[dev_list_tree, dev_read_file, dev_write_file, dev_validate_app],
         callback_handler=_DeveloperCallbackHandler(show_thinking=_thinking_enabled()),
     )
 
@@ -1377,11 +1346,7 @@ def _enrich_developer_context(ctx: dict[str, Any]) -> None:
             ctx["dbBackend"] = "postgres"
 
     if not ctx.get("templateDir") and _TEMPLATE_DIR.is_dir() and any(_TEMPLATE_DIR.iterdir()):
-        try:
-            ctx["templateDir"] = _TEMPLATE_DIR.relative_to(_REPO_ROOT).as_posix()
-            ctx["scaffoldManifest"] = f"{ctx['templateDir']}/scaffold-manifest.json"
-        except ValueError:
-            ctx["templateDir"] = _TEMPLATE_DIR.as_posix()
+        ctx["templateDir"] = _TEMPLATE_DIR.relative_to(_REPO_ROOT).as_posix()
 
 
 def _build_context(

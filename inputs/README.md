@@ -23,8 +23,6 @@ Use **`inputs/<feature-slug>.txt`** where `<feature-slug>` matches `targetApp` /
 | `standup-tracker.txt` | Sprint standup tracker (Bedrock + Postgres + **Streamlit** -- medium E2E test) |
 | `team-faq-bot.txt` | Lightweight FAQ chatbot (single text file) |
 | `contacts-api.txt` | Contact Directory Postgres CRUD + API-key auth-no JWT) |
-| `meeting-action-tracker.txt` | Meeting log + action items (Postgres + **Streamlit** — medium E2E) |
-| `customer-feedback-hub.txt` | Feedback inbox + Bedrock classify + weekly digest (Postgres + **Streamlit**) |
 
 ## Progressive pipeline tests (agentic flow)
 
@@ -38,8 +36,6 @@ Use these to validate the SDLC chain in increasing complexity. Backend only (no 
 | **#4 Showcase** | `inventory-app.txt` | `inventory-app` | product → architect → **database** → developer → **qa** | yes (JWT login + roles) |
 | **#5 Medium + UI** | `release-notes-bot.txt` | `release-notes-bot` | product → architect → **database** → developer → **qa** | yes (Bedrock + Streamlit) |
 | **#6 Golden Test** | `standup-tracker.txt` | `standup-tracker` | product → architect → **database** → developer → **qa** | yes (Bedrock + Streamlit) |
-| **#7 Medium CRUD+UI** | `meeting-action-tracker.txt` | `meeting-action-tracker` | product → architect → **database** → developer | yes (Postgres + Streamlit, no Bedrock) |
-| **#8 Medium AI+UI** | `customer-feedback-hub.txt` | `customer-feedback-hub` | product → architect → **database** → developer | yes (Bedrock classify + digest + Streamlit) |
 
 **#5 app idea:** *Release Notes Bot* — paste sprint tickets, Bedrock drafts Markdown release notes, Streamlit UI to edit/publish, history in Postgres (like incident-triage-bot complexity).
 

@@ -1,9 +1,0 @@
-﻿{
-    "productAgentOutput":  "See prdPath for customer-feedback-hub MVP requirements.",
-    "targetApp":  "customer-feedback-hub",
-    "prdPath":  "docs/PRD/customer-feedback-hub.md",
-    "designDocPath":  "docs/design/customer-feedback-hub.md",
-    "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/customer-feedback-hub.png"
-                     ]
-}

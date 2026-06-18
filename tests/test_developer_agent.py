@@ -11,14 +11,6 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _AGENT_PATH = _REPO_ROOT / "agents" / "developer-agent" / "developer_agent.py"
-_SCAFFOLD_PATH = _REPO_ROOT / "agents" / "developer-agent"
-
-
-def _import_scaffold():
-    sys.path.insert(0, str(_SCAFFOLD_PATH))
-    from scaffold import load_manifest, resolve_pattern_spec, scaffold_service
-
-    return load_manifest, resolve_pattern_spec, scaffold_service
 
 
 def _load_agent_module():
@@ -129,73 +121,6 @@ def test_strip_duplicate_handoff_sections() -> None:
 def test_dedupe_preserve_order() -> None:
     mod = _load_agent_module()
     assert mod._dedupe_preserve_order(["a.py", "b.py", "a.py"]) == ["a.py", "b.py"]
-
-
-def test_scaffold_pattern_copies_streamlit_and_base(tmp_path: Path) -> None:
-    _, _, scaffold_service = _import_scaffold()
-
-    template = _REPO_ROOT / "target-apps" / "_template"
-    service = tmp_path / "target-apps" / "scaffold-test-app"
-    result = scaffold_service(
-        template_dir=template,
-        service_dir=service,
-        pattern="C",
-        force=True,
-    )
-    assert result["pattern"] == "C"
-    assert not result["missing"]
-    assert (service / "app" / "database.py").is_file()
-    assert (service / "app" / "startup_checks.py").is_file()
-    assert (service / "app" / "services" / "bedrock_client.py").is_file()
-    assert (service / "ui" / "streamlit_app.py").is_file()
-    assert (service / "tests" / "conftest.py").is_file()
-
-
-def test_scaffold_skips_existing_unless_force(tmp_path: Path) -> None:
-    _, _, scaffold_service = _import_scaffold()
-
-    template = _REPO_ROOT / "target-apps" / "_template"
-    service = tmp_path / "target-apps" / "scaffold-skip-app"
-    service.mkdir(parents=True)
-    db = service / "app" / "database.py"
-    db.parent.mkdir(parents=True)
-    db.write_text("# custom\n", encoding="utf-8")
-
-    result = scaffold_service(
-        template_dir=template,
-        service_dir=service,
-        pattern="B",
-        force=False,
-    )
-    assert "app/database.py" in result["skipped"]
-    assert db.read_text(encoding="utf-8") == "# custom\n"
-
-    scaffold_service(
-        template_dir=template,
-        service_dir=service,
-        pattern="B",
-        force=True,
-    )
-    assert "SQLAlchemy" in db.read_text(encoding="utf-8")
-
-
-def test_dev_scaffold_tool_tracks_written_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    mod = _load_agent_module()
-    monkeypatch.setattr(mod, "_TARGET_APPS", tmp_path / "target-apps")
-    monkeypatch.setattr(mod, "_TEMPLATE_DIR", _REPO_ROOT / "target-apps" / "_template")
-    mod._written_files.clear()
-
-    report = mod.dev_scaffold("tool-test-app", "B")
-    assert report.startswith("SCAFFOLD OK")
-    assert any("tool-test-app/app/database.py" in p for p in mod._written_files)
-
-
-def test_resolve_pattern_spec_rejects_unknown() -> None:
-    load_manifest, resolve_pattern_spec, _ = _import_scaffold()
-
-    manifest = load_manifest(_REPO_ROOT / "target-apps" / "_template" / "scaffold-manifest.json")
-    with pytest.raises(ValueError, match="unsupported pattern"):
-        resolve_pattern_spec(manifest, "Z")
 
 
 def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> None:
