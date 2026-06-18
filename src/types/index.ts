@@ -162,6 +162,7 @@ export interface McpServer {
 export interface ContextItem {
   id: string;
   projectId: string;
+  projectSlug: string;
   projectName: string;
   key: string;
   scope: 'project' | 'run' | 'global';
@@ -169,6 +170,18 @@ export interface ContextItem {
   summary: string;
   updatedAt: string;
   tokens: number;
+}
+
+// Pipeline handoff context written by agents during a run (aligns with real handoff JSON).
+export interface PipelineContext {
+  targetApp: string;
+  prdPath: string;
+  designDocPath: string;
+  diagramPaths: string[];
+  productAgentOutput: string;
+  architectSummary: string;
+  dbOutputDir: string;
+  preferredSqlPath: string;
 }
 
 export interface LogEntry {
@@ -232,3 +245,24 @@ export type RunEvent =
     });
 
 export type RunEventKind = RunEvent['kind'];
+
+// ---- MCP (Cursor mcp.json format) ----
+export interface McpServerConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  envFile?: string;
+  disabled?: boolean;
+  timeout?: number;
+  type?: string;
+  url?: string;
+}
+
+export interface McpConfig {
+  mcpServers: Record<string, McpServerConfig>;
+}
+
+export interface McpValidationResult {
+  valid: boolean;
+  errors: string[];
+}

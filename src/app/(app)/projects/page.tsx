@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FolderKanban, FileBox, Clock, GitBranch } from 'lucide-react';
+import { FolderKanban, FileBox, Clock } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
@@ -44,7 +44,6 @@ export default function ProjectsPage() {
                 <p className="mt-3 line-clamp-2 flex-1 text-sm text-muted-foreground">{p.description}</p>
                 <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5"><FileBox className="h-3.5 w-3.5" /> {p.artifactCount} artifacts</span>
-                  <span className="inline-flex items-center gap-1.5"><GitBranch className="h-3.5 w-3.5" /> {p.environment}</span>
                   <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {formatRelative(p.lastRunAt)}</span>
                 </div>
               </Card>
@@ -52,6 +51,11 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      <p className="rounded-md border border-dashed border-border bg-card/40 px-4 py-3 text-xs text-muted-foreground">
+        New projects appear automatically when an SDLC pipeline run creates{' '}
+        <code className="font-mono text-foreground">agents/pipeline/&lt;slug&gt;.context.json</code>.
+      </p>
     </>
   );
 }

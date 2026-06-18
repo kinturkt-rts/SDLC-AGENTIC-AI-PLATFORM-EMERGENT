@@ -1,4 +1,4 @@
-# Helmsman — SDLC Agentic AI Control Plane
+# SDLC Agentic AI Platform — Control Plane
 
 A production-quality **Next.js App Router** control plane UI for an SDLC Agentic AI Platform.
 It visualizes specialist AI agents, pipeline runs, artifacts, and human-in-the-loop (HITL)

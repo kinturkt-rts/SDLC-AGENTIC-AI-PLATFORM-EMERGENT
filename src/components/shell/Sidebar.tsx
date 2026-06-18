@@ -25,7 +25,7 @@ export function Sidebar() {
         </div>
         {!collapsed && (
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-sidebar-foreground">Helmsman</p>
+            <p className="text-[13px] font-semibold leading-tight text-sidebar-foreground">SDLC Agentic AI Platform</p>
             <p className="truncate text-[10px] uppercase tracking-wider text-muted-foreground">Control Plane</p>
           </div>
         )}

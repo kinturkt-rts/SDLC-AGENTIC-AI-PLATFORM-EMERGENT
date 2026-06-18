@@ -17,7 +17,9 @@ export const queryKeys = {
   artifacts: ['artifacts'] as const,
   checkpoints: ['checkpoints'] as const,
   mcp: ['mcp'] as const,
-  context: ['context'] as const,
+  mcpConfig: ['mcpConfig'] as const,
+  context: (projectSlug?: string) => ['context', projectSlug ?? 'all'] as const,
+  pipelineContext: (projectSlug: string) => ['pipelineContext', projectSlug] as const,
   logs: ['logs'] as const,
   dashboard: ['dashboard'] as const,
 };
@@ -42,7 +44,11 @@ export const useArtifacts = () => useQuery({ queryKey: queryKeys.artifacts, quer
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });
 export const useMcpServers = () => useQuery({ queryKey: queryKeys.mcp, queryFn: api.getMcpServers });
-export const useContextItems = () => useQuery({ queryKey: queryKeys.context, queryFn: api.getContextItems });
+export const useMcpConfig = () => useQuery({ queryKey: queryKeys.mcpConfig, queryFn: api.getMcpConfig });
+export const useContextItems = (projectSlug?: string) =>
+  useQuery({ queryKey: queryKeys.context(projectSlug), queryFn: () => api.getContextItems(projectSlug) });
+export const usePipelineContext = (projectSlug: string) =>
+  useQuery({ queryKey: queryKeys.pipelineContext(projectSlug), queryFn: () => api.getPipelineContext(projectSlug), enabled: !!projectSlug });
 export const useLogs = () => useQuery({ queryKey: queryKeys.logs, queryFn: api.getLogs });
 export const useDashboardSummary = () =>
   useQuery({ queryKey: queryKeys.dashboard, queryFn: api.getDashboardSummary });

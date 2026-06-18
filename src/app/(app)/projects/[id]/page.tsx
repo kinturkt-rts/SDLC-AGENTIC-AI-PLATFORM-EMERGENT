@@ -9,6 +9,7 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { EmptyState } from '@/src/components/common/EmptyState';
+import { ContextView } from '@/src/features/context/ContextView';
 import {
   useProject,
   useRuns,
@@ -85,8 +86,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Card className="p-4"><p className="text-xs text-muted-foreground">Environment</p><p className="mt-1 text-lg font-semibold capitalize text-foreground">{project?.environment}</p></Card>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
             <Card className="p-4"><p className="text-xs text-muted-foreground">Artifacts</p><p className="mt-1 text-lg font-semibold text-foreground">{project?.artifactCount}</p></Card>
             <Card className="p-4"><p className="text-xs text-muted-foreground">Total runs</p><p className="mt-1 text-lg font-semibold text-foreground">{projectRuns.length}</p></Card>
             <Card className="p-4"><p className="text-xs text-muted-foreground">Last run</p><p className="mt-1 text-lg font-semibold text-foreground">{formatRelative(project?.lastRunAt ?? null)}</p></Card>
@@ -130,7 +130,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
           {projectArtifacts.length ? <DataTable columns={artCols} rows={projectArtifacts} getRowId={(a) => a.id} /> : <EmptyState icon={FileBox} title="No artifacts" description="No deliverables produced yet." />}
         </TabsContent>
         <TabsContent value="context">
-          {projectContext.length ? <DataTable columns={ctxCols} rows={projectContext} getRowId={(c) => c.id} /> : <EmptyState icon={Clock} title="No context" description="No shared context for this project." />}
+          <ContextView projectSlug={params.id} />
         </TabsContent>
       </Tabs>
     </>

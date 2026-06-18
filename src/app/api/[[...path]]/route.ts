@@ -20,7 +20,7 @@ async function handler(_request: Request, { params }: { params: { path?: string[
   if (route === '/' || route === '/health') {
     return cors(
       NextResponse.json({
-        service: 'helmsman-control-plane',
+        service: 'sdlc-agentic-platform',
         status: 'ok',
         mode: process.env.NEXT_PUBLIC_API_BASE_URL ? 'live' : 'mock',
         time: new Date().toISOString(),

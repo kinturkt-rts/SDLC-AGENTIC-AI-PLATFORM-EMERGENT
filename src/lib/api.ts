@@ -15,6 +15,7 @@ import {
   mockCheckpoints,
   mockMcpServers,
   mockContextItems,
+  mockPipelineContext,
   mockLogs,
   mockAgentMessages,
   mockRunEvents,
@@ -28,11 +29,14 @@ import type {
   HITLCheckpoint,
   McpServer,
   ContextItem,
+  PipelineContext,
   LogEntry,
   DashboardSummary,
   RunStatus,
   AgentMessage,
   RunEvent,
+  McpConfig,
+  McpServerConfig,
 } from '@/src/types';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
@@ -100,8 +104,37 @@ export const api = {
   async getMcpServers(): Promise<McpServer[]> {
     return delay(mockMcpServers);
   },
-  async getContextItems(): Promise<ContextItem[]> {
-    return delay(mockContextItems);
+  // ---- MCP registry (real persistence via /api/mcp -> data/mcp.json) ----
+  async getMcpConfig(): Promise<McpConfig> {
+    const r = await fetch('/api/mcp', { cache: 'no-store' });
+    if (!r.ok) throw new Error('Failed to load mcp.json');
+    return r.json();
+  },
+  async saveMcpServer(name: string, config: McpServerConfig): Promise<McpConfig> {
+    const r = await fetch('/api/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, config }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(Array.isArray(data.errors) ? data.errors.join(' ') : data.error || 'Save failed');
+    return { mcpServers: data.mcpServers };
+  },
+  async deleteMcpServer(name: string): Promise<void> {
+    const r = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Delete failed');
+    }
+  },
+  async getContextItems(projectSlug?: string): Promise<ContextItem[]> {
+    const items = projectSlug
+      ? mockContextItems.filter((c) => c.projectSlug === projectSlug)
+      : mockContextItems;
+    return delay(items);
+  },
+  async getPipelineContext(projectSlug: string): Promise<PipelineContext | null> {
+    return delay(mockPipelineContext[projectSlug] ?? null);
   },
   async getLogs(): Promise<LogEntry[]> {
     return delay(mockLogs);

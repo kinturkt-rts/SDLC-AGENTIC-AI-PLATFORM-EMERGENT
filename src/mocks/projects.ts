@@ -1,6 +1,10 @@
 import type { Project, PipelineDefinition } from '@/src/types';
 import { minsAgo, daysAgo } from './time';
 
+// Central project registry (mock phase).
+// Each distinct target-app slug is one project. To add a project, append an entry here
+// (or, in the real backend, it is discovered from agents/pipeline/<slug>.context.json).
+// GET /api/v1/projects returns this same shape.
 export const mockProjects: Project[] = [
   {
     id: 'finops-web-app',
@@ -55,6 +59,28 @@ export const mockProjects: Project[] = [
     artifactCount: 4,
     lastRunAt: daysAgo(3),
     repo: 'gitlab.com/acme/target-apps/demo-api',
+    environment: 'dev',
+  },
+  {
+    id: 'customer-feedback-hub',
+    name: 'Customer Feedback Hub',
+    slug: 'customer-feedback-hub',
+    description: 'Aggregates product feedback from multiple channels with sentiment tagging and theme clustering.',
+    pipelineStatus: 'running',
+    artifactCount: 6,
+    lastRunAt: minsAgo(7),
+    repo: 'gitlab.com/acme/target-apps/customer-feedback-hub',
+    environment: 'dev',
+  },
+  {
+    id: 'meeting-action-tracker',
+    name: 'Meeting Action Tracker',
+    slug: 'meeting-action-tracker',
+    description: 'Extracts and tracks action items from meeting notes, with owner assignment and due-date reminders.',
+    pipelineStatus: 'completed',
+    artifactCount: 11,
+    lastRunAt: minsAgo(52),
+    repo: 'gitlab.com/acme/target-apps/meeting-action-tracker',
     environment: 'dev',
   },
 ];

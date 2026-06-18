@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'Helmsman — SDLC Agentic AI Control Plane',
+  title: 'SDLC Agentic AI Platform — Control Plane',
   description:
     'Control plane for orchestrating specialist AI agents across the software delivery lifecycle.',
 };
