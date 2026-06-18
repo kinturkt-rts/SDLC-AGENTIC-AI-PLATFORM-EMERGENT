@@ -34,6 +34,7 @@ import botocore.config
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.decorator import tool
 from strands.types.exceptions import MCPClientInitializationError
@@ -266,7 +267,10 @@ def _max_output_tokens() -> int:
 
 
 def _coding_model() -> BedrockModel:
-    model_id = os.getenv("CODING_MODEL_ID", os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"))
+    model_id = os.getenv(
+        "CODING_MODEL_ID",
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+    )
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     max_tokens = _max_output_tokens()
     return BedrockModel(
@@ -274,6 +278,8 @@ def _coding_model() -> BedrockModel:
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         streaming=True,
         max_tokens=max_tokens,
+        cache_config=CacheConfig(strategy="auto"),
+        cache_tools="default",
         boto_client_config=botocore.config.Config(
             read_timeout=read_timeout,
             connect_timeout=10,

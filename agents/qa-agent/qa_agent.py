@@ -37,6 +37,7 @@ import botocore.config
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.decorator import tool
 
@@ -477,6 +478,8 @@ def _qa_model() -> BedrockModel:
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         max_tokens=_max_output_tokens(),
         streaming=True,
+        cache_config=CacheConfig(strategy="auto"),
+        cache_tools="default",
         boto_client_config=botocore.config.Config(
             read_timeout=read_timeout,
             connect_timeout=10,

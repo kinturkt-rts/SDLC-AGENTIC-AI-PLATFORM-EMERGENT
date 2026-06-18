@@ -18,7 +18,10 @@ ATLASSIAN_MCP_URL = os.getenv(
     "https://mcp.atlassian.com/v1/mcp/authv2",
 )
 POSTGRES_MCP_VERSION = os.getenv("POSTGRES_MCP_VERSION", "latest")
-POSTGRES_MCP_BINARY = os.getenv("POSTGRES_MCP_BINARY", "awslabs.postgres-mcp-server.exe")
+_POSTGRES_MCP_DEFAULT_BINARY = (
+    "awslabs.postgres-mcp-server.exe" if os.name == "nt" else "awslabs.postgres-mcp-server"
+)
+POSTGRES_MCP_BINARY = os.getenv("POSTGRES_MCP_BINARY", _POSTGRES_MCP_DEFAULT_BINARY)
 MONGODB_MCP_COMMAND = os.getenv("MONGODB_MCP_COMMAND", "npx")
 MONGODB_MCP_ARGS = os.getenv("MONGODB_MCP_ARGS", "-y mongodb-mcp-server")
 FIRECRAWL_MCP_COMMAND = os.getenv("FIRECRAWL_MCP_COMMAND", "npx")

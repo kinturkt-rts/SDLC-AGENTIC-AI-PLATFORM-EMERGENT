@@ -3,12 +3,12 @@
 Generates code under target-apps/<service>/ and writes
 agents/pipeline/<app>.developer-handoff.json for qa-agent / devops-agent.
 
-Patterns:
-  A   — in-memory / no DB       (flat app/)
-  B   — Postgres CRUD            (app/ + db models)
-  B+  — Postgres + Bedrock/LLM  (B + app/services/)
-  B++ — Local RAG (pgvector)    (B+ + ingestion + retriever)
-  C   — FastAPI + Streamlit UI  (backend/ + ui/streamlit_app.py)
+Patterns (legacy code in parens):
+  in-memory    — FastAPI, no DB                 (flat app/)                       (A)
+  postgres     — Postgres CRUD                  (app/ + db models)                (B)
+  postgres-llm — Postgres + Bedrock/LLM         (postgres + app/services/)        (B+)
+  rag          — Local RAG (pgvector)           (postgres-llm + ingestion)        (B++)
+  streamlit    — any backend + Streamlit UI     (backend + ui/streamlit_app.py)   (C)
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ import botocore.config
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.decorator import tool
 
@@ -98,14 +99,14 @@ Missing any route = the agent must catch it here, not during re-run.
 2b. Pattern selection (highest authority wins):
     1. Design doc **file layout** subsection — follow EXACTLY if present.
     2. Determine from tech stack + data model + architecture:
-       - No DB, in-memory          → Pattern A   (flat app/)
-       - Postgres CRUD, no LLM     → Pattern B   (app/ + db models)
-       - Postgres + Bedrock/LLM    → Pattern B+  (B + app/services/)
-       - Postgres + pgvector + RAG → Pattern B++ (B+ + ingestion + retriever)
-       - Any above + "streamlit"   → Pattern C   (backend/ + ui/streamlit_app.py)
+       - No DB, in-memory          → in-memory     (flat app/)             (legacy: A)
+       - Postgres CRUD, no LLM     → postgres      (app/ + db models)      (legacy: B)
+       - Postgres + Bedrock/LLM    → postgres-llm  (postgres + services/)  (legacy: B+)
+       - Postgres + pgvector + RAG → rag           (postgres-llm + retriever) (legacy: B++)
+       - Any above + "streamlit"   → streamlit     (backend + ui/streamlit_app.py) (legacy: C)
     State your chosen pattern and cite the design heading before writing any file.
 
-2c. **Scaffold golden template (Pattern B / B+ / B++ / C) — ONE tool call, not manual copies:**
+2c. **Scaffold golden template (postgres / postgres-llm / rag / streamlit patterns) — ONE tool call, not manual copies:**
     Call `dev_scaffold(service=targetApp, pattern=<chosen>)` once after Step 0 manifest.
     This copies all infrastructure files from `target-apps/_template/` per scaffold-manifest.json.
     Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
@@ -117,7 +118,7 @@ Missing any route = the agent must catch it here, not during re-run.
     - `app/dependencies.py` — auth per Rules (API-key or JWT)
     - `tests/conftest.py` — replace SCHEMA_NAME, match auth mode, add seed fixtures
     - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix
-    - `ui/streamlit_app.py` (Pattern C) — tabs/forms only; keep HTTP helpers
+    - `ui/streamlit_app.py` (streamlit pattern) — tabs/forms only; keep HTTP helpers
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
@@ -174,7 +175,7 @@ Missing any route = the agent must catch it here, not during re-run.
     POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
     **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or
     run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
-    Pattern C / Streamlit: document UI URL (http://localhost:8501) and `streamlit run` in
+    streamlit pattern: document UI URL (http://localhost:8501) and `streamlit run` in
     Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
   passwords (# → %23). Document that pytest uses SQLite — passing tests ≠ RDS proof.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
@@ -243,7 +244,172 @@ _BLOCKED_PATH_PARTS = frozenset({".venv", "node_modules", "__pycache__", ".pytes
 
 _written_files: list[str] = []
 
-DEVELOPER_SYS_PROMPT = """\
+# Descriptive pattern names. Legacy A/B/B+/B++/C codes still accepted via _PATTERN_ALIASES.
+_PATTERN_KEYS: tuple[str, ...] = (
+    "in-memory",
+    "postgres",
+    "postgres-llm",
+    "rag",
+    "streamlit",
+)
+
+# Map legacy codes to current names so existing briefs and docs still resolve.
+_PATTERN_ALIASES: dict[str, str] = {
+    "A": "in-memory",
+    "B": "postgres",
+    "B+": "postgres-llm",
+    "B++": "rag",
+    "C": "streamlit",
+}
+
+_PATTERN_LAYOUTS: dict[str, str] = {
+    "in-memory": """\
+**Pattern: in-memory (legacy: A) — FastAPI, no DB:**
+```
+app/__init__.py, app/main.py, app/models.py
+tests/test_api.py, requirements.txt, README.md
+```
+""",
+    "postgres": """\
+**Pattern: postgres (legacy: B) — FastAPI + Postgres CRUD:**
+```
+app/__init__.py
+app/main.py          [SCAFFOLD seed — add domain router imports]
+app/config.py        [SCAFFOLD seed — add/remove env var Fields]
+app/database.py      [SCAFFOLD — do not edit]
+app/startup_checks.py [SCAFFOLD — do not edit]
+app/dependencies.py  [SCAFFOLD seed — auth per Rules]
+app/models/__init__.py, app/models/pg_types.py [SCAFFOLD], app/models/<entity>.py [GENERATE]
+app/routers/__init__.py, app/routers/health.py [SCAFFOLD], app/routers/<domain>.py [GENERATE]
+schemas/__init__.py, schemas/<domain>.py [GENERATE]
+tests/conftest.py [SCAFFOLD from conftest_reference — adapt schema + auth + seeds]
+tests/test_health.py [SCAFFOLD], tests/test_<domain>.py [GENERATE]
+requirements.txt, .env.example, .gitignore [SCAFFOLD seed], README.md [GENERATE]
+```
+""",
+    "postgres-llm": """\
+**Pattern: postgres-llm (legacy: B+) — Postgres + Bedrock/LLM:**
+```
+postgres pattern plus:
+app/services/__init__.py, app/services/bedrock_client.py, app/services/prompts.py
+app/routers/chat.py or triage.py
+tests/test_chat.py (mocked bedrock_client)
+.env.example: AWS_REGION=us-east-2 and/or BEDROCK_REGION=us-east-2 (same region as platform RDS/Bedrock)
+config.py: default region us-east-2 for any bedrock_region / aws_region field
+```
+""",
+    "rag": """\
+**Pattern: rag (legacy: B++) — Postgres + pgvector + RAG ingestion:**
+```
+postgres-llm pattern plus:
+app/services/ingestion.py      # save PDF → parse → chunk → embed → INSERT document_chunks
+app/services/pgvector_retriever.py  # cosine similarity top-k search
+app/routers/documents.py       # POST /documents/upload, GET /documents, DELETE /documents/{id}
+tests/test_ingestion.py, tests/test_chat_rag.py (fake retriever)
+```
+Never ship a stub retriever or discard uploaded bytes — upload must fully ingest on the request.
+requirements.txt adds: pypdf, pgvector, boto3.
+.env.example adds: AWS_REGION=us-east-2, BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0,
+                    BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0, EMBED_DIM=1024, CHUNK_SIZE=500,
+                    CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
+                    PDF_STORAGE_DIR=./uploaded_pdfs.
+""",
+    "streamlit": """\
+**Pattern: streamlit (legacy: C) — any backend pattern + Streamlit UI:**
+When tech stack includes `streamlit`:
+```
+app/  (postgres or postgres-llm backend, unchanged — golden template files)
+ui/
+  streamlit_app.py   [SCAFFOLD — then add app-specific tabs/forms]
+  requirements.txt   [SCAFFOLD — add app-specific packages if needed]
+```
+The Streamlit template includes:
+- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
+- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
+- API_KEY + API_BASE_URL config from .env
+ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
+startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
+README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
+`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
+""",
+}
+
+
+def _canonical_pattern(name: str | None) -> str | None:
+    """Resolve a pattern name. Accepts both new names and legacy A/B/B+/B++/C codes."""
+    if not name:
+        return None
+    if name in _PATTERN_LAYOUTS:
+        return name
+    return _PATTERN_ALIASES.get(name)
+
+
+def _compose_pattern_section(included: tuple[str, ...] | None = None) -> str:
+    """Render the Project layout patterns block. None = all 5 (legacy behavior)."""
+    canonical = tuple(filter(None, (_canonical_pattern(k) for k in (included or _PATTERN_KEYS))))
+    if not canonical:
+        canonical = _PATTERN_KEYS
+    # postgres-llm and rag reference postgres; if shipping one without postgres, include it as base.
+    if any(k in {"postgres-llm", "rag"} for k in canonical) and "postgres" not in canonical:
+        canonical = ("postgres",) + canonical
+    return "\n".join(_PATTERN_LAYOUTS[k] for k in canonical if k in _PATTERN_LAYOUTS)
+
+
+def _infer_pattern_from_context(ctx: dict[str, Any] | None) -> str | None:
+    """Heuristic pattern inference from context + design doc text. Returns None when unsure."""
+    if not ctx:
+        return None
+    text = ""
+    design_path = ctx.get("designDocPath") or ctx.get("design_doc_path")
+    if design_path:
+        path = _REPO_ROOT / str(design_path)
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                text = ""
+    has_streamlit = "streamlit" in text
+    has_rag = ("pgvector" in text) or ("retrieval" in text and "embed" in text)
+    has_llm = any(token in text for token in ("bedrock", "claude", "/chat"))
+    has_postgres = (
+        bool(ctx.get("preferredSqlPath"))
+        or bool(ctx.get("dbOutputDir"))
+        or "postgres" in text
+        or "sqlalchemy" in text
+    )
+    if has_streamlit:
+        return "streamlit"
+    if has_rag and has_postgres:
+        return "rag"
+    if has_llm and has_postgres:
+        return "postgres-llm"
+    if has_postgres:
+        return "postgres"
+    # Without a design doc on disk, prefer "unsure" over guessing in-memory.
+    return "in-memory" if text else None
+
+
+def _select_pattern_keys(ctx: dict[str, Any] | None) -> tuple[str, ...] | None:
+    """Return a single-pattern tuple when opt-in + inference is confident, else None (all)."""
+    if os.getenv("DEVELOPER_AGENT_AUTO_PATTERN", "").strip().lower() not in {"1", "true", "yes"}:
+        return None
+    inferred = _infer_pattern_from_context(ctx)
+    return (inferred,) if inferred else None
+
+
+def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
+    keys = _select_pattern_keys(ctx)
+    section = _compose_pattern_section(keys)
+    if keys:
+        print(
+            f"[developer-agent] System prompt: pattern {'+'.join(keys)} only "
+            "(DEVELOPER_AGENT_AUTO_PATTERN=1)",
+            file=sys.stderr,
+        )
+    return _DEVELOPER_SYS_PROMPT_TEMPLATE.replace("{{PATTERN_LAYOUTS}}", section.rstrip())
+
+
+_DEVELOPER_SYS_PROMPT_TEMPLATE = """\
 You are the Developer Agent for the Autonomous SDLC platform. You are the fifth agent in a
 sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU.
 
@@ -327,7 +493,7 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
 
-## Golden template scaffolding (mandatory for Pattern B / B+ / B++ / C)
+## Golden template scaffolding (mandatory for postgres / postgres-llm / rag / streamlit patterns)
 
 Call `dev_scaffold(service, pattern)` once — copies infrastructure from `target-apps/_template/`
 via `scaffold-manifest.json`. Do NOT manually rewrite scaffolded files.
@@ -399,69 +565,7 @@ Use when design mentions Bedrock, Claude, chat, triage, RAG, or /chat routes.
 Authority: Design file layout > design constraints > golden templates.
 Infrastructure marked [SCAFFOLD] is copied by `dev_scaffold` — NEVER regenerate with dev_write_file.
 
-**Pattern A — in-memory / no DB:**
-```
-app/__init__.py, app/main.py, app/models.py
-tests/test_api.py, requirements.txt, README.md
-```
-
-**Pattern B — Postgres CRUD:**
-```
-app/__init__.py
-app/main.py          [SCAFFOLD seed — add domain router imports]
-app/config.py        [SCAFFOLD seed — add/remove env var Fields]
-app/database.py      [SCAFFOLD — do not edit]
-app/startup_checks.py [SCAFFOLD — do not edit]
-app/dependencies.py  [SCAFFOLD seed — auth per Rules]
-app/models/__init__.py, app/models/pg_types.py [SCAFFOLD], app/models/<entity>.py [GENERATE]
-app/routers/__init__.py, app/routers/health.py [SCAFFOLD], app/routers/<domain>.py [GENERATE]
-schemas/__init__.py, schemas/<domain>.py [GENERATE]
-tests/conftest.py [SCAFFOLD from conftest_reference — adapt schema + auth + seeds]
-tests/test_health.py [SCAFFOLD], tests/test_<domain>.py [GENERATE]
-requirements.txt, .env.example, .gitignore [SCAFFOLD seed], README.md [GENERATE]
-```
-
-**Pattern B+ — Postgres + Bedrock/LLM:**
-```
-Pattern B plus:
-app/services/__init__.py, app/services/bedrock_client.py, app/services/prompts.py
-app/routers/chat.py or triage.py
-tests/test_chat.py (mocked bedrock_client)
-.env.example: AWS_REGION=us-east-2 and/or BEDROCK_REGION=us-east-2 (same region as platform RDS/Bedrock)
-config.py: default region us-east-2 for any bedrock_region / aws_region field
-```
-
-**Pattern B++ — Local RAG (pgvector):**
-```
-Pattern B+ plus:
-app/services/ingestion.py      # save PDF → parse → chunk → embed → INSERT document_chunks
-app/services/pgvector_retriever.py  # cosine similarity top-k search
-app/routers/documents.py       # POST /documents/upload, GET /documents, DELETE /documents/{id}
-tests/test_ingestion.py, tests/test_chat_rag.py (fake retriever)
-```
-Never ship a stub retriever or discard uploaded bytes — upload must fully ingest on the request.
-requirements.txt adds: pypdf, pgvector, boto3.
-.env.example adds: AWS_REGION=us-east-2, BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0,
-                    BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0, EMBED_DIM=1024, CHUNK_SIZE=500,
-                    CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
-                    PDF_STORAGE_DIR=./uploaded_pdfs.
-
-**Pattern C — FastAPI + Streamlit UI:**
-When tech stack includes `streamlit`:
-```
-app/  (Pattern B or B+, unchanged — golden template files)
-ui/
-  streamlit_app.py   [SCAFFOLD — then add app-specific tabs/forms]
-  requirements.txt   [SCAFFOLD — add app-specific packages if needed]
-```
-The Streamlit template includes:
-- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
-- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
-- API_KEY + API_BASE_URL config from .env
-ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
-startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
-README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
-`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
+{{PATTERN_LAYOUTS}}
 
 ## FastAPI correctness rules (zero-tolerance)
 
@@ -735,6 +839,10 @@ App code rules (container-ready without refactors):
 15. .env.example every line is KEY=value; README warns about DATABASE_URL= prefix.
 16. Bedrock/RDS region vars default to us-east-2 in config.py, .env.example, README env tables, and test conftest setdefaults.
 """
+
+# Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
+DEVELOPER_SYS_PROMPT = _build_system_prompt(None)
+
 
 def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     raw = relative_path.strip().replace("\\", "/")
@@ -1286,7 +1394,7 @@ class _DeveloperCallbackHandler:
 def _coding_model() -> BedrockModel:
     model_id = os.getenv(
         "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
     )
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     model_kwargs: dict[str, Any] = {
@@ -1294,6 +1402,8 @@ def _coding_model() -> BedrockModel:
         "region_name": os.getenv("AWS_REGION", "us-east-2"),
         "max_tokens": _max_output_tokens(),
         "streaming": True,
+        "cache_config": CacheConfig(strategy="auto"),
+        "cache_tools": "default",
         "boto_client_config": botocore.config.Config(
             read_timeout=read_timeout,
             connect_timeout=10,
@@ -1301,24 +1411,25 @@ def _coding_model() -> BedrockModel:
         ),
     }
     if _thinking_enabled():
+        # "adaptive" thinking is only supported on Claude 4.5+; Sonnet 4 requires "enabled"|"disabled".
         model_kwargs["additional_request_fields"] = {
-            "thinking": {"type": "adaptive", "budget_tokens": _thinking_budget_tokens()},
+            "thinking": {"type": "enabled", "budget_tokens": _thinking_budget_tokens()},
         }
     return BedrockModel(**model_kwargs)
 
 
-def _build_agent() -> Agent:
+def _build_agent(ctx: dict[str, Any] | None = None) -> Agent:
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
         description=(
             "Implements backend API code under target-apps/ from PRD, design doc, "
             "database-agent handoff, and scraped research. "
-            "Patterns: A (in-memory), B (Postgres), B+ (Postgres+Bedrock), "
-            "B++ (local RAG pgvector), C (FastAPI+Streamlit)."
+            "Patterns: in-memory, postgres, postgres-llm, rag, streamlit "
+            "(legacy aliases: A, B, B+, B++, C)."
         ),
         model=_coding_model(),
-        system_prompt=DEVELOPER_SYS_PROMPT,
+        system_prompt=_build_system_prompt(ctx),
         tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_validate_app],
         callback_handler=_DeveloperCallbackHandler(show_thinking=_thinking_enabled()),
     )
@@ -1423,7 +1534,7 @@ def run_task(
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    agent = _build_agent()
+    agent = _build_agent(ctx)
     summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
 
     written = _dedupe_preserve_order(_written_files)
@@ -1521,7 +1632,10 @@ def main() -> None:
 
     ctx = _build_context(target_app=target, jira_key=args.jira_key, extra=extra or None)
 
-    model_id = os.getenv("CODING_MODEL_ID", os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"))
+    model_id = os.getenv(
+        "CODING_MODEL_ID",
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+    )
     print(f"[developer-agent] Model      : {model_id}", file=sys.stderr)
     if _thinking_enabled():
         print(
