@@ -40,6 +40,7 @@ from _shared.pipeline_context import (
     resolve_target_app,
     slugify,
 )
+from _shared.telemetry import RunTelemetry, usage_from_event
 
 load_repo_env()
 os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
@@ -485,6 +486,8 @@ SQLite-only pytest does NOT prove the app works on RDS.
 |----------------|----------|
 | `CREATE TYPE … AS ENUM` | `SAEnum(MyEnum, name=..., schema=SCHEMA, create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
 | `uuid` PK/FK | `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` — never plain String(36) |
+| `uuid` PK default | Declare BOTH `default=lambda: str(uuid.uuid4())` (Python — runs on SQLite) AND `server_default=func.gen_random_uuid()` (SQL — Postgres-only). `server_default` alone fails every test insert with `sqlite3.OperationalError: unknown function: gen_random_uuid()`. |
+| `_UUIDStr` TypeDecorator in conftest | `process_result_value` MUST return `str`, not `uuid.UUID`. The ORM column declared `PG_UUID(as_uuid=False)` promises `str`; returning a `uuid.UUID` from the test patch breaks JSON serialization in `TestClient.post(json=...)` and breaks equality assertions against fixture-seeded string IDs. |
 | UUID in response | `@field_validator("id", mode="before") def coerce(cls, v): return str(v) if v else v` |
 | Driver | `psycopg[binary]>=3.1` only — never psycopg2-binary |
 | DSN | `postgresql+psycopg://...?sslmode=require` in .env.example |
@@ -568,6 +571,80 @@ Infrastructure marked [SCAFFOLD] is copied by `dev_scaffold` — NEVER regenerat
 {{PATTERN_LAYOUTS}}
 
 ## FastAPI correctness rules (zero-tolerance)
+
+### pytest.ini — every project with tests/ needs it
+
+Write `pytest.ini` (or `[tool.pytest.ini_options]` in `pyproject.toml`) at the service
+root with `pythonpath = .` and `testpaths = tests`. Without it, `conftest.py` raises
+`ModuleNotFoundError: No module named 'app'` and zero tests can be collected.
+
+```ini
+[pytest]
+pythonpath = .
+testpaths = tests
+```
+
+### app.config exports get_settings(), not settings
+
+`app/config.py` exports only the factory `get_settings() -> Settings`. Every consumer
+imports the factory and calls it at use time:
+
+```python
+# correct
+from app.config import get_settings
+schema = get_settings().postgres_schema
+
+# wrong — causes ImportError, breaks every test
+from app.config import settings
+schema = settings.postgres_schema
+```
+
+Never declare a module-level `settings = Settings()`; it bypasses env overrides in
+tests and breaks `pydantic-settings` reload semantics.
+
+### Header() with default — required for 401-vs-422 contract
+
+Any `Header(...)` parameter that must raise **401** on missing input must declare
+itself as `Optional` with `default=None`. A required `Header` returns FastAPI's
+generic **422 validation error** before custom auth logic runs, so the documented
+401 contract becomes unreachable.
+
+```python
+# correct — runs auth check, returns 401 when missing
+def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> str:
+    if not x_api_key or x_api_key != get_settings().api_key:
+        raise HTTPException(401, "Invalid or missing API key")
+    return x_api_key
+
+# wrong — FastAPI returns 422 before auth check
+def require_api_key(x_api_key: str = Header(alias="X-API-Key")) -> str: ...
+```
+
+### Handler parameter ordering — dependencies before explicit defaults
+
+`Annotated[..., Depends(...)]` dependencies carry an *implicit* default through
+`Depends`, but Python parses the function signature **before** FastAPI resolves
+that. A parameter without an explicit default that appears after one with an
+explicit default is a `SyntaxError` at import time.
+
+```python
+# correct — DbSession first, then Query-defaulted params
+def list_contacts(
+    db: DbSession,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None),
+) -> ContactListPage: ...
+
+# wrong — SyntaxError: parameter without a default follows parameter with a default
+def list_contacts(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: DbSession,
+) -> ContactListPage: ...
+```
+
+Order rule: `Annotated[..., Depends(...)]` / `Annotated[..., Header(...)]` /
+path params **before** any `Query(default=...)` / `Body(default=...)` parameter.
 
 ### __init__.py — every package directory requires one
 
@@ -838,6 +915,7 @@ App code rules (container-ready without refactors):
 14. startup_checks.py + lifespan validate_runtime_config; GET /health pings DB; dev exception handler when APP_ENV=development.
 15. .env.example every line is KEY=value; README warns about DATABASE_URL= prefix.
 16. Bedrock/RDS region vars default to us-east-2 in config.py, .env.example, README env tables, and test conftest setdefaults.
+17. Test-vs-implementation contract cross-check: for every response value the implementation emits (`"status":"ok"`, error detail strings, status codes), find the corresponding test assertion and confirm they match exactly. The route manifest check (item 2) catches missing routes; this check catches value-level drift between code and the tests you just wrote (e.g. route returns `"ok"` but test asserts `"healthy"`).
 """
 
 # Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
@@ -1367,28 +1445,35 @@ def _thinking_budget_tokens() -> int:
 
 
 class _DeveloperCallbackHandler:
-    """Stream tool calls and optional thinking to stderr."""
+    """Stream tool calls, optional thinking, and feed telemetry."""
 
-    def __init__(self, *, show_thinking: bool) -> None:
-        self.tool_count = 0
+    def __init__(self, *, show_thinking: bool, telemetry: RunTelemetry | None = None) -> None:
         self._show_thinking = show_thinking
+        self.telemetry = telemetry
 
     def __call__(self, **kwargs: Any) -> None:
         reasoning_text = kwargs.get("reasoningText")
         if self._show_thinking and reasoning_text:
             print(reasoning_text, end="", file=sys.stderr)
-        tool_use = (
-            kwargs.get("event", {})
-            .get("contentBlockStart", {})
-            .get("start", {})
-            .get("toolUse")
-        )
+
+        event = kwargs.get("event", {})
+        tool_use = event.get("contentBlockStart", {}).get("start", {}).get("toolUse")
         if tool_use:
-            self.tool_count += 1
-            print(
-                f"\n[developer-agent] Tool #{self.tool_count}: {tool_use['name']}",
-                file=sys.stderr,
-            )
+            name = tool_use.get("name", "<unknown>")
+            if self.telemetry is not None:
+                self.telemetry.record_tool(name)
+                print(
+                    f"\n[developer-agent] Tool #{self.telemetry.tool_count}: {name}",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"\n[developer-agent] Tool: {name}", file=sys.stderr)
+
+        # Capture Bedrock usage tokens from streamed metadata events.
+        if self.telemetry is not None:
+            usage = usage_from_event(kwargs) or usage_from_event(event)
+            if usage:
+                self.telemetry.record_usage(usage)
 
 
 def _coding_model() -> BedrockModel:
@@ -1418,7 +1503,11 @@ def _coding_model() -> BedrockModel:
     return BedrockModel(**model_kwargs)
 
 
-def _build_agent(ctx: dict[str, Any] | None = None) -> Agent:
+def _build_agent(
+    ctx: dict[str, Any] | None = None,
+    *,
+    telemetry: RunTelemetry | None = None,
+) -> Agent:
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
@@ -1431,7 +1520,10 @@ def _build_agent(ctx: dict[str, Any] | None = None) -> Agent:
         model=_coding_model(),
         system_prompt=_build_system_prompt(ctx),
         tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_validate_app],
-        callback_handler=_DeveloperCallbackHandler(show_thinking=_thinking_enabled()),
+        callback_handler=_DeveloperCallbackHandler(
+            show_thinking=_thinking_enabled(),
+            telemetry=telemetry,
+        ),
     )
 
 
@@ -1534,7 +1626,8 @@ def run_task(
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    agent = _build_agent(ctx)
+    telemetry = RunTelemetry(AGENT_NAME, target_app=app)
+    agent = _build_agent(ctx, telemetry=telemetry)
     summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
 
     written = _dedupe_preserve_order(_written_files)
@@ -1561,6 +1654,14 @@ def run_task(
             )
             handoff["envVarsRequired"] = _env_var_names_from_example(written)
         handoff_rel = _write_developer_handoff(app, handoff)
+
+    # Telemetry: tokens, cache hits, wall-clock, file count; persist for next-run delta.
+    telemetry.extra = {
+        "filesWritten": len(written),
+        "pattern": _select_pattern_keys(ctx) or "all",
+    }
+    telemetry.print_summary()
+    telemetry.persist()
 
     return summary, written, handoff_rel
 
@@ -1636,6 +1737,15 @@ def main() -> None:
         "CODING_MODEL_ID",
         os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
     )
+    auto_pattern = os.getenv("DEVELOPER_AGENT_AUTO_PATTERN", "").strip().lower() in {"1", "true", "yes"}
+    print("", file=sys.stderr)
+    print("=" * 64, file=sys.stderr)
+    print(
+        f"  AGENT: {AGENT_NAME}  |  prompt-cache: auto  |  cache_tools: default"
+        f"  |  auto-pattern: {'on' if auto_pattern else 'off'}",
+        file=sys.stderr,
+    )
+    print("=" * 64, file=sys.stderr)
     print(f"[developer-agent] Model      : {model_id}", file=sys.stderr)
     if _thinking_enabled():
         print(
