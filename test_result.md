@@ -163,48 +163,60 @@ backend:
 frontend:
   - task: "Rebrand to SDLC Agentic AI Platform + remove environment UI"
     implemented: true
-    working: "NA"
+    working: true
     file: "src/components/shell/Sidebar.tsx, src/components/shell/Topbar.tsx, src/app/layout.tsx, src/app/(app)/projects/page.tsx, src/app/(app)/projects/[id]/page.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         -working: "NA"
         -agent: "main"
         -comment: "Sidebar shows 'SDLC Agentic AI Platform' / 'Control Plane'; document title updated; no 'Helmsman' in src. Removed dev/staging/prod selector from top bar, env label from project cards, and Environment stat from project detail Overview. Project switcher retained. internal `environment` field kept on mock data (not rendered). Verified visually."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ REBRAND VERIFIED. Automated testing confirms: (1) Sidebar displays 'SDLC Agentic AI Platform' and 'Control Plane' correctly. (2) No 'Helmsman' text found anywhere on the page. (3) Top bar has NO environment pill/dropdown (no dev/staging/prod selector) - project switcher is present as expected. (4) Project cards do NOT show any environment labels. All branding requirements met."
   - task: "Dynamic Projects registry (7 projects) + discovery note"
     implemented: true
-    working: "NA"
+    working: true
     file: "src/mocks/projects.ts, src/app/(app)/projects/page.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         -working: "NA"
         -agent: "main"
         -comment: "Central registry in src/mocks/projects.ts now has 7 projects incl. customer-feedback-hub & meeting-action-tracker; cards have no env label; added discovery note. /projects/customer-feedback-hub renders (200)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PROJECTS VERIFIED. Automated testing confirms: (1) /projects displays exactly 7 project cards. (2) 'Customer Feedback Hub' project found and clickable. (3) 'Meeting Action Tracker' project found. (4) Clicking 'Customer Feedback Hub' navigates to /projects/customer-feedback-hub with 5-tab detail view rendering correctly. (5) GET /api/v1/projects returns 7 projects with NO 'environment' field in any project (correctly filtered from API response). All project requirements met."
   - task: "Context page project-scoped + Pipeline context"
     implemented: true
-    working: "NA"
+    working: true
     file: "src/app/(app)/context/page.tsx, src/features/context/ContextView.tsx, src/mocks/context.ts, src/app/(app)/projects/[id]/page.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         -working: "NA"
         -agent: "main"
         -comment: "Context now filtered to selected project (top-bar default) with a secondary 'All projects'/slug Select and ?project= deep-link (Suspense-wrapped). Subtitle 'Context for {name}'. Pipeline context (handoff JSON) section at top with raw-JSON collapsible. No cross-project rows when a project is selected. Project detail Context tab reuses ContextView. Verified visually for rag-pdf-system."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ CONTEXT FILTERING VERIFIED. Automated testing confirms: (1) Using project switcher to select 'RAG PDF System' then navigating to /context shows subtitle 'Context for RAG PDF System', displays RAG-specific keys (prd.summary, crawler.refs, schema.embeddings), does NOT show FinOps-only keys (schema.budgets), and 'Pipeline context' section is visible. (2) Direct deep-link /context?project=customer-feedback-hub shows subtitle 'Context for Customer Feedback Hub', displays Customer Feedback Hub keys (schema.feedback), and correctly filters out RAG/FinOps rows. (3) /projects/rag-pdf-system Context tab shows same RAG-scoped context with Pipeline context section. All context filtering working correctly."
   - task: "MCP Registry page CRUD UI (add/edit/delete/enable-disable)"
     implemented: true
-    working: "NA"
+    working: true
     file: "src/app/(app)/mcp/page.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         -working: "NA"
         -agent: "main"
         -comment: "Cursor-style UI: '+ Add MCP Server' dialog, per-card Edit/Delete(confirm AlertDialog)/Enable-Disable Switch. Form fields command/args/env/envFile/timeout/type/url/disabled with TanStack mutations + invalidation + toasts. env shown as ${env:...} chips. Verified visually: 7 cards render, Terraform Disabled."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ MCP REGISTRY CRUD FULLY FUNCTIONAL. Comprehensive automated testing confirms: (1) /mcp loads with 7 server cards and '+ Add MCP Server' button. (2) ADD: Successfully added 'SmokeUITest' server with valid secret reference (TOKEN=${env:TOKEN}), success toast appeared, card visible, and persistence verified via GET /api/mcp. (3) RAW SECRET REJECTED: Attempted to add server with raw secret (KEY=rawsecretvalue), validation correctly rejected it with error toast 'env.KEY must be a secret reference like ${env:NAME} or ${workspaceFolder}/.env (no raw secrets)', and NO card was added. (4) ENABLE/DISABLE: Toggle switch working correctly, state changes from checked to unchecked, toast appears. (5) EDIT: Successfully edited SmokeUITest timeout to 90, success toast appeared. (6) DELETE: Delete button opens AlertDialog confirm, clicking confirm deletes server, success toast appears, card disappears, and cleanup verified via GET /api/mcp (SmokeUITest absent). All CRUD operations working perfectly with proper validation, toasts, and persistence."
 
   - task: "App shell (sidebar sections, topbar project switcher + env badge, theme toggle)"
     implemented: true
@@ -550,3 +562,57 @@ agent_communication:
       with proper validation, persistence, and error handling. Projects API correctly filters internal fields.
       Health endpoints reflect rebrand. Ready for production use.
 
+    -agent: "testing"
+    -message: |
+      🎉 NEW UX REBRAND SMOKE PASS COMPLETE - ALL 18 TESTS PASSED ✅
+      
+      Executed comprehensive automated Playwright tests for the NEW UX (rebrand + environment removal).
+      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com
+      
+      TEST RESULTS (18/18 PASSED):
+      
+      ### BRANDING & ENV (3/3 PASSED) ###
+      ✅ Test 1: Sidebar displays "SDLC Agentic AI Platform" and "Control Plane", NO "Helmsman" text anywhere
+      ✅ Test 2: Top bar has NO environment pill/dropdown (no dev/staging/prod selector), project switcher present
+      ✅ Test 3: Project cards do NOT show environment labels
+      
+      ### PROJECTS (2/2 PASSED) ###
+      ✅ Test 4: /projects shows all 7 projects including "Customer Feedback Hub" and "Meeting Action Tracker"
+      ✅ Test 5: Clicking "Customer Feedback Hub" navigates to /projects/customer-feedback-hub with 5-tab detail view
+      
+      ### CONTEXT (3/3 PASSED) ###
+      ✅ Test 6: Project switcher → RAG PDF System → /context shows "Context for RAG PDF System", RAG keys only (prd.summary, crawler.refs, schema.embeddings), NO FinOps keys (schema.budgets), Pipeline context section visible
+      ✅ Test 7: Deep-link /context?project=customer-feedback-hub shows "Context for Customer Feedback Hub", schema.feedback visible, NO RAG/FinOps rows
+      ✅ Test 8: /projects/rag-pdf-system → Context tab shows RAG-scoped context with Pipeline context section
+      
+      ### MCP REGISTRY CRUD + PERSISTENCE (7/7 PASSED) ###
+      ✅ Test 9: /mcp loads with 7 server cards (Atlassian visible) and "+ Add MCP Server" button
+      ✅ Test 10: ADD valid server "SmokeUITest" with secret reference (TOKEN=${env:TOKEN}), success toast, card appears, GET /api/mcp confirms persistence
+      ✅ Test 11: RAW SECRET REJECTED - attempted to add server with raw secret (KEY=rawsecretvalue), error toast "env.KEY must be a secret reference like ${env:NAME} or ${workspaceFolder}/.env (no raw secrets)", NO card added
+      ✅ Test 12: ENABLE/DISABLE toggle on SmokeUITest card, switch state changes (checked → unchecked), toast appears
+      ✅ Test 13: EDIT SmokeUITest timeout to 90, success toast appears
+      ✅ Test 14: DELETE SmokeUITest with AlertDialog confirm, success toast, card disappears, GET /api/mcp confirms cleanup (SmokeUITest absent)
+      ✅ Test 15: GET /api/v1/projects returns 7 projects with NO "environment" field
+      
+      ### REGRESSION (3/3 PASSED) ###
+      ✅ Test 16: Theme toggle switches document.documentElement.className (dark ↔ light)
+      ✅ Test 17: Sidebar navigation works (Projects → Context → MCP Registry, URLs change correctly)
+      ✅ Test 18: Console errors check on /dashboard, /projects, /context, /mcp, /projects/customer-feedback-hub - NO critical errors (benign hydration warning ignored)
+      
+      CRITICAL NOTES:
+      - TanStack Query ~250ms mock delay accounted for with proper polling
+      - Dev server cold route loads can be slow (~3-10s), all tests waited appropriately
+      - Benign hydration warning "Extra attributes from the server: style" on disabled search input ignored as expected
+      - One expected 400 error on /mcp from raw secret validation test (correct behavior)
+      - All test artifacts cleaned up (SmokeUITest, BadUITest removed)
+      - data/mcp.json returned to 7 seeded servers
+      
+      SUMMARY: Zero critical issues found. All NEW UX features working perfectly:
+      - Rebrand complete (SDLC Agentic AI Platform, no Helmsman)
+      - Environment UI completely removed (no selectors, no labels)
+      - Projects registry with 7 projects fully functional
+      - Context filtering by project working correctly
+      - MCP Registry CRUD fully functional with validation, persistence, and error handling
+      - All regression tests passed
+      
+      The NEW UX is production-ready and all requirements met.
