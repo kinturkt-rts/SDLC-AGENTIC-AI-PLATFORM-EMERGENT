@@ -167,6 +167,13 @@ Missing any route = the agent must catch it here, not during re-run.
     `target-apps/_template/tests/test_seed_bcrypt_reference.py`). conftest `hash_password(...)`
     MUST use the **same plaintext** documented in the seed SQL comment — never a different password.
     Passing pytest without test_seed_bcrypt.py is a false green for RDS login.
+    When seed SQL uses `__BCRYPT_PLACEHOLDER__`, README **Seed Users** section MUST include
+    this warning block immediately before the credentials table:
+    ```
+    > ⚠ **RDS login will fail until seed passwords are materialized.**
+    > Full pipeline (recommended): `python scripts/apply_sql_to_rds.py --target-app <app>`
+    > Manual (if SQL already applied): `python agents/_shared/materialize_seed_passwords.py --target-app <app>`
+    ```
 
 **Step 4 — configuration and README**
 4a. .env.example only when the service reads env vars. Placeholder values, no real secrets.
@@ -240,16 +247,25 @@ Missing any route = the agent must catch it here, not during re-run.
   - `tests/test_seed_bcrypt.py` present and passes
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
+  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README Seed Users section has ⚠ materialize warning
+    with exact command: `python agents/_shared/materialize_seed_passwords.py --target-app <app>`
 
-**Step 5b — VALIDATE (mandatory — do NOT skip)**
+**Step 5b — VALIDATE (mandatory — do NOT skip or declare success early)**
 After all files are written and the checklist above is done:
-  1. Call `dev_validate_app(service=targetApp)` — checks `.env.example` format, **startup config**
-     (same checks uvicorn runs), import, health + API route smoke, **seed bcrypt in sql/** when JWT seeds exist.
-     If any step fails, fix and retry.
-  2. If a `.venv/` exists in the target-app with packages installed, also call
-     `dev_validate_app(service=targetApp, run_pytest=True)` to run tests. Fix any failures.
-  3. If no `.venv/` exists (common for first-time generation), import + env-example + health smoke
-     is sufficient. Note in the handoff that the user must create a venv before full pytest.
+  1. Call `dev_validate_app(service=targetApp, run_pytest=True)` — must end with
+     `IMPORT OK` and `PYTEST OK` in the tool output. Fix every failure and call again.
+  2. **Never** tell the user the app is "fully functional" if import or pytest failed.
+     SEED_BCRYPT: non-blocking when seed SQL uses `__BCRYPT_PLACEHOLDER__` with a documented
+     password comment (pipeline materializes hashes via `apply_sql_to_rds.py`). Blocking when
+     a real bcrypt hash in the seed SQL doesn't match the documented password. Either way, when
+     `SEED_BCRYPT NOTE` appears in validation output, your handoff summary MUST include:
+     "⚠ Run `python scripts/apply_sql_to_rds.py --target-app <app>` (or
+     `python agents/_shared/materialize_seed_passwords.py --target-app <app>`) before
+     testing RDS login — seed passwords are not active until this runs."
+  3. Common fixes the validator catches:
+     - `CurrentUser = Depends()` → use `current_user: CurrentUser` only (no `= Depends()`)
+     - Parameter order: `CurrentUser` / `DbSession` before `Query(default=...)` params
+     - SQLite Date columns: use `date(2024, 1, 1)` in test fixtures, not `"2024-01-01"` strings
 
 **Step 6 — handoff summary (LAST)**
 1. stack — language, framework, pattern, DB driver(s).
@@ -498,22 +514,16 @@ Section numbers vary per feature. Locate content by heading text:
 
 Default to Python/FastAPI only when tech stack is absent (add to open_questions then).
 
-## Seed credentials — scaffold a real bcrypt init script
+## Seed credentials — placeholders only (pipeline materializes on RDS)
 
-If the database-agent's `HANDOFF.md` contains a `### seedCredentials` section listing `(username, role, plaintext_password)`, the seed SQL will contain `'__BCRYPT_PLACEHOLDER__'` literals in the `password_hash` column. **Do NOT invent bcrypt strings yourself** — the LLM cannot compute real hashes. Instead:
+If `HANDOFF.md` has `### seedCredentials` or seed SQL uses `'__BCRYPT_PLACEHOLDER__'`, **do NOT invent bcrypt strings** — the LLM cannot compute real hashes.
 
-1. Copy `target-apps/_template/scripts/seed_dev_users.py` into your service via `dev_scaffold` (it's part of the golden template — never write it from scratch).
-2. **Replace the `_CREDENTIALS` constant** at the top of that copied script with the exact `(username, password)` pairs from `HANDOFF.md`'s `seedCredentials` table. Nothing else in the script changes.
-3. **Add `bcrypt>=4.0` to `requirements.txt`** if the app has any `password_hash` column.
-4. **Document the post-migrate step in README.md** under "Setup":
-   ```bash
-   # After running migrations / seed SQL:
-   python scripts/seed_dev_users.py
-   ```
+1. Optionally copy `target-apps/_template/scripts/seed_dev_users.py` via `dev_scaffold` and set `_CREDENTIALS` from HANDOFF (local re-seed only).
+2. **Do NOT** tell users to run `seed_dev_users.py` as a required setup step — `scripts/apply_sql_to_rds.py` **automatically** calls `materialize_seed_passwords.py` after seed SQL.
+3. README "Setup": document seed login emails/passwords from HANDOFF; note RDS passwords are applied during pipeline DB apply.
+4. Add `bcrypt>=4.0` to `requirements.txt` when the app verifies passwords.
 
-The script reads each plaintext, calls `bcrypt.hashpw()`, and `UPDATE`s rows where `password_hash = '__BCRYPT_PLACEHOLDER__'`. Result: login tests pass against the documented passwords.
-
-Same approach applies to `api_key_hash`, `verification_token`, or any sentinel-marked hash column. One script handles all hash columns in the database.
+Same sentinel approach for `api_key_hash` or other hash columns documented in HANDOFF.
 
 ## Database layer — mirror database-agent output exactly
 
@@ -714,6 +724,25 @@ def list_contacts(
 
 Order rule: `Annotated[..., Depends(...)]` / `Annotated[..., Header(...)]` /
 path params **before** any `Query(default=...)` / `Body(default=...)` parameter.
+
+### Annotated auth dependencies — never double Depends()
+
+When you define `CurrentUser = Annotated[User, Depends(get_current_user)]`, use it
+as a plain parameter type only. **Never** add `= Depends()` — FastAPI rejects
+`Depends` in both `Annotated` and the default (`AssertionError` at import).
+
+```python
+# dependencies.py
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+# correct
+def list_assets(current_user: CurrentUser, db: DbSession) -> list[AssetOut]: ...
+
+# wrong — import crash
+def list_assets(db: DbSession = Depends(get_db), current_user: CurrentUser = Depends()): ...
+```
+
+`DbSession = Annotated[Session, Depends(get_db)]` follows the same rule.
 
 ### __init__.py — every package directory requires one
 
@@ -1253,10 +1282,254 @@ def _validation_env(service_dir: Path) -> dict[str, str]:
     env["DATABASE_URL"] = "sqlite:///:memory:"
     if not env.get("API_KEY"):
         env["API_KEY"] = "test-key"
-    env.setdefault("JWT_SECRET_KEY", "test-secret-not-for-prod")
+    env.setdefault("JWT_SECRET", example_vars.get("JWT_SECRET") or "test-secret-not-for-prod")
+    env.setdefault("JWT_SECRET_KEY", env["JWT_SECRET"])
     env.setdefault("JWT_EXPIRE_MINUTES", "60")
+    env.setdefault("JWT_TTL_HOURS", "8")
+    # Valid Fernet key for encryption smoke tests (32 zero bytes, url-safe base64)
+    env.setdefault(
+        "ASSET_ENCRYPTION_KEY",
+        example_vars.get("ASSET_ENCRYPTION_KEY")
+        or "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
     env.setdefault("AWS_REGION", "us-east-2")
     return env
+
+
+_ROUTER_ANTIPATTERN_RES = (
+    re.compile(r"\bCurrentUser\s*=\s*Depends\s*\("),
+    re.compile(r"\bDbSession\s*=\s*Depends\s*\("),
+    re.compile(r"Annotated\s*\[[^\]]+Depends[^\]]*\]\s*=\s*Depends\s*\("),
+)
+
+
+def _scan_router_antipatterns(service_dir: Path) -> list[str]:
+    """Static scan for FastAPI dependency mistakes that crash at import."""
+    errors: list[str] = []
+    routers = service_dir / "app" / "routers"
+    if not routers.is_dir():
+        return errors
+    for path in routers.glob("*.py"):
+        if path.name.startswith("_"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(service_dir).as_posix()
+        for pattern in _ROUTER_ANTIPATTERN_RES:
+            if pattern.search(text):
+                errors.append(
+                    f"{rel}: double Depends() on Annotated auth type — use "
+                    "`current_user: CurrentUser` only (no `= Depends()`); "
+                    "put CurrentUser before Query params with defaults"
+                )
+                break
+    return errors
+
+
+def run_service_validation(
+    service: str,
+    *,
+    run_pytest: bool = True,
+) -> tuple[bool, str]:
+    """Host-side validation gate. Returns (passed, full report)."""
+    import subprocess
+
+    service_dir = _service_dir(service)
+    if not service_dir.is_dir():
+        return False, f"Error: target-apps/{service}/ does not exist"
+
+    reqs = service_dir / "requirements.txt"
+    if not reqs.is_file():
+        return False, f"Error: target-apps/{service}/requirements.txt not found"
+
+    python_cmd = _python_for_service(service_dir)
+    env = _validation_env(service_dir)
+    output_parts: list[str] = []
+
+    required_files = [
+        "app/__init__.py",
+        "app/main.py",
+        "app/config.py",
+        "app/database.py",
+        "app/startup_checks.py",
+        "app/routers/__init__.py",
+        "app/routers/health.py",
+    ]
+    missing = [f for f in required_files if not (service_dir / f).is_file()]
+    if missing:
+        output_parts.append("STRUCTURE FAILED — missing golden template files:")
+        for f in missing:
+            output_parts.append(f"  - {f}")
+        return False, "\n".join(output_parts)
+    output_parts.append("STRUCTURE OK")
+
+    env_results = _validate_env_example(service_dir)
+    output_parts.extend(env_results)
+    if env_results[0].startswith("ENV_EXAMPLE FAILED"):
+        return False, "\n".join(output_parts)
+
+    antipattern_errors = _scan_router_antipatterns(service_dir)
+    if antipattern_errors:
+        output_parts.append("ROUTER_ANTIPATTERN FAILED (fix before import will work):")
+        output_parts.extend(f"  - {e}" for e in antipattern_errors)
+        return False, "\n".join(output_parts)
+    output_parts.append("ROUTER_ANTIPATTERN OK")
+
+    seed_sql = (
+        list((service_dir / "db" / "sql").glob("*seed*.sql"))
+        if (service_dir / "db" / "sql").is_dir()
+        else []
+    )
+    if seed_sql:
+        verify_script = _REPO_ROOT / "agents" / "_shared" / "verify_seed_bcrypt.py"
+        if verify_script.is_file():
+            try:
+                result = subprocess.run(
+                    [
+                        python_cmd,
+                        str(verify_script),
+                        "--target-app",
+                        service,
+                        "--repo-root",
+                        str(_REPO_ROOT),
+                    ],
+                    cwd=str(service_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    detail = (result.stdout + result.stderr).strip()
+                    if "without documented password" in detail:
+                        # Missing password comment = real error; materialize can't run without it
+                        output_parts.append(
+                            f"SEED_BCRYPT FAILED — __BCRYPT_PLACEHOLDER__ without documented "
+                            f"password in SQL comment (add `-- Password for all seed users: \"…\"`):\n{detail}"
+                        )
+                        return False, "\n".join(output_parts)
+                    output_parts.append(
+                        f"SEED_BCRYPT WARN (non-blocking — hash mismatch or antipattern; "
+                        f"check whether apply_sql_to_rds.py ran):\n{detail}"
+                    )
+                else:
+                    output_parts.append("SEED_BCRYPT OK")
+                    # Remind developer agent when placeholders still need pipeline to materialize
+                    has_placeholders = any(
+                        "__BCRYPT_PLACEHOLDER__" in p.read_text(encoding="utf-8", errors="replace")
+                        for p in seed_sql
+                        if "fix" not in p.name.lower()
+                    )
+                    if has_placeholders:
+                        output_parts.append(
+                            f"SEED_BCRYPT NOTE — seed SQL uses __BCRYPT_PLACEHOLDER__ "
+                            f"(RDS login will 401 until materialized):\n"
+                            f"  Auto (full pipeline): python scripts/apply_sql_to_rds.py --target-app {service}\n"
+                            f"  Manual (after SQL already applied): "
+                            f"python agents/_shared/materialize_seed_passwords.py --target-app {service}\n"
+                            f"  README Seed Users section MUST include this command."
+                        )
+            except subprocess.TimeoutExpired:
+                output_parts.append("SEED_BCRYPT TIMEOUT (non-blocking)")
+
+    if (service_dir / "app" / "startup_checks.py").is_file():
+        startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}
+        startup_env["APP_ENV"] = "development"
+        startup_env.pop("SKIP_STARTUP_CHECKS", None)
+        try:
+            result = subprocess.run(
+                [python_cmd, "-c", _STARTUP_CONFIG_SCRIPT],
+                cwd=str(service_dir),
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=startup_env,
+            )
+            if result.returncode != 0:
+                blocking = True
+                output_parts.append(
+                    "STARTUP_CONFIG FAILED (uvicorn would refuse to start):\n{}{}".format(
+                        result.stdout, result.stderr
+                    )
+                )
+                return False, "\n".join(output_parts)
+            output_parts.append("STARTUP_CONFIG OK")
+        except subprocess.TimeoutExpired:
+            return False, "\n".join(output_parts + ["STARTUP_CONFIG TIMEOUT"])
+
+    import_cmd = [python_cmd, "-c", "from app.main import app; print('IMPORT_OK')"]
+    try:
+        result = subprocess.run(
+            import_cmd,
+            cwd=str(service_dir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        if result.returncode != 0:
+            output_parts.append("IMPORT FAILED (exit code {}):\n{}{}".format(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+            ))
+            if "Cannot specify `Depends` in `Annotated`" in result.stderr:
+                output_parts.append(
+                    "Hint: remove `= Depends()` from CurrentUser/DbSession parameters"
+                )
+            if "parameter without a default follows parameter with a default" in result.stderr:
+                output_parts.append(
+                    "Hint: move CurrentUser/DbSession before Query(...) parameters"
+                )
+            return False, "\n".join(output_parts)
+        output_parts.append("IMPORT OK")
+    except subprocess.TimeoutExpired:
+        return False, "\n".join(output_parts + ["IMPORT TIMEOUT (>30s)"])
+
+    health_cmd = [python_cmd, "-c", _HEALTH_SMOKE_SCRIPT]
+    try:
+        result = subprocess.run(
+            health_cmd,
+            cwd=str(service_dir),
+            capture_output=True,
+            text=True,
+            timeout=45,
+            env=env,
+        )
+        if result.returncode != 0:
+            output_parts.append("HEALTH FAILED:\n{}{}".format(result.stdout, result.stderr))
+            return False, "\n".join(output_parts)
+        output_parts.append(result.stdout.strip() or "HEALTH OK")
+    except subprocess.TimeoutExpired:
+        return False, "\n".join(output_parts + ["HEALTH TIMEOUT (>45s)"])
+
+    tests_dir = service_dir / "tests"
+    if run_pytest and tests_dir.is_dir():
+        pytest_cmd = [python_cmd, "-m", "pytest", "tests/", "-q", "--tb=short"]
+        try:
+            result = subprocess.run(
+                pytest_cmd,
+                cwd=str(service_dir),
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=env,
+            )
+            stdout = result.stdout[-4000:] if len(result.stdout) > 4000 else result.stdout
+            stderr = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+            if result.returncode == 0:
+                output_parts.append(f"PYTEST OK:\n{stdout}")
+            else:
+                output_parts.append(f"PYTEST FAILED (exit {result.returncode}):\n{stdout}\n{stderr}")
+                if "SQLite Date type only accepts Python date objects" in stdout + stderr:
+                    output_parts.append(
+                        "Hint: use date(2024, 1, 1) in ORM fixtures, not '2024-01-01' strings"
+                    )
+                return False, "\n".join(output_parts)
+        except subprocess.TimeoutExpired:
+            return False, "\n".join(output_parts + ["PYTEST TIMEOUT (>180s)"])
+    elif run_pytest:
+        output_parts.append("PYTEST SKIPPED: no tests/ directory")
+
+    return True, "\n".join(output_parts)
 
 
 _STARTUP_CONFIG_SCRIPT = """
@@ -1316,203 +1589,19 @@ with TestClient(app) as client:
 
 
 @tool
-def dev_validate_app(service: str, run_pytest: bool = False) -> str:
-    """Validate the generated app can start and optionally pass tests.
+def dev_validate_app(service: str, run_pytest: bool = True) -> str:
+    """Validate the generated app can start and pass tests.
 
-    Checks:
-      1. .env.example format (DATABASE_URL= prefix, KEY=value lines)
-      2. startup_checks.validate_runtime_config with APP_ENV=development + .env.example values
-         (catches Postgres schema vs SQLite mismatch before user copies .env wrong)
-      3. Seed SQL bcrypt parity when db/sql/*seed*.sql documents a dev password (placeholder hashes fail here)
-      4. `python -c "from app.main import app"` succeeds (catches import errors)
-      5. TestClient smoke: GET /health + optional authenticated list route
-      6. If run_pytest=True: `python -m pytest tests/ -x -q --tb=short`
+    Runs structure, env-example, router antipattern scan, seed bcrypt (warn-only),
+    startup config, import, health smoke, and pytest (default on).
 
-    Note: does NOT start uvicorn or Streamlit. User must run API (Terminal 1) before UI (Terminal 2).
-    Returns stdout+stderr so the LLM can read errors and fix files.
-    Call after all files are written. If errors are returned, fix them and call again.
+    Returns the full report. If output contains FAILED, fix files and call again.
+    Do NOT declare success to the user until you see IMPORT OK and PYTEST OK.
     """
-    import subprocess
-
-    service_dir = _service_dir(service)
-    if not service_dir.is_dir():
-        return f"Error: target-apps/{service}/ does not exist"
-
-    reqs = service_dir / "requirements.txt"
-    if not reqs.is_file():
-        return f"Error: target-apps/{service}/requirements.txt not found - write it first"
-
-    python_cmd = _python_for_service(service_dir)
-    env = _validation_env(service_dir)
-    output_parts: list[str] = []
-
-    # --- Step 0: structural check — golden template files must exist ---
-    required_files = [
-        "app/__init__.py",
-        "app/main.py",
-        "app/config.py",
-        "app/database.py",
-        "app/startup_checks.py",
-        "app/routers/__init__.py",
-        "app/routers/health.py",
-    ]
-    missing = [f for f in required_files if not (service_dir / f).is_file()]
-    if missing:
-        output_parts.append("STRUCTURE FAILED — missing golden template files:")
-        for f in missing:
-            output_parts.append(f"  - {f}")
-        output_parts.append(
-            "These files should be COPIED from _template/. "
-            "Call dev_read_file + dev_write_file for each missing file."
-        )
-        return "\n".join(output_parts)
-    output_parts.append("STRUCTURE OK")
-
-    env_results = _validate_env_example(service_dir)
-    output_parts.extend(env_results)
-    if env_results[0].startswith("ENV_EXAMPLE FAILED"):
-        return "\n".join(output_parts)
-
-    # --- Step 1a: seed SQL bcrypt (file-level — catches placeholder hashes before RDS login 401) ---
-    seed_sql = list((service_dir / "db" / "sql").glob("*seed*.sql")) if (service_dir / "db" / "sql").is_dir() else []
-    if seed_sql:
-        verify_script = _REPO_ROOT / "agents" / "_shared" / "verify_seed_bcrypt.py"
-        if verify_script.is_file():
-            try:
-                result = subprocess.run(
-                    [
-                        python_cmd,
-                        str(verify_script),
-                        "--target-app",
-                        service,
-                        "--repo-root",
-                        str(_REPO_ROOT),
-                    ],
-                    cwd=str(service_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if result.returncode != 0:
-                    output_parts.append(
-                        "SEED_BCRYPT FAILED (RDS login will 401; pytest may still pass via conftest):\n"
-                        f"{result.stdout}{result.stderr}"
-                    )
-                    output_parts.append(
-                        "Fix db/sql/*seed*.sql: generate hash with bcrypt.hashpw(..., bcrypt.gensalt(12)); "
-                        "add tests/test_seed_bcrypt.py from _template/tests/test_seed_bcrypt_reference.py"
-                    )
-                    return "\n".join(output_parts)
-                output_parts.append("SEED_BCRYPT OK")
-            except subprocess.TimeoutExpired:
-                output_parts.append("SEED_BCRYPT TIMEOUT")
-                return "\n".join(output_parts)
-
-    # --- Step 1b: startup config (mirrors real uvicorn lifespan with .env.example) ---
-    if (service_dir / "app" / "startup_checks.py").is_file():
-        startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}
-        startup_env["APP_ENV"] = "development"
-        startup_env.pop("SKIP_STARTUP_CHECKS", None)
-        try:
-            result = subprocess.run(
-                [python_cmd, "-c", _STARTUP_CONFIG_SCRIPT],
-                cwd=str(service_dir),
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=startup_env,
-            )
-            if result.returncode != 0:
-                output_parts.append(
-                    "STARTUP_CONFIG FAILED (uvicorn would refuse to start):\n{}{}".format(
-                        result.stdout, result.stderr
-                    )
-                )
-                output_parts.append(
-                    "Hint: POSTGRES_SCHEMA apps need DATABASE_URL=postgresql+psycopg://... in .env.example"
-                )
-                return "\n".join(output_parts)
-            output_parts.append("STARTUP_CONFIG OK")
-        except subprocess.TimeoutExpired:
-            output_parts.append("STARTUP_CONFIG TIMEOUT")
-            return "\n".join(output_parts)
-
-    # --- Step 2: import check ---
-    import_cmd = [python_cmd, "-c", "from app.main import app; print('IMPORT_OK')"]
-    try:
-        result = subprocess.run(
-            import_cmd,
-            cwd=str(service_dir),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
-        if result.returncode != 0:
-            output_parts.append("IMPORT FAILED (exit code {}):\n{}{}".format(
-                result.returncode,
-                result.stdout,
-                result.stderr,
-            ))
-            return "\n".join(output_parts)
-        output_parts.append("IMPORT OK")
-    except FileNotFoundError:
-        return (
-            f"Error: python not found at {python_cmd}. "
-            f"No .venv in target-apps/{service}/ - create venv and install requirements first, "
-            "or the host python will be used."
-        )
-    except subprocess.TimeoutExpired:
-        output_parts.append("IMPORT TIMEOUT (>30s) - possible circular import or startup hang")
-        return "\n".join(output_parts)
-
-    # --- Step 2: health smoke test ---
-    health_cmd = [python_cmd, "-c", _HEALTH_SMOKE_SCRIPT]
-    try:
-        result = subprocess.run(
-            health_cmd,
-            cwd=str(service_dir),
-            capture_output=True,
-            text=True,
-            timeout=45,
-            env=env,
-        )
-        if result.returncode != 0:
-            output_parts.append(
-                "HEALTH FAILED:\n{}{}".format(result.stdout, result.stderr)
-            )
-            return "\n".join(output_parts)
-        output_parts.append(result.stdout.strip() or "HEALTH OK")
-    except subprocess.TimeoutExpired:
-        output_parts.append("HEALTH TIMEOUT (>45s)")
-        return "\n".join(output_parts)
-
-    # --- Step 3: optional pytest ---
-    if run_pytest:
-        tests_dir = service_dir / "tests"
-        if not tests_dir.is_dir():
-            output_parts.append("PYTEST SKIPPED: no tests/ directory")
-        else:
-            pytest_cmd = [python_cmd, "-m", "pytest", "tests/", "-x", "-q", "--tb=short"]
-            try:
-                result = subprocess.run(
-                    pytest_cmd,
-                    cwd=str(service_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    env=env,
-                )
-                stdout = result.stdout[-3000:] if len(result.stdout) > 3000 else result.stdout
-                stderr = result.stderr[-1500:] if len(result.stderr) > 1500 else result.stderr
-                if result.returncode == 0:
-                    output_parts.append(f"PYTEST OK:\n{stdout}")
-                else:
-                    output_parts.append(f"PYTEST FAILED (exit {result.returncode}):\n{stdout}\n{stderr}")
-            except subprocess.TimeoutExpired:
-                output_parts.append("PYTEST TIMEOUT (>120s)")
-
-    return "\n".join(output_parts)
+    passed, report = run_service_validation(service, run_pytest=run_pytest)
+    if passed:
+        return report + "\n\nVALIDATION PASSED — safe to hand off."
+    return report + "\n\nVALIDATION FAILED — fix all errors above and call dev_validate_app again."
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -1586,14 +1675,17 @@ class _DeveloperCallbackHandler:
                 self.telemetry.record_usage(usage)
 
 
-def _coding_model() -> BedrockModel:
-    model_id = os.getenv(
+def _coding_model_id() -> str:
+    return os.getenv(
         "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"),
     )
+
+
+def _coding_model() -> BedrockModel:
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     model_kwargs: dict[str, Any] = {
-        "model_id": model_id,
+        "model_id": _coding_model_id(),
         "region_name": os.getenv("AWS_REGION", "us-east-2"),
         "max_tokens": _max_output_tokens(),
         "streaming": True,
@@ -1849,10 +1941,6 @@ def main() -> None:
 
     ctx = _build_context(target_app=target, jira_key=args.jira_key, extra=extra or None)
 
-    model_id = os.getenv(
-        "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
-    )
     auto_pattern = os.getenv("DEVELOPER_AGENT_AUTO_PATTERN", "").strip().lower() in {"1", "true", "yes"}
     print("", file=sys.stderr)
     print("=" * 64, file=sys.stderr)
@@ -1862,7 +1950,7 @@ def main() -> None:
         file=sys.stderr,
     )
     print("=" * 64, file=sys.stderr)
-    print(f"[developer-agent] Model      : {model_id}", file=sys.stderr)
+    print(f"[developer-agent] Model      : {_coding_model_id()}", file=sys.stderr)
     if _thinking_enabled():
         print(
             f"[developer-agent] Thinking   : on (budget {_thinking_budget_tokens()} tokens)",
@@ -1892,12 +1980,44 @@ def main() -> None:
         )
     print("[developer-agent] Running...", file=sys.stderr)
 
-    result, written, handoff_rel = run_task(
-        args.task,
-        ctx,
-        target_app=target,
-        jira_key=args.jira_key,
-    )
+    max_validate_retries = int(os.getenv("DEVELOPER_AGENT_VALIDATE_RETRIES", "2"))
+    task = args.task
+    result = ""
+    written: list[str] = []
+    handoff_rel: str | None = None
+
+    for attempt in range(max_validate_retries + 1):
+        if attempt > 0:
+            print(
+                f"[developer-agent] Validation retry {attempt}/{max_validate_retries}...",
+                file=sys.stderr,
+            )
+        result, written, handoff_rel = run_task(
+            task,
+            ctx,
+            target_app=target,
+            jira_key=args.jira_key,
+        )
+        passed, validate_report = run_service_validation(target, run_pytest=True)
+        print("\n=== Host validation gate ===", file=sys.stderr)
+        print(validate_report, file=sys.stderr)
+        if passed:
+            print("[developer-agent] Host validation PASSED", file=sys.stderr)
+            break
+        if attempt >= max_validate_retries:
+            print(
+                "[developer-agent] Host validation FAILED after "
+                f"{max_validate_retries + 1} attempt(s) — exiting non-zero.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        task = (
+            "Host validation failed after your implementation. Fix ALL blocking errors "
+            "before handoff. Call dev_validate_app(run_pytest=True) until you see "
+            "IMPORT OK and PYTEST OK.\n\n"
+            f"{validate_report}\n\n"
+            "Do NOT declare the app complete until validation passes."
+        )
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(result)
     if written:

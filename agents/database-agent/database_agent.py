@@ -101,12 +101,7 @@ Under `dbOutputDir` (default `target-apps/<service>/db/`):
   Use `seedMinRows`–`seedMaxRows` from Context: **every RDS table in §3 must get that many INSERT rows**
   (realistic names/emails/dates; stable UUIDs only where tests need them; respect FK order; `ON CONFLICT DO NOTHING`).
   Do not leave any §3 table empty in seed unless design §6.2 explicitly excludes it.
-- **JWT seed users:** every `password_hash` in `*_seed.sql` MUST be a real bcrypt digest (cost 12)
-  generated with the `bcrypt` library for the documented dev password in the SQL comment
-  (e.g. `-- Password for all seed users: "AuditPass123!"`). **Never invent placeholder hashes**
-  — the host runs `agents/_shared/verify_seed_bcrypt.py` after RDS apply; bad hashes block the pipeline.
-  Put one `-- Hash: $2b$12$...` comment line matching the INSERT values. Plaintext passwords only in comments/README, not in INSERT literals.
-  **SQL quoting:** use single-quoted bcrypt literals (`'$2b$12$...'`). Never dollar-quote bcrypt (`$tag$2b$12$...$tag$`) — PostgreSQL drops the leading `$` and login breaks.
+- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the password hash column — use the **exact column name from your DDL** (`hashed_password`, `password_hash`, `password`, etc.). See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 
 ## RDS apply (host — not your job when `applyToRdsAfterWrite` is true)
@@ -140,26 +135,47 @@ Use **one `db_write_file` call per sql file**; put full SQL only in the tool `co
 
 ## Seeding credentials — DO NOT invent hashes
 
-When a seed user row has a `password_hash` (or any `*_hash` column whose plaintext is documented elsewhere in the brief), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` you produce will be random characters that fail every `bcrypt.checkpw(...)` call. This has shipped to multiple validation runs and broken login tests every time.
+When any seed row has a password hash column (`hashed_password`, `password_hash`, `password`, etc.), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
 
-Instead:
-1. **Insert the sentinel** `'__BCRYPT_PLACEHOLDER__'` (or `'__ARGON2_PLACEHOLDER__'` etc.) in every `password_hash` column of every seed row.
-2. **Document the credential map in `HANDOFF.md`** under a `### seedCredentials` heading. Format exactly:
+### All three steps are MANDATORY — skipping any one causes silent 401 on RDS
 
-   ```
-   ### seedCredentials
-   | username | role | plaintext_password |
-   |----------|------|--------------------|
-   | priya    | auditor | AuditPass123! |
-   | alice    | assignee | AlicePass123! |
-   | bob      | executive | BobPass123! |
-   ```
+**Step 1 — Sentinel value in every seed user row**
+Insert `'__BCRYPT_PLACEHOLDER__'` in the hash column. Use the **exact column name from your DDL** — never assume `password_hash`; read the `CREATE TABLE` you just wrote.
 
-3. The developer-agent reads this section and scaffolds `scripts/seed_dev_users.py` which hashes each plaintext with `bcrypt.hashpw()` at deploy time and `UPDATE`s the placeholder rows.
+```sql
+INSERT INTO users (id, username, hashed_password, role) VALUES
+    ('uuid-1', 'alice', '__BCRYPT_PLACEHOLDER__', 'admin'),
+    ('uuid-2', 'bob',   '__BCRYPT_PLACEHOLDER__', 'viewer');
+```
 
-This is the **only correct approach** — the database-agent (LLM) does not run cryptographic libraries. The developer-agent (also LLM) does not either, but the script it scaffolds runs `bcrypt` at deploy time on a real CPU.
+**Step 2 — Machine-parseable password comment at the TOP of the seed file (MANDATORY)**
+The seed file MUST contain this comment. It is parsed by `agents/_shared/materialize_seed_passwords.py` to know which password to hash. Without it, materialize silently skips and every login returns 401.
 
-Same rule applies to `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + HANDOFF.md mapping every time.
+```sql
+-- Password for all seed users: "YourPassword123!"
+```
+
+Format rules (regex: `(?:Password|passwords?)[^"\n]*(?:"([^"]+)"|: *([^\s!][^\n]*!))`):
+- Must contain the word `Password` (case-insensitive)
+- Password must be **double-quoted** `"…"` OR the line must **end with `!`** (e.g. `-- Password: Pass123!`)
+- Put it as the first comment in the file, before any `SET search_path` or `INSERT` statements
+- One comment covers all users when they share a password; add separate comments when roles have different passwords (first match wins)
+
+**Step 3 — Credential map in `HANDOFF.md` under `### seedCredentials` (MANDATORY)**
+```
+### seedCredentials
+| username | role      | plaintext_password |
+|----------|-----------|--------------------|
+| alice    | admin     | YourPassword123!   |
+| bob      | viewer    | YourPassword123!   |
+```
+- First column: the login field value (`username` value or `email` value — whichever the app uses to log in)
+- Third column: the plaintext password (must match the SQL comment exactly)
+- Use `email` values in column 1 when the users table has an `email` login column (no `username`)
+
+The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** to find the password, reads **Step 3** to find which users to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
+
+Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + SQL comment + HANDOFF.md map — all three, every time.
 """
 
 

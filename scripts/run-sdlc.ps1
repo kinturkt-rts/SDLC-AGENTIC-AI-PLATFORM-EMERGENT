@@ -158,6 +158,15 @@ function Invoke-RdsApply {
     }
 }
 
+function Invoke-SeedMaterialize {
+    param([string]$TargetFeature)
+    Write-Host "`n=== Materialize seed passwords on RDS (materialize_seed_passwords.py) ===" -ForegroundColor Green
+    python agents/_shared/materialize_seed_passwords.py --target-app $TargetFeature --repo-root $RepoRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Seed password materialization failed - check HANDOFF seedCredentials or seed SQL password comment."
+    }
+}
+
 function Invoke-LocalVerify {
     param([string]$TargetFeature)
     $targetDir = Join-Path $RepoRoot "target-apps\$TargetFeature"
@@ -189,17 +198,13 @@ function Invoke-LocalVerify {
             Write-Host "  import smoke: from app.main import app" -ForegroundColor DarkGray
             & $python -c "from app.main import app; print('  import OK')"
             if ($LASTEXITCODE -ne 0) {
-                Write-Warning "app import failed  - fix startup errors before pytest."
-                return
+                throw "app import failed - developer-agent must fix startup errors before pipeline continues."
             }
 
             Write-Host "  pytest tests/ -q" -ForegroundColor DarkGray
             & $python -m pytest tests/ -q --tb=line
             if ($LASTEXITCODE -ne 0) {
-                Write-Warning "pytest failed  - fix tests before manual Swagger testing."
-            }
-            else {
-                Write-Host "  pytest OK" -ForegroundColor Green
+                throw "pytest failed - developer-agent must fix tests before pipeline continues."
             }
 
             Write-Host "  seed bcrypt verify (SQL files)" -ForegroundColor DarkGray
@@ -207,12 +212,10 @@ function Invoke-LocalVerify {
             if ($LASTEXITCODE -ne 0) {
                 Write-Warning "Seed bcrypt verification failed - README login will fail on RDS even if pytest passes."
             }
-            if (Test-Path (Join-Path $targetDir ".env")) {
-                Write-Host "  seed bcrypt verify (RDS stored hash)" -ForegroundColor DarkGray
-                & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "RDS seed password mismatch - run apply_sql_to_rds.py or fix seed SQL."
-                }
+            Write-Host "  seed bcrypt verify (RDS stored hash)" -ForegroundColor DarkGray
+            & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds
+            if ($LASTEXITCODE -ne 0) {
+                throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
             }
         }
         finally {
@@ -354,7 +357,7 @@ if (-not $SkipDb) {
         "agents/database-agent/database_agent.py",
         "--target-app", $Feature,
         "--context-file", $ContextFile,
-        "--task", "Implement data model from designDocPath §3/§6: numbered sql/ migrations, dev seed with real bcrypt hashes for any password columns (bcrypt library, cost 12), stable UUIDs, HANDOFF notes."
+        "--task", "Implement data model from designDocPath §3/§6: numbered sql/ migrations, dev seed with __BCRYPT_PLACEHOLDER__ for password_hash columns, documented password in SQL comment, ### seedCredentials table in HANDOFF.md, stable UUIDs."
     )
     if ($applyPostgres) { $dbArgs += "--with-postgres" }
     python @dbArgs
@@ -363,20 +366,16 @@ if (-not $SkipDb) {
     # Explicit RDS apply (idempotent)  - ensures schema exists even if agent apply was skipped
     if ($applyPostgres) {
         Invoke-RdsApply
+        Invoke-SeedMaterialize -TargetFeature $Feature
         Write-Host "`n=== Verify seed bcrypt hashes (SQL files) ===" -ForegroundColor Green
         python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot
         if ($LASTEXITCODE -ne 0) {
             throw "Seed bcrypt verification failed - placeholder password hashes will break RDS login."
         }
-        $appEnv = Join-Path $appDir ".env"
-        if (Test-Path $appEnv) {
-            Write-Host "`n=== Verify seed bcrypt on RDS ===" -ForegroundColor Green
-            python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot --check-rds
-            if ($LASTEXITCODE -ne 0) {
-                throw "RDS seed password verification failed - Swagger/Streamlit login will 401."
-            }
-        } else {
-            Write-Host "  (skip RDS hash check - copy .env.example to .env, then re-run verify with --check-rds)" -ForegroundColor DarkGray
+        Write-Host "`n=== Verify seed bcrypt on RDS ===" -ForegroundColor Green
+        python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot --check-rds
+        if ($LASTEXITCODE -ne 0) {
+            throw "RDS seed password verification failed - Swagger/Streamlit login will 401."
         }
     }
 }

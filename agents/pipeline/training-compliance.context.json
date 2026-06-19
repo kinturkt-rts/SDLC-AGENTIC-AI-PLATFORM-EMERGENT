@@ -1,0 +1,18 @@
+﻿{
+    "productAgentOutput":  "See prdPath for training-compliance MVP requirements.",
+    "targetApp":  "training-compliance",
+    "prdPath":  "docs/PRD/training-compliance.md",
+    "designDocPath":  "docs/design/training-compliance.md",
+    "inputPath":  "inputs/training-compliance.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  false,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/training-compliance.png"
+                     ]
+}

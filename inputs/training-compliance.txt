@@ -1,0 +1,58 @@
+Training & Certification Compliance — mandatory courses, expirations, team gaps
+
+Client story:
+Marcus (HR) is audited every quarter on who completed safety and security training. Today it is
+spreadsheets and inbox searches. Managers cannot see which direct reports are out of compliance
+until someone escalates. Marcus needs one place to define required trainings, record completions,
+and surface who is missing or about to expire — without managers editing other teams' records.
+
+MVP:
+- Course catalog: name, category (safety, security, role-specific), validity period in months
+  (e.g. annual refresh), and whether it is required for all staff or for selected job roles.
+- Employee roster with department, manager, job role, and active/inactive flag.
+- Record training completions with completion date; system calculates expiry from validity period.
+- Recertification: a new completion replaces the prior active record for that person + course.
+- Required-course matrix: each job role lists which courses are mandatory.
+- Compliance view per employee: required vs completed vs expired vs never taken.
+- Manager view: own team's compliance summary only — not other departments.
+- HR admin: full catalog, roster, record completions for anyone, deactivate employees.
+- Compliance officer (read-only): org-wide dashboards — overdue, expiring within 30 days,
+  completion rate by department, worst gaps by course.
+- Alerts conceptually: employee with expired required course; employee inactive but still showing
+  as compliant owner on open items (should drop from active compliance counts).
+
+Personas (who needs what):
+- HR administrator — defines courses and role requirements, manages roster, records completions.
+- Manager — sees team compliance; cannot change catalog or other teams.
+- Employee — sees own required and completed trainings; cannot mark others complete.
+- Compliance officer — read-only org reports and alerts; no writes.
+- Public/unauthenticated — health check only for ops.
+
+Business rules worth getting right:
+- Inactive employees excluded from compliance percentages and manager team totals.
+- A course required for a role applies to everyone currently in that role; changing role changes
+  the requirement set going forward (no retroactive penalty for courses no longer required).
+- Expired = completion exists but expiry date is before today.
+- Missing = required course has no current non-expired completion.
+- Managers only see employees where they are the recorded manager.
+- Deactivating an employee does not delete history; they disappear from active compliance views.
+- Optional: soft cap — flag if someone has more than 20 active course records (data quality guard).
+
+Demo data expectations:
+- Enough courses to cover all-vs-role-specific rules (at least 6 courses, 3 role types).
+- At least 15 employees across 3 departments with mixed compliance states.
+- Several expiring-within-30-days and several never-started required courses for dashboard demos.
+- At least one inactive employee still referenced in history.
+
+UI expectation:
+- Streamlit (or equivalent) role-gated screens: HR catalog & roster, manager team board,
+  employee "my trainings", compliance officer dashboard. API remains the source of truth.
+
+Out of scope:
+- LMS integration, SCORM, video hosting, payments
+- Email/SMS reminders (show in-app alerts only)
+- External certificate file storage beyond a simple reference field
+- Multi-language, multi-tenant
+
+Target app slug: training-compliance
+Output directory: target-apps/training-compliance/

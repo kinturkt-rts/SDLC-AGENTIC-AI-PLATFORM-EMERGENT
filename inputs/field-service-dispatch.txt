@@ -1,74 +1,49 @@
 Field Service Dispatch — customers, work orders, technician assignment, SLA board
 
 Client story:
-Dana runs a 15-tech HVAC shop; dispatch is whiteboard + group text. Needs office tool for
+Dana runs a 15-tech HVAC shop; dispatch is whiteboard + group text. She needs an office tool for
 assignments, status updates, and "who is overloaded today" — not Salesforce.
 
 MVP:
-- Customers, work orders, technicians with skill tags.
-- Dispatcher assigns/reassigns; tech updates status on own jobs only.
-- SLA: urgent = same-day completion target; flag breached orders on dashboard.
-- Parts used captured as line items on completion.
+- Customer records with contact info and service address.
+- Work orders linked to customers: description, priority (routine vs urgent), scheduled date,
+  time window (morning / afternoon / all day), and lifecycle status from new through completed
+  or cancelled.
+- Technician roster with skills (e.g. residential, commercial, install) and active flag.
+- Dispatcher assigns one active technician per order; can reassign; sees today's board.
+- Technicians update status only on jobs assigned to them.
+- Owner role: read-only visibility into board and workload — no dispatch writes.
+- SLA idea: urgent jobs should complete same day; surface breached SLAs on today's board.
+- On completion: capture brief completion notes and line items for parts used (name, qty, optional cost).
+- History of status changes (who changed what, when) for disputes.
 
-Personas & auth:
-| Role | Auth | Can do |
-|------|------|--------|
-| dispatcher | JWT | Full CRUD customers/orders/assignments |
-| technician | JWT | Read assigned orders; PATCH status on own active assignment |
-| owner | JWT | Read-only all dashboards |
-| anonymous | — | /health |
+Personas (who needs what):
+- Dispatcher — customers, orders, assignments, reschedule, cancel.
+- Technician — my jobs today, progress updates, add parts on active jobs.
+- Owner — dashboards and board; read-only.
+- Public/unauthenticated — health check only.
 
-Data model (DDL under target-apps/field-service-dispatch/db/sql/):
-- users: id uuid PK, username, password_hash, role, technician_id uuid FK nullable, is_active
-- technicians: id uuid PK, full_name, phone, skills text[] (e.g. {residential,commercial,install}),
-  is_active bool
-- customers: id uuid PK, name, phone, service_address text, notes text, created_at
-- work_orders: id uuid PK, customer_id FK, description text, priority enum (low|normal|urgent),
-  status enum (new|scheduled|in_progress|completed|cancelled), scheduled_date date,
-  time_window enum (morning|afternoon|all_day), sla_due_at timestamptz nullable,
-  completion_notes text nullable, created_at, updated_at
-- assignments: id uuid PK, work_order_id FK unique where active, technician_id FK,
-  assigned_at timestamptz, unassigned_at timestamptz nullable, active bool default true
-- parts_used: id uuid PK, work_order_id FK, part_name varchar(120), quantity int > 0, unit_cost numeric(10,2) nullable
-- status_history: id uuid PK, work_order_id FK, from_status, to_status, changed_by FK→users, note, created_at
-- Indexes: work_orders(scheduled_date, status), work_orders(priority, status)
+Business rules worth getting right:
+- Cannot assign unless order is in a dispatchable state; only one active assignment per order.
+- Technician cannot touch another tech's active assignment.
+- Completing a job requires meaningful completion notes; parts list can be empty but allowed.
+- Cancelling allowed from non-terminal states; completed jobs are effectively locked except
+  dispatcher addendum on notes.
+- Urgent priority implies a same-day completion expectation — system should flag when that
+  window is missed relative to scheduled date.
+- Board for a given day: unassigned queue, per-technician columns, SLA breaches highlighted.
 
-State machine (work_orders.status):
-- new → scheduled (requires active assignment)
-- scheduled → in_progress → completed
-- any non-completed → cancelled (dispatcher only)
-- completed → immutable except dispatcher addendum note via PATCH completion_notes
+Demo data expectations:
+- Several technicians with different skills, multiple customers, ~15 orders across statuses.
+- Mix of urgent and routine; at least one breached SLA for dashboard demo.
+- Assignments and parts on a few completed jobs.
 
-Guards:
-- POST assignment only if order status in (new, scheduled) and no active assignment.
-- Technician PATCH status only if assignment.technician_id matches user's technician_id.
-- completed requires completion_notes min 10 chars AND at least 0 parts rows allowed.
-- urgent priority auto-sets sla_due_at = end of scheduled_date 6pm local (UTC stored).
-- GET /board/today returns columns: unassigned[], per-technician[], breached_sla[].
+UI expectation:
+- Streamlit (or equivalent): dispatcher board, technician "my jobs" with status actions.
+  API is source of truth.
 
-API contracts (implement all):
-| Method | Path | Auth | Behavior |
-| GET | /health | none | DB ping |
-| POST | /auth/login | none | JWT |
-| POST | /customers | dispatcher | |
-| GET | /customers | dispatcher, owner | ?q= phone/name |
-| POST | /work-orders | dispatcher | sets sla if urgent |
-| GET | /work-orders | all roles | scoped; filters date, status, priority, technician_id |
-| PATCH | /work-orders/{id} | dispatcher | reschedule, priority |
-| POST | /work-orders/{id}/assign | dispatcher | body technician_id; deactivate prior assignment |
-| POST | /work-orders/{id}/status | dispatcher, technician | body {status, note?}; append history |
-| POST | /work-orders/{id}/parts | dispatcher, technician | on in_progress or completed |
-| GET | /board/today | dispatcher, owner | ?date= default today |
-| GET | /technicians | dispatcher, owner | include active_job_count for date |
-
-Stack: FastAPI, SQLAlchemy, psycopg, Streamlit: Dispatcher Board, Technician My Jobs (status buttons).
-
-Seed: 5 technicians, 8 customers, 15 orders across statuses, 3 urgent with one breached SLA.
-
-Tests: assignment uniqueness, tech 403 on other's job, completed without notes 422, board shape,
-SLA auto-set, cancel from scheduled, owner read-only 403 on write.
-
-Out of scope: GPS, SMS, payments, inventory stock depletion.
+Out of scope:
+- GPS tracking, SMS to customers, payments, inventory stock depletion
 
 Target app slug: field-service-dispatch
 Output directory: target-apps/field-service-dispatch/

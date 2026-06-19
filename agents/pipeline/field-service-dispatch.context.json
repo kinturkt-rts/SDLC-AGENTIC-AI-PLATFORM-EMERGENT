@@ -1,0 +1,18 @@
+﻿{
+    "productAgentOutput":  "See prdPath for field-service-dispatch MVP requirements.",
+    "targetApp":  "field-service-dispatch",
+    "prdPath":  "docs/PRD/field-service-dispatch.md",
+    "designDocPath":  "docs/design/field-service-dispatch.md",
+    "inputPath":  "inputs/field-service-dispatch.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  false,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/field-service-dispatch.png"
+                     ]
+}

@@ -331,6 +331,41 @@ def apply_sql_files(
     if not verbose and applied:
         print(f"[apply-sql] Applied: {', '.join(applied)}", file=sys.stderr)
     print("[apply-sql] Done.", file=sys.stderr)
+
+    if target_app and not skip_seed:
+        if _materialize_seed_passwords(target_app) != 0:
+            return 1
+
+    return 0
+
+
+def _materialize_seed_passwords(target_app: str) -> int:
+    """Replace __BCRYPT_PLACEHOLDER__ rows on RDS immediately after seed SQL apply."""
+    agents_dir = _REPO_ROOT / "agents"
+    if str(agents_dir) not in sys.path:
+        sys.path.insert(0, str(agents_dir))
+    try:
+        from _shared.materialize_seed_passwords import materialize
+        from _shared.seed_credentials import seed_sql_has_placeholders
+    except ImportError as exc:
+        print(f"[apply-sql] WARN: could not import materialize ({exc})", file=sys.stderr)
+        return 0
+
+    app_dir = _REPO_ROOT / "target-apps" / target_app
+    if not seed_sql_has_placeholders(app_dir):
+        return 0
+
+    print("[apply-sql] Materializing seed bcrypt passwords on RDS ...", file=sys.stderr)
+    try:
+        errors = materialize(target_app, _REPO_ROOT, strict=True)
+    except Exception as exc:
+        print(f"[apply-sql] FAILED: materialize_seed_passwords: {exc}", file=sys.stderr)
+        return 1
+    if errors:
+        for err in errors:
+            print(f"[apply-sql] FAILED: {err}", file=sys.stderr)
+        return 1
+    print("[apply-sql] Seed passwords materialized (RDS login ready).", file=sys.stderr)
     return 0
 
 
