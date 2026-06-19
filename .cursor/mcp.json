@@ -1,26 +1,10 @@
 {
   "mcpServers": {
-    "Atlassian": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote@latest",
-        "https://mcp.atlassian.com/v1/mcp/authv2"
-      ]
-    },
     "GitLab": {
       "command": "npx",
       "args": [
         "-y",
         "@zereight/mcp-gitlab"
-      ],
-      "envFile": "${workspaceFolder}/.env"
-    },
-    "GitHub": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
       ],
       "envFile": "${workspaceFolder}/.env"
     },
