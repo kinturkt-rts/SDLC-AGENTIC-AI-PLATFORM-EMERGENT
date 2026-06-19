@@ -118,7 +118,13 @@ Missing any route = the agent must catch it here, not during re-run.
     Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
     startup_checks.py, health.py, bedrock_client.py, etc.).
 
-    Then `dev_write_file` ONLY the files listed under "Customize next" in the scaffold report:
+    **Prefer `dev_write_files` (batched dict of `{path: content}`) for groups of related files** —
+    e.g. all `app/models/*.py` in one call, all `app/routers/*.py` in one call, all `schemas/*.py`
+    in one call, all `tests/test_*.py` in one call. Each separate `dev_write_file` is a full LLM
+    round-trip; batched writes cut tool count by ~70% and finish noticeably faster. Reserve
+    single-file `dev_write_file` for one-off updates (config.py adjustments, README.md, etc.).
+
+    Then write ONLY the files listed under "Customize next" in the scaffold report (batch them):
     - `app/config.py` — service_name + env Fields (keep Field(alias=...) pattern)
     - `app/main.py` — add domain router imports + include_router calls
     - `app/dependencies.py` — auth per Rules (API-key or JWT)
@@ -555,6 +561,8 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | search_path | Set via POSTGRES_SCHEMA in database.py connect hook |
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
+| FK columns on ORM | Every FK column on a SQLAlchemy model MUST declare `ForeignKey("<table>.<col>")` as an argument to `mapped_column` / `Column`. Having `REFERENCES users(id)` in the SQL DDL is **not enough** — SQLAlchemy reads only the ORM declaration when resolving `relationship(...)`. Without it, every `relationship` raises `NoForeignKeysError: Could not determine join condition`. Example: `assigned_to: Mapped[str] = mapped_column(pg_uuid_column(), ForeignKey("users.id"), nullable=False)`. |
+| Conditional aggregates | `case` is a top-level SQLAlchemy construct, NOT a `func` member. `func.case((cond, 1), else_=0)` raises `OperationalError: no such function: case` at runtime. Correct: `from sqlalchemy import case` then `case((cond, 1), else_=0)`. Same for `cast`, `null`, `true`, `false` — all top-level imports, not `func` members. |
 
 ## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag / streamlit patterns)
 
@@ -588,6 +596,8 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | python-jose vs PyJWT | Both provide JWT but have different APIs; mixing causes AttributeError | Pick one per app; if design says `python-jose` use `from jose import jwt`; if `PyJWT` use `import jwt` |
 | psycopg2-binary vs psycopg[binary] | SQLAlchemy 2.x with `postgresql+psycopg://` DSN requires psycopg 3.x, not psycopg2 | Always `psycopg[binary]>=3.1` in requirements.txt; never `psycopg2-binary` |
 | SQLAlchemy ENUM on SQLite | `create_type=True` (default) fails on SQLite with `CompileError` | `SAEnum(..., create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
+| Pydantic `EmailStr` | Importing `EmailStr` alone is fine, but at *validation time* Pydantic imports `email-validator` lazily and raises `ImportError: email-validator is not installed` | Any schema that uses `EmailStr` requires `pydantic[email]>=2.0` (or `email-validator>=2.0`) in `requirements.txt`. Add it the moment you write `EmailStr` anywhere — not later. |
+| `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
 
 When writing `tests/conftest.py`, COPY `_template/tests/conftest_reference.py` via
 `dev_read_file("target-apps/_template/tests/conftest_reference.py")` then `dev_write_file` as
@@ -743,6 +753,52 @@ def list_assets(db: DbSession = Depends(get_db), current_user: CurrentUser = Dep
 ```
 
 `DbSession = Annotated[Session, Depends(get_db)]` follows the same rule.
+
+When `app/dependencies.py` exposes RBAC shorthands like
+`AuditorUser = Annotated[CurrentUser, Depends(require_auditor)]`, use option 1
+or 2 below — never `current_user: AuthUser = Depends(require_auditor)`:
+
+```python
+# right (option 1) — bare class with Depends default
+def list_audits(
+    db: DbSession,
+    current_user: CurrentUser = Depends(require_auditor),
+): ...
+
+# right (option 2) — dedicated Annotated shorthand for the RBAC dep
+AuditorUser = Annotated[CurrentUser, Depends(require_auditor)]
+def list_audits(db: DbSession, current_user: AuditorUser): ...
+```
+
+When the RBAC dependency itself uses `AuthUser` internally (e.g.
+`def require_auditor(current_user: AuthUser) -> CurrentUser:`) that's fine —
+it's the public route signature where double-Depends fires.
+
+### Positional arguments before keyword arguments — Python parser rule
+
+Python rejects positional args appearing *after* keyword args in any function
+call, including SQLAlchemy `Column(...)`:
+
+```python
+# wrong — CheckConstraint is positional, comes after nullable=False keyword arg
+risk_score = Column(
+    Integer,
+    nullable=False,
+    CheckConstraint("risk_score >= 0 AND risk_score <= 100"),
+)
+# → SyntaxError: positional argument follows keyword argument
+
+# right — all positional args first, all keyword args last
+risk_score = Column(
+    Integer,
+    CheckConstraint("risk_score >= 0 AND risk_score <= 100"),
+    nullable=False,
+)
+```
+
+Order in every multi-arg call: **positional → defaulted-positional → keyword**.
+Same rule for `relationship(...)`, `mapped_column(...)`, `Index(...)`, and
+every FastAPI dependency declaration.
 
 ### __init__.py — every package directory requires one
 
@@ -982,6 +1038,8 @@ App code rules (container-ready without refactors):
 - Tests: AAA pattern; one behavior per test; no conditional asserts; reset state between tests.
 - `GET /health` with real DB `SELECT 1` check always required (503 when DB down).
 - dependencies.txt: only packages actually imported — no speculative extras.
+- File format awareness: non-Python files do NOT accept Python docstrings or comments. `pytest.ini`, `setup.cfg`, `.env.example`, `.gitignore` use `# comment` syntax only. `.yml/.yaml` use `# comment`. JSON files have no comment syntax at all. NEVER start an `.ini` / `.cfg` / `.env` / `.yml` / `.json` with a Python triple-quoted docstring — that produces `unexpected line` parse errors.
+- Watch the output budget: keep prompt files (`app/services/prompts.py`, large system-prompt constants) short. When emitting a long triple-quoted string, write the closing token to disk before the file's content grows too large — running out of output tokens mid-string produces `SyntaxError: unterminated triple-quoted string literal` that's hard to diagnose later.
 
 ## Security guardrails
 
@@ -1019,6 +1077,8 @@ App code rules (container-ready without refactors):
     - Route returns a `ContactListPage` object but test asserts `len(data) == 5` instead of `data["total"] == 5` — must match the response shape.
     If you fix the test rather than the code, justify briefly in the handoff summary so reviewers know which contract is canonical.
 18. URL path cross-check: for every `@router.get/post/...` decorator, mentally compute `include_router(prefix=) + route_path` and confirm the test calls that exact URL. `/health/health` is a real bug that has shipped before — never double-prefix.
+19. Test fixtures must replicate route side-effects: if `POST /findings` creates both a `Finding` AND an initial `status_history` row, then a `sample_finding` fixture that constructs `Finding` via the ORM **must also** insert the matching `status_history` row. Otherwise tests that read the side-effect (`GET /findings/{id}/history`) see an empty list and fail. Rule of thumb: every `db.add(SecondaryModel(...))` call inside a route handler needs a mirror line in the corresponding test fixture, OR the fixture should call the route via the TestClient instead of constructing models directly.
+20. ORM models referencing other tables: every `mapped_column(... pg_uuid_column())` that points at another table MUST include `ForeignKey("other_table.id")` as a positional argument. SQL DDL constraints don't propagate to the ORM. Missing FK declaration = `relationship()` raises `NoForeignKeysError` at app startup.
 """
 
 # Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
@@ -1184,7 +1244,7 @@ def dev_read_file(path: str) -> str:
 
 @tool
 def dev_write_file(path: str, content: str) -> str:
-    """Write a file under target-apps/ only. Path relative to repo root.
+    """Write a single file under target-apps/. Prefer `dev_write_files` for ≥3 related files.
 
     Blocked: .env (use .env.example), QA_REPORT.md, tests/test_qa_*.py,
     .venv/, node_modules/, cache dirs.
@@ -1203,6 +1263,56 @@ def dev_write_file(path: str, content: str) -> str:
     if rel not in _written_files:
         _written_files.append(rel)
     return f"Wrote {rel} ({len(content)} bytes)"
+
+
+@tool
+def dev_write_files(files: dict[str, str]) -> str:
+    """Write multiple files in ONE tool call. Pass a mapping of `{path: content}`.
+
+    Use this for batched scaffolding (all models, all routers, all schemas in one call)
+    instead of many `dev_write_file` calls — drastically reduces tool call count and
+    LLM round-trips. Each path follows the same scoping/blocking rules as `dev_write_file`.
+
+    Returns a summary: how many files were written + which ones failed validation.
+    Continues on per-file errors (doesn't abort the whole batch); errored entries are
+    reported in the return value but successfully-written files are still on disk.
+
+    Example:
+        dev_write_files({
+            "target-apps/my-svc/app/models/item.py": "from sqlalchemy ...",
+            "target-apps/my-svc/app/models/order.py": "from sqlalchemy ...",
+            "target-apps/my-svc/app/routers/items.py": "from fastapi ...",
+        })
+    """
+    if not isinstance(files, dict) or not files:
+        return "Error: files must be a non-empty dict of {path: content}"
+
+    written: list[str] = []
+    errors: list[str] = []
+    for path, content in files.items():
+        if not isinstance(path, str) or not isinstance(content, str):
+            errors.append(f"{path!r}: path and content must both be strings")
+            continue
+        try:
+            file_path = _resolve_repo_path(path, write=True)
+        except ValueError as exc:
+            errors.append(f"{path}: {exc}")
+            continue
+        blocked = _validate_dev_write_path(file_path)
+        if blocked:
+            errors.append(f"{path}: {blocked}")
+            continue
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8", newline="\n")
+        rel = file_path.relative_to(_REPO_ROOT).as_posix()
+        if rel not in _written_files:
+            _written_files.append(rel)
+        written.append(rel)
+
+    summary = f"Wrote {len(written)} file(s)"
+    if errors:
+        summary += f"; {len(errors)} error(s):\n  - " + "\n  - ".join(errors)
+    return summary
 
 
 def _parse_dotenv_file(path: Path) -> dict[str, str]:
@@ -1731,7 +1841,7 @@ def _build_agent(
         ),
         model=_coding_model(),
         system_prompt=_build_system_prompt(ctx),
-        tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_validate_app],
+        tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_write_files, dev_validate_app],
         callback_handler=_DeveloperCallbackHandler(
             show_thinking=_thinking_enabled(),
             telemetry=telemetry,

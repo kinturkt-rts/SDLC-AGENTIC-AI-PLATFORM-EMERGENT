@@ -97,6 +97,24 @@ Return **only**:
 - Do not invent Jira keys. Jira is not required for architecture.
 - FastAPI services under `target-apps/` when the PRD implies an app tier.
 - A follow-up step writes the per-feature design doc (`designDocPath` in context) for database-agent and developer-agent; keep ADR bullets aligned with that doc.
+
+## Scope discipline — do NOT add services the brief did not request
+
+Briefs explicitly call out the MVP scope (local filesystem, single shared API key, no JWT, no LLM, etc.). Your job is to architect **what the brief asks for**, not to upgrade it to a production AWS reference architecture. Adding services not in the brief causes downstream drift: database-agent generates schemas for them, developer-agent writes integration code, then nothing matches the brief.
+
+| Brief says | Architect MUST use | Architect MUST NOT add |
+|------------|---------------------|------------------------|
+| "local filesystem under `data/evidence/`" | Local FS in Stack + design | S3, EFS, EBS |
+| "JWT auth" (with no provider named) | Library-based JWT (PyJWT) | AWS Cognito, Auth0, Okta |
+| "API key in `.env`" | `X-API-Key` header check | Cognito, API Gateway authorizers |
+| "FastAPI on Postgres" | FastAPI + RDS | API Gateway, Lambda, DynamoDB, ElastiCache |
+| "Bedrock for chat" | `app/services/bedrock_client.py` | SageMaker, Bedrock Agents, Knowledge Bases |
+| Single tenant, internal tool | Single-region single-AZ minimal | WAF, Shield, multi-region, read-replicas |
+| "mock the GitLab fetch" | Mock interface + stub return | Real GitLab integration design |
+
+If you believe a service is genuinely needed despite the brief, name it in the ADR's **Trade-offs** bullet as "Suggested Phase-2: <service> for <reason>" — never in the Stack table, never in the data model, never in the Rules. Database-agent and developer-agent treat the Stack table as authoritative.
+
+The diagram can still show standard infra (ALB → app → RDS). It should NOT include S3, Cognito, ElastiCache, API Gateway, etc. unless the brief explicitly names them.
 """
 
 DESIGN_SYS_PROMPT = """\
@@ -131,6 +149,15 @@ When React/Next is required (Phase 2), note `frontend/` in Stack — developer i
 | Layer | Technology |
 |-------|------------|
 (Max **6** rows — match the architecture diagram.)
+
+**Stack scope discipline**: list ONLY technologies the brief (or PRD) explicitly requires.
+- Brief says "local filesystem" → use local FS, do not list S3.
+- Brief says "JWT" → use library JWT (PyJWT), do not list Cognito.
+- Brief says "API key in env" → header check, do not list Cognito or API Gateway authorizers.
+- Brief says "FastAPI + Postgres" → don't add Lambda, DynamoDB, ElastiCache, WAF.
+If a service is genuinely needed beyond the brief, add it in a one-line "Suggested Phase-2"
+note under Summary — never in the Stack table or Data model. database-agent and developer-agent
+treat this table as authoritative; adding Cognito here adds a `cognito_sub` column to users.
 
 ## 3. Data model
 | Table / collection | Columns (name type PK/FK UNIQUE) | Indexes / constraints |
