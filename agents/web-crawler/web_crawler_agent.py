@@ -34,6 +34,7 @@ load_repo_env()
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.decorator import tool
 from strands.types.exceptions import MCPClientInitializationError
@@ -425,12 +426,17 @@ def wc_scraped_content_ddl() -> str:
 
 
 def _coding_model() -> BedrockModel:
-    model_id = os.getenv("CODING_MODEL_ID", os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6"))
+    model_id = os.getenv(
+        "CODING_MODEL_ID",
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+    )
     return BedrockModel(
         model_id=model_id,
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         streaming=True,
         max_tokens=8192,
+        cache_config=CacheConfig(strategy="auto"),
+        cache_tools="default",
     )
 
 

@@ -1,0 +1,35 @@
+Team expense tracker — sparse spec, agent must infer the rest.
+
+The finance team wants a small internal API where employees log business expenses and
+managers see monthly totals per team.
+
+What we need:
+- Employees submit expenses: amount, currency, category (travel, meals, software, other),
+  description, and the date the expense happened.
+- Multi-currency input but everything reports in USD. Use a fixed daily-snapshot conversion
+  table (no live FX API in MVP). Store the original amount AND the converted USD amount on submit.
+- Each employee belongs to a team. Managers can pull a monthly total per team across categories.
+- Admin can create teams and approve/reject submitted expenses. Approved/rejected expenses are
+  immutable; only "submitted" status allows edits.
+- Audit log: every state transition stored with timestamp + actor.
+
+Auth:
+- API key for managers and admins (different keys, different scopes)
+- Employees authenticate via a per-employee token like in our other internal tools
+
+Stack expected:
+- FastAPI + Postgres + pytest
+- No LLM, no UI, no JWT
+
+Things to get right:
+- Decimal handling — never use float for money
+- Monthly aggregation efficient even with 10k expenses per team per month
+- Currency conversion happens at submit-time using the snapshot table; stored values do not change
+  if the snapshot is later updated
+- Soft delete only — never hard-delete an expense once it's past "submitted"
+
+Out of scope:
+- Receipts / file uploads
+- Reimbursement workflow (just approval tracking)
+- Live FX rates
+- Multi-org / tenants

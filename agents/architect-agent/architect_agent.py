@@ -27,6 +27,7 @@ load_repo_env()
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.mcp import MCPClient
 from strands.types.exceptions import MCPClientInitializationError
@@ -291,6 +292,8 @@ def _bedrock_model() -> BedrockModel:
         model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         streaming=True,
+        cache_config=CacheConfig(strategy="auto"),
+        cache_tools="default",
     )
 
 

@@ -1,52 +1,35 @@
-"""Pydantic schemas for Department endpoints."""
+"""Department Pydantic schemas for request/response."""
 from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class DepartmentCreate(BaseModel):
+class DepartmentBase(BaseModel):
+    """Base department fields."""
     name: str = Field(..., min_length=1, max_length=80)
-    code: str = Field(..., min_length=2, max_length=10)
+    code: str = Field(..., min_length=2, max_length=10, pattern=r"^[A-Z]{2,10}$")
 
-    @field_validator("code")
-    @classmethod
-    def code_must_be_uppercase(cls, v: str) -> str:
-        upper = v.upper()
-        if not upper.isalpha():
-            raise ValueError("code must contain only letters A-Z")
-        return upper
+
+class DepartmentCreate(DepartmentBase):
+    """Request schema for creating departments."""
+    pass
 
 
 class DepartmentUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
-    code: Optional[str] = Field(default=None, min_length=2, max_length=10)
-
-    @field_validator("code")
-    @classmethod
-    def code_must_be_uppercase(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        upper = v.upper()
-        if not upper.isalpha():
-            raise ValueError("code must contain only letters A-Z")
-        return upper
+    """Request schema for updating departments."""
+    name: Optional[str] = Field(None, min_length=1, max_length=80)
+    code: Optional[str] = Field(None, min_length=2, max_length=10, pattern=r"^[A-Z]{2,10}$")
 
 
-class DepartmentOut(BaseModel):
+class DepartmentRead(DepartmentBase):
+    """Response schema for departments."""
     model_config = ConfigDict(from_attributes=True)
-
+    
     id: str
-    name: str
-    code: str
     created_at: datetime
 
     @field_validator("id", mode="before")
     @classmethod
     def coerce_uuid(cls, v):
         return str(v) if v is not None else v
-
-
-class DepartmentDetailOut(DepartmentOut):
-    """Includes contact_count for GET /departments/{id}."""
-    contact_count: int = 0

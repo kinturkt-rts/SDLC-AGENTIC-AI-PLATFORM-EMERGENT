@@ -12,6 +12,7 @@ import botocore.config
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.mcp import MCPClient
 
@@ -44,6 +45,8 @@ def _bedrock_model() -> BedrockModel:
         model_id=model_id,
         region_name=region,
         streaming=True,
+        cache_config=CacheConfig(strategy="auto"),
+        cache_tools="default",
         boto_client_config=botocore.config.Config(
             read_timeout=read_timeout,
             connect_timeout=10,

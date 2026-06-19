@@ -1,0 +1,106 @@
+Legal Contract Q&A — RAG over uploaded PDFs with clause-level citations
+
+App idea (one paragraph):
+Legal ops at a mid-size company maintains a folder of executed vendor contracts, NDAs, MSAs,
+and SOWs. Every quarter, finance and sales ask questions like "what's our termination clause
+for vendor X?" or "which contracts auto-renew in Q3?" — answers today require scrolling through
+50-page PDFs. This tool lets a legal-ops user upload contracts, then any authorized user can
+ask questions in a Streamlit chat and get an answer grounded in the actual PDF text with
+**clause-level citations** (document name + page number + relevant snippet).
+
+Purpose:
+- End-to-end SDLC test at HARD complexity, RAG pattern (B++).
+- Exercises **pgvector** + **PDF ingestion** + **cited responses**.
+- Different from rag-pdf-system: domain is legal contracts (longer documents, citation precision
+  matters more), and the answer MUST refuse when the retrieval confidence is below threshold.
+
+Personas & auth:
+| Caller | Auth | Can do |
+|--------|------|--------|
+| anonymous | none | GET /health |
+| legal_ops | `X-Legal-Key: <key>` header | Upload PDFs, delete documents, list all documents |
+| reader | `X-API-Key: <key>` header | Ask questions, list documents (read-only) |
+
+Stack:
+- FastAPI + Postgres + pgvector + Bedrock + Streamlit
+- pypdf for parsing
+- Embeddings: amazon.titan-embed-text-v2:0 (1024 dim)
+- Chat model: us.anthropic.claude-sonnet-4-20250514-v1:0
+
+Data:
+- documents: id (uuid), filename (text), title (text), doc_type (text — nda | msa | sow | other),
+  uploaded_at (timestamp), uploaded_by (text), page_count (int), total_chunks (int)
+- document_chunks: id (uuid), document_id (FK), page_number (int), chunk_index (int),
+  text (text), embedding (vector(1024)), char_start (int), char_end (int)
+- queries: id (uuid), asked_at (timestamp), question (text), answer (text), confidence (float),
+  cited_chunk_ids (uuid[]), refused (bool), asked_by (text)
+
+Ingestion (POST /documents/upload):
+1. Accept multipart/form-data with the PDF file + optional title + doc_type.
+2. Parse via pypdf, extract text per page.
+3. Chunk: 500 chars with 50-char overlap, preserving page boundaries (chunk does not span pages).
+4. Embed each chunk via Bedrock Titan, insert into document_chunks.
+5. Return { document_id, page_count, total_chunks, ingest_seconds }.
+6. Reject uploads larger than 10 MB with 413.
+
+Retrieval (POST /ask):
+1. Embed the question.
+2. Top-K=5 cosine similarity search across all chunks (configurable RETRIEVAL_TOP_K).
+3. Compute confidence = average cosine similarity of top-K.
+4. If confidence < CONFIDENCE_THRESHOLD (default 0.7), return:
+   { "refused": true, "reason": "low confidence — rephrase or upload more context", "answer": null }.
+5. Otherwise call Claude with the top-K chunks as context, asking it to ANSWER ONLY FROM THE
+   PROVIDED CONTEXT and cite each claim with [doc_title, page X].
+6. Return { answer, confidence, citations: [{ document_id, document_title, page_number, snippet }], refused: false }.
+
+Never invent answers. Never use the LLM's general knowledge. Refusal is the correct behavior
+when confidence is low.
+
+API endpoints:
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| GET | /health | none | DB + pgvector extension + Bedrock client checks |
+| POST | /documents/upload | legal_ops | multipart, returns ingest summary |
+| GET | /documents | reader or legal_ops | pagination, filter `?doc_type=` |
+| GET | /documents/{id} | reader | metadata only (no chunks) |
+| DELETE | /documents/{id} | legal_ops | cascade-deletes chunks |
+| POST | /ask | reader | { question } → answer with citations OR refusal |
+| GET | /queries | reader | their own query history (paginate) |
+
+Streamlit UI:
+- Tab 1: "Upload" (legal_ops only) — file picker, doc_type select, upload button, ingestion progress
+- Tab 2: "Ask" — text input, answer area, citations panel showing snippets with page links
+- Tab 3: "Documents" — table of uploaded docs (filename, type, page count, uploaded_at)
+- Tab 4: "History" — last 30 questions asked by the current user
+- Reads API_KEY from .env, sends as X-API-Key (for reader endpoints)
+
+Tests should cover:
+- Upload a small test PDF (use a fixture .pdf in tests/fixtures/), verify chunks created and embeddings non-null.
+- Mock get_bedrock_client for both embeddings AND chat — no live AWS in tests.
+- Low-confidence question returns refusal with no LLM call to chat model (saves cost in tests).
+- High-confidence question returns answer with at least 1 citation.
+- DELETE document cascades chunks (verify count drops to 0).
+- Anonymous /ask → 401.
+- File >10 MB → 413.
+
+Env vars expected (.env.example):
+- DATABASE_URL=postgresql+psycopg://...
+- POSTGRES_SCHEMA=legal_doc_qa
+- AWS_REGION=us-east-2
+- BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
+- BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
+- EMBED_DIM=1024
+- CHUNK_SIZE=500
+- CHUNK_OVERLAP=50
+- RETRIEVAL_TOP_K=5
+- CONFIDENCE_THRESHOLD=0.7
+- LEGAL_API_KEY=...
+- API_KEY=...
+- PDF_STORAGE_DIR=./uploaded_pdfs
+
+Out of scope:
+- OCR (only digital PDFs, not scanned images)
+- Multi-document comparison ("what's different between v1 and v2 of this contract")
+- Redlining / clause editing
+- E-signature integration
+- User management beyond shared keys

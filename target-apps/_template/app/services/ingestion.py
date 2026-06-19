@@ -16,7 +16,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from app.config import settings
+from app.config import get_settings
 from app.services.bedrock_client import BedrockClient
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class Chunk:
 
 def save_pdf_bytes(doc_id: str, filename: str, content: bytes) -> str:
     """Persist raw PDF bytes to local storage (MVP — no S3). Returns the path."""
-    storage = Path(settings.pdf_storage_dir)
+    storage = Path(get_settings().pdf_storage_dir)
     storage.mkdir(parents=True, exist_ok=True)
     safe_name = Path(filename).name
     target = storage / f"{doc_id}-{safe_name}"
@@ -55,8 +55,9 @@ def extract_pages(content: bytes) -> list[tuple[int, str]]:
 
 def chunk_text(page: int, text: str) -> list[Chunk]:
     """Split one page into overlapping word-window chunks."""
-    size = settings.chunk_size
-    overlap = settings.chunk_overlap
+    settings_ = get_settings()
+    size = settings_.chunk_size
+    overlap = settings_.chunk_overlap
     words = text.split()
     if not words:
         return []

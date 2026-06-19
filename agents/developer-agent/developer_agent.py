@@ -3,12 +3,12 @@
 Generates code under target-apps/<service>/ and writes
 agents/pipeline/<app>.developer-handoff.json for qa-agent / devops-agent.
 
-Patterns:
-  A   — in-memory / no DB       (flat app/)
-  B   — Postgres CRUD            (app/ + db models)
-  B+  — Postgres + Bedrock/LLM  (B + app/services/)
-  B++ — Local RAG (pgvector)    (B+ + ingestion + retriever)
-  C   — FastAPI + Streamlit UI  (backend/ + ui/streamlit_app.py)
+Patterns (legacy code in parens):
+  in-memory    — FastAPI, no DB                 (flat app/)                       (A)
+  postgres     — Postgres CRUD                  (app/ + db models)                (B)
+  postgres-llm — Postgres + Bedrock/LLM         (postgres + app/services/)        (B+)
+  rag          — Local RAG (pgvector)           (postgres-llm + ingestion)        (B++)
+  streamlit    — any backend + Streamlit UI     (backend + ui/streamlit_app.py)   (C)
 """
 
 from __future__ import annotations
@@ -24,8 +24,11 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TARGET_APPS = _REPO_ROOT / "target-apps"
 _TEMPLATE_DIR = _TARGET_APPS / "_template"
+_DEV_AGENT_DIR = Path(__file__).resolve().parent
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
+sys.path.insert(0, str(_DEV_AGENT_DIR))
+from scaffold import format_scaffold_report, scaffold_service
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.pipeline_context import (
@@ -37,6 +40,7 @@ from _shared.pipeline_context import (
     resolve_target_app,
     slugify,
 )
+from _shared.telemetry import RunTelemetry, usage_from_event
 
 load_repo_env()
 os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
@@ -45,6 +49,7 @@ import botocore.config
 from a2a.types import AgentSkill
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.decorator import tool
 
@@ -100,32 +105,26 @@ Missing any route = the agent must catch it here, not during re-run.
 2b. Pattern selection (highest authority wins):
     1. Design doc **file layout** subsection — follow EXACTLY if present.
     2. Determine from tech stack + data model + architecture:
-       - No DB, in-memory          → Pattern A   (flat app/)
-       - Postgres CRUD, no LLM     → Pattern B   (app/ + db models)
-       - Postgres + Bedrock/LLM    → Pattern B+  (B + app/services/)
-       - Postgres + pgvector + RAG → Pattern B++ (B+ + ingestion + retriever)
-       - Any above + "streamlit"   → Pattern C   (backend/ + ui/streamlit_app.py)
+       - No DB, in-memory          → in-memory     (flat app/)             (legacy: A)
+       - Postgres CRUD, no LLM     → postgres      (app/ + db models)      (legacy: B)
+       - Postgres + Bedrock/LLM    → postgres-llm  (postgres + services/)  (legacy: B+)
+       - Postgres + pgvector + RAG → rag           (postgres-llm + retriever) (legacy: B++)
+       - Any above + "streamlit"   → streamlit     (backend + ui/streamlit_app.py) (legacy: C)
     State your chosen pattern and cite the design heading before writing any file.
 
-2c. **COPY golden template files VERBATIM** (Pattern B / B+ / B++ / C):
-    For every file below, call `dev_read_file` then `dev_write_file` with the EXACT same content,
-    changing ONLY the placeholders marked in comments. Do NOT rewrite, simplify, or "improve" them.
+2c. **Scaffold golden template (postgres / postgres-llm / rag / streamlit patterns) — ONE tool call, not manual copies:**
+    Call `dev_scaffold(service=targetApp, pattern=<chosen>)` once after Step 0 manifest.
+    This copies all infrastructure files from `target-apps/_template/` per scaffold-manifest.json.
+    Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
+    startup_checks.py, health.py, bedrock_client.py, etc.).
 
-    | Template file | Write to | What to change |
-    |---------------|----------|----------------|
-    | `target-apps/_template/app/config.py` | `app/config.py` | Change `service_name` default. Add/remove Field lines for app-specific env vars (e.g. add bedrock fields for B+, remove RAG fields for B). Keep ALL Field(alias=...) patterns. |
-    | `target-apps/_template/app/database.py` | `app/database.py` | **NOTHING** — copy verbatim. Works for Postgres and SQLite. |
-    | `target-apps/_template/app/startup_checks.py` | `app/startup_checks.py` | **NOTHING** — copy verbatim. |
-    | `target-apps/_template/app/main.py` | `app/main.py` | Change router imports + `include_router` calls for your domain routers. Keep lifespan, exception handler, CORS unchanged. |
-    | `target-apps/_template/app/routers/health.py` | `app/routers/health.py` | **NOTHING** — copy verbatim. |
-    | `target-apps/_template/app/models/pg_types.py` | `app/models/pg_types.py` | **NOTHING** — copy when HANDOFF has ENUM or uuid columns. |
-    | `target-apps/_template/tests/conftest_reference.py` | `tests/conftest.py` | Replace SCHEMA_NAME with actual POSTGRES_SCHEMA. Keep auth variant matching the app (API-key or JWT). Add app-specific seed fixtures. |
-    | `target-apps/_template/.gitignore` | `.gitignore` | **NOTHING** — copy verbatim. |
-    | `target-apps/_template/.env.example` | `.env.example` | Uncomment/add env vars matching config.py Fields. Remove sections for unused features (e.g. RAG for non-RAG apps). Keep KEY=value format, comments, and DATABASE_URL= prefix. |
-
-    Pattern C (Streamlit) — also copy these:
-    | `target-apps/_template/ui/streamlit_app.py` | `ui/streamlit_app.py` | Replace SERVICE_NAME, add app-specific tabs/forms. Keep HTTP helpers and `_ensure_api_reachable()` unchanged. |
-    | `target-apps/_template/ui/requirements.txt` | `ui/requirements.txt` | Add app-specific packages if needed. |
+    Then `dev_write_file` ONLY the files listed under "Customize next" in the scaffold report:
+    - `app/config.py` — service_name + env Fields (keep Field(alias=...) pattern)
+    - `app/main.py` — add domain router imports + include_router calls
+    - `app/dependencies.py` — auth per Rules (API-key or JWT)
+    - `tests/conftest.py` — replace SCHEMA_NAME, match auth mode, add seed fixtures
+    - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix
+    - `ui/streamlit_app.py` (streamlit pattern) — tabs/forms only; keep HTTP helpers
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
@@ -186,7 +185,7 @@ Missing any route = the agent must catch it here, not during re-run.
     POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
     **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or
     run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
-    Pattern C / Streamlit: document UI URL (http://localhost:8501) and `streamlit run` in
+    streamlit pattern: document UI URL (http://localhost:8501) and `streamlit run` in
     Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
   passwords (# → %23). Document that pytest uses SQLite — passing tests ≠ RDS proof.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
@@ -272,7 +271,172 @@ _BLOCKED_PATH_PARTS = frozenset({".venv", "node_modules", "__pycache__", ".pytes
 
 _written_files: list[str] = []
 
-DEVELOPER_SYS_PROMPT = """\
+# Descriptive pattern names. Legacy A/B/B+/B++/C codes still accepted via _PATTERN_ALIASES.
+_PATTERN_KEYS: tuple[str, ...] = (
+    "in-memory",
+    "postgres",
+    "postgres-llm",
+    "rag",
+    "streamlit",
+)
+
+# Map legacy codes to current names so existing briefs and docs still resolve.
+_PATTERN_ALIASES: dict[str, str] = {
+    "A": "in-memory",
+    "B": "postgres",
+    "B+": "postgres-llm",
+    "B++": "rag",
+    "C": "streamlit",
+}
+
+_PATTERN_LAYOUTS: dict[str, str] = {
+    "in-memory": """\
+**Pattern: in-memory (legacy: A) — FastAPI, no DB:**
+```
+app/__init__.py, app/main.py, app/models.py
+tests/test_api.py, requirements.txt, README.md
+```
+""",
+    "postgres": """\
+**Pattern: postgres (legacy: B) — FastAPI + Postgres CRUD:**
+```
+app/__init__.py
+app/main.py          [SCAFFOLD seed — add domain router imports]
+app/config.py        [SCAFFOLD seed — add/remove env var Fields]
+app/database.py      [SCAFFOLD — do not edit]
+app/startup_checks.py [SCAFFOLD — do not edit]
+app/dependencies.py  [SCAFFOLD seed — auth per Rules]
+app/models/__init__.py, app/models/pg_types.py [SCAFFOLD], app/models/<entity>.py [GENERATE]
+app/routers/__init__.py, app/routers/health.py [SCAFFOLD], app/routers/<domain>.py [GENERATE]
+schemas/__init__.py, schemas/<domain>.py [GENERATE]
+tests/conftest.py [SCAFFOLD from conftest_reference — adapt schema + auth + seeds]
+tests/test_health.py [SCAFFOLD], tests/test_<domain>.py [GENERATE]
+requirements.txt, .env.example, .gitignore [SCAFFOLD seed], README.md [GENERATE]
+```
+""",
+    "postgres-llm": """\
+**Pattern: postgres-llm (legacy: B+) — Postgres + Bedrock/LLM:**
+```
+postgres pattern plus:
+app/services/__init__.py, app/services/bedrock_client.py, app/services/prompts.py
+app/routers/chat.py or triage.py
+tests/test_chat.py (mocked bedrock_client)
+.env.example: AWS_REGION=us-east-2 and/or BEDROCK_REGION=us-east-2 (same region as platform RDS/Bedrock)
+config.py: default region us-east-2 for any bedrock_region / aws_region field
+```
+""",
+    "rag": """\
+**Pattern: rag (legacy: B++) — Postgres + pgvector + RAG ingestion:**
+```
+postgres-llm pattern plus:
+app/services/ingestion.py      # save PDF → parse → chunk → embed → INSERT document_chunks
+app/services/pgvector_retriever.py  # cosine similarity top-k search
+app/routers/documents.py       # POST /documents/upload, GET /documents, DELETE /documents/{id}
+tests/test_ingestion.py, tests/test_chat_rag.py (fake retriever)
+```
+Never ship a stub retriever or discard uploaded bytes — upload must fully ingest on the request.
+requirements.txt adds: pypdf, pgvector, boto3.
+.env.example adds: AWS_REGION=us-east-2, BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0,
+                    BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0, EMBED_DIM=1024, CHUNK_SIZE=500,
+                    CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
+                    PDF_STORAGE_DIR=./uploaded_pdfs.
+""",
+    "streamlit": """\
+**Pattern: streamlit (legacy: C) — any backend pattern + Streamlit UI:**
+When tech stack includes `streamlit`:
+```
+app/  (postgres or postgres-llm backend, unchanged — golden template files)
+ui/
+  streamlit_app.py   [SCAFFOLD — then add app-specific tabs/forms]
+  requirements.txt   [SCAFFOLD — add app-specific packages if needed]
+```
+The Streamlit template includes:
+- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
+- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
+- API_KEY + API_BASE_URL config from .env
+ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
+startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
+README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
+`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
+""",
+}
+
+
+def _canonical_pattern(name: str | None) -> str | None:
+    """Resolve a pattern name. Accepts both new names and legacy A/B/B+/B++/C codes."""
+    if not name:
+        return None
+    if name in _PATTERN_LAYOUTS:
+        return name
+    return _PATTERN_ALIASES.get(name)
+
+
+def _compose_pattern_section(included: tuple[str, ...] | None = None) -> str:
+    """Render the Project layout patterns block. None = all 5 (legacy behavior)."""
+    canonical = tuple(filter(None, (_canonical_pattern(k) for k in (included or _PATTERN_KEYS))))
+    if not canonical:
+        canonical = _PATTERN_KEYS
+    # postgres-llm and rag reference postgres; if shipping one without postgres, include it as base.
+    if any(k in {"postgres-llm", "rag"} for k in canonical) and "postgres" not in canonical:
+        canonical = ("postgres",) + canonical
+    return "\n".join(_PATTERN_LAYOUTS[k] for k in canonical if k in _PATTERN_LAYOUTS)
+
+
+def _infer_pattern_from_context(ctx: dict[str, Any] | None) -> str | None:
+    """Heuristic pattern inference from context + design doc text. Returns None when unsure."""
+    if not ctx:
+        return None
+    text = ""
+    design_path = ctx.get("designDocPath") or ctx.get("design_doc_path")
+    if design_path:
+        path = _REPO_ROOT / str(design_path)
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                text = ""
+    has_streamlit = "streamlit" in text
+    has_rag = ("pgvector" in text) or ("retrieval" in text and "embed" in text)
+    has_llm = any(token in text for token in ("bedrock", "claude", "/chat"))
+    has_postgres = (
+        bool(ctx.get("preferredSqlPath"))
+        or bool(ctx.get("dbOutputDir"))
+        or "postgres" in text
+        or "sqlalchemy" in text
+    )
+    if has_streamlit:
+        return "streamlit"
+    if has_rag and has_postgres:
+        return "rag"
+    if has_llm and has_postgres:
+        return "postgres-llm"
+    if has_postgres:
+        return "postgres"
+    # Without a design doc on disk, prefer "unsure" over guessing in-memory.
+    return "in-memory" if text else None
+
+
+def _select_pattern_keys(ctx: dict[str, Any] | None) -> tuple[str, ...] | None:
+    """Return a single-pattern tuple when opt-in + inference is confident, else None (all)."""
+    if os.getenv("DEVELOPER_AGENT_AUTO_PATTERN", "").strip().lower() not in {"1", "true", "yes"}:
+        return None
+    inferred = _infer_pattern_from_context(ctx)
+    return (inferred,) if inferred else None
+
+
+def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
+    keys = _select_pattern_keys(ctx)
+    section = _compose_pattern_section(keys)
+    if keys:
+        print(
+            f"[developer-agent] System prompt: pattern {'+'.join(keys)} only "
+            "(DEVELOPER_AGENT_AUTO_PATTERN=1)",
+            file=sys.stderr,
+        )
+    return _DEVELOPER_SYS_PROMPT_TEMPLATE.replace("{{PATTERN_LAYOUTS}}", section.rstrip())
+
+
+_DEVELOPER_SYS_PROMPT_TEMPLATE = """\
 You are the Developer Agent for the Autonomous SDLC platform. You are the fifth agent in a
 sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU.
 
@@ -334,6 +498,23 @@ Section numbers vary per feature. Locate content by heading text:
 
 Default to Python/FastAPI only when tech stack is absent (add to open_questions then).
 
+## Seed credentials — scaffold a real bcrypt init script
+
+If the database-agent's `HANDOFF.md` contains a `### seedCredentials` section listing `(username, role, plaintext_password)`, the seed SQL will contain `'__BCRYPT_PLACEHOLDER__'` literals in the `password_hash` column. **Do NOT invent bcrypt strings yourself** — the LLM cannot compute real hashes. Instead:
+
+1. Copy `target-apps/_template/scripts/seed_dev_users.py` into your service via `dev_scaffold` (it's part of the golden template — never write it from scratch).
+2. **Replace the `_CREDENTIALS` constant** at the top of that copied script with the exact `(username, password)` pairs from `HANDOFF.md`'s `seedCredentials` table. Nothing else in the script changes.
+3. **Add `bcrypt>=4.0` to `requirements.txt`** if the app has any `password_hash` column.
+4. **Document the post-migrate step in README.md** under "Setup":
+   ```bash
+   # After running migrations / seed SQL:
+   python scripts/seed_dev_users.py
+   ```
+
+The script reads each plaintext, calls `bcrypt.hashpw()`, and `UPDATE`s rows where `password_hash = '__BCRYPT_PLACEHOLDER__'`. Result: login tests pass against the documented passwords.
+
+Same approach applies to `api_key_hash`, `verification_token`, or any sentinel-marked hash column. One script handles all hash columns in the database.
+
 ## Database layer — mirror database-agent output exactly
 
 Read `databaseHandoffPath` before writing any model.
@@ -353,6 +534,10 @@ SQLite-only pytest does NOT prove the app works on RDS.
 |----------------|----------|
 | `CREATE TYPE … AS ENUM` | `SAEnum(MyEnum, name=..., schema=SCHEMA, create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
 | `uuid` PK/FK | `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` — never plain String(36) |
+| `uuid` PK default | Declare BOTH `default=lambda: str(uuid.uuid4())` (Python — runs on SQLite) AND `server_default=func.gen_random_uuid()` (SQL — Postgres-only). `server_default` alone fails every test insert with `sqlite3.OperationalError: unknown function: gen_random_uuid()`. |
+| `_UUIDStr` TypeDecorator in conftest | `process_result_value` MUST return `str`, not `uuid.UUID`. The ORM column declared `PG_UUID(as_uuid=False)` promises `str`; returning a `uuid.UUID` from the test patch breaks JSON serialization in `TestClient.post(json=...)` and breaks equality assertions against fixture-seeded string IDs. |
+| `with_variant()` arguments | Pass type **instances**, not classes. `JSONB.with_variant(String, "sqlite")` raises `ArgumentError` in SQLAlchemy 2.0. Correct: `JSONB().with_variant(JSON(), "sqlite")`. Same for `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` — note the `()` after each type. |
+| JSONB column needs JSON for SQLite | `JSONB` is Postgres-specific. SQLite uses `JSON` (from `sqlalchemy`, not `sqlalchemy.dialects.postgresql`). Import both: `from sqlalchemy import JSON` and `from sqlalchemy.dialects.postgresql import JSONB`. |
 | UUID in response | `@field_validator("id", mode="before") def coerce(cls, v): return str(v) if v else v` |
 | Driver | `psycopg[binary]>=3.1` only — never psycopg2-binary |
 | DSN | `postgresql+psycopg://...?sslmode=require` in .env.example |
@@ -361,7 +546,7 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
 
-## Startup reliability (mandatory for Pattern B / B+ / B++ / C)
+## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag / streamlit patterns)
 
 These files are COPIED VERBATIM from golden templates in Step 2c — do NOT regenerate them:
 - `app/startup_checks.py` ← copied from `_template/app/startup_checks.py`
@@ -429,71 +614,106 @@ Use when design mentions Bedrock, Claude, chat, triage, RAG, or /chat routes.
 Authority: Design file layout > design constraints > golden templates.
 Files marked [COPY] below are copied verbatim from `_template/` in Step 2c — NEVER regenerate.
 
-**Pattern A — in-memory / no DB:**
-```
-app/__init__.py, app/main.py, app/models.py
-tests/test_api.py, requirements.txt, README.md
-```
-
-**Pattern B — Postgres CRUD:**
-```
-app/__init__.py
-app/main.py          [COPY — add domain router imports]
-app/config.py        [COPY — add/remove env var Fields]
-app/database.py      [COPY — verbatim]
-app/startup_checks.py [COPY — verbatim]
-app/dependencies.py  [GENERATE — auth logic per design Rules]
-app/models/__init__.py, app/models/pg_types.py [COPY], app/models/<entity>.py [GENERATE]
-app/routers/__init__.py, app/routers/health.py [COPY], app/routers/<domain>.py [GENERATE]
-schemas/__init__.py, schemas/<domain>.py [GENERATE]
-tests/conftest.py [COPY from conftest_reference.py — adapt schema + auth + seeds]
-tests/test_health.py, tests/test_<domain>.py [GENERATE]
-requirements.txt, .env.example, .gitignore, README.md [GENERATE]
-```
-
-**Pattern B+ — Postgres + Bedrock/LLM:**
-```
-Pattern B plus:
-app/services/__init__.py, app/services/bedrock_client.py, app/services/prompts.py
-app/routers/chat.py or triage.py
-tests/test_chat.py (mocked bedrock_client)
-.env.example: AWS_REGION=us-east-2 and/or BEDROCK_REGION=us-east-2 (same region as platform RDS/Bedrock)
-config.py: default region us-east-2 for any bedrock_region / aws_region field
-```
-
-**Pattern B++ — Local RAG (pgvector):**
-```
-Pattern B+ plus:
-app/services/ingestion.py      # save PDF → parse → chunk → embed → INSERT document_chunks
-app/services/pgvector_retriever.py  # cosine similarity top-k search
-app/routers/documents.py       # POST /documents/upload, GET /documents, DELETE /documents/{id}
-tests/test_ingestion.py, tests/test_chat_rag.py (fake retriever)
-```
-Never ship a stub retriever or discard uploaded bytes — upload must fully ingest on the request.
-requirements.txt adds: pypdf, pgvector, boto3.
-.env.example adds: AWS_REGION=us-east-2, BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0,
-                    BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0, EMBED_DIM=1024, CHUNK_SIZE=500,
-                    CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
-                    PDF_STORAGE_DIR=./uploaded_pdfs.
-
-**Pattern C — FastAPI + Streamlit UI:**
-When tech stack includes `streamlit`:
-```
-app/  (Pattern B or B+, unchanged — golden template files)
-ui/
-  streamlit_app.py   [COPY from _template/ui/streamlit_app.py — then add app-specific tabs/forms]
-  requirements.txt   [COPY from _template/ui/requirements.txt — add app-specific packages if needed]
-```
-The Streamlit template includes:
-- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
-- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
-- API_KEY + API_BASE_URL config from .env
-ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
-startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
-README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
-`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
+{{PATTERN_LAYOUTS}}
 
 ## FastAPI correctness rules (zero-tolerance)
+
+### pytest.ini — every project with tests/ needs it
+
+Write `pytest.ini` (or `[tool.pytest.ini_options]` in `pyproject.toml`) at the service
+root with `pythonpath = .` and `testpaths = tests`. Without it, `conftest.py` raises
+`ModuleNotFoundError: No module named 'app'` and zero tests can be collected.
+
+```ini
+[pytest]
+pythonpath = .
+testpaths = tests
+```
+
+### app.config exports get_settings(), not settings
+
+`app/config.py` exports only the factory `get_settings() -> Settings`. Every consumer
+imports the factory and calls it at use time:
+
+```python
+# correct
+from app.config import get_settings
+schema = get_settings().postgres_schema
+
+# wrong — causes ImportError, breaks every test
+from app.config import settings
+schema = settings.postgres_schema
+```
+
+Never declare a module-level `settings = Settings()`; it bypasses env overrides in
+tests and breaks `pydantic-settings` reload semantics.
+
+### Header() with default — required for 401-vs-422 contract
+
+Any `Header(...)` parameter that must raise **401** on missing input must declare
+itself as `Optional` with `default=None`. A required `Header` returns FastAPI's
+generic **422 validation error** before custom auth logic runs, so the documented
+401 contract becomes unreachable.
+
+```python
+# correct — runs auth check, returns 401 when missing
+def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> str:
+    if not x_api_key or x_api_key != get_settings().api_key:
+        raise HTTPException(401, "Invalid or missing API key")
+    return x_api_key
+
+# wrong — FastAPI returns 422 before auth check
+def require_api_key(x_api_key: str = Header(alias="X-API-Key")) -> str: ...
+```
+
+### Router prefix vs route path — no double prefix
+
+The final URL is `app.include_router(prefix=...) + @router.get(...)`. Concatenating
+the same name in both produces a 404 at the expected route:
+
+```python
+# wrong — actual URL is /health/health, GET /health returns 404
+app.include_router(health.router, prefix="/health")
+@router.get("/health") def health(): ...
+
+# right (option 1) — prefix at include, empty path inside
+app.include_router(health.router, prefix="/health")
+@router.get("") def health(): ...
+
+# right (option 2) — no prefix, full path inside
+app.include_router(health.router)
+@router.get("/health") def health(): ...
+```
+
+Be consistent across routers. If you use `prefix="/contacts"` for the contacts
+router, the route handlers inside should use relative paths (`""`, `"/{id}"`),
+NOT absolute (`"/contacts"`, `"/contacts/{id}"`).
+
+### Handler parameter ordering — dependencies before explicit defaults
+
+`Annotated[..., Depends(...)]` dependencies carry an *implicit* default through
+`Depends`, but Python parses the function signature **before** FastAPI resolves
+that. A parameter without an explicit default that appears after one with an
+explicit default is a `SyntaxError` at import time.
+
+```python
+# correct — DbSession first, then Query-defaulted params
+def list_contacts(
+    db: DbSession,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None),
+) -> ContactListPage: ...
+
+# wrong — SyntaxError: parameter without a default follows parameter with a default
+def list_contacts(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: DbSession,
+) -> ContactListPage: ...
+```
+
+Order rule: `Annotated[..., Depends(...)]` / `Annotated[..., Header(...)]` /
+path params **before** any `Query(default=...)` / `Body(default=...)` parameter.
 
 ### __init__.py — every package directory requires one
 
@@ -764,7 +984,17 @@ App code rules (container-ready without refactors):
 14. startup_checks.py + lifespan validate_runtime_config; GET /health pings DB; dev exception handler when APP_ENV=development.
 15. .env.example every line is KEY=value; README warns about DATABASE_URL= prefix.
 16. Bedrock/RDS region vars default to us-east-2 in config.py, .env.example, README env tables, and test conftest setdefaults.
+17. Test-vs-implementation contract cross-check (MANDATORY, not optional): for every response value the implementation emits — status field literals (`"ok"`, `"healthy"`, `"running"`), error detail strings, response keys, status codes — open the corresponding test file and confirm the assertion targets the **exact** string the route returns. The route manifest check (item 2) catches missing routes; this check catches value-level drift between code and the tests you just wrote. Common recurring failures:
+    - `/health` route returns `{"status": "ok"}` but `test_health.py` asserts `"healthy"` — must match.
+    - Route raises `HTTPException(detail="Invalid or missing API key")` but test asserts `"missing api key"` (case/wording) — must match.
+    - Route returns a `ContactListPage` object but test asserts `len(data) == 5` instead of `data["total"] == 5` — must match the response shape.
+    If you fix the test rather than the code, justify briefly in the handoff summary so reviewers know which contract is canonical.
+18. URL path cross-check: for every `@router.get/post/...` decorator, mentally compute `include_router(prefix=) + route_path` and confirm the test calls that exact URL. `/health/health` is a real bug that has shipped before — never double-prefix.
 """
+
+# Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
+DEVELOPER_SYS_PROMPT = _build_system_prompt(None)
+
 
 def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     raw = relative_path.strip().replace("\\", "/")
@@ -873,6 +1103,38 @@ def dev_list_tree(service: str, subpath: str = "") -> str:
         if path.is_file() and "__pycache__" not in path.parts:
             lines.append(path.relative_to(_REPO_ROOT).as_posix())
     return "\n".join(lines) if lines else "(no files)"
+
+
+@tool
+def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
+    """Copy golden template infrastructure into target-apps/<service>/.
+
+    Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++, C.
+    Manifest: target-apps/_template/scaffold-manifest.json
+
+    Args:
+        service: target app slug (e.g. standup-tracker)
+        pattern: B | B+ | B++ | C
+        force: when True, overwrite existing scaffold files from _template/
+    """
+    dest = _ensure_service_exists(service)
+    try:
+        result = scaffold_service(
+            template_dir=_TEMPLATE_DIR,
+            service_dir=dest,
+            pattern=pattern,
+            force=force,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        return f"SCAFFOLD ERROR: {exc}"
+
+    prefix = f"target-apps/{slugify(service)}/"
+    for rel in result["copied"]:
+        full = f"{prefix}{rel}"
+        if full not in _written_files:
+            _written_files.append(full)
+
+    return format_scaffold_report(result, service=slugify(service))
 
 
 @tool
@@ -1293,34 +1555,41 @@ def _thinking_budget_tokens() -> int:
 
 
 class _DeveloperCallbackHandler:
-    """Stream tool calls and optional thinking to stderr."""
+    """Stream tool calls, optional thinking, and feed telemetry."""
 
-    def __init__(self, *, show_thinking: bool) -> None:
-        self.tool_count = 0
+    def __init__(self, *, show_thinking: bool, telemetry: RunTelemetry | None = None) -> None:
         self._show_thinking = show_thinking
+        self.telemetry = telemetry
 
     def __call__(self, **kwargs: Any) -> None:
         reasoning_text = kwargs.get("reasoningText")
         if self._show_thinking and reasoning_text:
             print(reasoning_text, end="", file=sys.stderr)
-        tool_use = (
-            kwargs.get("event", {})
-            .get("contentBlockStart", {})
-            .get("start", {})
-            .get("toolUse")
-        )
+
+        event = kwargs.get("event", {})
+        tool_use = event.get("contentBlockStart", {}).get("start", {}).get("toolUse")
         if tool_use:
-            self.tool_count += 1
-            print(
-                f"\n[developer-agent] Tool #{self.tool_count}: {tool_use['name']}",
-                file=sys.stderr,
-            )
+            name = tool_use.get("name", "<unknown>")
+            if self.telemetry is not None:
+                self.telemetry.record_tool(name)
+                print(
+                    f"\n[developer-agent] Tool #{self.telemetry.tool_count}: {name}",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"\n[developer-agent] Tool: {name}", file=sys.stderr)
+
+        # Capture Bedrock usage tokens from streamed metadata events.
+        if self.telemetry is not None:
+            usage = usage_from_event(kwargs) or usage_from_event(event)
+            if usage:
+                self.telemetry.record_usage(usage)
 
 
 def _coding_model() -> BedrockModel:
     model_id = os.getenv(
         "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
     )
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     model_kwargs: dict[str, Any] = {
@@ -1328,6 +1597,8 @@ def _coding_model() -> BedrockModel:
         "region_name": os.getenv("AWS_REGION", "us-east-2"),
         "max_tokens": _max_output_tokens(),
         "streaming": True,
+        "cache_config": CacheConfig(strategy="auto"),
+        "cache_tools": "default",
         "boto_client_config": botocore.config.Config(
             read_timeout=read_timeout,
             connect_timeout=10,
@@ -1335,26 +1606,44 @@ def _coding_model() -> BedrockModel:
         ),
     }
     if _thinking_enabled():
+        # "adaptive" thinking is only supported on Claude 4.5+; Sonnet 4 requires "enabled"|"disabled".
         model_kwargs["additional_request_fields"] = {
-            "thinking": {"type": "adaptive", "budget_tokens": _thinking_budget_tokens()},
+            "thinking": {"type": "enabled", "budget_tokens": _thinking_budget_tokens()},
         }
+
+    # ── Sonnet 4.6 upgrade — uncomment this block (and delete the one above) when MODEL_ID/CODING_MODEL_ID
+    # in .env are switched to a Sonnet 4.5+ inference profile. It makes the thinking type env-driven so you
+    # can flip between "enabled"/"adaptive"/"disabled" via THINKING_TYPE without touching code again.
+    #
+    # if _thinking_enabled():
+    #     thinking_type = os.getenv("THINKING_TYPE", "adaptive")  # "enabled" | "adaptive" | "disabled"
+    #     model_kwargs["additional_request_fields"] = {
+    #         "thinking": {"type": thinking_type, "budget_tokens": _thinking_budget_tokens()},
+    #     }
     return BedrockModel(**model_kwargs)
 
 
-def _build_agent() -> Agent:
+def _build_agent(
+    ctx: dict[str, Any] | None = None,
+    *,
+    telemetry: RunTelemetry | None = None,
+) -> Agent:
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
         description=(
             "Implements backend API code under target-apps/ from PRD, design doc, "
             "database-agent handoff, and scraped research. "
-            "Patterns: A (in-memory), B (Postgres), B+ (Postgres+Bedrock), "
-            "B++ (local RAG pgvector), C (FastAPI+Streamlit)."
+            "Patterns: in-memory, postgres, postgres-llm, rag, streamlit "
+            "(legacy aliases: A, B, B+, B++, C)."
         ),
         model=_coding_model(),
-        system_prompt=DEVELOPER_SYS_PROMPT,
-        tools=[dev_list_tree, dev_read_file, dev_write_file, dev_validate_app],
-        callback_handler=_DeveloperCallbackHandler(show_thinking=_thinking_enabled()),
+        system_prompt=_build_system_prompt(ctx),
+        tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_validate_app],
+        callback_handler=_DeveloperCallbackHandler(
+            show_thinking=_thinking_enabled(),
+            telemetry=telemetry,
+        ),
     )
 
 
@@ -1453,7 +1742,8 @@ def run_task(
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    agent = _build_agent()
+    telemetry = RunTelemetry(AGENT_NAME, target_app=app)
+    agent = _build_agent(ctx, telemetry=telemetry)
     summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
 
     written = _dedupe_preserve_order(_written_files)
@@ -1480,6 +1770,14 @@ def run_task(
             )
             handoff["envVarsRequired"] = _env_var_names_from_example(written)
         handoff_rel = _write_developer_handoff(app, handoff)
+
+    # Telemetry: tokens, cache hits, wall-clock, file count; persist for next-run delta.
+    telemetry.extra = {
+        "filesWritten": len(written),
+        "pattern": _select_pattern_keys(ctx) or "all",
+    }
+    telemetry.print_summary()
+    telemetry.persist()
 
     return summary, written, handoff_rel
 
@@ -1551,7 +1849,19 @@ def main() -> None:
 
     ctx = _build_context(target_app=target, jira_key=args.jira_key, extra=extra or None)
 
-    model_id = os.getenv("CODING_MODEL_ID", os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"))
+    model_id = os.getenv(
+        "CODING_MODEL_ID",
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+    )
+    auto_pattern = os.getenv("DEVELOPER_AGENT_AUTO_PATTERN", "").strip().lower() in {"1", "true", "yes"}
+    print("", file=sys.stderr)
+    print("=" * 64, file=sys.stderr)
+    print(
+        f"  AGENT: {AGENT_NAME}  |  prompt-cache: auto  |  cache_tools: default"
+        f"  |  auto-pattern: {'on' if auto_pattern else 'off'}",
+        file=sys.stderr,
+    )
+    print("=" * 64, file=sys.stderr)
     print(f"[developer-agent] Model      : {model_id}", file=sys.stderr)
     if _thinking_enabled():
         print(

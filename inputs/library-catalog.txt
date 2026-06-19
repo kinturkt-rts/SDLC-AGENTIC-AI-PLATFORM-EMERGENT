@@ -1,0 +1,72 @@
+Library Catalog API — books, members, and loans with date-aware business logic
+
+App idea (one paragraph):
+A small corporate library lets employees borrow physical books from a shared shelf. Members
+register, librarians (with an API key) manage the catalog, and any authenticated member can
+check out and return books. The system tracks loan periods, computes overdue status, and
+maintains a simple hold queue when a book is unavailable. No external services, no LLM —
+just FastAPI + Postgres + pytest. Swagger at /docs is the UI for demos.
+
+Purpose:
+- Validate the SDLC chain on Postgres CRUD with **date math** the agent has to get right:
+  due dates, overdue flags, hold-queue position calculations.
+- Different shape from contacts-api: relations (member → loan → book) and time-aware queries.
+
+Personas & auth:
+| Caller | Auth | Can do |
+|--------|------|--------|
+| anonymous | none | GET /health, GET /books (search the catalog only) |
+| member | `X-Member-Key: <key>` header | POST /loans, POST /returns, GET /loans/mine, POST /holds |
+| librarian | `X-API-Key: <key>` header | All catalog writes (POST/PATCH/DELETE on /books and /members) |
+
+Auth implementation (MVP — header-based only, no JWT):
+- One shared `LIBRARIAN_API_KEY` for catalog management
+- Per-member `member_key` (random 24-char string) issued at registration; checked against `members.member_key`
+
+Data:
+- books: id (uuid), isbn (text unique), title (text), author (text), total_copies (int >0), created_at
+- members: id (uuid), full_name (text), email (text unique), member_key (text unique), created_at
+- loans: id (uuid), book_id (FK), member_id (FK), checked_out_at (timestamp), due_at (timestamp), returned_at (timestamp nullable)
+- holds: id (uuid), book_id (FK), member_id (FK), placed_at (timestamp), fulfilled_at (timestamp nullable)
+
+Business rules:
+- Default loan period is 14 days from checkout. Configurable via env LOAN_DAYS (default 14).
+- A book is **available** when `total_copies > active loans on that book` (active = returned_at IS NULL).
+- A member cannot have more than 5 active loans at once (return 409 if exceeded).
+- A member cannot place a hold on a book they already have an active loan for (409).
+- Holds are FIFO: when a book becomes available (loan returned), the oldest unfulfilled hold for that book
+  is auto-fulfilled by setting `fulfilled_at = now()` and the member is allowed to check out.
+- A loan is **overdue** when `due_at < now() AND returned_at IS NULL`. Expose this as a computed field
+  `is_overdue: bool` on the loan response — never store it.
+- GET /loans/mine returns the calling member's loans (active + 30 most recent historical), sorted newest first.
+- DELETE on /books returns 409 if any active loans exist; otherwise hard-delete.
+
+API endpoints (at minimum):
+| Method | Path | Auth | Body / Query |
+|--------|------|------|--------------|
+| GET | /health | none | — |
+| GET | /books | none | `?q=` partial match on title or author, `?available=true` to filter |
+| GET | /books/{id} | none | — (include `available_copies` computed) |
+| POST | /books | librarian | { isbn, title, author, total_copies } |
+| PATCH | /books/{id} | librarian | partial |
+| DELETE | /books/{id} | librarian | — |
+| POST | /members | librarian | { full_name, email } → returns member_key (one-time visibility) |
+| GET | /members | librarian | list with pagination |
+| POST | /loans | member | { book_id } → 201 with due_at computed |
+| GET | /loans/mine | member | — |
+| POST | /returns | member | { loan_id } → 200; auto-fulfills next hold if any |
+| POST | /holds | member | { book_id } → 201 with `queue_position` |
+
+Tests should cover:
+- Happy path: register member, librarian adds a book, member checks out, returns.
+- 14-day default due date enforced (override LOAN_DAYS=7 in conftest, verify).
+- Overdue flag flips correctly when `due_at` is in the past.
+- 5-loan-cap returns 409 on 6th checkout attempt.
+- FIFO hold fulfillment: member A holds book at t1, member B holds at t2; return triggers A's hold first.
+- Anonymous caller cannot POST to any endpoint.
+
+Out of scope:
+- No JWT, no per-member RBAC beyond "is this loan mine"
+- No physical-shelf integration, no barcodes
+- No email notifications (just API responses)
+- No fines or late fees in MVP (record overdue flag, that's it)

@@ -20,6 +20,7 @@ from a2a.types import AgentSkill
 from mcp import StdioServerParameters, stdio_client
 from strands import Agent
 from strands.models import BedrockModel
+from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.mcp import MCPClient
 
@@ -338,15 +339,20 @@ def _atlassian_mcp() -> MCPClient:
 
 
 def _bedrock_model() -> BedrockModel:
+    import botocore.config
+
+    read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     return BedrockModel(
-        model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
+        model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         streaming=True,
-        additional_request_fields={
-            "thinking": {
-            "type": "adaptive",
-            }
-        },
+        cache_config=CacheConfig(strategy="auto"),
+        cache_tools="default",
+        boto_client_config=botocore.config.Config(
+            read_timeout=read_timeout,
+            connect_timeout=10,
+            retries={"mode": "standard", "max_attempts": 2},
+        ),
     )
 
 
