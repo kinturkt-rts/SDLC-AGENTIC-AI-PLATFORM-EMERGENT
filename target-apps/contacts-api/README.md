@@ -1,170 +1,215 @@
 # Contact Directory API
 
-Internal contact directory REST service — FastAPI + SQLAlchemy 2.x + PostgreSQL (schema `contacts_api`).  
-Write routes guarded by `X-API-Key` header; all reads are public.
+Internal REST API for colleague contact information with department organization. Pattern B Postgres CRUD with API key authentication.
 
----
+## Features
 
-## Endpoints
+- **Departments**: Create and manage organizational departments
+- **Contacts**: Full CRUD operations for contact records with department relationships
+- **Search**: Case-insensitive search across contact names and emails
+- **Authentication**: API key protection for write operations
+- **Soft Delete**: Maintains audit trail by setting `is_active=false`
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | None | Liveness probe |
-| POST | `/departments` | API-key | Create department |
-| GET | `/departments` | None | List all departments (sorted by name) |
-| GET | `/departments/{id}` | None | Get department + contact_count |
-| PATCH | `/departments/{id}` | API-key | Update department name/code |
-| POST | `/contacts` | API-key | Create contact |
-| GET | `/contacts` | None | List contacts (paginated, filterable, searchable) |
-| GET | `/contacts/{id}` | None | Get single contact |
-| PATCH | `/contacts/{id}` | API-key | Update contact fields |
-| DELETE | `/contacts/{id}` | API-key | Soft-delete (sets is_active=false) |
+## API Endpoints
 
----
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/health` | Health check with database ping | No |
+| GET | `/contacts` | List contacts with search & pagination | No |
+| GET | `/contacts/{id}` | Get specific contact | No |
+| POST | `/contacts` | Create new contact | API Key |
+| PATCH | `/contacts/{id}` | Update existing contact | API Key |
+| DELETE | `/contacts/{id}` | Soft delete contact | API Key |
+| GET | `/departments` | List all departments | No |
+| POST | `/departments` | Create new department | API Key |
+| PATCH | `/departments/{id}` | Update existing department | API Key |
 
 ## Local Development
 
 ### Prerequisites
-
 - Python 3.12+
-- (Optional) PostgreSQL instance for integration testing
+- PostgreSQL 15+ (for production) or SQLite (for testing)
+- Git
 
-### Terminal 1 — API Server
+### Setup (Windows & bash)
 
-**Bash (macOS/Linux):**
+**Terminal 1: API Server**
+
 ```bash
+# From repo root
 cd target-apps/contacts-api
+
+# Create virtual environment
 python -m venv .venv
+
+# Activate venv (Windows)
+.venv\Scripts\activate
+# Activate venv (bash/Linux/Mac)
 source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Copy environment template
+# Windows:
+copy .env.example .env
+# bash/Linux/Mac:
 cp .env.example .env
-# Edit .env: set DATABASE_URL, POSTGRES_SCHEMA, API_KEY
-uvicorn app.main:app --reload --port 8000
+
+# Edit .env file - set real values:
+# DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/contacts_db?sslmode=require
+# POSTGRES_SCHEMA=contacts_api
+# API_KEY=your-secure-api-key-here
+
+# Start API server
+uvicorn app.main:app --reload --port 8000 --reload-exclude '.venv'
 ```
 
-**Windows (PowerShell):**
-```powershell
-cd target-apps\contacts-api
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-# Edit .env: set DATABASE_URL, POSTGRES_SCHEMA, API_KEY
-uvicorn app.main:app --reload --port 8000
-```
+**Important**: Every line in `.env` needs the variable name — paste `DATABASE_URL=postgresql+psycopg://...`, not a bare URL.
+
+### Database Setup
+
+The API expects the `contacts_api` schema to exist with tables created by the database-agent SQL files in `db/sql/`.
+
+For password characters like `#` in the DATABASE_URL, use URL encoding: `#` becomes `%23`.
+
+### Environment Variables
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `APP_ENV` | No | Application environment | `development` |
+| `DATABASE_URL` | Yes | PostgreSQL connection string | `postgresql+psycopg://user:pass@host:5432/db?sslmode=require` |
+| `POSTGRES_SCHEMA` | Yes | Database schema name | `contacts_api` |
+| `API_KEY` | Yes | Shared API key for write operations | `your-secure-key` |
+| `PORT` | No | Server port | `8000` |
 
 ### Running Tests
 
-Tests use SQLite in-memory — no Postgres required:
-
 ```bash
-cd target-apps/contacts-api
-source .venv/bin/activate
-pip install pytest httpx
-pytest tests/ -v
+# From target-apps/contacts-api with venv activated
+python -m pytest tests/ -v
 ```
 
-> ⚠️ Passing tests use SQLite. This does **not** prove the app works against RDS.  
-> Always perform the RDS smoke test below before declaring success.
+**Note**: Tests use SQLite in memory. Passing tests don't guarantee RDS compatibility — always test against real Postgres.
 
----
+## Manual API Testing
 
-## Manual API Test (Swagger)
+### Swagger UI
+1. Start the API server
+2. Open http://localhost:8000/docs
+3. For protected endpoints, click "Authorize" and enter your API key in the `X-API-Key` field
 
-1. Open http://localhost:8000/docs
-2. For write routes, click **Authorize** or add the header manually:
-   - Header name: `X-API-Key`
-   - Value: the `API_KEY` from your `.env` (default: `dev-api-key-change-me`)
+### curl Examples
 
-### curl examples
-
+**Health check:**
 ```bash
-# Health
 curl http://localhost:8000/health
+```
 
-# List departments (public)
+**List departments:**
+```bash
 curl http://localhost:8000/departments
+```
 
-# Create department (requires API key)
+**Create department (requires API key):**
+```bash
 curl -X POST http://localhost:8000/departments \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-api-key-change-me" \
-  -d '{"name": "Marketing", "code": "MKT"}'
+  -H "X-API-Key: your-secure-key" \
+  -d '{"name": "Engineering", "code": "ENG"}'
+```
 
-# List contacts with search
-curl "http://localhost:8000/contacts?q=alice&limit=10&offset=0"
+**List contacts:**
+```bash
+curl http://localhost:8000/contacts
+```
 
-# Create contact
+**Search contacts:**
+```bash
+curl "http://localhost:8000/contacts?q=john&limit=10"
+```
+
+**Create contact (requires API key):**
+```bash
 curl -X POST http://localhost:8000/contacts \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-api-key-change-me" \
-  -d '{"full_name":"Alice Smith","email":"alice@example.com","department_id":"a1b2c3d4-0001-4000-8000-000000000001"}'
-
-# Soft-delete contact
-curl -X DELETE http://localhost:8000/contacts/b2c3d4e5-0001-4000-8000-000000000001 \
-  -H "X-API-Key: dev-api-key-change-me"
+  -H "X-API-Key: your-secure-key" \
+  -d '{
+    "department_id": "dept-uuid-here",
+    "full_name": "John Doe", 
+    "email": "john.doe@company.com",
+    "phone": "555-1234",
+    "title": "Software Engineer"
+  }'
 ```
 
-### PowerShell example
+### PowerShell Example
 
 ```powershell
-# List departments
-Invoke-RestMethod -Uri http://localhost:8000/departments -Method GET
+$headers = @{
+    "X-API-Key" = "your-secure-key"
+    "Content-Type" = "application/json"
+}
 
-# Create department
-$headers = @{ "X-API-Key" = "dev-api-key-change-me"; "Content-Type" = "application/json" }
-$body = '{"name": "Marketing", "code": "MKT"}'
-Invoke-RestMethod -Uri http://localhost:8000/departments -Method POST -Headers $headers -Body $body
+$body = @{
+    name = "Engineering"
+    code = "ENG"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/departments" -Method Post -Headers $headers -Body $body
 ```
-
----
 
 ## RDS Smoke Test
 
-After filling `.env` with real RDS credentials:
+After setting up `.env` with real PostgreSQL credentials:
 
-> **Note:** URL-encode special characters in passwords (e.g., `#` → `%23`).
+1. **Health check**: `curl http://localhost:8000/health` should return `{"status":"ok","checks":{"api":"ok","database":"ok"}}`
 
-1. Start the server: `uvicorn app.main:app --port 8000`
-2. Health check:
+2. **List departments**: `curl http://localhost:8000/departments` should return department array
+
+3. **Use seed UUIDs** from `db/sql/004_seed.sql`:
+   - Engineering dept: `11111111-1111-1111-1111-111111111111`
+   - Sales dept: `22222222-2222-2222-2222-222222222222`
+   - Marketing dept: `33333333-3333-3333-3333-333333333333`
+
+4. **Create test contact**:
    ```bash
-   curl http://localhost:8000/health
-   # Expected: {"status":"ok","service":"contacts-api"}
-   ```
-3. List departments (seed data should be present):
-   ```bash
-   curl http://localhost:8000/departments
-   # Expected: 3 departments — Engineering (ENG), HR (HR), Sales (SALES)
-   ```
-4. Fetch a seeded contact by UUID:
-   ```bash
-   curl http://localhost:8000/contacts/b2c3d4e5-0001-4000-8000-000000000001
-   # Expected: Alice Johnson, alice.johnson@example.com
-   ```
-5. List inactive contacts:
-   ```bash
-   curl "http://localhost:8000/contacts?is_active=false"
-   # Expected: George Taylor (seed inactive contact)
+   curl -X POST http://localhost:8000/contacts \
+     -H "X-API-Key: your-key" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "department_id": "11111111-1111-1111-1111-111111111111",
+       "full_name": "Test User",
+       "email": "test@company.com"
+     }'
    ```
 
-### Seed UUIDs (from `db/sql/004_seed.sql`)
+## Authentication
 
-| Entity | UUID | Identifier |
-|--------|------|------------|
-| Department: Engineering | `a1b2c3d4-0001-4000-8000-000000000001` | ENG |
-| Department: Sales | `a1b2c3d4-0002-4000-8000-000000000002` | SALES |
-| Department: HR | `a1b2c3d4-0003-4000-8000-000000000003` | HR |
-| Contact: Alice Johnson | `b2c3d4e5-0001-4000-8000-000000000001` | alice.johnson@example.com |
-| Contact: George Taylor (inactive) | `b2c3d4e5-0007-4000-8000-000000000007` | george.taylor@example.com |
+Write operations (POST, PATCH, DELETE) require the `X-API-Key` header:
 
----
+```
+X-API-Key: your-secure-api-key-here
+```
+
+Missing or invalid keys return `401 Unauthorized`.
+
+## Search & Pagination
+
+**Search contacts**:
+- Parameter: `?q=searchterm`
+- Searches `full_name` and `email` fields (case-insensitive)
+- Example: `/contacts?q=john` finds "John Smith" and "jane.johnson@company.com"
+
+**Pagination**:
+- `?limit=N` (default 50, max 100)
+- `?offset=N` (default 0)
+- Response includes `total`, `limit`, `offset` for navigation
 
 ## Deployment (AWS dev — devops-agent)
 
-| Config | Value |
-|--------|-------|
-| Port | 8000 |
-| Health probe | `GET /health` |
-| Start command | `uvicorn app.main:app --host 0.0.0.0 --port 8000` |
-| Env vars | `DATABASE_URL`, `POSTGRES_SCHEMA`, `API_KEY`, `PORT` |
-| Secrets | `DATABASE_URL`, `API_KEY` via AWS Secrets Manager |
+- **Port**: 8000
+- **Health endpoint**: `/health`
+- **Start command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- **Environment**: Variables from `.env.example`
+- **Secrets**: Load `DATABASE_URL` and `API_KEY` from AWS Secrets Manager

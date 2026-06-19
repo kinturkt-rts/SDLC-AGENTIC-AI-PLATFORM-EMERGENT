@@ -1,99 +1,78 @@
-"""Department CRUD routes."""
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+"""Department API routes."""
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.dependencies import require_api_key
-from app.models.contact import Contact
+from app.dependencies import ApiKeyAuth, DbSession
 from app.models.department import Department
-from schemas.department import (
-    DepartmentCreate,
-    DepartmentDetailOut,
-    DepartmentOut,
-    DepartmentUpdate,
-)
+from schemas.department import DepartmentCreate, DepartmentRead, DepartmentUpdate
 
 router = APIRouter()
 
 
-@router.post("/", response_model=DepartmentOut, status_code=201)
+@router.get("/", response_model=list[DepartmentRead])
+def list_departments(db: DbSession) -> list[Department]:
+    """List all departments."""
+    departments = list(db.scalars(select(Department)).all())
+    return departments
+
+
+@router.post("/", response_model=DepartmentRead, status_code=201)
 def create_department(
     body: DepartmentCreate,
-    db: Session = Depends(get_db),
-    _api_key: None = Depends(require_api_key),
+    db: DbSession,
+    _api_key: ApiKeyAuth,
 ) -> Department:
+    """Create a new department."""
     # Check for duplicate code
-    existing = db.scalars(
-        select(Department).where(Department.code == body.code)
-    ).first()
+    existing = db.scalar(select(Department).where(Department.code == body.code))
     if existing:
-        raise HTTPException(status_code=409, detail="Department code already exists")
-
-    dept = Department(name=body.name, code=body.code)
-    db.add(dept)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Department code '{body.code}' already exists"
+        )
+    
+    department = Department(**body.model_dump())
+    db.add(department)
     db.commit()
-    db.refresh(dept)
-    return dept
+    db.refresh(department)
+    return department
 
 
-@router.get("/", response_model=list[DepartmentOut])
-def list_departments(db: Session = Depends(get_db)) -> list[Department]:
-    return list(db.scalars(select(Department).order_by(Department.name)).all())
-
-
-@router.get("/{department_id}", response_model=DepartmentDetailOut)
-def get_department(
-    department_id: str,
-    db: Session = Depends(get_db),
-) -> dict:
-    dept = db.scalars(
-        select(Department).where(Department.id == department_id)
-    ).first()
-    if not dept:
-        raise HTTPException(status_code=404, detail="Department not found")
-
-    contact_count = db.scalar(
-        select(func.count(Contact.id)).where(Contact.department_id == department_id)
-    ) or 0
-
-    return {
-        "id": dept.id,
-        "name": dept.name,
-        "code": dept.code,
-        "created_at": dept.created_at,
-        "contact_count": contact_count,
-    }
-
-
-@router.patch("/{department_id}", response_model=DepartmentOut)
+@router.patch("/{id}", response_model=DepartmentRead)
 def update_department(
-    department_id: str,
+    id: str,
     body: DepartmentUpdate,
-    db: Session = Depends(get_db),
-    _api_key: None = Depends(require_api_key),
+    db: DbSession,
+    _api_key: ApiKeyAuth,
 ) -> Department:
-    dept = db.scalars(
-        select(Department).where(Department.id == department_id)
-    ).first()
-    if not dept:
-        raise HTTPException(status_code=404, detail="Department not found")
-
+    """Update an existing department."""
+    department = db.scalar(select(Department).where(Department.id == id))
+    if not department:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Department not found"
+        )
+    
     updates = body.model_dump(exclude_unset=True)
-
-    if "code" in updates and updates["code"]:
-        conflict = db.scalars(
+    
+    # Check for duplicate code if updating code
+    if "code" in updates:
+        existing = db.scalar(
             select(Department).where(
                 Department.code == updates["code"],
-                Department.id != department_id,
+                Department.id != id
             )
-        ).first()
-        if conflict:
-            raise HTTPException(status_code=409, detail="Department code already exists")
-
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Department code '{updates['code']}' already exists"
+            )
+    
     for key, value in updates.items():
-        setattr(dept, key, value)
-
+        setattr(department, key, value)
+    
     db.commit()
-    db.refresh(dept)
-    return dept
+    db.refresh(department)
+    return department

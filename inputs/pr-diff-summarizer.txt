@@ -1,0 +1,73 @@
+AI PR Diff Summarizer — FastAPI + Postgres + Bedrock + Streamlit dashboard
+
+App idea (one paragraph):
+Engineering managers want a quick read on incoming pull requests before assigning a reviewer.
+Users paste a diff (or a PR URL — agent should mock the fetch in MVP), the system runs it
+through Claude on Bedrock to produce a 3-sentence summary plus a numeric risk score (0-100)
+based on heuristics like file count, lines changed, presence of security-sensitive paths, and
+migration files. History is stored in Postgres so the dashboard can show "last 50 PRs reviewed."
+The Streamlit page is the demo UI.
+
+Purpose:
+- End-to-end SDLC test at HARD complexity: product → architect → database → developer.
+- Exercises **Pattern C** (FastAPI + Streamlit) on top of **postgres-llm** (Bedrock summarization).
+- Different shape from incident-triage-bot: diffs are larger inputs, response is structured (summary + score).
+
+Personas & auth:
+| Caller | Auth | Can do |
+|--------|------|--------|
+| anonymous | none | GET /health |
+| reviewer | `X-API-Key: <key>` header | POST /reviews (submit diff), GET /reviews (list), GET /reviews/{id} |
+| Streamlit UI | reads `API_KEY` from .env and sends it as `X-API-Key` on every call |
+
+Stack:
+- FastAPI + Postgres (history) + Bedrock (Claude Sonnet via app/services/bedrock_client.py)
+- Streamlit UI under ui/streamlit_app.py
+- pytest with mocked bedrock_client (no live AWS calls in tests)
+
+Data:
+- reviews: id (uuid), submitted_at (timestamp), title (text), diff_text (text), file_count (int),
+  lines_added (int), lines_removed (int), summary (text), risk_score (int 0-100),
+  risk_band (enum: low | medium | high), model_id (text), created_by (text — the API caller marker)
+
+LLM contract:
+- Pass the diff to Bedrock with a structured prompt requesting JSON: { summary, risk_factors[], risk_score }.
+- risk_score 0-30 = low band, 31-70 = medium, 71-100 = high.
+- summary must be 2-4 sentences, plain English, no code blocks.
+- The agent should mock get_bedrock_client at import site in tests so no live AWS is called.
+
+Heuristics layered on top of the LLM's risk_score:
+- +15 risk if diff touches `migrations/`, `terraform/`, or `iam/`
+- +10 risk if diff touches `*.env` or any file with `secret` / `key` in the path
+- -10 risk if diff is < 30 lines total
+- Final score clamped to [0, 100].
+
+API endpoints:
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| GET | /health | none | DB ping + Bedrock-client-builds check |
+| POST | /reviews | API key | { title, diff_text } → 201 with full review object |
+| GET | /reviews | API key | pagination, optional `?risk_band=` filter |
+| GET | /reviews/{id} | API key | full record |
+| GET | /stats | API key | last 30 days: counts by risk_band, average risk score |
+
+Streamlit UI:
+- Tab 1: "Submit a PR" — title field, large textarea for the diff, submit button, results display
+- Tab 2: "History" — table of last 50 reviews, click a row to expand summary + risk factors
+- Tab 3: "Stats" — simple bar chart of risk_band distribution + average score gauge
+- The UI calls the API via httpx with follow_redirects=True (Pattern C golden helper)
+- Never imports anything from app/ — communicates only over HTTP
+
+Tests should cover:
+- POST /reviews stores the diff + computes file_count and line stats correctly
+- Bedrock client is mocked; returns canned JSON for summary + risk_score
+- Heuristic adjustments: a diff touching migrations/ gets +15 on the LLM's base score
+- Final risk_band derived correctly at boundaries (30/31, 70/71)
+- GET /stats over fixture data returns expected aggregates
+- Anonymous POST → 401
+
+Out of scope:
+- Live GitLab/GitHub integration (mock the fetch)
+- AI-suggested reviewer recommendations
+- Inline-comment generation
+- Webhook trigger

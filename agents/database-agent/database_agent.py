@@ -131,6 +131,29 @@ Use **one `db_write_file` call per sql file**; put full SQL only in the tool `co
 - Never write outside `target-apps/`.
 - Do not modify `docs/design/*.md`, PRD, or secrets.
 - No password literals in SQL files.
+
+## Seeding credentials — DO NOT invent hashes
+
+When a seed user row has a `password_hash` (or any `*_hash` column whose plaintext is documented elsewhere in the brief), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` you produce will be random characters that fail every `bcrypt.checkpw(...)` call. This has shipped to multiple validation runs and broken login tests every time.
+
+Instead:
+1. **Insert the sentinel** `'__BCRYPT_PLACEHOLDER__'` (or `'__ARGON2_PLACEHOLDER__'` etc.) in every `password_hash` column of every seed row.
+2. **Document the credential map in `HANDOFF.md`** under a `### seedCredentials` heading. Format exactly:
+
+   ```
+   ### seedCredentials
+   | username | role | plaintext_password |
+   |----------|------|--------------------|
+   | priya    | auditor | AuditPass123! |
+   | alice    | assignee | AlicePass123! |
+   | bob      | executive | BobPass123! |
+   ```
+
+3. The developer-agent reads this section and scaffolds `scripts/seed_dev_users.py` which hashes each plaintext with `bcrypt.hashpw()` at deploy time and `UPDATE`s the placeholder rows.
+
+This is the **only correct approach** — the database-agent (LLM) does not run cryptographic libraries. The developer-agent (also LLM) does not either, but the script it scaffolds runs `bcrypt` at deploy time on a real CPU.
+
+Same rule applies to `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + HANDOFF.md mapping every time.
 """
 
 

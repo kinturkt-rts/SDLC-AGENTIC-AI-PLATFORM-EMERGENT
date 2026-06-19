@@ -1,0 +1,76 @@
+Hot Desk Booking API — postgres CRUD with time-slot conflict detection
+
+App idea (one paragraph):
+Engineering teams in a hybrid office reserve hot desks for the days they come in. Each desk
+is in a known zone (north, south, lab). Employees book a desk for a specific date and either
+a full-day, AM, or PM slot. The system must prevent overlapping bookings on the same desk +
+date + slot, and let admins blackout desks for maintenance. No real-time check-in flow,
+no QR codes — just the booking ledger.
+
+Purpose:
+- Validate the SDLC chain on **Postgres CRUD with multi-column uniqueness** and
+  **time-slot overlap detection** the agent has to model correctly in the schema.
+
+Personas & auth:
+| Caller | Auth | Can do |
+|--------|------|--------|
+| anonymous | none | GET /health, GET /desks (list), GET /availability |
+| employee | `X-User-Token: <token>` header | POST/DELETE /bookings/mine, GET /bookings/mine |
+| admin | `X-Admin-Key: <key>` header | All desk + blackout management |
+
+Auth implementation (MVP):
+- One shared `ADMIN_API_KEY`
+- Per-user opaque token mapped to user id (stored in `users.user_token`)
+
+Data:
+- zones: id (uuid), name (text, unique among: north, south, lab), created_at
+- desks: id (uuid), zone_id (FK), label (text), is_active (bool default true), created_at
+- users: id (uuid), email (text unique), full_name (text), user_token (text unique), created_at
+- bookings: id (uuid), desk_id (FK), user_id (FK), booking_date (date), slot (enum: full | am | pm),
+  created_at; **UNIQUE (desk_id, booking_date, slot)** to prevent double-booking same slot.
+- blackouts: id (uuid), desk_id (FK), starts_on (date), ends_on (date), reason (text), created_at
+
+Business rules:
+- A desk is unavailable on a date+slot if:
+  - It has an existing booking for that (desk, date, slot), OR
+  - It has a `full` booking for that (desk, date) — full conflicts with am AND pm, OR
+  - It has an `am` or `pm` booking on that (desk, date) AND the new request is `full`, OR
+  - There is an active blackout covering `booking_date` (between starts_on and ends_on inclusive), OR
+  - The desk has `is_active = false`.
+- Booking creation is best-effort optimistic — on conflict return 409 with the conflicting booking id
+  (do not transactionally retry; the client retries with a different slot).
+- A user can have at most 1 booking per (date), regardless of slot — server enforces (409 with detail).
+- Bookings can only be created for today or the next 30 days. Earlier or later = 422.
+- DELETE /bookings/{id} is only allowed by the booking's owner OR an admin.
+- GET /availability requires `?date=YYYY-MM-DD` (required) and optional `?zone=north|south|lab`.
+  Returns per-desk: { desk_id, label, zone, available_slots: ["am", "pm"] | ["full"] | [] }.
+
+API endpoints:
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| GET | /health | none | standard |
+| GET | /desks | none | optional `?zone=`, `?active=true` |
+| POST | /desks | admin | { zone, label } |
+| PATCH | /desks/{id} | admin | partial |
+| GET | /availability | none | `?date=YYYY-MM-DD&zone=` |
+| POST | /bookings | employee | { desk_id, booking_date, slot } → 201 or 409 |
+| GET | /bookings/mine | employee | pagination |
+| DELETE | /bookings/{id} | employee or admin | — |
+| POST | /blackouts | admin | { desk_id, starts_on, ends_on, reason } |
+| GET | /blackouts | admin | optional `?desk_id=` |
+| DELETE | /blackouts/{id} | admin | — |
+
+Tests should cover:
+- Cannot book same desk + date + slot twice (409, exposes UNIQUE constraint).
+- AM + PM same desk same date is OK; AM + full same desk same date is 409.
+- User cannot have 2 bookings on the same date (even on different desks) → 409.
+- Booking outside the 30-day window → 422.
+- Booking on a blackout range → 409 with `reason: "blackout"`.
+- DELETE on someone else's booking by a non-admin → 403.
+- Anonymous can GET /availability but not POST anywhere.
+
+Out of scope:
+- No recurring bookings, no team-level reservations
+- No notifications, no calendar integration
+- No check-in / no-show tracking (Phase 2)
+- No payment / cost allocation

@@ -122,6 +122,8 @@ class RunTelemetry:
             if prev is None:
                 return ""
             d = curv - prev
+            if isinstance(d, float):
+                d = round(d, 2)
             if d == 0:
                 return f"  (= prev)"
             sign = "+" if d > 0 else ""

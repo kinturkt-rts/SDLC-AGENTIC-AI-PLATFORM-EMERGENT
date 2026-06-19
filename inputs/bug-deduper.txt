@@ -1,0 +1,41 @@
+Bug deduplicator — find similar existing bugs when filing a new one. Sparse spec.
+
+Engineering keeps filing duplicate bug reports across teams. We want a tool that, when a new
+bug is submitted, returns the top 3 most similar existing bugs (by meaning, not keywords) so
+the filer can confirm whether their report is actually a duplicate before we create a new ticket.
+
+Roughly:
+- Internal users submit bugs with a title and description.
+- On submit, the server embeds the description, compares to embeddings of existing open bugs,
+  and returns the top 3 with similarity scores. If the top score is above a threshold (say 0.85),
+  flag the submission as "likely duplicate" and let the user decide whether to proceed or
+  attach to the existing one.
+- Users can mark a bug as a duplicate of another (creates a link, sets status to "duplicate").
+- Closed/resolved bugs are excluded from dedup search.
+
+Stack expected:
+- FastAPI + Postgres with pgvector + Bedrock Titan embeddings
+- pytest
+- No UI for MVP — Swagger is the demo surface
+
+Roles:
+- All callers authenticate with a shared API key (no JWT for MVP)
+- An admin key is needed to actually resolve / merge duplicates
+
+Things to think about:
+- Embed only the description, not the title (title is too short and noisy)
+- Re-embed if the description changes via PATCH
+- Threshold and top-K should be env-configurable
+- Don't compare a bug to itself when searching from inside a PATCH
+
+Tests:
+- Submitting a near-duplicate of an existing open bug returns it in the top 3 with high score
+- Submitting an unrelated bug returns top 3 but with low scores (below threshold)
+- A closed bug never appears in dedup results
+- PATCH to description triggers re-embed
+
+Out of scope:
+- UI
+- Cross-project search (single bug table for MVP)
+- ML-based duplicate auto-merge
+- Slack notifications

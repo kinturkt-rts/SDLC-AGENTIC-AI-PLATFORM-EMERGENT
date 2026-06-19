@@ -1,0 +1,8 @@
+{
+  "targetApp": "audit-finding-tracker",
+  "prdPath": "docs/PRD/audit-finding-tracker.md",
+  "designDocPath": "docs/design/audit-finding-tracker.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/audit-finding-tracker.png"
+  ]
+}

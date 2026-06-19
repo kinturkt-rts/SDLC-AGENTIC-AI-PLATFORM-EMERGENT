@@ -16,7 +16,6 @@ from typing import Iterable, Protocol
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.services.bedrock_client import BedrockClient
 
 

@@ -467,6 +467,23 @@ Section numbers vary per feature. Locate content by heading text:
 
 Default to Python/FastAPI only when tech stack is absent (add to open_questions then).
 
+## Seed credentials — scaffold a real bcrypt init script
+
+If the database-agent's `HANDOFF.md` contains a `### seedCredentials` section listing `(username, role, plaintext_password)`, the seed SQL will contain `'__BCRYPT_PLACEHOLDER__'` literals in the `password_hash` column. **Do NOT invent bcrypt strings yourself** — the LLM cannot compute real hashes. Instead:
+
+1. Copy `target-apps/_template/scripts/seed_dev_users.py` into your service via `dev_scaffold` (it's part of the golden template — never write it from scratch).
+2. **Replace the `_CREDENTIALS` constant** at the top of that copied script with the exact `(username, password)` pairs from `HANDOFF.md`'s `seedCredentials` table. Nothing else in the script changes.
+3. **Add `bcrypt>=4.0` to `requirements.txt`** if the app has any `password_hash` column.
+4. **Document the post-migrate step in README.md** under "Setup":
+   ```bash
+   # After running migrations / seed SQL:
+   python scripts/seed_dev_users.py
+   ```
+
+The script reads each plaintext, calls `bcrypt.hashpw()`, and `UPDATE`s rows where `password_hash = '__BCRYPT_PLACEHOLDER__'`. Result: login tests pass against the documented passwords.
+
+Same approach applies to `api_key_hash`, `verification_token`, or any sentinel-marked hash column. One script handles all hash columns in the database.
+
 ## Database layer — mirror database-agent output exactly
 
 Read `databaseHandoffPath` before writing any model.
@@ -488,6 +505,8 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | `uuid` PK/FK | `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` — never plain String(36) |
 | `uuid` PK default | Declare BOTH `default=lambda: str(uuid.uuid4())` (Python — runs on SQLite) AND `server_default=func.gen_random_uuid()` (SQL — Postgres-only). `server_default` alone fails every test insert with `sqlite3.OperationalError: unknown function: gen_random_uuid()`. |
 | `_UUIDStr` TypeDecorator in conftest | `process_result_value` MUST return `str`, not `uuid.UUID`. The ORM column declared `PG_UUID(as_uuid=False)` promises `str`; returning a `uuid.UUID` from the test patch breaks JSON serialization in `TestClient.post(json=...)` and breaks equality assertions against fixture-seeded string IDs. |
+| `with_variant()` arguments | Pass type **instances**, not classes. `JSONB.with_variant(String, "sqlite")` raises `ArgumentError` in SQLAlchemy 2.0. Correct: `JSONB().with_variant(JSON(), "sqlite")`. Same for `PG_UUID(as_uuid=False).with_variant(String(36), "sqlite")` — note the `()` after each type. |
+| JSONB column needs JSON for SQLite | `JSONB` is Postgres-specific. SQLite uses `JSON` (from `sqlalchemy`, not `sqlalchemy.dialects.postgresql`). Import both: `from sqlalchemy import JSON` and `from sqlalchemy.dialects.postgresql import JSONB`. |
 | UUID in response | `@field_validator("id", mode="before") def coerce(cls, v): return str(v) if v else v` |
 | Driver | `psycopg[binary]>=3.1` only — never psycopg2-binary |
 | DSN | `postgresql+psycopg://...?sslmode=require` in .env.example |
@@ -619,6 +638,29 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
 # wrong — FastAPI returns 422 before auth check
 def require_api_key(x_api_key: str = Header(alias="X-API-Key")) -> str: ...
 ```
+
+### Router prefix vs route path — no double prefix
+
+The final URL is `app.include_router(prefix=...) + @router.get(...)`. Concatenating
+the same name in both produces a 404 at the expected route:
+
+```python
+# wrong — actual URL is /health/health, GET /health returns 404
+app.include_router(health.router, prefix="/health")
+@router.get("/health") def health(): ...
+
+# right (option 1) — prefix at include, empty path inside
+app.include_router(health.router, prefix="/health")
+@router.get("") def health(): ...
+
+# right (option 2) — no prefix, full path inside
+app.include_router(health.router)
+@router.get("/health") def health(): ...
+```
+
+Be consistent across routers. If you use `prefix="/contacts"` for the contacts
+router, the route handlers inside should use relative paths (`""`, `"/{id}"`),
+NOT absolute (`"/contacts"`, `"/contacts/{id}"`).
 
 ### Handler parameter ordering — dependencies before explicit defaults
 
@@ -915,7 +957,12 @@ App code rules (container-ready without refactors):
 14. startup_checks.py + lifespan validate_runtime_config; GET /health pings DB; dev exception handler when APP_ENV=development.
 15. .env.example every line is KEY=value; README warns about DATABASE_URL= prefix.
 16. Bedrock/RDS region vars default to us-east-2 in config.py, .env.example, README env tables, and test conftest setdefaults.
-17. Test-vs-implementation contract cross-check: for every response value the implementation emits (`"status":"ok"`, error detail strings, status codes), find the corresponding test assertion and confirm they match exactly. The route manifest check (item 2) catches missing routes; this check catches value-level drift between code and the tests you just wrote (e.g. route returns `"ok"` but test asserts `"healthy"`).
+17. Test-vs-implementation contract cross-check (MANDATORY, not optional): for every response value the implementation emits — status field literals (`"ok"`, `"healthy"`, `"running"`), error detail strings, response keys, status codes — open the corresponding test file and confirm the assertion targets the **exact** string the route returns. The route manifest check (item 2) catches missing routes; this check catches value-level drift between code and the tests you just wrote. Common recurring failures:
+    - `/health` route returns `{"status": "ok"}` but `test_health.py` asserts `"healthy"` — must match.
+    - Route raises `HTTPException(detail="Invalid or missing API key")` but test asserts `"missing api key"` (case/wording) — must match.
+    - Route returns a `ContactListPage` object but test asserts `len(data) == 5` instead of `data["total"] == 5` — must match the response shape.
+    If you fix the test rather than the code, justify briefly in the handoff summary so reviewers know which contract is canonical.
+18. URL path cross-check: for every `@router.get/post/...` decorator, mentally compute `include_router(prefix=) + route_path` and confirm the test calls that exact URL. `/health/health` is a real bug that has shipped before — never double-prefix.
 """
 
 # Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
@@ -1500,6 +1547,16 @@ def _coding_model() -> BedrockModel:
         model_kwargs["additional_request_fields"] = {
             "thinking": {"type": "enabled", "budget_tokens": _thinking_budget_tokens()},
         }
+
+    # ── Sonnet 4.6 upgrade — uncomment this block (and delete the one above) when MODEL_ID/CODING_MODEL_ID
+    # in .env are switched to a Sonnet 4.5+ inference profile. It makes the thinking type env-driven so you
+    # can flip between "enabled"/"adaptive"/"disabled" via THINKING_TYPE without touching code again.
+    #
+    # if _thinking_enabled():
+    #     thinking_type = os.getenv("THINKING_TYPE", "adaptive")  # "enabled" | "adaptive" | "disabled"
+    #     model_kwargs["additional_request_fields"] = {
+    #         "thinking": {"type": thinking_type, "budget_tokens": _thinking_budget_tokens()},
+    #     }
     return BedrockModel(**model_kwargs)
 
 

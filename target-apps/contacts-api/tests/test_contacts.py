@@ -1,275 +1,218 @@
-"""Tests for /contacts routes."""
+"""Test contact endpoints."""
 import pytest
+from fastapi.testclient import TestClient
 
 
-def _create_dept(client, api_headers, name="Test Dept", code="TST"):
-    resp = client.post(
-        "/departments", json={"name": name, "code": code}, headers=api_headers
-    )
-    assert resp.status_code == 201
-    return resp.json()["id"]
-
-
-# ── POST /contacts ───────────────────────────────────────────────────────────
-
-
-def test_create_contact_success(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    resp = client.post(
-        "/contacts",
-        json={
-            "full_name": "Jane Doe",
-            "email": "jane@example.com",
-            "department_id": dept_id,
-            "phone": "+1-555-0100",
-            "title": "Manager",
-        },
-        headers=api_headers,
-    )
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["full_name"] == "Jane Doe"
-    assert data["email"] == "jane@example.com"
-    assert data["is_active"] is True
-    assert data["department_id"] == dept_id
-
-
-def test_create_contact_bad_department(client, api_headers):
-    resp = client.post(
-        "/contacts",
-        json={
-            "full_name": "X",
-            "email": "x@example.com",
-            "department_id": "00000000-0000-0000-0000-000000000000",
-        },
-        headers=api_headers,
-    )
-    assert resp.status_code == 404
-
-
-def test_create_contact_duplicate_email(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    client.post(
-        "/contacts",
-        json={"full_name": "A", "email": "dup@test.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    resp = client.post(
-        "/contacts",
-        json={"full_name": "B", "email": "dup@test.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    assert resp.status_code == 409
-
-
-def test_create_contact_no_api_key(client):
-    resp = client.post(
-        "/contacts",
-        json={"full_name": "X", "email": "x@t.com", "department_id": "any"},
-    )
-    assert resp.status_code == 401
-
-
-# ── GET /contacts (list with pagination, filters, search) ────────────────────
-
-
-def test_list_contacts_empty(client):
-    resp = client.get("/contacts")
-    assert resp.status_code == 200
-    data = resp.json()
+def test_list_contacts_empty(client: TestClient):
+    """Test listing contacts when none exist."""
+    response = client.get("/contacts/")
+    assert response.status_code == 200
+    
+    data = response.json()
     assert data["items"] == []
     assert data["total"] == 0
-    assert data["limit"] == 20
+    assert data["limit"] == 50
     assert data["offset"] == 0
 
 
-def test_list_contacts_pagination(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
+def test_get_contact_not_found(client: TestClient):
+    """Test getting non-existent contact."""
+    response = client.get("/contacts/99999999-9999-9999-9999-999999999999")
+    assert response.status_code == 404
+    assert "Contact not found" in response.json()["detail"]
+
+
+def test_create_contact_success(client: TestClient, api_headers: dict, seeded_dept):
+    """Test successful contact creation."""
+    contact_data = {
+        "department_id": seeded_dept.id,
+        "full_name": "Jane Smith",
+        "email": "jane.smith@company.com",
+        "phone": "555-5678",
+        "title": "Senior Engineer"
+    }
+    response = client.post("/contacts/", json=contact_data, headers=api_headers)
+    assert response.status_code == 201
+    
+    contact = response.json()
+    assert contact["full_name"] == "Jane Smith"
+    assert contact["email"] == "jane.smith@company.com"
+    assert contact["phone"] == "555-5678"
+    assert contact["title"] == "Senior Engineer"
+    assert contact["is_active"] is True
+    assert contact["department"]["name"] == "Engineering"
+    assert "id" in contact
+    assert "created_at" in contact
+    assert "updated_at" in contact
+
+
+def test_create_contact_without_api_key(client: TestClient, seeded_dept):
+    """Test contact creation fails without API key."""
+    contact_data = {
+        "department_id": seeded_dept.id,
+        "full_name": "Jane Smith",
+        "email": "jane.smith@company.com"
+    }
+    response = client.post("/contacts/", json=contact_data)
+    assert response.status_code == 401
+    assert "Invalid or missing API key" in response.json()["detail"]
+
+
+def test_create_contact_invalid_department(client: TestClient, api_headers: dict):
+    """Test contact creation with non-existent department."""
+    contact_data = {
+        "department_id": "99999999-9999-9999-9999-999999999999",
+        "full_name": "Jane Smith",
+        "email": "jane.smith@company.com"
+    }
+    response = client.post("/contacts/", json=contact_data, headers=api_headers)
+    assert response.status_code == 404
+    assert "Department not found" in response.json()["detail"]
+
+
+def test_create_contact_duplicate_email(client: TestClient, api_headers: dict, seeded_contact):
+    """Test contact creation with duplicate email."""
+    contact_data = {
+        "department_id": seeded_contact.department_id,
+        "full_name": "Different Name",
+        "email": seeded_contact.email  # duplicate email
+    }
+    response = client.post("/contacts/", json=contact_data, headers=api_headers)
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
+
+
+def test_get_contact_success(client: TestClient, seeded_contact):
+    """Test getting an existing contact."""
+    response = client.get(f"/contacts/{seeded_contact.id}")
+    assert response.status_code == 200
+    
+    contact = response.json()
+    assert contact["id"] == seeded_contact.id
+    assert contact["full_name"] == seeded_contact.full_name
+    assert contact["email"] == seeded_contact.email
+    assert contact["department"]["name"] == "Engineering"
+
+
+def test_list_contacts_with_data(client: TestClient, seeded_contact):
+    """Test listing contacts after creating some."""
+    response = client.get("/contacts/")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["total"] == 1
+    assert data["items"][0]["full_name"] == "John Doe"
+
+
+def test_list_contacts_with_search(client: TestClient, api_headers: dict, seeded_dept):
+    """Test contact search functionality."""
+    # Create multiple contacts
+    contacts = [
+        {"department_id": seeded_dept.id, "full_name": "John Smith", "email": "john.smith@company.com"},
+        {"department_id": seeded_dept.id, "full_name": "Jane Doe", "email": "jane.doe@company.com"},
+        {"department_id": seeded_dept.id, "full_name": "Bob Wilson", "email": "bob.wilson@company.com"}
+    ]
+    
+    for contact_data in contacts:
+        response = client.post("/contacts/", json=contact_data, headers=api_headers)
+        assert response.status_code == 201
+    
+    # Search by name
+    response = client.get("/contacts/?q=john")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert "john" in data["items"][0]["full_name"].lower()
+    
+    # Search by email
+    response = client.get("/contacts/?q=doe")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert "doe" in data["items"][0]["email"].lower()
+
+
+def test_list_contacts_pagination(client: TestClient, api_headers: dict, seeded_dept):
+    """Test contact pagination."""
+    # Create multiple contacts
     for i in range(5):
-        client.post(
-            "/contacts",
-            json={
-                "full_name": f"Person {i}",
-                "email": f"p{i}@test.com",
-                "department_id": dept_id,
-            },
-            headers=api_headers,
-        )
-
-    resp = client.get("/contacts?limit=2&offset=0")
-    data = resp.json()
+        contact_data = {
+            "department_id": seeded_dept.id,
+            "full_name": f"Test User {i}",
+            "email": f"test{i}@company.com"
+        }
+        response = client.post("/contacts/", json=contact_data, headers=api_headers)
+        assert response.status_code == 201
+    
+    # Test pagination
+    response = client.get("/contacts/?limit=3&offset=0")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 3
     assert data["total"] == 5
-    assert len(data["items"]) == 2
-    assert data["limit"] == 2
+    assert data["limit"] == 3
     assert data["offset"] == 0
+    
+    # Next page
+    response = client.get("/contacts/?limit=3&offset=3")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 5
 
 
-def test_list_contacts_filter_department(client, api_headers):
-    dept1 = _create_dept(client, api_headers, "D1", "DDD")
-    dept2 = _create_dept(client, api_headers, "D2", "EEE")
-    client.post(
-        "/contacts",
-        json={"full_name": "A", "email": "a@t.com", "department_id": dept1},
-        headers=api_headers,
-    )
-    client.post(
-        "/contacts",
-        json={"full_name": "B", "email": "b@t.com", "department_id": dept2},
-        headers=api_headers,
-    )
-
-    resp = client.get(f"/contacts?department_id={dept1}")
-    data = resp.json()
-    assert data["total"] == 1
-    assert data["items"][0]["full_name"] == "A"
+def test_update_contact_success(client: TestClient, api_headers: dict, seeded_contact):
+    """Test successful contact update."""
+    update_data = {
+        "full_name": "John Updated Doe",
+        "title": "Lead Engineer"
+    }
+    response = client.patch(f"/contacts/{seeded_contact.id}", json=update_data, headers=api_headers)
+    assert response.status_code == 200
+    
+    contact = response.json()
+    assert contact["full_name"] == "John Updated Doe"
+    assert contact["title"] == "Lead Engineer"
+    assert contact["email"] == seeded_contact.email  # unchanged
 
 
-def test_list_contacts_filter_is_active(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    create_resp = client.post(
-        "/contacts",
-        json={"full_name": "Active", "email": "active@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    cid = create_resp.json()["id"]
-    # Soft-delete
-    client.delete(f"/contacts/{cid}", headers=api_headers)
-
-    resp = client.get("/contacts?is_active=false")
-    data = resp.json()
-    assert data["total"] == 1
-    assert data["items"][0]["is_active"] is False
+def test_update_contact_not_found(client: TestClient, api_headers: dict):
+    """Test updating non-existent contact."""
+    update_data = {"full_name": "New Name"}
+    response = client.patch("/contacts/99999999-9999-9999-9999-999999999999", 
+                          json=update_data, headers=api_headers)
+    assert response.status_code == 404
+    assert "Contact not found" in response.json()["detail"]
 
 
-def test_list_contacts_search_q(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    client.post(
-        "/contacts",
-        json={"full_name": "Alice Wonder", "email": "aw@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    client.post(
-        "/contacts",
-        json={"full_name": "Bob Smith", "email": "bob@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-
-    resp = client.get("/contacts?q=alice")
-    data = resp.json()
-    assert data["total"] == 1
-    assert data["items"][0]["full_name"] == "Alice Wonder"
+def test_update_contact_without_api_key(client: TestClient, seeded_contact):
+    """Test contact update fails without API key."""
+    update_data = {"full_name": "New Name"}
+    response = client.patch(f"/contacts/{seeded_contact.id}", json=update_data)
+    assert response.status_code == 401
 
 
-# ── GET /contacts/{id} ───────────────────────────────────────────────────────
+def test_delete_contact_success(client: TestClient, api_headers: dict, seeded_contact):
+    """Test successful contact soft delete."""
+    response = client.delete(f"/contacts/{seeded_contact.id}", headers=api_headers)
+    assert response.status_code == 204
+    
+    # Verify contact is soft deleted
+    response = client.get(f"/contacts/{seeded_contact.id}")
+    assert response.status_code == 200
+    contact = response.json()
+    assert contact["is_active"] is False
 
 
-def test_get_contact_success(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    create_resp = client.post(
-        "/contacts",
-        json={"full_name": "Fetch Me", "email": "fetch@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    cid = create_resp.json()["id"]
-
-    resp = client.get(f"/contacts/{cid}")
-    assert resp.status_code == 200
-    assert resp.json()["full_name"] == "Fetch Me"
+def test_delete_contact_not_found(client: TestClient, api_headers: dict):
+    """Test deleting non-existent contact."""
+    response = client.delete("/contacts/99999999-9999-9999-9999-999999999999", headers=api_headers)
+    assert response.status_code == 404
+    assert "Contact not found" in response.json()["detail"]
 
 
-def test_get_contact_not_found(client):
-    resp = client.get("/contacts/00000000-0000-0000-0000-000000000000")
-    assert resp.status_code == 404
-
-
-# ── PATCH /contacts/{id} ─────────────────────────────────────────────────────
-
-
-def test_update_contact_success(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    create_resp = client.post(
-        "/contacts",
-        json={"full_name": "Old Name", "email": "old@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    cid = create_resp.json()["id"]
-
-    resp = client.patch(
-        f"/contacts/{cid}",
-        json={"full_name": "New Name"},
-        headers=api_headers,
-    )
-    assert resp.status_code == 200
-    assert resp.json()["full_name"] == "New Name"
-
-
-def test_update_contact_email_conflict(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    client.post(
-        "/contacts",
-        json={"full_name": "A", "email": "taken@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    c2 = client.post(
-        "/contacts",
-        json={"full_name": "B", "email": "free@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    cid = c2.json()["id"]
-
-    resp = client.patch(
-        f"/contacts/{cid}",
-        json={"email": "taken@t.com"},
-        headers=api_headers,
-    )
-    assert resp.status_code == 409
-
-
-def test_update_contact_not_found(client, api_headers):
-    resp = client.patch(
-        "/contacts/00000000-0000-0000-0000-000000000000",
-        json={"full_name": "X"},
-        headers=api_headers,
-    )
-    assert resp.status_code == 404
-
-
-def test_update_contact_requires_api_key(client):
-    resp = client.patch(
-        "/contacts/00000000-0000-0000-0000-000000000000",
-        json={"full_name": "X"},
-    )
-    assert resp.status_code == 401
-
-
-# ── DELETE /contacts/{id} (soft-delete) ──────────────────────────────────────
-
-
-def test_soft_delete_contact(client, api_headers):
-    dept_id = _create_dept(client, api_headers)
-    create_resp = client.post(
-        "/contacts",
-        json={"full_name": "Deletable", "email": "del@t.com", "department_id": dept_id},
-        headers=api_headers,
-    )
-    cid = create_resp.json()["id"]
-
-    resp = client.delete(f"/contacts/{cid}", headers=api_headers)
-    assert resp.status_code == 204
-
-    # Verify record still accessible but inactive
-    get_resp = client.get(f"/contacts/{cid}")
-    assert get_resp.status_code == 200
-    assert get_resp.json()["is_active"] is False
-
-
-def test_delete_contact_not_found(client, api_headers):
-    resp = client.delete(
-        "/contacts/00000000-0000-0000-0000-000000000000", headers=api_headers
-    )
-    assert resp.status_code == 404
-
-
-def test_delete_contact_requires_api_key(client):
-    resp = client.delete("/contacts/00000000-0000-0000-0000-000000000000")
-    assert resp.status_code == 401
+def test_delete_contact_without_api_key(client: TestClient, seeded_contact):
+    """Test contact delete fails without API key."""
+    response = client.delete(f"/contacts/{seeded_contact.id}")
+    assert response.status_code == 401

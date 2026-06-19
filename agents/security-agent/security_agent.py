@@ -34,6 +34,13 @@ from _shared.pipeline_context import (
     resolve_design_doc_path,
     slugify,
 )
+from _shared.handoff_schemas import (
+    DeveloperHandoff,
+    HandoffValidationError,
+    SecurityHandoff,
+    load_handoff,
+    write_handoff,
+)
 from _shared.telemetry import RunTelemetry, usage_from_event
 
 load_repo_env()
@@ -59,10 +66,12 @@ Run a security review on targetApp using upstream handoff artifacts in Context.
 1c. sec_read_file(qaHandoffPath) when set — note any test failures classified as security-relevant.
 1d. sec_read_file(developerHandoffPath) when set — read envVarsRequired to spot secret-handling surface.
 
-**Step 2 — run scanners (always run all three; missing tooling is itself a finding)**
+**Step 2 — run scanners (always run all four; missing tooling is itself a finding)**
 2a. sec_run_bandit(targetApp) — Python SAST. Severity from bandit's HIGH/MEDIUM/LOW.
 2b. sec_run_pip_audit(targetApp) — dependency CVE audit against requirements.txt.
 2c. sec_run_secrets_scan(targetApp) — regex sweep for AWS keys, Slack tokens, PEM blocks, generic JWTs.
+2d. sec_scan_pii(targetApp) — PII patterns in DB schemas, Pydantic models, logger/HTTPException calls.
+    For each `response_schema` finding, sec_read_file the route(s) using that schema to check auth.
 
 **Step 3 — classify and de-duplicate findings**
 For each finding, assign:
@@ -146,6 +155,7 @@ You do NOT fix them — you classify and hand off remediations to developer-agen
 | `sec_run_bandit` | Static analysis on Python app/ — JSON output |
 | `sec_run_pip_audit` | CVE check on requirements.txt — JSON output |
 | `sec_run_secrets_scan` | Regex sweep for secrets in all repo text files |
+| `sec_scan_pii` | PII detection: columns in SQL, fields in Pydantic schemas, logger/HTTPException leaks |
 | `sec_write_file` | Write **only** `SECURITY_REPORT.md` under the service |
 
 ## Severity classification rules
@@ -186,14 +196,31 @@ If `bandit` or `pip-audit` are not installed in the agent's Python env, the scan
 - Never modify app/, tests/, requirements.txt, or .env.example — those edits belong to developer-agent.
 - Read app/ via `sec_read_file` to enrich findings with code context. Do not edit.
 
-## Compliance hints
+## PII detection — proactive, not reactive
 
-When PRD or design mentions:
-- **PII / GDPR** — flag any logging of user identifiers without redaction; flag missing data-retention notes.
-- **HIPAA** — flag plaintext storage of patient data; flag missing audit log.
-- **SOC2 / PCI** — flag missing audit log; flag absence of access-control documentation.
+Always run `sec_scan_pii` even when PRD/design doesn't explicitly call out compliance scope. PII handling is a baseline expectation. The tool returns findings categorized by **surface**:
 
-Treat these as `medium` unless the PRD elevates explicitly.
+| Surface | What it means | How to classify |
+|---------|--------------|-----------------|
+| `db_schema` | PII column in SQL DDL | `medium`. Upgrade to `high` if design specifies HIPAA/PCI and DDL has no encryption note. |
+| `response_schema` | PII field in a Pydantic response model | Cross-check `app/routers/` for the route that uses this schema. If the route has NO auth dependency, upgrade to `high` (PII reachable by anonymous callers). |
+| `orm_model` | PII column on SQLAlchemy model | `medium` (informational — confirm encryption at rest is documented elsewhere). |
+| `log_leak` | Sensitive variable interpolated into `logger.<level>(...)` | `high`. Logs are typically lower-trust than the DB. |
+| `error_leak` | Sensitive variable interpolated into `HTTPException(detail=...)` | `high` — visible in 4xx response body to any caller. |
+
+Severity is the *base*; elevate when compliance scope is named (HIPAA → patient_id leak = `critical`; PCI → credit_card field in response = `critical`).
+
+Suppress finding when:
+- The match is in `tests/` or `conftest.py` (the scanner already skips these dirs for log/error patterns; if you see one in `db/sql/` it's still real).
+- The field name matches the pattern but the data isn't PII in this app's context (e.g. `phone` field on a `support_ticket` table is a callback phone — flag for review but classify `low`). Document the suppression reason.
+
+## Compliance hints (when PRD or design mentions scope)
+
+- **GDPR / general PII** — confirm data-retention notes in design, redaction in logs.
+- **HIPAA** — flag plaintext patient data, missing audit log; elevate PII findings.
+- **SOC2 / PCI** — flag missing audit log; flag absence of access-control documentation; elevate financial PII findings.
+
+If PRD is silent on compliance, default-classify PII findings per the table above.
 
 ## Response format
 
@@ -517,6 +544,160 @@ def _run_secrets_scan_impl(service: str) -> str:
     return json.dumps(result)
 
 
+# ── PII scanner ──────────────────────────────────────────────────────────────
+
+# PII field-name patterns. The token is matched as a whole word, case-insensitive.
+# `severity` is the *base* severity; the LLM upgrades to `high` when the field is
+# exposed on an unauthenticated route (it has the route auth context, the scanner
+# does not).
+_PII_FIELD_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    # National IDs
+    ("national_id", r"(?i)\b(ssn|social_security_number|sin|tin|nid|aadhaar|passport_number|drivers_license|national_id)\b", "high"),
+    # Financial
+    ("financial", r"(?i)\b(credit_card|credit_card_number|card_number|cvv|cvc|iban|bank_account|account_number|routing_number|tax_id)\b", "high"),
+    # Health
+    ("health", r"(?i)\b(medical_record|health_insurance|patient_id|diagnosis|prescription|mrn)\b", "high"),
+    # Date of birth (commonly used for identity confirmation)
+    ("dob", r"(?i)\b(date_of_birth|dob|birth_date|birthdate)\b", "medium"),
+    # Contact PII
+    ("contact", r"(?i)\b(email|email_address|phone_number|home_phone|mobile|cell_phone)\b", "medium"),
+    # Location PII (more granular than country)
+    ("location", r"(?i)\b(street_address|home_address|mailing_address|zip_code|postal_code|latitude|longitude|gps_coordinates)\b", "medium"),
+    # Other sensitive
+    ("auth_secrets", r"(?i)\b(password_hash|mother_maiden|security_question|security_answer)\b", "medium"),
+)
+
+_PII_LOG_INTERPOLATION = re.compile(
+    r"(?:logger|logging|log)\.\w+\([^)]*\{?\s*(?P<var>\w+)",
+    re.IGNORECASE,
+)
+_PII_HTTPEXC_INTERPOLATION = re.compile(
+    r"HTTPException\([^)]*detail\s*=\s*[fF]?['\"][^'\"]*\{(?P<var>\w+)",
+)
+
+_PII_SENSITIVE_VAR_NAMES = re.compile(
+    r"(?i)\b(ssn|email|phone|password|dob|birth|address|credit|card|cvv|patient|medical|aadhaar|passport|national_id|tax_id|iban)\b"
+)
+
+_PII_SCAN_DIRS = ("db/sql", "app/models", "app/routers", "schemas", "app/services")
+_PII_SCAN_EXTS = {".sql", ".py"}
+
+
+def _run_pii_scan_impl(service: str) -> str:
+    """Pattern-based PII detection across SQL, ORM models, schemas, routers, services.
+
+    Categorizes each finding by surface (db_schema, response_schema, log_leak, error_leak)
+    so the LLM can correlate response_schema findings with route auth dependencies.
+    """
+    try:
+        service_dir = _ensure_service_exists(service)
+    except ValueError as exc:
+        return json.dumps({"tool": "pii-scan", "status": "error", "error": str(exc)})
+
+    findings: list[dict[str, Any]] = []
+    files_scanned = 0
+
+    for sub in _PII_SCAN_DIRS:
+        base = service_dir / sub
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file() or path.suffix not in _PII_SCAN_EXTS:
+                continue
+            if any(part in _SECRETS_SCAN_SKIP_DIRS for part in path.parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            files_scanned += 1
+            rel = path.relative_to(_REPO_ROOT).as_posix()
+
+            # Pre-compute newline offsets once for fast line lookups.
+            newline_positions = [i for i, ch in enumerate(text) if ch == "\n"]
+
+            def _line_for(offset: int) -> int:
+                return bisect.bisect_left(newline_positions, offset) + 1
+
+            # Determine the "surface" of this file — drives how findings are categorized.
+            if "/db/sql/" in rel:
+                surface = "db_schema"
+            elif "/schemas/" in rel or "/schema/" in rel:
+                surface = "response_schema"
+            elif "/app/routers/" in rel:
+                surface = "router"
+            elif "/app/models/" in rel:
+                surface = "orm_model"
+            else:
+                surface = "service"
+
+            # 1. PII field/column name matches across all in-scope files.
+            for name, pattern, severity in _PII_FIELD_PATTERNS:
+                for match in re.finditer(pattern, text):
+                    findings.append(
+                        {
+                            "category": name,
+                            "surface": surface,
+                            "severity": severity,
+                            "file": rel,
+                            "line": _line_for(match.start()),
+                            "match": match.group(0),
+                            "hint": (
+                                "Exposed via response schema — verify route auth"
+                                if surface == "response_schema"
+                                else (
+                                    "PII column — confirm encryption at rest + access control"
+                                    if surface == "db_schema"
+                                    else "PII field present — verify handling rules"
+                                )
+                            ),
+                        }
+                    )
+
+            # 2. PII interpolation in logger calls (router/service files only).
+            if surface in {"router", "service"}:
+                for match in _PII_LOG_INTERPOLATION.finditer(text):
+                    var = match.group("var") or ""
+                    if _PII_SENSITIVE_VAR_NAMES.search(var):
+                        findings.append(
+                            {
+                                "category": "log_leak",
+                                "surface": surface,
+                                "severity": "medium",
+                                "file": rel,
+                                "line": _line_for(match.start()),
+                                "match": f"logger.…({var}…)",
+                                "hint": "Logging a sensitive variable — redact or remove",
+                            }
+                        )
+
+            # 3. PII interpolation in HTTPException detail (router files).
+            if surface == "router":
+                for match in _PII_HTTPEXC_INTERPOLATION.finditer(text):
+                    var = match.group("var") or ""
+                    if _PII_SENSITIVE_VAR_NAMES.search(var):
+                        findings.append(
+                            {
+                                "category": "error_leak",
+                                "surface": surface,
+                                "severity": "high",
+                                "file": rel,
+                                "line": _line_for(match.start()),
+                                "match": f"HTTPException(detail=…{{{var}}}…)",
+                                "hint": "PII in 4xx response body — unauthenticated callers may see this",
+                            }
+                        )
+
+    result = {
+        "tool": "pii-scan",
+        "status": "ran",
+        "filesScanned": files_scanned,
+        "findings": findings,
+    }
+    _last_scan_results["pii-scan"] = result
+    return json.dumps(result)
+
+
 # ── Tools (Strands) ──────────────────────────────────────────────────────────
 
 @tool
@@ -595,6 +776,20 @@ def sec_run_pip_audit(service: str) -> str:
 def sec_run_secrets_scan(service: str) -> str:
     """Regex-based secrets scan across the service tree. Returns JSON."""
     return _run_secrets_scan_impl(service)
+
+
+@tool
+def sec_scan_pii(service: str) -> str:
+    """Pattern-based PII detection in db/sql, app/models, schemas, app/routers, app/services.
+
+    Returns categorized findings:
+      - db_schema      : PII column names in SQL DDL
+      - response_schema: PII fields in Pydantic response schemas (LLM must check route auth)
+      - orm_model     : PII columns in SQLAlchemy models
+      - log_leak       : PII variables interpolated in logger calls
+      - error_leak     : PII variables interpolated in HTTPException detail (response body)
+    """
+    return _run_pii_scan_impl(service)
 
 
 # ── Model + agent ────────────────────────────────────────────────────────────
@@ -676,6 +871,7 @@ def _build_agent(telemetry: RunTelemetry | None = None) -> Agent:
             sec_run_bandit,
             sec_run_pip_audit,
             sec_run_secrets_scan,
+            sec_scan_pii,
         ],
         callback_handler=_SecurityCallbackHandler(telemetry),
     )
@@ -707,6 +903,25 @@ def _enrich_security_context(ctx: dict[str, Any]) -> None:
         if candidate.is_file():
             ctx["developerHandoffPath"] = candidate.relative_to(_REPO_ROOT).as_posix()
 
+    # Validate the developer handoff up front — fail loud if upstream schema drifted.
+    dev_path = ctx.get("developerHandoffPath")
+    if dev_path:
+        try:
+            dev = load_handoff(dev_path, DeveloperHandoff)
+            # Surface a few high-signal fields into context for the LLM to use directly.
+            if dev.deploymentHandoff and dev.deploymentHandoff.envVarNames:
+                ctx.setdefault("envVarNames", dev.deploymentHandoff.envVarNames)
+            if dev.runCommand:
+                ctx.setdefault("upstreamRunCommand", dev.runCommand)
+        except HandoffValidationError as exc:
+            print(
+                f"[security-agent] WARNING: developer handoff schema mismatch — "
+                f"continuing with raw context. Details: {exc}",
+                file=sys.stderr,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[security-agent] WARNING: could not load dev handoff: {exc}", file=sys.stderr)
+
     if not ctx.get("qaHandoffPath"):
         candidate = _REPO_ROOT / "agents" / "pipeline" / f"{app}.qa-handoff.json"
         if candidate.is_file():
@@ -732,10 +947,24 @@ def _build_context(
 
 
 def _write_security_handoff(app: str, payload: dict[str, Any]) -> str:
-    pipeline_dir = _REPO_ROOT / "agents" / "pipeline"
-    pipeline_dir.mkdir(parents=True, exist_ok=True)
-    out = pipeline_dir / f"{slugify(app)}.security-handoff.json"
-    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    """Validate the payload against SecurityHandoff before writing.
+
+    If validation fails, fall back to writing the raw dict but log a loud warning —
+    downstream agents will still get *something*, just not a guaranteed-shape file.
+    """
+    try:
+        model = SecurityHandoff.model_validate(payload)
+        out = write_handoff(model, slugify(app), "security-handoff")
+    except Exception as exc:
+        print(
+            f"[security-agent] WARNING: handoff payload failed SecurityHandoff validation; "
+            f"writing raw dict. Cause: {exc}",
+            file=sys.stderr,
+        )
+        pipeline_dir = _REPO_ROOT / "agents" / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+        out = pipeline_dir / f"{slugify(app)}.security-handoff.json"
+        out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return out.relative_to(_REPO_ROOT).as_posix()
 
 
