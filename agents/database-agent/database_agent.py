@@ -97,6 +97,19 @@ Under `dbOutputDir` (default `target-apps/<service>/db/`):
 - `HANDOFF.md` — host-written after each CLI run (developer-agent reads `databaseHandoffPath`)
 - `sql/001_*.sql` … numbered, idempotent DDL (`IF NOT EXISTS` where possible)
 - **Postgres extensions before indexes:** `CREATE EXTENSION IF NOT EXISTS pg_trgm` (and any other extension) must run in an early migration **before** any index using `gin_trgm_ops` or extension-specific operator classes — never only in seed files.
+- **pgvector / VECTOR columns (RAG, dedup, semantic search):** When design §2/§3 uses `vector(n)`, HNSW, or cosine similarity:
+  - First migration MUST be `001_enable_pgvector.sql` (before any `VECTOR(...)` column or `vector_cosine_ops` index).
+  - Use this template verbatim — **do not** `SET search_path` before `CREATE EXTENSION` (RDS requires extension in `public`):
+    ```sql
+    -- 001_enable_pgvector.sql
+    CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+    ```
+  - Reference: `target-apps/_template/db/reference/rag_pgvector_reference.sql`
+  - `vector(n)` dimension **must match** the embedding model in design §2 (e.g. 1536 for `amazon.titan-embed-text-v1`, 1024 for v2).
+  - HNSW index (after table DDL): `USING hnsw (embedding vector_cosine_ops)` with `CREATE INDEX IF NOT EXISTS`.
+  - App-schema `SET search_path` belongs in **later** migrations (enums/tables), not in `001_enable_pgvector.sql`.
+  - **Shared RDS:** pgvector must live in `public`. If an older app installed `vector` in its own schema, the host apply script relocates it with `ALTER EXTENSION vector SET SCHEMA public` before DDL.
+  - **`api_keys.key_hash` UNIQUE:** never insert multiple rows with the same `__BCRYPT_PLACEHOLDER__` — use one row per tier or pre-hash distinct API key strings; placeholders are for `users` password columns only.
 - `sql/*_seed.sql` or `011_seed.sql` — **dev/test fixture rows only** per design §6.2 (not production CUR data).
   Use `seedMinRows`–`seedMaxRows` from Context: **every RDS table in §3 must get that many INSERT rows**
   (realistic names/emails/dates; stable UUIDs only where tests need them; respect FK order; `ON CONFLICT DO NOTHING`).
@@ -155,7 +168,7 @@ The seed file MUST contain this comment. It is parsed by `agents/_shared/materia
 -- Password for all seed users: "YourPassword123!"
 ```
 
-Format rules (regex: `(?:Password|passwords?)[^"\n]*(?:"([^"]+)"|: *([^\s!][^\n]*!))`):
+Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\\n]*!))`):
 - Must contain the word `Password` (case-insensitive)
 - Password must be **double-quoted** `"…"` OR the line must **end with `!`** (e.g. `-- Password: Pass123!`)
 - Put it as the first comment in the file, before any `SET search_path` or `INSERT` statements

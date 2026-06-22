@@ -1,56 +1,49 @@
 """Bug ORM model."""
-
 from __future__ import annotations
 
-import enum
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import Enum as SAEnum, ForeignKey, String, Text, func
+from sqlalchemy import Column, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
-from app.models.pg_types import TimestampTZ, pg_schema, pg_uuid_column
-
-
-class BugStatus(str, enum.Enum):
-    OPEN = "open"
-    CLOSED = "closed"
-    DUPLICATE = "duplicate"
-
-
-def _bug_status_column():
-    return (
-        SAEnum(
-            BugStatus,
-            name="bug_status_enum",
-            schema=pg_schema(),
-            create_type=False,
-            native_enum=True,
-            values_callable=lambda enum_cls: [member.value for member in enum_cls],
-        )
-        .with_variant(String(32), "sqlite")
-    )
+from app.models.pg_types import BugStatus, bug_status_column, embedding_column, pg_uuid_pk
 
 
 class Bug(Base):
     __tablename__ = "bugs"
 
-    id: Mapped[str] = mapped_column(pg_uuid_column(), primary_key=True)
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[BugStatus] = mapped_column(
-        _bug_status_column(),
-        nullable=False,
-        default=BugStatus.OPEN,
+    id: Mapped[str] = mapped_column(
+        pg_uuid_pk(),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        server_default=func.gen_random_uuid(),
     )
-    duplicate_of_id: Mapped[str | None] = mapped_column(
-        pg_uuid_column(),
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = Column("embedding", embedding_column(), nullable=True)
+    status: Mapped[str] = mapped_column(
+        bug_status_column(),
+        nullable=False,
+        default=BugStatus.open.value,
+        server_default="open",
+    )
+    duplicate_of: Mapped[str | None] = mapped_column(
+        pg_uuid_pk(),
         ForeignKey("bugs.id"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        TimestampTZ, server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TimestampTZ, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
     )

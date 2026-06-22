@@ -5,7 +5,7 @@
 -- vector(1024) matches amazon.titan-embed-text-v2:0. Change the dimension if the
 -- design selects a different embedding model.
 
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 -- collections and documents tables are the usual metadata tables; only the
 -- chunk + embedding table is RAG-specific.

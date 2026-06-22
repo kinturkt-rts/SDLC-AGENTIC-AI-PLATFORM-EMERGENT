@@ -66,6 +66,28 @@ def test_resolve_host_port_parses_url_when_password_contains_at(
     assert port == 5432
 
 
+def test_sql_files_need_pgvector_detects_vector_column(tmp_path: Path) -> None:
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "003_create_bugs.sql").write_text(
+        "CREATE TABLE bugs (embedding vector(1536));",
+        encoding="utf-8",
+    )
+    assert mod._sql_files_need_pgvector([sql_dir / "003_create_bugs.sql"]) is True
+
+
+def test_sql_files_need_pgvector_false_for_plain_tables(tmp_path: Path) -> None:
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "002_create_users.sql").write_text(
+        "CREATE TABLE users (id uuid primary key);",
+        encoding="utf-8",
+    )
+    assert mod._sql_files_need_pgvector([sql_dir / "002_create_users.sql"]) is False
+
+
 def test_connection_url_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://bad:pass@word@host:5432/db")
     monkeypatch.setenv("POSTGRES_MCP_DB_ENDPOINT", "host.example.com")

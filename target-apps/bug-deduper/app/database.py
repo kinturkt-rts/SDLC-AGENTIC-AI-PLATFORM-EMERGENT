@@ -1,5 +1,7 @@
-"""SQLAlchemy engine and session factory."""
+"""SQLAlchemy engine and session factory.
 
+Dialect-aware: SQLite (pytest) skips pool args; Postgres sets search_path.
+"""
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -26,6 +28,7 @@ def _make_metadata() -> MetaData:
 
 
 class Base(DeclarativeBase):
+    """Shared declarative base for all SQLAlchemy models."""
     metadata = _make_metadata()
 
 
@@ -81,6 +84,7 @@ SessionLocal: sessionmaker[Session] = sessionmaker(
 
 
 def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency — yields a scoped DB session, always closed on exit."""
     db = SessionLocal()
     try:
         yield db

@@ -43,6 +43,64 @@ def resolve_app_schema(target_app: str | None) -> str | None:
     return None
 
 
+_PGVECTOR_SQL_MARKERS = (
+    " vector(",
+    " vector_cosine_ops",
+    " vector_l2_ops",
+    "create extension if not exists vector",
+    "using hnsw",
+)
+
+
+def _sql_files_need_pgvector(files: list[Path]) -> bool:
+    """True when migrations use pgvector types, indexes, or extension DDL."""
+    for path in files:
+        lowered = path.read_text(encoding="utf-8").lower()
+        if any(marker in lowered for marker in _PGVECTOR_SQL_MARKERS):
+            return True
+    return False
+
+
+def _vector_type_schema(cur) -> str | None:
+    cur.execute(
+        """
+        SELECT n.nspname
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE t.typname = 'vector' AND t.typtype = 'b'
+        LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _ensure_pgvector_extension(cur, *, verbose: bool) -> None:
+    """Install pgvector in public before any VECTOR(...) DDL (required on shared RDS)."""
+    type_schema = _vector_type_schema(cur)
+    if type_schema is None:
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
+        type_schema = _vector_type_schema(cur)
+    elif type_schema != "public":
+        if verbose:
+            print(
+                f"  Relocating pgvector from {type_schema} to public (shared RDS) ...",
+                file=sys.stderr,
+            )
+        cur.execute("ALTER EXTENSION vector SET SCHEMA public")
+        type_schema = _vector_type_schema(cur)
+
+    if type_schema != "public":
+        raise RuntimeError(
+            'pgvector type "vector" is not available in schema public. '
+            f"Found in {type_schema!r} instead. "
+            "On RDS, run: ALTER EXTENSION vector SET SCHEMA public; "
+            "or contact a DBA to relocate the extension."
+        )
+    if verbose:
+        print("  pgvector extension OK (schema public)", file=sys.stderr)
+
+
 def _is_verbose() -> bool:
     return os.getenv("APPLY_SQL_VERBOSE", os.getenv("DATABASE_AGENT_VERBOSE", "")).strip().lower() in (
         "1",
@@ -289,6 +347,10 @@ def apply_sql_files(
             with conn.cursor() as cur:
                 if app_schema:
                     _ensure_schema_and_search_path(cur, app_schema)
+                if _sql_files_need_pgvector(files):
+                    if verbose:
+                        print("Ensuring pgvector extension (public) ...", file=sys.stderr)
+                    _ensure_pgvector_extension(cur, verbose=verbose)
                 applied: list[str] = []
                 for path in files:
                     sql = path.read_text(encoding="utf-8").strip()
