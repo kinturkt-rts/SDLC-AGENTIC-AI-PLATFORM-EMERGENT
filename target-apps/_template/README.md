@@ -47,8 +47,10 @@ cp .env.example .env   # Windows: copy .env.example .env
 ```bash
 cd target-apps/<your-service>
 # activate venv (see above)
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas
 ```
+
+Use `--reload-dir` so pytest/package installs under `.venv` do not trigger reload storms (Streamlit health checks time out).
 
 If the app includes Streamlit (`ui/streamlit_app.py`), add **Terminal 2** from repo root:
 

@@ -89,7 +89,7 @@ def _ensure_api_reachable() -> None:
             "```\n"
             "cd target-apps/<app-name>\n"
             ".venv\\Scripts\\Activate.ps1  # or source .venv/bin/activate\n"
-            "uvicorn app.main:app --reload --port 8000\n"
+            "uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas\n"
             "```\n\n"
             "If the API crashed, check the terminal for errors (common: DATABASE_URL not set in .env)."
         )

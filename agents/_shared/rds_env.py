@@ -26,9 +26,16 @@ def load_target_app_env(target_app: str, repo_root: Path | None = None) -> None:
 
 
 def schema_for_app(target_app: str) -> str:
-    return os.environ.get("POSTGRES_APP_SCHEMA") or os.environ.get(
-        "POSTGRES_SCHEMA"
-    ) or target_app.replace("-", "_")
+    """Postgres schema for target-apps/<slug> — must match apply_sql_to_rds.resolve_app_schema.
+
+    Uses POSTGRES_APP_SCHEMA when set (e.g. by apply_sql_to_rds before materialize).
+    Does NOT fall back to POSTGRES_SCHEMA from repo .env.local — that often points at a
+    different app and causes materialize to UPDATE zero rows while seed SQL applied elsewhere.
+    """
+    explicit = os.environ.get("POSTGRES_APP_SCHEMA", "").strip()
+    if explicit:
+        return explicit
+    return target_app.strip().replace("-", "_")
 
 
 def connection_url() -> str:

@@ -186,7 +186,9 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 - Third column: the plaintext password (must match the SQL comment exactly)
 - Use `email` values in column 1 when the users table has an `email` login column (no `username`)
 
-The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** to find the password, reads **Step 3** to find which users to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
+The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
+
+If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and the hash column name from your DDL.
 
 Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + SQL comment + HANDOFF.md map — all three, every time.
 """

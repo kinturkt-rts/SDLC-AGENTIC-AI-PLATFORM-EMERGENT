@@ -57,6 +57,11 @@ def materialize(
 
     creds = collect_credentials(app_dir)
     if not creds:
+        if seed_sql_has_placeholders(app_dir):
+            return [
+                f"{target_app}: seed SQL has __BCRYPT_PLACEHOLDER__ but no login rows could be "
+                "parsed (check users INSERT columns and password comment in *_seed.sql)"
+            ]
         return []
 
     schema = schema_for_app(target_app)
@@ -87,12 +92,7 @@ def materialize(
     if remaining > 0 and strict:
         return [
             f"{target_app}: {remaining} user row(s) still have placeholder/invalid password "
-            f"hash after materialize (RDS login will 401)"
-        ]
-    if updated == 0 and strict and seed_sql_has_placeholders(app_dir):
-        return [
-            f"{target_app}: seed SQL uses placeholders but no user rows were updated "
-            "(check schema/users table or re-run apply_sql_to_rds.py)"
+            f"hash after materialize in schema {schema!r} (RDS login will 401)"
         ]
     return []
 

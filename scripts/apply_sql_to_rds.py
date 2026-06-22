@@ -395,6 +395,9 @@ def apply_sql_files(
     print("[apply-sql] Done.", file=sys.stderr)
 
     if target_app and not skip_seed:
+        app_schema = resolve_app_schema(target_app)
+        if app_schema:
+            os.environ["POSTGRES_APP_SCHEMA"] = app_schema
         if _materialize_seed_passwords(target_app) != 0:
             return 1
 

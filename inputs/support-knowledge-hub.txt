@@ -1,0 +1,77 @@
+Support Knowledge Hub — internal how-to articles, semantic search, duplicate awareness
+
+Client story:
+Priya runs internal IT support for a 400-person company. Answers to "how do I reset VPN?",
+"expense policy for client meals", and "onboarding laptop checklist" live in scattered Confluence
+pages and Slack threads. New hires search keywords and get nothing useful. Contributors keep
+writing the same article twice under slightly different titles. Priya wants one hub where staff
+search by meaning (not exact keywords), contributors publish vetted articles, and the system
+warns when a draft looks like something already published.
+
+MVP:
+- Article catalog: title, rich text body, category (IT, HR, Finance, Facilities, General),
+  optional tags, author, created/updated timestamps.
+- Article lifecycle: draft → published → archived. Only published articles appear in employee
+  search. Archiving hides from search but keeps history.
+- Semantic search: employee types a natural-language question; system returns top matches ranked
+  by meaning with a short excerpt and link to full article — not keyword-only matching.
+- Similar-article check: when a contributor saves or publishes a draft, show the top few existing
+  published articles that read similarly (by meaning), so they can merge or differentiate before
+  publishing.
+- Relevance after edits: if a published article's body changes materially, search and similarity
+  should reflect the new content (not stale matches).
+- Long articles: search should surface the most relevant section, not only articles whose title
+  happens to match a word in the query.
+- Categories browse: employees can filter search by category; contributors manage category list
+  (admin only).
+- Search feedback: after viewing results, employee can mark a result helpful or not — stored for
+  analytics (no public leaderboard required).
+- Popular gaps: analytics view listing frequent searches that returned weak or no useful matches
+  (signals missing documentation).
+- Pinned articles: admin can pin up to 5 published articles per category for the employee home
+  screen.
+
+Personas (who needs what):
+- Employee — semantic search, read published articles, submit helpful/not-helpful on results.
+- Contributor — create/edit own drafts, publish own articles, see similar-article warnings.
+- Knowledge admin — publish or archive any article, manage categories, pin articles, full analytics.
+- Leadership (read-only) — org-wide search analytics and coverage gaps; no content edits.
+- Public/unauthenticated — health check only.
+
+Business rules worth getting right:
+- Employees never see drafts or archived articles in search/browse.
+- Contributors cannot publish directly without at least title + body + category; similarity warning
+  is advisory (they may still publish).
+- Only knowledge admin can archive another person's article or edit another's published body.
+- Archiving removes from search immediately; restoring to published re-enables search.
+- Similar-article suggestions compare against published articles only (not drafts).
+- Search never returns the same article twice in one result set.
+- Pinning enforces max 5 per category; pinning an archived article is rejected.
+- Helpful/not-helpful only allowed for published articles the employee actually opened from search.
+- Leadership sees aggregated analytics only — not individual employee identities in feedback.
+
+Demo data expectations:
+- At least 5 categories with 3–4 published articles each (mix of short and long bodies).
+- Several draft articles and 2–3 archived for workflow demos.
+- Enough semantic overlap between pairs of articles to demo similar-article warnings
+  (e.g. two VPN setup guides with different wording).
+- Search analytics seed: sample queries with mixed helpful ratings and a few "weak result" gaps.
+- At least 2 contributors, 1 knowledge admin, 1 leadership user, several employees.
+
+UI expectation:
+- Streamlit (or equivalent) role-gated experience:
+  - Employee: home with pins + search bar + results with excerpts and feedback buttons.
+  - Contributor: my drafts, editor with similar-articles panel, publish flow.
+  - Knowledge admin: all articles table, category manager, pin manager, analytics dashboard.
+  - Leadership: read-only analytics dashboard.
+- API is source of truth; UI calls backend over HTTP.
+
+Out of scope:
+- External public internet, SSO beyond dev login, multi-language
+- File attachments, video hosting, Confluence/Slack sync
+- Auto-merge or block publish on similarity (warning only)
+- Ticketing integration, chatbot small-talk outside article corpus
+- Fine-grained per-article ACL beyond roles above
+
+Target app slug: support-knowledge-hub
+Output directory: target-apps/support-knowledge-hub/

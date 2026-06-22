@@ -1,12 +1,11 @@
 # Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> verify
-# Optional GitHub mirror: -WithGithub publishes branch + PR, then qa-agent tests and comments on PR.
-# QA step disabled by default unless -WithQa or -WithGithub.
+# Optional GitHub publish: -WithGithub runs github-agent (MCP push + PR). No QA in Phase 1 MVP.
 #
 # DEFAULT (Postgres app, full chain):
 #   .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 #
 # Opt-in extras:
-#   -WithGithub                          # devops-agent: git push + PR; then qa-agent + PR review
+#   -WithGithub                          # github-agent: MCP push + PR to showcase repo
 #   -GithubOwner / -GithubRepo           # override GITHUB_OWNER / GITHUB_REPO from .env
 #
 #   -WithWebCrawler                      # scrape URLs into Postgres (optional step 2b)
@@ -56,11 +55,11 @@ $ctxPath = Join-Path $RepoRoot ($ContextFile -replace "/", "\")
 $ctxDir = Split-Path $ctxPath -Parent
 if (-not (Test-Path $ctxDir)) { New-Item -ItemType Directory -Path $ctxDir -Force | Out-Null }
 
-# Full chain defaults: RDS apply when DB runs; QA when -WithQa or -WithGithub
+# Full chain defaults: RDS apply when DB runs; QA only when -WithQa (Phase 3)
 $applyPostgres = (-not $SkipDb) -and (-not $SkipPostgres)
 $runQa = $false
-if ($WithQa -or $WithGithub) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
-$runDevops = $WithGithub -and (-not $SkipDeveloper)
+if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
+$runGithub = $WithGithub -and (-not $SkipDeveloper)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
 
@@ -396,35 +395,35 @@ if (-not $SkipVerify -and -not $SkipDeveloper) {
     Invoke-LocalVerify -TargetFeature $Feature
 }
 
-# 6) DevOps -> GitHub branch + PR (mirrors developer git push)
-if ($runDevops) {
-    Write-Host "`n=== 6/7 devops-agent (GitHub publish + PR) ===" -ForegroundColor Green
-    $devopsArgs = @(
-        "agents/devops-agent/devops_agent.py",
+# 6) GitHub-agent -> MCP push + PR (showcase repo, one branch per app)
+if ($runGithub) {
+    Write-Host "`n=== 6/6 github-agent (MCP publish + PR) ===" -ForegroundColor Green
+    $githubArgs = @(
+        "agents/github-agent/github_agent.py",
         "--target-app", $Feature,
         "--context-file", $ContextFile
     )
-    if ($GithubOwner) { $devopsArgs += @("--github-owner", $GithubOwner) }
-    if ($GithubRepo) { $devopsArgs += @("--github-repo", $GithubRepo) }
-    if ($GithubBase) { $devopsArgs += @("--github-base", $GithubBase) }
-    python @devopsArgs
-    if ($LASTEXITCODE -ne 0) { Write-Warning "devops-agent reported issues - review before merge." }
-    $devopsHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.devops-handoff.json"
-    if (Test-Path $devopsHandoff) {
-        $devopsJson = Get-Content $devopsHandoff -Raw | ConvertFrom-Json
+    if ($GithubOwner) { $githubArgs += @("--github-owner", $GithubOwner) }
+    if ($GithubRepo) { $githubArgs += @("--github-repo", $GithubRepo) }
+    if ($GithubBase) { $githubArgs += @("--github-base", $GithubBase) }
+    python @githubArgs
+    if ($LASTEXITCODE -ne 0) { Write-Warning "github-agent reported issues - review before merge." }
+    $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
+    if (Test-Path $githubHandoff) {
+        $githubJson = Get-Content $githubHandoff -Raw | ConvertFrom-Json
         Update-Context @{
-            pullRequestNumber = $devopsJson.pullRequestNumber
-            pullRequestUrl    = $devopsJson.pullRequestUrl
-            githubOwner         = $devopsJson.githubOwner
-            githubRepo          = $devopsJson.githubRepo
-            featureBranch       = $devopsJson.branch
+            pullRequestNumber = $githubJson.pullRequestNumber
+            pullRequestUrl    = $githubJson.pullRequestUrl
+            githubOwner       = $githubJson.githubOwner
+            githubRepo        = $githubJson.githubRepo
+            featureBranch     = $githubJson.branch
         }
     }
 }
 
-# 7) QA -> pytest + edge-case tests + GitHub PR review
+# 7) QA -> pytest (Phase 3 — opt-in via -WithQa)
 if ($runQa) {
-    Write-Host "`n=== 7/7 qa-agent (pytest + PR review) ===" -ForegroundColor Green
+    Write-Host "`n=== qa-agent (pytest) ===" -ForegroundColor Green
     python agents/qa-agent/qa_agent.py `
         --target-app $Feature `
         --context-file $ContextFile
@@ -441,7 +440,7 @@ if (-not $SkipDb) {
     if ($applyPostgres) { Write-Host "  RDS:     applied via apply_sql_to_rds.py" }
 }
 Write-Host "  App:     target-apps/$Feature/"
-if ($runDevops) { Write-Host "  DevOps:  agents/pipeline/$Feature.devops-handoff.json" }
+if ($runGithub) { Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json" }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
 
 Write-RunInstructions -TargetFeature $Feature -UsesDb:(-not $SkipDb)

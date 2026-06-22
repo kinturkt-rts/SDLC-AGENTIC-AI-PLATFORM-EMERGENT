@@ -59,6 +59,55 @@ def default_branch_name(feature: str) -> str:
     return f"sdlc/{slugify_feature(feature)}"
 
 
+def github_feature_branch(feature: str) -> str:
+    """Branch name for showcase repo — one branch per app (e.g. training-compliance)."""
+    return slugify_feature(feature)
+
+
+def dest_path_for_showcase_repo(rel_path: str, slug: str) -> str:
+    """Map platform monorepo paths to SDLC-Agentic-AI-Platform layout."""
+    prefix = f"target-apps/{slug}/"
+    if rel_path.startswith(prefix):
+        return f"{slug}/{rel_path[len(prefix):]}"
+    return rel_path
+
+
+def collect_showcase_publish_files(
+    feature: str,
+    *,
+    root: Path | None = None,
+) -> list[dict[str, str]]:
+    """Build {path, content} payloads for GitHub MCP push_files (showcase repo layout)."""
+    import base64
+
+    root = root or repo_root()
+    slug = slugify_feature(feature)
+    text_suffixes = {
+        ".py",
+        ".md",
+        ".sql",
+        ".txt",
+        ".ini",
+        ".json",
+        ".example",
+    }
+    files: list[dict[str, str]] = []
+    for rel in collect_feature_artifact_paths(slug, root=root):
+        if rel.endswith(".devops-handoff.json"):
+            continue
+        src = root / rel
+        data = src.read_bytes()
+        dest = dest_path_for_showcase_repo(rel, slug)
+        if src.suffix.lower() == ".png":
+            content = base64.b64encode(data).decode("ascii")
+        elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
+            content = data.decode("utf-8")
+        else:
+            content = base64.b64encode(data).decode("ascii")
+        files.append({"path": dest, "content": content})
+    return files
+
+
 def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],

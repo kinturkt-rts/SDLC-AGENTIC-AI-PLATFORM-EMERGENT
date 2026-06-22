@@ -1,0 +1,73 @@
+Facility Work Order Hub — building maintenance requests, assignments, and SLA tracking
+
+Client story:
+Jordan runs facilities for a multi-site office portfolio. Tenants submit maintenance issues
+(leaky faucet, HVAC noise, broken badge reader) via email and hallway whiteboards. Technicians
+chase assignments in a shared spreadsheet. Leadership asks monthly for overdue counts by site
+and nobody trusts the numbers. Jordan wants one hub: employees file work orders, technicians
+see their queue, facilities admins assign and close jobs, and leadership gets read-only SLA
+dashboards — with every status change timestamped for audit.
+
+MVP:
+- Site catalog: site code, name, address line, active flag.
+- Location within site: floor, room or area label (optional), used on work orders.
+- Work order: title, description, category (HVAC, plumbing, electrical, access, general),
+  priority (low, normal, urgent), status lifecycle, requester, optional assignee technician,
+  site + location, created/updated/assigned/started/completed/closed timestamps, optional due-by.
+- Status lifecycle: submitted → triaged → assigned → in_progress → completed → closed.
+  Reopen allowed (closed → in_progress) with reason; only facilities admin may force-close.
+- Assignment rules: facilities admin assigns technician; technician may self-start only their
+  assigned jobs; requester sees own orders only unless they are also admin.
+- SLA hints: flag orders past due-by while not closed; dashboard counts overdue by site and
+  category (no email integration — in-app counts only).
+- Comments thread per work order: author, body, created_at — visible to requester, assignee,
+  and admin on that order.
+- Technician workload view: open assigned + in_progress count per technician (admin only).
+- Leadership dashboard: read-only aggregates — open vs closed this month, overdue count,
+  average days-to-close by category, top sites by volume.
+
+Personas (who needs what):
+- Employee (requester) — create work orders for their site, add comments on own orders,
+  view status history on own orders.
+- Technician — see assigned queue, move assigned → in_progress → completed, add comments.
+- Facilities administrator — triage all orders, assign/reassign technicians, edit any field,
+  force-close, manage sites/locations, workload view.
+- Leadership (read-only) — org-wide SLA dashboard; no writes.
+- Public/unauthenticated — health check only.
+
+Business rules worth getting right:
+- Requesters cannot assign technicians or change status beyond submitted on create.
+- Technicians cannot see other technicians' queues or reassign work.
+- Only facilities admin can create/edit sites and locations or reassign after assignment.
+- Completed requires in_progress first; closed requires completed (or admin force-close).
+- Due-by must be on or after created date when set; urgent priority suggests due within 24h
+  (validation warning in API, not a hard block).
+- Inactive sites reject new work orders but existing orders remain readable.
+- Comments immutable after post (no edit/delete in MVP).
+- Leadership never sees comment author PII beyond display name already on the order.
+- List endpoints paginated; default sort newest first for admin triage queue.
+
+Demo data expectations:
+- At least 3 active sites with 2–3 locations each.
+- At least 8 work orders across all status values including 2 overdue and 1 reopened.
+- Comment threads on at least 4 orders (mix of requester and technician).
+- Seed users: 2 requesters, 2 technicians, 1 facilities admin, 1 leadership user — login via
+  email + password (JWT). Document a single shared dev password in seed SQL comment.
+- Timestamps on all work orders and comments should reflect realistic spread over 60 days.
+
+UI expectation:
+- Streamlit role-gated experience (API is source of truth over HTTP):
+  - Requester: submit form, my orders table with status timeline.
+  - Technician: my queue, status buttons, comment box.
+  - Facilities admin: triage board, assign dropdown, sites/locations CRUD, workload panel.
+  - Leadership: read-only dashboard charts/tables.
+- Local dev: document uvicorn with --reload-dir app (and schemas) to avoid .venv reload storms.
+
+Out of scope:
+- SSO, mobile app, photo attachments, parts inventory, vendor billing
+- Email/SMS/push notifications (in-app SLA flags only)
+- Geo maps, IoT sensor ingestion, multi-tenant property management
+- Fine-grained per-room ACL beyond roles above
+
+Target app slug: facility-work-order-hub
+Output directory: target-apps/facility-work-order-hub/

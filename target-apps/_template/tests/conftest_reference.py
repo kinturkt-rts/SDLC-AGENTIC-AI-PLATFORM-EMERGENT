@@ -13,6 +13,7 @@ Adapt checklist:
   - Replace SCHEMA_NAME with actual POSTGRES_SCHEMA value
   - Replace JWT/API-key env vars to match the app's config.py
   - Add app-specific seed fixtures (users, categories, etc.)
+  - For TimestampTZ columns: use `_ts("2024-01-01T00:00:00+00:00")` in fixtures — not bare ISO strings
   - Remove auth sections not needed (JWT or API-key, not both)
 """
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Generator
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -29,6 +31,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import TypeDecorator
+
+
+def _ts(iso: str) -> datetime:
+    """ISO string → datetime for ORM TimestampTZ columns in SQLite tests."""
+    return datetime.fromisoformat(iso)
+
 
 # ── 1. Environment BEFORE any app import ─────────────────────────────────────
 os.environ.setdefault("APP_ENV", "test")

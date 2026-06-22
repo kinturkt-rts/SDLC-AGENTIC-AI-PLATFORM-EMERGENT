@@ -238,6 +238,12 @@ Missing any route = the agent must catch it here, not during re-run.
 
   Code quality:
   - Postgres: psycopg[binary] in requirements; ENUM + uuid ORM parity per HANDOFF §ORM parity
+  - **TIMESTAMPTZ parity (mandatory when db/sql uses TIMESTAMPTZ):**
+    - ORM: `TimestampTZ` from `app.models.pg_types` for every `*_at` column — never `mapped_column(Text)`
+    - Pydantic: `schemas/common.py` with `coerce_iso_datetime`; every `*_at: str` response field needs
+      `@field_validator(..., mode="before")` calling it (RDS returns `datetime`, SQLite tests use strings)
+    - conftest seeds: `_ts("2024-01-01T00:00:00+00:00")` for TimestampTZ columns — not bare ISO strings
+    - Add `tests/test_schema_datetime.py` (see `_template/tests/test_schema_datetime_reference.py`)
   - No .dict() calls — only .model_dump(); no orm_mode — only ConfigDict(from_attributes=True)
   - Optional fields have = None default
   - No circular imports: schemas never imports models, models never imports schemas
@@ -247,6 +253,8 @@ Missing any route = the agent must catch it here, not during re-run.
   - Endpoint table, curl examples, Swagger auth notes, RDS smoke-test steps
   - When multi-role or portal/internal routes: **Role & endpoint quick reference** table with seed usernames
   - Terminal 1/2 blocks start from repo root; no bare `cd ui` without `cd target-apps/<app>` first
+  - uvicorn dev command uses `--reload-dir app` (and `--reload-dir schemas` when present) — never bare
+    `--reload` on the project root (watches `.venv` → reload storms / Streamlit API timeouts)
   - Documents `cp .env.example .env` (Windows: `copy`)
 
   Seed auth parity (JWT apps with db/sql/*seed*.sql):
@@ -272,6 +280,8 @@ After all files are written and the checklist above is done:
      - `CurrentUser = Depends()` → use `current_user: CurrentUser` only (no `= Depends()`)
      - Parameter order: `CurrentUser` / `DbSession` before `Query(default=...)` params
      - SQLite Date columns: use `date(2024, 1, 1)` in test fixtures, not `"2024-01-01"` strings
+     - RDS_PARITY FAILED: fix TimestampTZ ORM + coerce_iso_datetime validators, or seedCredentials /
+       users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
 
 **Step 6 — handoff summary (LAST)**
 1. stack — language, framework, pattern, DB driver(s).
@@ -1539,6 +1549,17 @@ def run_service_validation(
                         )
             except subprocess.TimeoutExpired:
                 output_parts.append("SEED_BCRYPT TIMEOUT (non-blocking)")
+
+    from _shared.validate_rds_parity import validate_rds_parity, validate_rds_parity_warnings
+
+    rds_errors = validate_rds_parity(service_dir)
+    if rds_errors:
+        output_parts.append("RDS_PARITY FAILED (blocks RDS smoke / Streamlit — pytest may still pass):")
+        output_parts.extend(f"  - {e}" for e in rds_errors)
+        return False, "\n".join(output_parts)
+    output_parts.append("RDS_PARITY OK")
+    for warn in validate_rds_parity_warnings(service_dir):
+        output_parts.append(f"RDS_PARITY WARN: {warn}")
 
     if (service_dir / "app" / "startup_checks.py").is_file():
         startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}

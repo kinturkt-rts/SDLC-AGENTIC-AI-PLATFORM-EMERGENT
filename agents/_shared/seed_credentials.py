@@ -17,18 +17,111 @@ _USER_INSERT_EMAIL = re.compile(
     r"\('[0-9a-f-]{36}',\s*'[0-9a-f-]{36}',\s*'([^']+@[^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
     re.IGNORECASE,
 )
+_USERS_INSERT_HEADER = re.compile(
+    r"INSERT\s+INTO\s+(?:\S+\.)?users\s*\(([^)]+)\)",
+    re.IGNORECASE,
+)
+
+
+def _users_insert_columns(seed_path: Path) -> list[str] | None:
+    text = seed_path.read_text(encoding="utf-8")
+    header = _USERS_INSERT_HEADER.search(text)
+    if not header:
+        return None
+    return [c.strip().strip('"') for c in header.group(1).split(",")]
+
+
+def _split_sql_tuple_values(inner: str) -> list[str | None]:
+    """Split comma-separated SQL literals inside a VALUES tuple."""
+    values: list[str | None] = []
+    i = 0
+    n = len(inner)
+    while i < n:
+        while i < n and inner[i] in " \t\n\r,":
+            i += 1
+        if i >= n:
+            break
+        if inner[i] == "'":
+            i += 1
+            buf: list[str] = []
+            while i < n:
+                if inner[i] == "'":
+                    if i + 1 < n and inner[i + 1] == "'":
+                        buf.append("'")
+                        i += 2
+                    else:
+                        i += 1
+                        break
+                else:
+                    buf.append(inner[i])
+                    i += 1
+            values.append("".join(buf))
+            continue
+        if inner[i : i + 4].upper() == "NULL":
+            values.append(None)
+            i += 4
+            continue
+        start = i
+        while i < n and inner[i] != ",":
+            i += 1
+        values.append(inner[start:i].strip())
+    return values
+
+
+def _parse_users_insert_rows(
+    seed_path: Path,
+    *,
+    lookup_col: str,
+    hash_col: str,
+) -> list[str]:
+    """Column-aware extraction of email/username from users INSERT rows."""
+    text = seed_path.read_text(encoding="utf-8")
+    cols = _users_insert_columns(seed_path)
+    if not cols:
+        return []
+    try:
+        lookup_idx = cols.index(lookup_col)
+        hash_idx = cols.index(hash_col)
+    except ValueError:
+        return []
+
+    lookups: list[str] = []
+    in_users_block = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _USERS_INSERT_HEADER.search(stripped):
+            in_users_block = True
+            continue
+        if not in_users_block:
+            continue
+        if stripped.startswith("ON CONFLICT") or (
+            stripped.startswith("--") and not stripped.startswith("('")
+        ):
+            in_users_block = False
+            continue
+        if not stripped.startswith("('"):
+            if stripped and not stripped.startswith("--"):
+                in_users_block = False
+            continue
+        tuple_match = re.search(r"\((.+)\)\s*(?:,|;)?\s*$", stripped)
+        if not tuple_match:
+            continue
+        vals = _split_sql_tuple_values(tuple_match.group(1))
+        if len(vals) <= max(lookup_idx, hash_idx):
+            continue
+        hash_val = vals[hash_idx]
+        lookup_val = vals[lookup_idx]
+        if not lookup_val or not hash_val:
+            continue
+        if hash_val == _PLACEHOLDER or hash_val.startswith("$2"):
+            lookups.append(lookup_val)
+    return lookups
 
 
 def users_table_layout(seed_path: Path) -> tuple[str, str] | None:
-    text = seed_path.read_text(encoding="utf-8")
-    header = re.search(
-        r"INSERT\s+INTO\s+(?:\S+\.)?users\s*\(([^)]+)\)",  # schema prefix optional (SET search_path style)
-        text,
-        re.IGNORECASE,
-    )
-    if not header:
+    cols = _users_insert_columns(seed_path)
+    if not cols:
         return None
-    cols = [c.strip().strip('"') for c in header.group(1).split(",")]
     hash_col = next(
         (c for c in cols if c in ("password_hash", "hashed_password")),
         None,
@@ -76,14 +169,18 @@ def parse_seed_credentials(seed_path: Path) -> list[tuple[str, str, str, str]]:
     if not layout:
         return []
     lookup_col, hash_col = layout
-    if lookup_col == "email":
-        lookups = _USER_INSERT_EMAIL.findall(text)
-    else:
-        lookups = _USER_INSERT_USERNAME.findall(text)
-        if not lookups:
-            user = first_seed_username(text)
-            if user:
-                lookups = [user]
+    lookups = _parse_users_insert_rows(
+        seed_path, lookup_col=lookup_col, hash_col=hash_col
+    )
+    if not lookups:
+        if lookup_col == "email":
+            lookups = _USER_INSERT_EMAIL.findall(text)
+        else:
+            lookups = _USER_INSERT_USERNAME.findall(text)
+            if not lookups:
+                user = first_seed_username(text)
+                if user:
+                    lookups = [user]
     return [(u, password, lookup_col, hash_col) for u in lookups]
 
 
