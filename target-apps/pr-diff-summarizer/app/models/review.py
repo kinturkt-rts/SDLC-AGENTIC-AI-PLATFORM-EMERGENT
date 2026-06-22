@@ -45,9 +45,16 @@ class Review(Base):
         nullable=False,
     )
     risk_band = Column(
-        SAEnum(RiskBandEnum, name="risk_band_enum", schema="pr_diff_summarizer", create_type=False, native_enum=True)
+        SAEnum(
+            RiskBandEnum,
+            name="risk_band_enum",
+            schema="pr_diff_summarizer",
+            create_type=False,
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        )
         .with_variant(String(10), "sqlite"),
-        nullable=False
+        nullable=False,
     )
     model_id = Column(Text, nullable=False)
     created_by = Column(Text, nullable=False)

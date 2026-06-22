@@ -100,10 +100,12 @@ def create_review(
     
     # Call Bedrock for AI analysis
     bedrock = get_bedrock_client()
-    prompt = f"{DIFF_ANALYSIS_PROMPT}\n\nDiff to analyze:\n{body.diff_text}"
-    
+
     try:
-        response_text = bedrock.invoke_text(prompt)
+        response_text = bedrock.invoke_text(
+            system_message=DIFF_ANALYSIS_PROMPT,
+            user_message=f"Diff to analyze:\n{body.diff_text}",
+        )
         # Try to parse JSON response
         try:
             ai_result = json.loads(response_text)

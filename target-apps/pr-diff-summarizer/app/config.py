@@ -16,10 +16,15 @@ class Settings(BaseSettings):
     # Authentication
     api_key: str = Field(default="", alias="API_KEY")
     
-    # AWS Bedrock
+    # AWS Bedrock — profile (SSO) OR explicit session keys from root .env
+    aws_profile: str = Field(default="", alias="AWS_PROFILE")
     aws_region: str = Field(default="us-east-2", alias="AWS_REGION")
+    aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
+    aws_session_token: str = Field(default="", alias="AWS_SESSION_TOKEN")
     bedrock_region: str = Field(default="us-east-2", alias="BEDROCK_REGION")
     bedrock_model_id: str = Field(default="us.anthropic.claude-sonnet-4-20250514-v1:0", alias="BEDROCK_MODEL_ID")
+    bedrock_max_tokens: int = Field(default=4096, alias="BEDROCK_MAX_TOKENS")
     
     # Input limits
     max_diff_size_mb: int = Field(default=10, alias="MAX_DIFF_SIZE_MB")

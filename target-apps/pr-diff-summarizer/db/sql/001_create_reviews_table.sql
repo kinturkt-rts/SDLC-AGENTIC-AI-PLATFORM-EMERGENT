@@ -1,5 +1,9 @@
--- Create risk_band enum type
-CREATE TYPE risk_band_enum AS ENUM ('low', 'medium', 'high');
+-- Create risk_band enum type (idempotent)
+DO $$ BEGIN
+    CREATE TYPE risk_band_enum AS ENUM ('low', 'medium', 'high');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Create reviews table
 CREATE TABLE IF NOT EXISTS reviews (

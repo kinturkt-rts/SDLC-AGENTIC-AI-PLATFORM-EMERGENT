@@ -1,7 +1,12 @@
 """Streamlit UI for PR Diff Summarizer."""
 
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 import streamlit as st
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import requests
 from datetime import datetime
 from typing import Optional
@@ -14,12 +19,12 @@ API_KEY = os.getenv("API_KEY", "")
 def _get(path: str, params: Optional[dict] = None) -> requests.Response:
     """GET request with API key auth."""
     headers = {"X-API-Key": API_KEY}
-    return requests.get(f"{API_BASE_URL}{path}", headers=headers, params=params, follow_redirects=True)
+    return requests.get(f"{API_BASE_URL}{path}", headers=headers, params=params)
 
 def _post(path: str, json_data: dict) -> requests.Response:
     """POST request with API key auth."""
     headers = {"X-API-Key": API_KEY}
-    return requests.post(f"{API_BASE_URL}{path}", headers=headers, json=json_data, follow_redirects=True)
+    return requests.post(f"{API_BASE_URL}{path}", headers=headers, json=json_data)
 
 def _ensure_api_reachable():
     """Check if API is reachable and healthy."""

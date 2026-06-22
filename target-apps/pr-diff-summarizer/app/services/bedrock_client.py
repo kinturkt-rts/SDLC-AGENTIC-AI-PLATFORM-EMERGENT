@@ -39,7 +39,21 @@ class BedrockClient:
                 "BEDROCK_MODEL_ID is not set. Configure .env when design §2 requires Bedrock."
             )
         region = region_name or get_settings().aws_region
-        self._client = client or boto3.client("bedrock-runtime", region_name=region)
+        if client is not None:
+            self._client = client
+        else:
+            settings = get_settings()
+            session_kwargs: dict[str, str] = {"region_name": region}
+            profile = settings.aws_profile.strip()
+            if profile:
+                session_kwargs["profile_name"] = profile
+            elif settings.aws_access_key_id and settings.aws_secret_access_key:
+                session_kwargs["aws_access_key_id"] = settings.aws_access_key_id
+                session_kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+                if settings.aws_session_token.strip():
+                    session_kwargs["aws_session_token"] = settings.aws_session_token
+            session = boto3.Session(**session_kwargs)
+            self._client = session.client("bedrock-runtime")
 
     def invoke_text(
         self,
