@@ -173,24 +173,6 @@ def atlassian_mcp_client() -> MCPClient:
     return MCPClient(transport, prefix="atlassian", startup_timeout=120)
 
 
-def gitlab_mcp_client() -> MCPClient:
-    """Stdio transport to jmrplens/gitlab-mcp-server (scripts/gitlab_jmrplens_stdio.py)."""
-
-    root = Path(__file__).resolve().parents[2]
-    python = os.environ.get("GITLAB_MCP_PYTHON", shutil.which("python") or "python")
-
-    def transport() -> object:
-        return stdio_client(
-            StdioServerParameters(
-                command=python,
-                args=[str(root / "scripts" / "gitlab_jmrplens_stdio.py")],
-                env=os.environ.copy(),
-            )
-        )
-
-    return MCPClient(transport, prefix="gitlab", startup_timeout=120)
-
-
 def github_personal_access_token() -> str:
     for key in ("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
         value = os.getenv(key, "").strip()
@@ -316,7 +298,6 @@ def mongodb_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
 
 MCP_FACTORIES: dict[str, Callable[[], MCPClient]] = {
     "atlassian": atlassian_mcp_client,
-    "gitlab": gitlab_mcp_client,
     "github": github_mcp_client,
     "postgres": postgres_mcp_client,
     "mongodb": mongodb_mcp_client,
