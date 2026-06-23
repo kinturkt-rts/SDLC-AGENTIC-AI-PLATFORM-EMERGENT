@@ -283,6 +283,28 @@ function Invoke-LocalVerify {
     Invoke-DeliveryVerify -Stage app
 }
 
+function Write-PublishHandoffLinks {
+    param(
+        [string]$Label,
+        [object]$Handoff
+    )
+    if (-not $Handoff) { return }
+    $repoUrl = [string]$Handoff.repoUrl
+    $branchUrl = [string]$Handoff.branchUrl
+    $prUrl = ""
+    if ($Handoff.PSObject.Properties.Name -contains "pullRequestUrl" -and $Handoff.pullRequestUrl) {
+        $prUrl = [string]$Handoff.pullRequestUrl
+    } elseif ($Handoff.PSObject.Properties.Name -contains "mergeRequestUrl" -and $Handoff.mergeRequestUrl) {
+        $prUrl = [string]$Handoff.mergeRequestUrl
+    }
+    if ($prUrl -match '^https://api\.github\.com/repos/([^/]+)/([^/]+)/pulls/(\d+)$') {
+        $prUrl = "https://github.com/$($Matches[1])/$($Matches[2])/pull/$($Matches[3])"
+    }
+    if ($repoUrl) { Write-Host "  $Label repo:   $repoUrl" -ForegroundColor Green }
+    if ($branchUrl) { Write-Host "  $Label branch: $branchUrl" -ForegroundColor Green }
+    if ($prUrl) { Write-Host "  $Label PR/MR:  $prUrl" -ForegroundColor Green }
+}
+
 function Write-RunInstructions {
     param([string]$TargetFeature, [bool]$UsesDb)
     Write-Host "`n=== Run the app (manual) ===" -ForegroundColor Cyan
@@ -496,7 +518,7 @@ if ($runGitlab) {
     }
 }
 
-# 7) QA -> pytest (Phase 3 — opt-in via -WithQa)
+# 7) QA -> pytest (Phase 3 - opt-in via -WithQa)
 if ($runQa) {
     Write-Host "`n=== qa-agent (pytest) ===" -ForegroundColor Green
     python agents/qa-agent/qa_agent.py `
@@ -519,16 +541,18 @@ if ($runGithub) {
     $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
     if (Test-Path $githubHandoff) {
         Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json"
+        Write-PublishHandoffLinks -Label "GitHub" -Handoff (Get-Content $githubHandoff -Raw | ConvertFrom-Json)
     } else {
-        Write-Host "  GitHub:  publish failed (no handoff file — retry github-agent when online)" -ForegroundColor Yellow
+        Write-Host "  GitHub:  publish failed (no handoff file - retry github-agent when online)" -ForegroundColor Yellow
     }
 }
 if ($runGitlab) {
     $gitlabHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.gitlab-handoff.json"
     if (Test-Path $gitlabHandoff) {
         Write-Host "  GitLab:  agents/pipeline/$Feature.gitlab-handoff.json"
+        Write-PublishHandoffLinks -Label "GitLab" -Handoff (Get-Content $gitlabHandoff -Raw | ConvertFrom-Json)
     } else {
-        Write-Host "  GitLab:  publish failed (no handoff file — retry gitlab-agent when online)" -ForegroundColor Yellow
+        Write-Host "  GitLab:  publish failed (no handoff file - retry gitlab-agent when online)" -ForegroundColor Yellow
     }
 }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
