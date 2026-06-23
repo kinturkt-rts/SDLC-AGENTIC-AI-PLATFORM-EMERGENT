@@ -425,7 +425,7 @@ agent_communication:
       LIGHTWEIGHT AUTOMATED SMOKE TEST - 4 NEW REACT FLOW FEATURES - ALL TESTS PASSED ✅
       
       Executed comprehensive automated Playwright tests for the 4 new React Flow features plus quick regression checks.
-      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com
+      Base URL: https://dynamic-repo-load.preview.emergentagent.com
       
       TEST RESULTS (7/7 PASSED):
       
@@ -490,7 +490,7 @@ agent_communication:
       🎉 COMPREHENSIVE BACKEND API TESTING COMPLETE - ALL 12 TESTS PASSED ✅
       
       Executed full backend API test suite covering all NEW MCP Registry routes, Projects API, and Health endpoints.
-      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com/api
+      Base URL: https://dynamic-repo-load.preview.emergentagent.com/api
       
       TEST RESULTS (12/12 PASSED):
       
@@ -567,7 +567,7 @@ agent_communication:
       🎉 NEW UX REBRAND SMOKE PASS COMPLETE - ALL 18 TESTS PASSED ✅
       
       Executed comprehensive automated Playwright tests for the NEW UX (rebrand + environment removal).
-      Base URL: https://pipeline-dashboard-11.preview.emergentagent.com
+      Base URL: https://dynamic-repo-load.preview.emergentagent.com
       
       TEST RESULTS (18/18 PASSED):
       

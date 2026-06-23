@@ -10,7 +10,7 @@ import sys
 from typing import Dict, Any, List
 
 # Base URL from environment
-BASE_URL = "https://pipeline-dashboard-11.preview.emergentagent.com"
+BASE_URL = "https://dynamic-repo-load.preview.emergentagent.com"
 API_BASE = f"{BASE_URL}/api"
 
 class TestResult:
