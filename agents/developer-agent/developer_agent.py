@@ -205,7 +205,9 @@ After POST/PATCH success call `st.rerun()` so tables refresh.
     `target-apps/`). Every `cd` must use the full path from repo root (e.g.
     `cd target-apps/<app>`) — never bare `cd ui` without that prefix. Split **Terminal 1 (API)**
     and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
-    `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). Windows AND bash: venv,
+    `cd target-apps/<app>`, venv activate (`.venv\Scripts\Activate.ps1` with
+    `# Linux/macOS: source .venv/bin/activate` comment — Windows-first in README Terminal blocks),
+    then subdir (e.g. `cd ui`). Windows AND bash: venv,
     pip install, copy .env.example → .env (Windows: `copy`; bash: `cp`), edit DATABASE_URL +
     POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
     **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or

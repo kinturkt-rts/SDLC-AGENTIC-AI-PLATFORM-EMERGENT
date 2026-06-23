@@ -1,28 +1,40 @@
 ---
 name: qa-agent
-description: Test plans, pytest coverage, and GitLab MR test feedback. Use when working on qa-agent, tests/, or coverage goals.
+description: SDLC QA — test plans, pytest, Postman API runs, Playwright E2E, coverage. Use when working on qa-agent, tests/, or QA reports.
 ---
 
 # QA Agent
 
 ## What this agent does
 
-Designs test plans and pytest cases; posts results on GitHub pull requests (or GitLab MR when configured).
+Runs SDLC-style QA after developer-agent:
+
+1. **Test planning** — map PRD/design to `TEST_PLAN.md`
+2. **Unit/component** — pytest baseline + edge cases
+3. **API integration** — Postman MCP (`runCollection`, create/sync collections)
+4. **System/E2E** — Playwright MCP when UI exists
+5. **Report** — `QA_REPORT.md` + `handoff_json` for security-agent / orchestrator
+
+GitHub publish and PR review are **not** handled here — use **github-agent**.
 
 ## Runtime
 
 | Item | Location |
 |------|----------|
-| Code | `agents/qa-agent/qa_agent.py` (Strands + scoped tools + A2A) |
+| Code | `agents/qa-agent/qa_agent.py` (Strands + scoped tools + optional MCP + A2A) |
 | System prompt | `QA_SYS_PROMPT` in `qa_agent.py` |
-| Tools | `qa_list_tree`, `qa_read_file`, `qa_write_file`, `qa_run_pytest`, `qa_run_coverage` |
+| Built-in tools | `qa_list_tree`, `qa_read_file`, `qa_write_file`, `qa_run_pytest`, `qa_run_coverage` |
+| Optional MCP | Playwright (`@playwright/mcp`), Postman (`https://mcp.postman.com/mcp`) |
 | A2A port | 9104 |
-| Test queries | `agents/qa-agent/test_queries.txt` |
 
-## MCP tools (optional)
+## MCP prerequisites
 
-- **GitHub**: PR review comment when `-WithGithub` pipeline ran devops-agent first
-- **GitLab**: legacy MR comment when `mergeRequestIid` in context
+| MCP | Env | When loaded |
+|-----|-----|-------------|
+| Playwright | `QA_ENABLE_PLAYWRIGHT_MCP=1` (default) | Always attempted; skipped if npx/Node unavailable |
+| Postman | `POSTMAN_API_KEY` | When key is set and `QA_ENABLE_POSTMAN_MCP=1` |
+
+Optional: `POSTMAN_WORKSPACE_ID`, `QA_API_BASE_URL` (default `http://localhost:8000`).
 
 ## Run standalone
 
@@ -37,9 +49,16 @@ python agents/qa-agent/qa_agent.py --serve-a2a
 |----------------|-----------|
 | `app_bug` | Report + recommend developer-agent; do not edit `app/` |
 | `test_bug` | Fix under `tests/` only, re-run pytest |
-| `env_issue` | Report missing install/cwd steps |
+| `env_issue` | Report missing install/cwd/server steps |
+
+## Writable paths
+
+- `target-apps/<service>/tests/**`
+- `target-apps/<service>/TEST_PLAN.md`
+- `target-apps/<service>/QA_REPORT.md`
 
 ## Cursor workflow
 
 - Prefer `pytest` under `target-apps/<service>/tests/`.
+- Start API with `runCommand` from context before Postman live runs.
 - Tie tests to Jira keys from task context when present.

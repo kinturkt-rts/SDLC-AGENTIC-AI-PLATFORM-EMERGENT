@@ -76,7 +76,33 @@
         "GITLAB_BASE_BRANCH": "main"
       },
       "notes": "jmrplens uses REST API v4 on GitLab Free. Native https://host/api/v4/mcp needs Duo Premium. Pipeline publish: gitlab-agent via jmrplens MCP. Binary: bin/gitlab-mcp-server.exe via install script.",
-      "usedBy": ["cursor", "qa-agent (optional MR comments)"]
+      "usedBy": ["cursor", "gitlab-agent", "qa-agent (optional MR comments)"]
+    },
+    "playwright": {
+      "name": "Playwright",
+      "package": "@playwright/mcp",
+      "transport": "stdio",
+      "install": "npx -y @playwright/mcp@latest --headless --isolated",
+      "env": {
+        "PLAYWRIGHT_MCP_ARGS": "Optional override for npx args (default: -y @playwright/mcp@latest --headless --isolated)",
+        "QA_ENABLE_PLAYWRIGHT_MCP": "Set 0 to skip Playwright in qa-agent"
+      },
+      "notes": "Browser E2E for apps with UI/Streamlit. Requires Node 20+; browsers download on first use.",
+      "usedBy": ["qa-agent"]
+    },
+    "postman": {
+      "name": "Postman",
+      "package": "postman-mcp-server",
+      "transport": "http",
+      "url": "https://mcp.postman.com/mcp",
+      "env": {
+        "POSTMAN_API_KEY": "Postman API key (PMAK-...)",
+        "POSTMAN_MCP_URL": "Default https://mcp.postman.com/mcp",
+        "POSTMAN_WORKSPACE_ID": "Optional workspace for qa-agent collections",
+        "QA_ENABLE_POSTMAN_MCP": "Set 0 to skip Postman in qa-agent"
+      },
+      "notes": "API integration testing via runCollection. Strands agents use streamable HTTP with Bearer token.",
+      "usedBy": ["qa-agent"]
     },
     "github": {
       "name": "GitHub",
@@ -89,8 +115,8 @@
         "GITHUB_REPO": "Monorepo name for -WithGithub pipeline",
         "GITHUB_BASE_BRANCH": "PR target branch (default main)"
       },
-      "notes": "Cursor may use GitHub Copilot HTTP MCP; Strands agents use this stdio server. devops-agent also supports gh CLI for PR creation.",
-      "usedBy": ["devops-agent", "qa-agent"]
+      "notes": "Cursor may use GitHub Copilot HTTP MCP; Strands agents use this stdio server. github-agent publishes; devops-agent may use gh CLI.",
+      "usedBy": ["github-agent", "devops-agent"]
     },
     "terraform": {
       "name": "HashiCorp Terraform",

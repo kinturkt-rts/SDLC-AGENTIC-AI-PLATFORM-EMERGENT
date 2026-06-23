@@ -189,7 +189,18 @@ def main() -> None:
         ctx["githubBaseBranch"] = args.github_base
 
     print(f"[{AGENT_NAME}] Publishing {app} via GitHub MCP...")
-    summary, handoff = run_publish(app, ctx, draft_pr=args.draft_pr)
+    try:
+        summary, handoff = run_publish(app, ctx, draft_pr=args.draft_pr)
+    except Exception as exc:
+        handoff = {
+            "targetApp": app,
+            "status": "failed",
+            "error": str(exc),
+        }
+        handoff_path = _write_github_handoff(app, handoff)
+        print("\n" + "=" * 60)
+        print(f"## status\nfailed\n\n## error\n{exc}\n\n## handoff\nSaved: `{handoff_path}`")
+        sys.exit(1)
     print("\n" + "=" * 60)
     print(summary)
     if not handoff.get("pullRequestUrl") and handoff.get("status") != "published":
