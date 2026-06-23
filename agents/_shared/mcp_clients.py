@@ -174,20 +174,21 @@ def atlassian_mcp_client() -> MCPClient:
 
 
 def gitlab_mcp_client() -> MCPClient:
-    """Stdio transport to @zereight/mcp-gitlab."""
+    """Stdio transport to jmrplens/gitlab-mcp-server (scripts/gitlab_jmrplens_stdio.py)."""
+
+    root = Path(__file__).resolve().parents[2]
+    python = os.environ.get("GITLAB_MCP_PYTHON", shutil.which("python") or "python")
 
     def transport() -> object:
-        env = os.environ.copy()
-        env.setdefault("GITLAB_API_URL", "https://code.junodev.net/api/v4")
         return stdio_client(
             StdioServerParameters(
-                command="npx",
-                args=["-y", "@zereight/mcp-gitlab"],
-                env=env,
+                command=python,
+                args=[str(root / "scripts" / "gitlab_jmrplens_stdio.py")],
+                env=os.environ.copy(),
             )
         )
 
-    return MCPClient(transport, prefix="gitlab")
+    return MCPClient(transport, prefix="gitlab", startup_timeout=120)
 
 
 def github_personal_access_token() -> str:

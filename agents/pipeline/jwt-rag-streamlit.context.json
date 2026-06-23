@@ -1,0 +1,17 @@
+{
+  "targetApp": "jwt-rag-streamlit",
+  "prdPath": "docs/PRD/jwt-rag-streamlit.md",
+  "designDocPath": "docs/design/jwt-rag-streamlit.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/jwt-rag-streamlit.png"
+  ],
+  "deliveryProfile": {
+    "uiRequired": true,
+    "requiresStreamlit": true,
+    "requiresReact": true,
+    "uiPattern": "streamlit",
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "inputPath": "inputs/jwt-rag-streamlit.txt"
+}

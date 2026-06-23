@@ -1,10 +1,12 @@
 # Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> verify
-# Optional GitHub publish: -WithGithub runs github-agent (MCP push + PR). No QA in Phase 1 MVP.
+# Optional publish: -WithGitlab (GitLab MR) or -WithGithub (GitHub showcase PR). No QA in Phase 1 MVP.
 #
 # DEFAULT (Postgres app, full chain):
 #   .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 #
 # Opt-in extras:
+#   -WithGitlab                          # gitlab-agent: MCP push + MR to GitLab origin
+#   -GitlabProject / -GitlabBase         # override GITLAB_PROJECT_PATH / GITLAB_BASE_BRANCH
 #   -WithGithub                          # github-agent: MCP push + PR to showcase repo
 #   -GithubOwner / -GithubRepo           # override GITHUB_OWNER / GITHUB_REPO from .env
 #
@@ -36,9 +38,12 @@ param(
     [switch] $SkipVerify,
     [switch] $WithJira,
     [switch] $WithGithub,
+    [switch] $WithGitlab,
     [string] $GithubOwner = "",
     [string] $GithubRepo = "",
     [string] $GithubBase = "",
+    [string] $GitlabProject = "",
+    [string] $GitlabBase = "",
     [string] $JiraProject = "",
     [int] $JiraSprint = 0,
     [ValidateSet("", "concise", "user-story")]
@@ -60,6 +65,7 @@ $applyPostgres = (-not $SkipDb) -and (-not $SkipPostgres)
 $runQa = $false
 if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
 $runGithub = $WithGithub -and (-not $SkipDeveloper)
+$runGitlab = $WithGitlab -and (-not $SkipDeveloper)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
 
@@ -71,6 +77,12 @@ if ($WithGithub -and (-not $GithubOwner) -and (-not $env:GITHUB_OWNER)) {
 }
 if ($WithGithub -and (-not $GithubRepo) -and (-not $env:GITHUB_REPO)) {
     throw "-WithGithub requires -GithubRepo or GITHUB_REPO in .env"
+}
+if ($WithGitlab -and (-not $env:GITLAB_PERSONAL_ACCESS_TOKEN)) {
+    throw "-WithGitlab requires GITLAB_PERSONAL_ACCESS_TOKEN in .env"
+}
+if ($WithGitlab -and (-not $GitlabProject) -and (-not $env:GITLAB_PROJECT_PATH)) {
+    throw "-WithGitlab requires -GitlabProject or GITLAB_PROJECT_PATH in .env"
 }
 
 if ($WithJira -and -not $JiraProject) {
@@ -421,6 +433,30 @@ if ($runGithub) {
     }
 }
 
+# 6b) GitLab-agent -> MCP push to sdlc/<app> branch (MR opt-in via --open-mr)
+if ($runGitlab) {
+    Write-Host "`n=== gitlab-agent (MCP publish to sdlc/<app> branch) ===" -ForegroundColor Green
+    $gitlabArgs = @(
+        "agents/gitlab-agent/gitlab_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile
+    )
+    if ($GitlabProject) { $gitlabArgs += @("--gitlab-project", $GitlabProject) }
+    if ($GitlabBase) { $gitlabArgs += @("--gitlab-base", $GitlabBase) }
+    python @gitlabArgs
+    if ($LASTEXITCODE -ne 0) { Write-Warning "gitlab-agent reported issues - review before merge." }
+    $gitlabHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.gitlab-handoff.json"
+    if (Test-Path $gitlabHandoff) {
+        $gitlabJson = Get-Content $gitlabHandoff -Raw | ConvertFrom-Json
+        Update-Context @{
+            mergeRequestIid   = $gitlabJson.mergeRequestIid
+            mergeRequestUrl   = $gitlabJson.mergeRequestUrl
+            gitlabProject     = $gitlabJson.gitlabProject
+            featureBranch     = $gitlabJson.branch
+        }
+    }
+}
+
 # 7) QA -> pytest (Phase 3 — opt-in via -WithQa)
 if ($runQa) {
     Write-Host "`n=== qa-agent (pytest) ===" -ForegroundColor Green
@@ -441,6 +477,7 @@ if (-not $SkipDb) {
 }
 Write-Host "  App:     target-apps/$Feature/"
 if ($runGithub) { Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json" }
+if ($runGitlab) { Write-Host "  GitLab:  agents/pipeline/$Feature.gitlab-handoff.json" }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
 
 Write-RunInstructions -TargetFeature $Feature -UsesDb:(-not $SkipDb)

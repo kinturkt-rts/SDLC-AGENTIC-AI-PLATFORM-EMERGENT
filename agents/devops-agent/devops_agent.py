@@ -1,6 +1,7 @@
 """DevOps agent — Phase 2: Terraform, CI/CD, ECS (not GitHub publish).
 
 GitHub publish is handled by github-agent after developer-agent (Phase 1 MVP).
+GitLab publish to origin is handled by gitlab-agent (self-hosted MCP).
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ You are the DevOps Agent for the Autonomous SDLC platform (Phase 2).
 
 ## Phase 1 (implemented elsewhere)
 - **github-agent** publishes generated apps to GitHub via MCP after developer-agent.
-- Do not push code or open pull requests — delegate to github-agent.
+- Do not push code or open pull requests — delegate to github-agent or gitlab-agent.
 
 ## Phase 2 scope (your future job)
 - Terraform modules under infrastructure/
@@ -52,6 +53,7 @@ You are the DevOps Agent for the Autonomous SDLC platform (Phase 2).
 
 ## Today
 If asked to publish to GitHub, tell the user to run:
+`python agents/gitlab-agent/gitlab_agent.py --target-app <app>`
 `python agents/github-agent/github_agent.py --target-app <app>`
 """
 
