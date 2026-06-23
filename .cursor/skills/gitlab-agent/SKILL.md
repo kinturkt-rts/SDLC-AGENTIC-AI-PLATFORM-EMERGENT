@@ -49,8 +49,32 @@ Install MCP binary once: `.\scripts\install-jmrplens-gitlab-mcp.ps1`
 ## Standalone
 
 ```powershell
+# Publish
 python agents/gitlab-agent/gitlab_agent.py --target-app training-compliance
+
+# List projects
+python agents/gitlab-agent/gitlab_agent.py --list-projects
+
+# List files on a branch
+python agents/gitlab-agent/gitlab_agent.py --list-branch-files sdlc/training-compliance
+
+# List MR comments
+python agents/gitlab-agent/gitlab_agent.py --list-mr-notes 3
+
+# Post MR comment
+python agents/gitlab-agent/gitlab_agent.py --mr-comment 3 --comment-body "QA passed"
 ```
+
+## MCP tools used
+
+| Operation | jmrplens tool |
+|-----------|----------------|
+| List projects | `gitlab_project_list` |
+| List branch files | `gitlab_repository_tree` |
+| List MR comments | `gitlab_mr_notes_list` |
+| Post MR comment | `gitlab_mr_note_create` |
+
+`qa-agent` posts QA summaries via `gitlab_mr_note_create` when `mergeRequestIid` is in `gitlab-handoff.json`.
 
 ## Not in scope
 

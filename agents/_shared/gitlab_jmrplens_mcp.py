@@ -68,14 +68,13 @@ async def call_gitlab_mcp_tool(
     return _parse_tool_result(result)
 
 
-async def list_existing_blob_paths(
+async def _list_repository_tree_async(
     session: ClientSession,
     *,
     project_id: str,
     ref: str,
-) -> set[str]:
-    """List file paths on a branch (for create vs update commit actions)."""
-    paths: set[str] = set()
+) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
     page = 1
     while True:
         data = await call_gitlab_mcp_tool(
@@ -90,10 +89,23 @@ async def list_existing_blob_paths(
             },
         )
         for entry in data.get("tree") or []:
-            if entry.get("type") == "blob" and entry.get("path"):
-                paths.add(str(entry["path"]))
+            path = entry.get("path")
+            entry_type = entry.get("type")
+            if path and entry_type:
+                entries.append({"path": str(path), "type": str(entry_type)})
         pagination = data.get("pagination") or {}
         if not pagination.get("has_more"):
             break
         page = int(pagination.get("next_page") or page + 1)
-    return paths
+    return entries
+
+
+async def list_existing_blob_paths(
+    session: ClientSession,
+    *,
+    project_id: str,
+    ref: str,
+) -> set[str]:
+    """List file paths on a branch (for create vs update commit actions)."""
+    entries = await _list_repository_tree_async(session, project_id=project_id, ref=ref)
+    return {entry["path"] for entry in entries if entry["type"] == "blob"}

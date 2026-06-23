@@ -20,6 +20,12 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.github_publish import collect_feature_artifact_paths, slugify_feature
+from _shared.gitlab_mcp_ops import (
+    create_mr_note,
+    list_branch_files,
+    list_mr_notes,
+    list_projects,
+)
 from _shared.gitlab_mcp_publish import gitlab_repo_config, publish_feature
 from _shared.pipeline_context import (
     TargetAppRequiredError,
@@ -131,6 +137,34 @@ def run_publish(
     return summary, handoff
 
 
+def _print_json(data: dict[str, Any]) -> None:
+    print(json.dumps(data, indent=2))
+
+
+def run_list_projects(*, page: int = 1, per_page: int = 20) -> int:
+    result = list_projects(page=page, per_page=per_page)
+    _print_json(result)
+    return 0 if result.get("ok") else 1
+
+
+def run_list_branch_files(*, branch: str, project: str | None = None) -> int:
+    result = list_branch_files(branch=branch, project_id=project, blobs_only=True)
+    _print_json(result)
+    return 0 if result.get("ok") else 1
+
+
+def run_list_mr_notes(*, mr_iid: int, project: str | None = None) -> int:
+    result = list_mr_notes(mr_iid=mr_iid, project_id=project)
+    _print_json(result)
+    return 0 if result.get("ok") else 1
+
+
+def run_mr_comment(*, mr_iid: int, body: str, project: str | None = None) -> int:
+    result = create_mr_note(mr_iid=mr_iid, body=body, project_id=project)
+    _print_json(result)
+    return 0 if result.get("ok") else 1
+
+
 def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
     from strands import Agent
     from strands.models import BedrockModel
@@ -168,6 +202,32 @@ def main() -> None:
     parser.add_argument("--branch", default="", help="Override publish branch (default: sdlc/<app>)")
     parser.add_argument("--open-mr", action="store_true", help="Open merge request to --gitlab-base / main")
     parser.add_argument("--draft-mr", action="store_true", help="Open MR as draft (requires --open-mr)")
+    parser.add_argument(
+        "--list-projects",
+        action="store_true",
+        help="List GitLab projects (MCP gitlab_project_list)",
+    )
+    parser.add_argument(
+        "--list-branch-files",
+        metavar="BRANCH",
+        help="List files on a branch (MCP gitlab_repository_tree)",
+    )
+    parser.add_argument(
+        "--list-mr-notes",
+        type=int,
+        metavar="MR_IID",
+        help="List comments on a merge request (MCP gitlab_mr_notes_list)",
+    )
+    parser.add_argument(
+        "--mr-comment",
+        type=int,
+        metavar="MR_IID",
+        help="Post a comment on a merge request (MCP gitlab_mr_note_create)",
+    )
+    parser.add_argument("--comment-body", default="", help="MR comment markdown (with --mr-comment)")
+    parser.add_argument("--comment-body-file", default="", help="Read MR comment body from file")
+    parser.add_argument("--page", type=int, default=1, help="Page for --list-projects")
+    parser.add_argument("--per-page", type=int, default=20, help="Page size for --list-projects")
     load_context_extra(parser)
     parser.add_argument(
         "--no-auto-context",
@@ -182,6 +242,25 @@ def main() -> None:
     if args.serve_a2a:
         serve_a2a(host=args.host, port=args.port)
         return
+
+    project_override = args.gitlab_project or None
+
+    if args.list_projects:
+        sys.exit(run_list_projects(page=args.page, per_page=args.per_page))
+
+    if args.list_branch_files:
+        sys.exit(run_list_branch_files(branch=args.list_branch_files, project=project_override))
+
+    if args.list_mr_notes is not None:
+        sys.exit(run_list_mr_notes(mr_iid=args.list_mr_notes, project=project_override))
+
+    if args.mr_comment is not None:
+        body = args.comment_body.strip()
+        if args.comment_body_file:
+            body = Path(args.comment_body_file).read_text(encoding="utf-8").strip()
+        if not body:
+            parser.error("--mr-comment requires --comment-body or --comment-body-file")
+        sys.exit(run_mr_comment(mr_iid=args.mr_comment, body=body, project=project_override))
 
     try:
         ctx, app = resolve_cli_context(
