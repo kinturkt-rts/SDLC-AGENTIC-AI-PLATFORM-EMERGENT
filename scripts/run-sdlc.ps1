@@ -51,6 +51,35 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+function Resolve-GithubConfigFromEnv {
+    param(
+        [string] $OwnerArg,
+        [string] $RepoArg,
+        [string] $BaseArg
+    )
+    $ownerPy = if ($OwnerArg) { "'$($OwnerArg.Replace("'", "''"))'" } else { "None" }
+    $repoPy = if ($RepoArg) { "'$($RepoArg.Replace("'", "''"))'" } else { "None" }
+    $basePy = if ($BaseArg) { "'$($BaseArg.Replace("'", "''"))'" } else { "None" }
+    $agentsPath = Join-Path $RepoRoot "agents"
+    $pyScript = @"
+import json, sys
+sys.path.insert(0, r'$agentsPath')
+from _shared.env import load_repo_env
+from _shared.github_mcp_publish import github_repo_config
+load_repo_env()
+cfg = github_repo_config(owner=$ownerPy, repo=$repoPy, base_branch=$basePy)
+token = ''
+for key in ('GITHUB_PERSONAL_ACCESS_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN'):
+    token = (__import__('os').environ.get(key) or '').strip()
+    if token:
+        break
+print(json.dumps({'owner': cfg['owner'], 'repo': cfg['repo'], 'base': cfg['base'], 'hasToken': bool(token)}))
+"@
+    $json = python -c $pyScript
+    if ($LASTEXITCODE -ne 0) { throw "Failed to resolve GitHub config from .env" }
+    return ($json | ConvertFrom-Json)
+}
+
 $ctxPath = Join-Path $RepoRoot ($ContextFile -replace "/", "\")
 $ctxDir = Split-Path $ctxPath -Parent
 if (-not (Test-Path $ctxDir)) { New-Item -ItemType Directory -Path $ctxDir -Force | Out-Null }
@@ -66,11 +95,15 @@ if ($WithQa) { $runQa = $true }
 if ($WithJira -and $SkipProduct) {
     throw "-WithJira requires the product step (do not use -SkipProduct). Re-run product-agent manually with --create-jira-tickets if PRD already exists."
 }
-if ($WithGithub -and (-not $GithubOwner) -and (-not $env:GITHUB_OWNER)) {
-    throw "-WithGithub requires -GithubOwner or GITHUB_OWNER in .env"
-}
-if ($WithGithub -and (-not $GithubRepo) -and (-not $env:GITHUB_REPO)) {
-    throw "-WithGithub requires -GithubRepo or GITHUB_REPO in .env"
+if ($WithGithub) {
+    $githubCfg = Resolve-GithubConfigFromEnv -OwnerArg $GithubOwner -RepoArg $GithubRepo -BaseArg $GithubBase
+    if (-not $GithubOwner) { $GithubOwner = $githubCfg.owner }
+    if (-not $GithubRepo) { $GithubRepo = $githubCfg.repo }
+    if (-not $GithubBase) { $GithubBase = $githubCfg.base }
+    if (-not $githubCfg.hasToken) {
+        throw "-WithGithub requires GITHUB_PERSONAL_ACCESS_TOKEN in .env (or GITHUB_TOKEN / GH_TOKEN)"
+    }
+    Write-Host "[pipeline] GitHub target: $GithubOwner/$GithubRepo (base: $GithubBase)" -ForegroundColor Cyan
 }
 
 if ($WithJira -and -not $JiraProject) {
@@ -215,6 +248,12 @@ function Invoke-LocalVerify {
             & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds
             if ($LASTEXITCODE -ne 0) {
                 throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
+            }
+
+            Write-Host "  RDS + UI parity (TIMESTAMPTZ, seed parse, Streamlit list GETs)" -ForegroundColor DarkGray
+            & $python (Join-Path $RepoRoot "scripts\verify_app_parity.py") --target-app $TargetFeature --repo-root $RepoRoot
+            if ($LASTEXITCODE -ne 0) {
+                throw "parity check failed - fix RDS_PARITY / UI_PARITY (see dev_validate_app hints) before pipeline continues."
             }
         }
         finally {
@@ -440,7 +479,14 @@ if (-not $SkipDb) {
     if ($applyPostgres) { Write-Host "  RDS:     applied via apply_sql_to_rds.py" }
 }
 Write-Host "  App:     target-apps/$Feature/"
-if ($runGithub) { Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json" }
+if ($runGithub) {
+    $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
+    if (Test-Path $githubHandoff) {
+        Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json"
+    } else {
+        Write-Host "  GitHub:  publish failed (no handoff file — retry github-agent when online)" -ForegroundColor Yellow
+    }
+}
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
 
 Write-RunInstructions -TargetFeature $Feature -UsesDb:(-not $SkipDb)

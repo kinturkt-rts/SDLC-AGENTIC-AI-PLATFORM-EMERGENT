@@ -34,6 +34,16 @@ Equivalent test wrapper:
 
 QA and GitHub publish are **opt-in** (`-WithQa` or `-WithGithub`).
 
+**Hard dev-agent stress test** (Streamlit + JWT + workflow + UI parity gates):
+
+```powershell
+.\scripts\run-pipeline-test.ps1 -Level hard
+# same as:
+.\scripts\run-sdlc.ps1 -Feature change-request-hub -InputFile inputs\change-request-hub.txt
+```
+
+Local verify now runs `scripts/verify_app_parity.py` (RDS_PARITY + UI_PARITY) after pytest.
+
 ### GitHub SDLC mirror (`-WithGithub`)
 
 Mirrors **developer pushes branch → QA tests and comments on PR**:
@@ -43,7 +53,7 @@ Mirrors **developer pushes branch → QA tests and comments on PR**:
 | 1–4 | (same as above) | product → architect → database → developer |
 | 5 | local verify | Quick pytest before publish |
 | 6 | **devops-agent** | `git` commit on `sdlc/<feature>`, push, open GitHub PR |
-| 7 | **qa-agent** | Full pytest + edge tests locally; post PR review via GitHub MCP |
+| 7 | **qa-agent** | Test plan, pytest, Postman API runs, Playwright E2E (when UI), QA handoff |
 
 ```powershell
 # .env: GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_OWNER, GITHUB_REPO

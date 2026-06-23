@@ -42,7 +42,21 @@ def _normalize_path(path: str) -> str:
     p = path.strip().rstrip("/") or "/"
     if not p.startswith("/"):
         p = "/" + p
+    while "//" in p:
+        p = p.replace("//", "/")
     return p
+
+
+def _join_route_path(prefix: str, sub: str) -> str:
+    base = prefix.strip().rstrip("/")
+    part = sub.strip()
+    if not part or part == "/":
+        return _normalize_path(base or "/")
+    if not part.startswith("/"):
+        part = "/" + part
+    if not base:
+        return _normalize_path(part)
+    return _normalize_path(base + part)
 
 
 def _path_to_pattern(path: str) -> str:
@@ -136,12 +150,10 @@ def collect_implemented_routes(app_dir: Path) -> set[tuple[str, str]]:
         for dec in _ROUTER_DECORATOR.finditer(text):
             method = dec.group(1).upper()
             sub = dec.group(2)
-            if sub in ("", "/"):
-                full = _normalize_path(prefix) if prefix else "/"
-            else:
-                full = _normalize_path(f"{prefix}/{sub}" if prefix else sub)
             if module == "health" and method == "GET":
                 full = "/health"
+            else:
+                full = _join_route_path(prefix, sub)
             routes.add((method, full))
 
     return routes

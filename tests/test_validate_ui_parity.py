@@ -70,6 +70,16 @@ def test_facility_work_order_hub_fails_ui_parity() -> None:
     assert errors  # sites list, streamlit gaps, etc.
 
 
+def test_join_route_path_no_double_slash() -> None:
+    from _shared.api_surface import _join_route_path, paths_match
+
+    assert _join_route_path("/api/v1/auth", "/token") == "/api/v1/auth/token"
+    assert paths_match(
+        "/api/v1/work-orders/{id}",
+        "/api/v1/work-orders/{work_order_id}",
+    )
+
+
 def test_desk_booking_api_only_skips_streamlit_checks() -> None:
     app = _REPO_ROOT / "target-apps" / "desk-booking"
     if not app.is_dir():

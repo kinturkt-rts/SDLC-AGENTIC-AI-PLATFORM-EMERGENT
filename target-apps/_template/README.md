@@ -30,10 +30,7 @@ Run from **repository root** (the folder that contains `target-apps/`):
 ```bash
 cd target-apps/<your-service>
 python -m venv .venv
-# Windows (PowerShell)
-.\.venv\Scripts\Activate.ps1
-# macOS / Linux
-source .venv/bin/activate
+.venv\Scripts\Activate.ps1   # Linux/macOS: source .venv/bin/activate
 
 pip install -r requirements.txt
 cp .env.example .env   # Windows: copy .env.example .env
@@ -46,7 +43,7 @@ cp .env.example .env   # Windows: copy .env.example .env
 
 ```bash
 cd target-apps/<your-service>
-# activate venv (see above)
+.venv\Scripts\Activate.ps1   # Linux/macOS: source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas
 ```
 
@@ -56,7 +53,7 @@ If the app includes Streamlit (`ui/streamlit_app.py`), add **Terminal 2** from r
 
 ```bash
 cd target-apps/<your-service>
-# activate venv
+.venv\Scripts\Activate.ps1   # Linux/macOS: source .venv/bin/activate
 cd ui
 streamlit run streamlit_app.py --server.port 8501
 ```
