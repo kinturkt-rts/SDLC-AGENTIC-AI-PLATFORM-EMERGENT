@@ -4,6 +4,9 @@ ADAPT checklist:
   - Replace SERVICE_NAME, PAGE_TITLE, PAGE_ICON with app-specific values.
   - Replace the example tabs/forms with your actual UI per the PRD/design.
   - Keep all httpx helper functions and _ensure_api_reachable() unchanged.
+  - Every design §4 collection GET: call _get() from at least one role view (table or selectbox).
+  - POST-on-collection APIs need matching GET list; forms use st.selectbox, not st.text_input for IDs.
+  - After successful POST/PATCH, call st.rerun() so lists refresh.
   - Every httpx call uses follow_redirects=True (FastAPI 307 redirect fix).
 """
 from __future__ import annotations

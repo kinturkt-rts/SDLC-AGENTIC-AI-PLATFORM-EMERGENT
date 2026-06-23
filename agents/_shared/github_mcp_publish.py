@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
@@ -57,6 +60,21 @@ def _parse_mcp_tool_result(result: Any) -> dict[str, Any]:
     return {}
 
 
+def _iter_exceptions(exc: BaseException) -> list[BaseException]:
+    """Flatten ExceptionGroup chains into a list of leaf exceptions."""
+    if isinstance(exc, BaseExceptionGroup):
+        out: list[BaseException] = []
+        for sub in exc.exceptions:
+            out.extend(_iter_exceptions(sub))
+        return out
+    return [exc]
+
+
+def _exception_message(exc: BaseException) -> str:
+    parts = [str(e) for e in _iter_exceptions(exc)]
+    return "; ".join(parts) if parts else str(exc)
+
+
 async def _call_github_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     token = github_personal_access_token()
     server_params = StdioServerParameters(
@@ -64,11 +82,74 @@ async def _call_github_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> di
         args=["-y", "@modelcontextprotocol/server-github"],
         env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": token},
     )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(tool_name, arguments=arguments)
-            return _parse_mcp_tool_result(result)
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments=arguments)
+                return _parse_mcp_tool_result(result)
+    except BaseException as exc:
+        message = _exception_message(exc)
+        if "Bad credentials" in message or "Authentication Failed" in message:
+            raise RuntimeError(
+                "GitHub authentication failed. Set GITHUB_PERSONAL_ACCESS_TOKEN in .env.local "
+                "(a classic PAT or fine-grained token with repo scope). "
+                "Note: github-agent uses @modelcontextprotocol/server-github via npx — "
+                "not the Cursor GitHub Copilot MCP URL in mcp.json."
+            ) from exc
+        if "Not Found" in message:
+            raise RuntimeError(
+                f"GitHub MCP {tool_name} failed: {message}. "
+                "Check GITHUB_OWNER/GITHUB_REPO and that the token can write to the repo."
+            ) from exc
+        raise RuntimeError(f"GitHub MCP {tool_name} failed: {message}") from exc
+
+
+def _github_branch_exists(cfg: dict[str, str], branch: str) -> bool:
+    """Check remote branch via GitHub REST (avoids create_branch 422 when branch exists)."""
+    token = github_personal_access_token()
+    url = (
+        f"https://api.github.com/repos/{cfg['owner']}/{cfg['repo']}"
+        f"/git/ref/heads/{urllib.parse.quote(branch, safe='')}"
+    )
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "sdlc-github-agent",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise RuntimeError(
+            f"GitHub branch lookup failed ({exc.code}): {exc.reason}"
+        ) from exc
+
+
+async def _ensure_feature_branch(cfg: dict[str, str], branch: str) -> None:
+    """Create feature branch from base when missing (legacy server-github does not auto-create)."""
+    if _github_branch_exists(cfg, branch):
+        return
+    try:
+        await _call_github_mcp_tool(
+            "create_branch",
+            {
+                "owner": cfg["owner"],
+                "repo": cfg["repo"],
+                "branch": branch,
+                "from_branch": cfg["base"],
+            },
+        )
+    except RuntimeError as exc:
+        msg = str(exc).lower()
+        if "reference already exists" in msg or "already exists" in msg:
+            return
+        raise
 
 
 def _batch_files(files: list[dict[str, str]], batch_size: int = _BATCH_SIZE) -> list[list[dict[str, str]]]:
@@ -114,6 +195,7 @@ async def mcp_publish_feature_async(
 
     batches = _batch_files(files)
     commits: list[str] = []
+    await _ensure_feature_branch(cfg, branch)
     for index, batch in enumerate(batches, start=1):
         message = f"feat({slug}): SDLC pipeline output (batch {index}/{len(batches)})"
         push_result = await _call_github_mcp_tool(

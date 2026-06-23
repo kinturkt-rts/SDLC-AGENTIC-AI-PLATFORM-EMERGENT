@@ -170,6 +170,10 @@ treat this table as authoritative; adding Cognito here adds a `cognito_sub` colu
 |--------|------|---------|----------|-------|
 
 (Max **10** MVP endpoints; Pydantic field names.)
+When `deliveryProfile.requiresStreamlit` is true or the PRD describes browse/catalog/admin tables:
+- Every entity users **create or pick in the UI** MUST include **GET list** on the collection path
+  (e.g. `GET /api/v1/sites` alongside `POST /api/v1/sites`) — create-only POST breaks Streamlit dropdowns.
+- Include `GET` list routes for work orders, sites, categories, or any entity shown in a table/selectbox.
 
 ## 5. Rules
 - Auth / RBAC: (roles + which routes)

@@ -9,7 +9,7 @@ from pathlib import Path
 _EXCLUDE_DIR_NAMES = frozenset(
     {".venv", "__pycache__", ".pytest_cache", "node_modules", ".git"}
 )
-_EXCLUDE_FILE_NAMES = frozenset({".env"})
+_EXCLUDE_FILE_NAMES = frozenset({".env", ".coverage"})
 
 
 def repo_root() -> Path:

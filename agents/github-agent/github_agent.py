@@ -156,6 +156,11 @@ def main() -> None:
     parser.add_argument("--github-repo", help="Repository name (default: GITHUB_REPO or SDLC-Agentic-AI-Platform)")
     parser.add_argument("--github-base", default="", help="PR base branch (default: main)")
     parser.add_argument("--draft-pr", action="store_true", help="Open PR as draft")
+    parser.add_argument(
+        "--no-auto-context",
+        action="store_true",
+        help="Do not auto-load agents/pipeline/<app>.context.json",
+    )
     load_context_extra(parser)
     parser.add_argument("--serve-a2a", action="store_true")
     parser.add_argument("--port", type=int, default=A2A_PORT)
@@ -167,7 +172,12 @@ def main() -> None:
         return
 
     try:
-        ctx = resolve_cli_context(args)
+        ctx, app = resolve_cli_context(
+            args.target_app,
+            parse_context_args(args),
+            no_auto_context=args.no_auto_context,
+            env_var="GITHUB_TARGET_APP",
+        )
     except TargetAppRequiredError as exc:
         parser.error(str(exc))
 
@@ -178,7 +188,6 @@ def main() -> None:
     if args.github_base:
         ctx["githubBaseBranch"] = args.github_base
 
-    app = resolve_target_app(args.target_app, ctx, env_var="GITHUB_TARGET_APP")
     print(f"[{AGENT_NAME}] Publishing {app} via GitHub MCP...")
     summary, handoff = run_publish(app, ctx, draft_pr=args.draft_pr)
     print("\n" + "=" * 60)

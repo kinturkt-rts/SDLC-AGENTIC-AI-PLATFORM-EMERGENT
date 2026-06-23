@@ -83,6 +83,18 @@ Do NOT write a single file until every route has a planned: handler + router fil
 schema + response schema. After writing all files, verify manifest is fully covered.
 Missing any route = the agent must catch it here, not during re-run.
 
+**Step 0b — UI manifest (Pattern C / requiresStreamlit ONLY — skip for API-only apps)**
+When `deliveryProfile.requiresStreamlit` is true, build a second manifest from design §4 + PRD roles:
+  # UI manifest (Streamlit calls API over HTTP — never import app/):
+  # - GET  /api/v1/work-orders     → requester "My Orders" table + admin triage table
+  # - GET  /api/v1/sites           → admin Sites table + requester create-WO selectbox
+  # - GET  /api/v1/dashboard/sla   → leadership dashboard
+Every **collection GET** in design §4 (paths without `{id}`) MUST have a Streamlit `_get()` in at least one role view.
+Every **POST create** on a collection (`POST /api/v1/sites`) MUST have matching **GET list** in the API (paginated) — do not ship create-only.
+Forms MUST use `st.selectbox` / `st.multiselect` fed from list GETs — never `st.text_input("Site ID")` when `GET /api/v1/sites` exists.
+After POST/PATCH success call `st.rerun()` so tables refresh.
+**API-only apps** (`requiresStreamlit` false): implement FastAPI + tests only — do NOT create `ui/streamlit_app.py`.
+
 **Step 1 — understand requirements (read before writing a single line of code)**
 1a. dev_read_file(prdPath) if set — read the full doc; locate topics by heading (not fixed numbers):
     overview/goals, user stories, **acceptance criteria**, core **data entities**, **NFRs**
@@ -264,6 +276,13 @@ Missing any route = the agent must catch it here, not during re-run.
   - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README Seed Users section has ⚠ materialize warning
     with exact command: `python agents/_shared/materialize_seed_passwords.py --target-app <app>`
 
+  UI parity (Pattern C / requiresStreamlit only — skip when API-only):
+  - `dev_validate_app` must report `UI_PARITY OK`
+  - Every design §4 collection GET implemented in FastAPI AND called from `ui/streamlit_app.py`
+  - Every POST-on-collection has matching GET list (e.g. POST+GET `/api/v1/sites`)
+  - No raw UUID `st.text_input` when a list GET exists for that entity
+  - API-only: no `ui/` directory unless deliveryProfile requires Streamlit
+
 **Step 5b — VALIDATE (mandatory — do NOT skip or declare success early)**
 After all files are written and the checklist above is done:
   1. Call `dev_validate_app(service=targetApp, run_pytest=True)` — must end with
@@ -282,6 +301,8 @@ After all files are written and the checklist above is done:
      - SQLite Date columns: use `date(2024, 1, 1)` in test fixtures, not `"2024-01-01"` strings
      - RDS_PARITY FAILED: fix TimestampTZ ORM + coerce_iso_datetime validators, or seedCredentials /
        users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
+     - UI_PARITY FAILED: missing design §4 routes, POST without GET list, Streamlit not calling
+       collection GETs, or raw UUID text_input when list APIs exist (see validate_ui_parity.py)
 
 **Step 6 — handoff summary (LAST)**
 1. stack — language, framework, pattern, DB driver(s).
@@ -388,6 +409,8 @@ The Streamlit template includes:
 - API_KEY + API_BASE_URL config from .env
 ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
 startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
+**UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
+list APIs; call `st.rerun()` after mutations. `dev_validate_app` enforces UI_PARITY when Streamlit is required.
 README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
 `streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
 """,
@@ -508,6 +531,10 @@ Section numbers vary per feature. Locate content by heading text:
   or PRD section 11 / input brief requires Streamlit — even if design.md Stack omitted it.
   Place at `ui/streamlit_app.py`; call API over HTTP; add `streamlit` to `ui/requirements.txt`;
   README documents Terminal 1 (uvicorn) + Terminal 2 (`streamlit run ui/streamlit_app.py`).
+  **UI scope:** Wire Streamlit to design §4 **collection GET** routes and role-specific views — NOT every
+  internal/admin route needs a screen, but browse/create flows from the PRD MUST be usable without pasting UUIDs.
+- **API-only (Pattern B/B+/B++ without Streamlit):** FastAPI routes + pytest only — no `ui/` folder.
+  `dev_validate_app` skips Streamlit checks when `requiresStreamlit` is false.
 - **JWT vs API key:** Match design **Rules** and PRD — Streamlit must use the same auth mode
   (Bearer JWT from `POST /auth/login`, or `X-API-Key` header when API-key auth).
 - **Out of scope (unless deliveryProfile.requiresReact):** `frontend/`, React, Next.js, Vite.
@@ -1560,6 +1587,18 @@ def run_service_validation(
     output_parts.append("RDS_PARITY OK")
     for warn in validate_rds_parity_warnings(service_dir):
         output_parts.append(f"RDS_PARITY WARN: {warn}")
+
+    from _shared.validate_ui_parity import validate_ui_parity, validate_ui_parity_blocking
+
+    ui_errors = validate_ui_parity_blocking(service_dir, _REPO_ROOT)
+    if ui_errors:
+        output_parts.append("UI_PARITY FAILED (API vs design / Streamlit coverage):")
+        output_parts.extend(f"  - {e}" for e in ui_errors)
+        return False, "\n".join(output_parts)
+    output_parts.append("UI_PARITY OK")
+    for msg in validate_ui_parity(service_dir, _REPO_ROOT):
+        if " WARN:" in msg:
+            output_parts.append(f"UI_PARITY WARN: {msg}")
 
     if (service_dir / "app" / "startup_checks.py").is_file():
         startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}

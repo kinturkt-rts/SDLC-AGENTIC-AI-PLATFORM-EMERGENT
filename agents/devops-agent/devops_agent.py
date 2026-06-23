@@ -114,6 +114,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="DevOps agent — Phase 2 infra (not GitHub publish)")
     parser.add_argument("--task", default="Summarize Phase 2 DevOps scope for this target app.")
     parser.add_argument("--target-app", help="Feature slug")
+    parser.add_argument(
+        "--no-auto-context",
+        action="store_true",
+        help="Do not auto-load agents/pipeline/<app>.context.json",
+    )
     load_context_extra(parser)
     parser.add_argument("--serve-a2a", action="store_true")
     parser.add_argument("--port", type=int, default=A2A_PORT)
@@ -125,12 +130,17 @@ def main() -> None:
         return
 
     try:
-        ctx = resolve_cli_context(args)
+        ctx, target = resolve_cli_context(
+            args.target_app,
+            parse_context_args(args),
+            no_auto_context=args.no_auto_context,
+            env_var="DEVOPS_TARGET_APP",
+        )
     except TargetAppRequiredError as exc:
         parser.error(str(exc))
 
     print(f"[{AGENT_NAME}] Phase 2 — use github-agent for publish.")
-    summary = run_task(args.task, ctx, target_app=ctx.get("targetApp"))
+    summary = run_task(args.task, ctx, target_app=target)
     print("\n" + "=" * 60)
     print(summary)
 
