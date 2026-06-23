@@ -1,6 +1,6 @@
 # Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> verify -> gitlab publish
-# Default publish: gitlab-agent → branch sdlc/<app> on GitLab origin (code.junodev.net).
-# Legacy opt-in: -WithGithub (github-agent showcase repo). Use -SkipGitlab to skip publish.
+# Default publish: gitlab-agent -> branch sdlc/<app> on GitLab origin (code.junodev.net).
+# Use -SkipGitlab to skip publish after developer.
 #
 # DEFAULT (Postgres app, full chain + GitLab publish when .env has GITLAB_*):
 #   .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
@@ -8,10 +8,6 @@
 # GitLab overrides:
 #   -GitlabProject / -GitlabBase         # override GITLAB_PROJECT_PATH / GITLAB_BASE_BRANCH
 #   -SkipGitlab                          # skip gitlab-agent publish step
-#
-# Legacy GitHub showcase (mutually exclusive with default GitLab publish):
-#   -WithGithub                          # github-agent: MCP push + PR to separate showcase repo
-#   -GithubOwner / -GithubRepo           # override GITHUB_OWNER / GITHUB_REPO from .env
 #
 #   -WithWebCrawler                      # scrape URLs into Postgres (optional step 2b)
 #
@@ -42,11 +38,6 @@ param(
     [switch] $SkipVerify,
     [switch] $SkipGitlab,
     [switch] $WithJira,
-    [switch] $WithGithub,
-    [switch] $WithGitlab,
-    [string] $GithubOwner = "",
-    [string] $GithubRepo = "",
-    [string] $GithubBase = "",
     [string] $GitlabProject = "",
     [string] $GitlabBase = "",
     [string] $JiraProject = "",
@@ -127,24 +118,13 @@ function Invoke-PipelinePython {
 $applyPostgres = (-not $SkipDb) -and (-not $SkipPostgres)
 $runQa = $false
 if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
-$runGithub = $WithGithub -and (-not $SkipDeveloper)
-# GitLab publish runs after verify unless skipped (-SkipGitlab or legacy -WithGithub).
-$runGitlab = (-not $SkipGitlab) -and (-not $WithGithub)
+# GitLab publish runs after verify unless skipped (-SkipGitlab).
+$runGitlab = (-not $SkipGitlab) -and (-not $SkipDeveloper)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
 
-if ($WithGithub -and $WithGitlab) {
-    throw "Use -WithGithub or default GitLab publish, not both. Omit -WithGitlab (GitLab is already default) or drop -WithGithub."
-}
-
 if ($WithJira -and $SkipProduct) {
     throw "-WithJira requires the product step (do not use -SkipProduct). Re-run product-agent manually with --create-jira-tickets if PRD already exists."
-}
-if ($WithGithub -and (-not $GithubOwner) -and (-not $env:GITHUB_OWNER)) {
-    throw "-WithGithub requires -GithubOwner or GITHUB_OWNER in .env"
-}
-if ($WithGithub -and (-not $GithubRepo) -and (-not $env:GITHUB_REPO)) {
-    throw "-WithGithub requires -GithubRepo or GITHUB_REPO in .env"
 }
 if ($runGitlab) {
     if (-not $env:GITLAB_PERSONAL_ACCESS_TOKEN) {
@@ -324,13 +304,8 @@ function Write-PublishHandoffLinks {
     $repoUrl = [string]$Handoff.repoUrl
     $branchUrl = [string]$Handoff.branchUrl
     $prUrl = ""
-    if ($Handoff.PSObject.Properties.Name -contains "pullRequestUrl" -and $Handoff.pullRequestUrl) {
-        $prUrl = [string]$Handoff.pullRequestUrl
-    } elseif ($Handoff.PSObject.Properties.Name -contains "mergeRequestUrl" -and $Handoff.mergeRequestUrl) {
+    if ($Handoff.PSObject.Properties.Name -contains "mergeRequestUrl" -and $Handoff.mergeRequestUrl) {
         $prUrl = [string]$Handoff.mergeRequestUrl
-    }
-    if ($prUrl -match '^https://api\.github\.com/repos/([^/]+)/([^/]+)/pulls/(\d+)$') {
-        $prUrl = "https://github.com/$($Matches[1])/$($Matches[2])/pull/$($Matches[3])"
     }
     if ($repoUrl) { Write-Host "  $Label repo:   $repoUrl" -ForegroundColor Green }
     if ($branchUrl) { Write-Host "  $Label branch: $branchUrl" -ForegroundColor Green }
@@ -529,31 +504,6 @@ if ($runGitlab) {
     }
 }
 
-# 6b) Legacy github-agent -> MCP push + PR (showcase repo; use -WithGithub; disables default GitLab publish)
-if ($runGithub) {
-    Write-Host "`n=== github-agent (legacy MCP publish + PR) ===" -ForegroundColor Green
-    $githubArgs = @(
-        "agents/github-agent/github_agent.py",
-        "--target-app", $Feature,
-        "--context-file", $ContextFile
-    )
-    if ($GithubOwner) { $githubArgs += @("--github-owner", $GithubOwner) }
-    if ($GithubRepo) { $githubArgs += @("--github-repo", $GithubRepo) }
-    if ($GithubBase) { $githubArgs += @("--github-base", $GithubBase) }
-    if ((Invoke-PipelinePython -ArgumentList $githubArgs) -ne 0) { Write-Warning "github-agent reported issues - review before merge." }
-    $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
-    if (Test-Path $githubHandoff) {
-        $githubJson = Get-Content $githubHandoff -Raw | ConvertFrom-Json
-        Update-Context @{
-            pullRequestNumber = $githubJson.pullRequestNumber
-            pullRequestUrl    = $githubJson.pullRequestUrl
-            githubOwner       = $githubJson.githubOwner
-            githubRepo        = $githubJson.githubRepo
-            featureBranch     = $githubJson.branch
-        }
-    }
-}
-
 # 7) QA -> pytest (Phase 3 - opt-in via -WithQa)
 if ($runQa) {
     Write-Host "`n=== qa-agent (pytest) ===" -ForegroundColor Green
@@ -574,15 +524,6 @@ if (-not $SkipDb) {
     if ($applyPostgres) { Write-Host "  RDS:     applied via apply_sql_to_rds.py" }
 }
 Write-Host "  App:     target-apps/$Feature/"
-if ($runGithub) {
-    $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
-    if (Test-Path $githubHandoff) {
-        Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json"
-        Write-PublishHandoffLinks -Label "GitHub" -Handoff (Get-Content $githubHandoff -Raw | ConvertFrom-Json)
-    } else {
-        Write-Host "  GitHub:  publish failed (no handoff file - retry github-agent when online)" -ForegroundColor Yellow
-    }
-}
 if ($runGitlab) {
     $gitlabHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.gitlab-handoff.json"
     if (Test-Path $gitlabHandoff) {

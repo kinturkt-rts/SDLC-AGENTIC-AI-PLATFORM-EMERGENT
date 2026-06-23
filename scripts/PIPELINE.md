@@ -36,35 +36,7 @@ Equivalent test wrapper:
 | 6 | **gitlab-agent** | MCP push to `sdlc/<feature>` on GitLab origin (default when `GITLAB_*` in `.env`) |
 | 7 | **qa-agent** | Full pytest + edge tests (opt-in via `-WithQa`) |
 
-GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. Legacy GitHub showcase: **`-WithGithub`** (disables default GitLab publish).
-
-### Legacy GitHub showcase (`-WithGithub`)
-
-Mirrors **developer pushes branch → QA tests and comments on PR**:
-
-| Step | Agent | What it does |
-|------|--------|----------------|
-| 1–4 | (same as above) | product → architect → database → developer |
-| 5 | local verify | Quick pytest before publish |
-| 6 | **github-agent** | `git` commit on `sdlc/<feature>`, push, open GitHub PR (legacy; not default) |
-| 7 | **qa-agent** | Full pytest + edge tests locally; post PR review via GitHub MCP |
-
-```powershell
-# .env: GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_OWNER, GITHUB_REPO
-# Optional: gh auth login (for PR creation via gh CLI)
-
-.\scripts\run-sdlc.ps1 `
-  -Feature meeting-action-tracker `
-  -InputFile inputs\meeting-action-tracker.txt `
-  -SkipProduct -SkipArchitect -SkipDb -SkipPostgres `
-  -WithGithub `
-  -GithubOwner your-org `
-  -GithubRepo your-monorepo
-```
-
-Handoffs: `agents/pipeline/<feature>.devops-handoff.json` → `qa-handoff.json`
-
-**Note:** QA runs pytest on your **local checkout** (same files as the branch). It does not clone from GitHub to test.
+GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip.
 
 ---
 
