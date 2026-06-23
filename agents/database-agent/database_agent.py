@@ -53,7 +53,8 @@ Implement the database layer as a DB developer using Context handoff.
 3. db_list_tree dbOutputDir; db_write_file idempotent scripts under preferredSqlPath (and nosql/ only if design requires MongoDB).
 4. When `applyToRdsAfterWrite` is true in Context: write sql/ only — the host applies files to RDS after this run (do not call postgres_run_query).
    MongoDB MCP (if present): apply nosql/ scripts when design requires document storage.
-5. Reply once: schema_summary, sql_artifacts, handoff_for_developer. Omit execution_commands when applyToRdsAfterWrite is true.
+5. Call `db_validate_sql(service=targetApp)` after writing sql/ — fix every SQL_VALIDATION FAILED before finishing.
+6. Reply once: schema_summary, sql_artifacts, handoff_for_developer. Omit execution_commands when applyToRdsAfterWrite is true.
    The host writes `db/HANDOFF.md` after the run — do not db_write_file HANDOFF.md yourself.\
 """
 
@@ -114,6 +115,10 @@ Under `dbOutputDir` (default `target-apps/<service>/db/`):
   Use `seedMinRows`–`seedMaxRows` from Context: **every RDS table in §3 must get that many INSERT rows**
   (realistic names/emails/dates; stable UUIDs only where tests need them; respect FK order; `ON CONFLICT DO NOTHING`).
   Do not leave any §3 table empty in seed unless design §6.2 explicitly excludes it.
+- **Optional / nullable columns:** When design §3 marks a field optional (e.g. `ends_at`, `description`)
+  or seed uses `NULL` for it, DDL must **omit** `NOT NULL`. Call `db_validate_sql` before finishing —
+  it blocks NULL inserts into NOT NULL columns. `CREATE TABLE IF NOT EXISTS` does not change nullability
+  on existing RDS tables; the host apply script reconciles drift, but your schema files must match design.
 - **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the password hash column — use the **exact column name from your DDL** (`hashed_password`, `password_hash`, `password`, etc.). See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 
@@ -128,7 +133,8 @@ Under `dbOutputDir` (default `target-apps/<service>/db/`):
 1. Read design (+ PRD when `prdPath` set); list planned tables with PRD FR ids.
 2. `db_list_tree` / overwrite stale files via `db_write_file`; **delete** superseded `sql/` files (do not leave duplicate `00N_*.sql` no-ops).
 3. Write migrations in §6 order; write seed with `seedMinRows`–`seedMaxRows` rows per §3 table.
-4. One compact reply (see below).
+4. `db_validate_sql(service=targetApp)` — must report SQL_VALIDATION OK.
+5. One compact reply (see below).
 
 ## Response format (single pass — no duplication)
 Return **once**, in order:
@@ -267,6 +273,25 @@ def db_write_file(path: str, content: str) -> str:
 
 
 @tool
+def db_validate_sql(service: str) -> str:
+    """Validate db/sql/ schema vs seed nullability (blocks NULL inserts into NOT NULL columns)."""
+    from _shared.validate_sql_artifacts import validate_sql_dir
+
+    sql_dir = _service_dir(service) / "db" / "sql"
+    if not sql_dir.is_dir():
+        return f"Error: no sql directory at {sql_dir.relative_to(_REPO_ROOT).as_posix()}"
+    errors = validate_sql_dir(sql_dir)
+    if not errors:
+        return "SQL_VALIDATION OK — schema and seed nullability are consistent."
+    lines = "\n".join(f"  - {e}" for e in errors)
+    return (
+        "SQL_VALIDATION FAILED — fix schema or seed before RDS apply:\n"
+        f"{lines}\n"
+        "Rule: optional columns omit NOT NULL in DDL; seed NULL only for nullable columns."
+    )
+
+
+@tool
 def db_get_postgres_params() -> str:
     """Return JSON connection params for postgres_run_query (from POSTGRES_MCP_* env)."""
     return json.dumps(postgres_mcp_tool_params(), indent=2)
@@ -307,6 +332,16 @@ def _strip_agent_files_written_section(text: str) -> str:
 def _apply_sql_to_rds(target_app: str) -> int:
     """Apply sql/ to RDS via scripts/apply_sql_to_rds.py (psycopg, no Bedrock)."""
     import subprocess
+
+    from _shared.validate_sql_artifacts import validate_sql_dir
+
+    sql_dir = _service_dir(target_app) / "db" / "sql"
+    pre_errors = validate_sql_dir(sql_dir) if sql_dir.is_dir() else []
+    if pre_errors:
+        print("[database-agent] SQL validation failed before RDS apply:", file=sys.stderr)
+        for err in pre_errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
 
     script = _REPO_ROOT / "scripts" / "apply_sql_to_rds.py"
     cmd = [sys.executable, str(script), "--target-app", target_app]
@@ -384,7 +419,7 @@ def _build_agent(tools: list[Any]) -> Agent:
 
 
 def _file_tools() -> list[Any]:
-    return [db_list_tree, db_read_file, db_write_file]
+    return [db_list_tree, db_read_file, db_write_file, db_validate_sql]
 
 
 def _postgres_mcp_tools(stack: ExitStack) -> list[Any]:

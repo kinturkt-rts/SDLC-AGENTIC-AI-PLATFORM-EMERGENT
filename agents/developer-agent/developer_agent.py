@@ -301,7 +301,8 @@ After all files are written and the checklist above is done:
      - `CurrentUser = Depends()` → use `current_user: CurrentUser` only (no `= Depends()`)
      - Parameter order: `CurrentUser` / `DbSession` before `Query(default=...)` params
      - SQLite Date columns: use `date(2024, 1, 1)` in test fixtures, not `"2024-01-01"` strings
-     - RDS_PARITY FAILED: fix TimestampTZ ORM + coerce_iso_datetime validators, or seedCredentials /
+     - RDS_PARITY FAILED: fix TimestampTZ ORM + coerce_iso_datetime validators, seed/schema nullability
+       (optional DDL columns → `Mapped[T | None]` + optional Pydantic fields), or seedCredentials /
        users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
      - UI_PARITY FAILED: missing design §4 routes, POST without GET list, Streamlit not calling
        collection GETs, or raw UUID text_input when list APIs exist (see validate_ui_parity.py)

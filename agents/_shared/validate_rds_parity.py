@@ -122,6 +122,11 @@ def validate_rds_parity(app_dir: Path) -> list[str]:
     errors: list[str] = []
     errors.extend(check_seed_materialize_parseable(app_dir))
     errors.extend(check_timestamp_orm_schema_parity(app_dir))
+    sql_dir = app_dir / "db" / "sql"
+    if sql_dir.is_dir():
+        from _shared.validate_sql_artifacts import validate_sql_dir
+
+        errors.extend(validate_sql_dir(sql_dir))
     return errors
 
 

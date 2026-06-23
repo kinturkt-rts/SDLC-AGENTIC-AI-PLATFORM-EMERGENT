@@ -1,0 +1,18 @@
+﻿{
+    "productAgentOutput":  "See prdPath for gitlab-pipeline-smoke MVP requirements.",
+    "targetApp":  "gitlab-pipeline-smoke",
+    "prdPath":  "docs/PRD/gitlab-pipeline-smoke.md",
+    "designDocPath":  "docs/design/gitlab-pipeline-smoke.md",
+    "inputPath":  "inputs/notice-board-api.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  true,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/gitlab-pipeline-smoke.png"
+                     ]
+}

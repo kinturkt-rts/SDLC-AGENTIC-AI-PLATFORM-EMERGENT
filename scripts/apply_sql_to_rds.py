@@ -278,6 +278,16 @@ def _print_schema_row_counts(cur: object, schema: str) -> None:
         print(f"  {schema}.{table}: {count}", file=sys.stderr)
 
 
+def _validate_sql_artifacts(sql_dir: Path) -> list[str]:
+    from _shared.validate_sql_artifacts import validate_sql_dir
+
+    return validate_sql_dir(sql_dir)
+
+
+def _is_seed_file(path: Path) -> bool:
+    return "seed" in path.name.lower()
+
+
 def apply_sql_files(
     sql_dir: Path,
     *,
@@ -298,6 +308,18 @@ def apply_sql_files(
 
     files = sorted_sql_files(sql_dir, skip_seed=skip_seed)
     app_schema = resolve_app_schema(target_app)
+
+    pre_errors = _validate_sql_artifacts(sql_dir)
+    if pre_errors:
+        for err in pre_errors:
+            print(f"FAILED (sql validation): {err}", file=sys.stderr)
+        print(
+            "Fix schema/seed nullability in db/sql/ before RDS apply. "
+            "Optional columns must omit NOT NULL when seed uses NULL.",
+            file=sys.stderr,
+        )
+        return 1
+
     host, port = _resolve_host_port(conn_url)
     host_hint = f"{host}:{port}"
     schema_label = app_schema or "public"
@@ -352,18 +374,42 @@ def apply_sql_files(
                         print("Ensuring pgvector extension (public) ...", file=sys.stderr)
                     _ensure_pgvector_extension(cur, verbose=verbose)
                 applied: list[str] = []
-                for path in files:
-                    sql = path.read_text(encoding="utf-8").strip()
-                    if not sql:
-                        print(f"SKIP (empty): {path.name}", file=sys.stderr)
-                        continue
-                    if verbose:
-                        print(f"Applying {path.name} ...", file=sys.stderr)
-                    for stmt in split_sql_statements(sql):
-                        cur.execute(stmt)
-                    applied.append(path.name)
-                    if verbose:
-                        print("  OK", file=sys.stderr)
+                ddl_files = [f for f in files if not _is_seed_file(f)]
+                seed_files = [f for f in files if _is_seed_file(f)]
+                if skip_seed:
+                    seed_files = []
+
+                def _apply_paths(paths: list[Path], *, label: str) -> None:
+                    nonlocal applied
+                    for path in paths:
+                        sql = path.read_text(encoding="utf-8").strip()
+                        if not sql:
+                            print(f"SKIP (empty): {path.name}", file=sys.stderr)
+                            continue
+                        if verbose:
+                            print(f"Applying {path.name} ...", file=sys.stderr)
+                        for stmt in split_sql_statements(sql):
+                            cur.execute(stmt)
+                        applied.append(path.name)
+                        if verbose:
+                            print("  OK", file=sys.stderr)
+
+                _apply_paths(ddl_files, label="ddl")
+                if app_schema and ddl_files:
+                    from _shared.validate_sql_artifacts import reconcile_nullability_from_ddl
+
+                    reconciled = reconcile_nullability_from_ddl(
+                        cur,
+                        app_schema=app_schema,
+                        sql_dir=sql_dir,
+                        verbose=verbose,
+                    )
+                    if reconciled and not verbose:
+                        print(
+                            f"[apply-sql] Reconciled {len(reconciled)} nullable column(s) on RDS",
+                            file=sys.stderr,
+                        )
+                _apply_paths(seed_files, label="seed")
 
                 if app_schema and verbose:
                     _print_schema_row_counts(cur, app_schema)
