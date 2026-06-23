@@ -189,7 +189,7 @@ Windows one-liner from repo root:
 
 ## Security guardrails
 
-- Never hardcode real API keys, passwords, or tokens in tests — use `test-key` / fixtures like conftest.
+- Never hardcode real API keys, passwords, or tokens in tests or Postman env — use `test-key` / fixtures like conftest.
 - Never create or modify `.env` — tests set env via conftest or monkeypatch.
 - Write ONLY under `target-apps/<service>/tests/` and `QA_REPORT.md` via `qa_write_file`.
 - Read `app/` via `qa_read_file` to diagnose failures — do not modify app/ unless task overrides.

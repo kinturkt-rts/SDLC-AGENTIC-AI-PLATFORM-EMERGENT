@@ -476,8 +476,22 @@ if (-not $SkipDb) {
     if ($applyPostgres) { Write-Host "  RDS:     applied via apply_sql_to_rds.py" }
 }
 Write-Host "  App:     target-apps/$Feature/"
-if ($runGithub) { Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json" }
-if ($runGitlab) { Write-Host "  GitLab:  agents/pipeline/$Feature.gitlab-handoff.json" }
+if ($runGithub) {
+    $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
+    if (Test-Path $githubHandoff) {
+        Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json"
+    } else {
+        Write-Host "  GitHub:  publish failed (no handoff file — retry github-agent when online)" -ForegroundColor Yellow
+    }
+}
+if ($runGitlab) {
+    $gitlabHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.gitlab-handoff.json"
+    if (Test-Path $gitlabHandoff) {
+        Write-Host "  GitLab:  agents/pipeline/$Feature.gitlab-handoff.json"
+    } else {
+        Write-Host "  GitLab:  publish failed (no handoff file — retry gitlab-agent when online)" -ForegroundColor Yellow
+    }
+}
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
 
 Write-RunInstructions -TargetFeature $Feature -UsesDb:(-not $SkipDb)
