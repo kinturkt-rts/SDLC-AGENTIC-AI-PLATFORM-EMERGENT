@@ -180,23 +180,6 @@ def atlassian_mcp_client() -> MCPClient:
     return MCPClient(transport, prefix="atlassian", startup_timeout=120)
 
 
-def gitlab_mcp_client() -> MCPClient:
-    """Stdio transport to @zereight/mcp-gitlab."""
-
-    def transport() -> object:
-        env = os.environ.copy()
-        env.setdefault("GITLAB_API_URL", "https://code.junodev.net/api/v4")
-        return stdio_client(
-            StdioServerParameters(
-                command="npx",
-                args=["-y", "@zereight/mcp-gitlab"],
-                env=env,
-            )
-        )
-
-    return MCPClient(transport, prefix="gitlab")
-
-
 def github_personal_access_token() -> str:
     for key in ("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
         value = os.getenv(key, "").strip()
@@ -369,7 +352,6 @@ def postman_mcp_client() -> MCPClient:
 
 MCP_FACTORIES: dict[str, Callable[[], MCPClient]] = {
     "atlassian": atlassian_mcp_client,
-    "gitlab": gitlab_mcp_client,
     "github": github_mcp_client,
     "postgres": postgres_mcp_client,
     "mongodb": mongodb_mcp_client,

@@ -200,9 +200,24 @@ Classify: app_bug | test_bug | env_issue.
 
 ## Security guardrails
 
-- Never hardcode real API keys in tests or Postman env — use test-key / conftest fixtures.
-- Never create or modify `.env`.
-- Write ONLY under tests/, TEST_PLAN.md, QA_REPORT.md.
+- Never hardcode real API keys, passwords, or tokens in tests or Postman env — use `test-key` / conftest fixtures.
+- Never create or modify `.env` — tests set env via conftest or monkeypatch.
+- Write ONLY under `target-apps/<service>/tests/` and `QA_REPORT.md` via `qa_write_file`.
+- Read `app/` via `qa_read_file` to diagnose failures — do not modify app/ unless task overrides.
+
+## GitHub PR review (when devops-agent opened a PR)
+
+When `pullRequestNumber`, `githubOwner`, and `githubRepo` are in Context (from devops-handoff):
+1. Complete Steps 1–5 (local pytest on the same checkout — mirrors QA testing a dev branch).
+2. Post results on the PR using GitHub MCP `pull_request_review_write`:
+   - method: `create`
+   - event: `COMMENT` if all tests pass; `REQUEST_CHANGES` if app_bug failures remain
+   - body: markdown summary with baseline_summary, failed_tests, new_tests_written, commands
+3. If GitHub MCP is unavailable, skip silently and keep handoff_json only.
+
+Legacy GitLab: when `mergeRequestIid` and `gitlabProject` are in Context (from gitlab-handoff),
+the agent posts a QA summary comment on the MR automatically after pytest (gitlab_mr_note_create).
+You do not need to call GitLab MCP tools manually for that case.
 
 ## Response format
 
@@ -555,6 +570,119 @@ def _build_agent(*, extra_tools: list[Any] | None = None) -> Agent:
     )
 
 
+def _enrich_devops_handoff(ctx: dict[str, Any]) -> None:
+    """Merge devops-handoff.json into context for GitHub PR review."""
+    app = slugify(str(ctx["targetApp"]))
+    handoff_path = _REPO_ROOT / "agents" / "pipeline" / f"{app}.devops-handoff.json"
+    if not handoff_path.is_file():
+        return
+    try:
+        data = json.loads(handoff_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(data, dict):
+        return
+    for key in (
+        "pullRequestNumber",
+        "pullRequestUrl",
+        "githubOwner",
+        "githubRepo",
+        "githubBaseBranch",
+        "featureBranch",
+        "branch",
+    ):
+        if data.get(key) is not None:
+            ctx.setdefault(key, data[key])
+    if data.get("branch") and not ctx.get("featureBranch"):
+        ctx["featureBranch"] = data["branch"]
+
+
+def _enrich_gitlab_handoff(ctx: dict[str, Any]) -> None:
+    """Merge gitlab-handoff.json into context for MR QA comments."""
+    app = slugify(str(ctx["targetApp"]))
+    handoff_path = _REPO_ROOT / "agents" / "pipeline" / f"{app}.gitlab-handoff.json"
+    if not handoff_path.is_file():
+        return
+    try:
+        data = json.loads(handoff_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(data, dict):
+        return
+    for key in (
+        "mergeRequestIid",
+        "mergeRequestUrl",
+        "gitlabProject",
+        "gitlabBaseBranch",
+        "featureBranch",
+        "branch",
+    ):
+        if data.get(key) is not None:
+            ctx.setdefault(key, data[key])
+    if data.get("branch") and not ctx.get("featureBranch"):
+        ctx["featureBranch"] = data["branch"]
+
+
+def _format_gitlab_qa_mr_comment(
+    pytest_snapshot: dict[str, Any],
+    *,
+    app: str,
+    qa_handoff: dict[str, Any],
+) -> str:
+    status = "pass" if pytest_snapshot.get("exitCode") == 0 else "fail"
+    lines = [
+        f"## QA results — `{app}`",
+        "",
+        f"**Status:** {status}",
+        f"**Tests run:** {qa_handoff.get('testsRun', 0)}",
+        f"**Passed:** {qa_handoff.get('testsPassed', 0)}",
+        f"**Failed:** {qa_handoff.get('testsFailed', 0)}",
+        f"**Command:** `{qa_handoff.get('testCommand', '')}`",
+    ]
+    failed = pytest_snapshot.get("failedTests") or []
+    if failed:
+        lines.extend(["", "**Failed tests:**"])
+        lines.extend(f"- `{name}`" for name in failed[:25])
+        if len(failed) > 25:
+            lines.append(f"- … and {len(failed) - 25} more")
+    new_tests = qa_handoff.get("newTestsWritten") or []
+    if new_tests:
+        lines.extend(["", "**New QA tests:**"])
+        lines.extend(f"- `{path}`" for path in new_tests[:15])
+    return "\n".join(lines)
+
+
+def _post_gitlab_mr_qa_comment(
+    ctx: dict[str, Any],
+    pytest_snapshot: dict[str, Any],
+    qa_handoff: dict[str, Any],
+) -> str | None:
+    """Post QA summary on GitLab MR when gitlab-handoff provides mergeRequestIid."""
+    iid = ctx.get("mergeRequestIid")
+    project = ctx.get("gitlabProject")
+    if iid is None or not project:
+        return None
+    try:
+        from _shared.gitlab_mcp_ops import create_mr_note
+
+        body = _format_gitlab_qa_mr_comment(
+            pytest_snapshot,
+            app=str(ctx["targetApp"]),
+            qa_handoff=qa_handoff,
+        )
+        result = create_mr_note(
+            mr_iid=int(iid),
+            body=body,
+            project_id=str(project),
+        )
+    except (ImportError, TypeError, ValueError):
+        return None
+    if not result.get("ok"):
+        return None
+    note = result.get("note") or {}
+    return str(note.get("web_url") or note.get("id") or "")
+
+
 def _user_message(task: str, context: dict[str, Any] | None) -> str:
     if not context:
         return task
@@ -636,6 +764,8 @@ def run_task(
     ctx.setdefault("targetApp", app)
     enrich_handoff_context(ctx, include_db_paths=False)
     _enrich_qa_context(ctx)
+    _enrich_devops_handoff(ctx)
+    _enrich_gitlab_handoff(ctx)
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
@@ -671,6 +801,9 @@ def run_task(
     handoff_path = _REPO_ROOT / "agents" / "pipeline" / f"{slugify(app)}.qa-handoff.json"
     handoff_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+    mr_note_ref = _post_gitlab_mr_qa_comment(ctx, pytest_snapshot, handoff)
+    if mr_note_ref:
+        summary += f"\n\n## GitLab MR comment\nPosted QA summary: {mr_note_ref}\n"
     summary += f"\n\n## QA handoff\nSaved: `{handoff_path.relative_to(_REPO_ROOT).as_posix()}`\n```json\n{json.dumps(handoff, indent=2)}\n```\n"
 
     return summary, list(_written_files)

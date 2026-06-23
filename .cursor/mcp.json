@@ -1,10 +1,9 @@
 {
   "mcpServers": {
     "GitLab": {
-      "command": "npx",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
       "args": [
-        "-y",
-        "@zereight/mcp-gitlab"
+        "${workspaceFolder}/scripts/gitlab_jmrplens_stdio.py"
       ],
       "envFile": "${workspaceFolder}/.env"
     },

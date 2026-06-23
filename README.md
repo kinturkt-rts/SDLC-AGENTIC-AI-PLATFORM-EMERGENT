@@ -105,7 +105,7 @@ See `agents/README.md`, `docs/SDLC_PIPELINE_FLOW.md`, and `a2a/README.md`.
 
 Catalog and env reference: `config/mcp/servers.json`.
 
-**GitLab (Juno):** use stdio `@zereight/mcp-gitlab` with `GITLAB_API_URL=https://code.junodev.net/api/v4` and a PAT in `.env`. Native `https://code.junodev.net/api/v4/mcp` needs GitLab Duo Premium (404 until enabled).
+**GitLab (Juno):** use jmrplens MCP via `scripts/gitlab_jmrplens_stdio.py` (install: `.\scripts\install-jmrplens-gitlab-mcp.ps1`). Set `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_URL` in `.env`. Native `https://code.junodev.net/api/v4/mcp` needs GitLab Duo Premium (404 until enabled).
 
 ```bash
 cp .env.example .env   # set GITLAB_PERSONAL_ACCESS_TOKEN, ATLASSIAN_MCP_TOKEN, AWS_*

@@ -1,15 +1,16 @@
 ---
 name: devops-agent
-description: Phase 2 Terraform, CI/CD, ECS. GitHub publish is github-agent (Phase 1).
+description: Phase 2 Terraform, CI/CD, ECS. GitLab/GitHub publish via gitlab-agent and github-agent.
 ---
 
 # DevOps Agent
 
 ## Phase 1
 
-**GitHub publish** is handled by **github-agent** — not this agent.
+**GitHub publish** is handled by **github-agent**. **GitLab publish** (primary `origin`) is **gitlab-agent**.
 
 ```powershell
+python agents/gitlab-agent/gitlab_agent.py --target-app <app>
 python agents/github-agent/github_agent.py --target-app <app>
 ```
 
