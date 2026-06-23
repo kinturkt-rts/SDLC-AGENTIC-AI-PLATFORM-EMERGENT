@@ -1,0 +1,92 @@
+Change Request Hub — IT change management, approvals, blackout windows, audit trail
+
+Client story:
+Sam (Change Manager) runs IT change control for a 600-person company. Teams submit changes in
+email and spreadsheets; nobody knows what is scheduled for production this weekend. Implementers
+merge without approval; leadership cannot see risk or overdue items. Sam wants one hub: requesters
+draft changes against a service catalog, change managers approve or reject with audit trail,
+implementers execute in approved windows, and leadership sees read-only risk dashboards — every
+transition timestamped.
+
+MVP:
+- Service catalog: name, owner team, tier (tier1|tier2|tier3), active flag.
+- Environment registry: name (dev|staging|prod), sort order, active flag.
+- Blackout window per environment: start_at, end_at, reason — blocks scheduling overlapping changes.
+- Change request: title, description, service_id, target_environment_id, change_type (standard|normal|emergency),
+  risk (low|medium|high), status lifecycle, requester, optional implementer, planned_start, planned_end,
+  rollback_plan text, created/updated/submitted/approved/scheduled/started/completed/closed timestamps.
+- Status lifecycle: draft → submitted → approved → scheduled → implementing → completed → closed.
+  Reject path: submitted → rejected (change manager only, reason required).
+  Emergency changes skip scheduled but still require approved before implementing.
+- Approval record: change_id, approver_id, decision (approved|rejected), comment, decided_at.
+- Comments thread per change (immutable after post).
+- Status history append-only: from_status, to_status, actor, changed_at, reason.
+- Leadership dashboard: counts by status/risk, overdue scheduled (planned_end passed, not closed),
+  changes this month by environment, top services by volume.
+
+Personas (who needs what):
+- Change requester — create/edit own drafts, submit, comment on own changes, view own list.
+- Change manager — triage all changes, approve/reject, schedule, reassign implementer, manage catalog.
+- Implementer — see assigned scheduled/implementing queue, start/complete implementation, comment.
+- Leadership (read-only) — org-wide dashboard; no writes.
+- Public/unauthenticated — health check only.
+
+Business rules worth getting right:
+- Requesters cannot approve or assign implementers; cannot edit after submitted except withdraw to draft (manager only).
+- Implementers cannot approve; only transition implementing → completed on assigned changes.
+- Scheduling requires approved status; planned window must not overlap environment blackout.
+- Emergency: must set change_type=emergency; approved required before implementing; dashboard flags emergencies separately.
+- Inactive services/environments reject new changes but existing history remains readable.
+- List endpoints paginated; default sort newest first for manager triage queue.
+- Comments and status_history are append-only (no edit/delete in MVP).
+- Leadership sees aggregated dashboard only — not raw requester PII beyond display names on changes they can already read.
+
+Demo data expectations:
+- At least 6 services across tier1–tier3; 3 environments; 2 blackout windows (one active).
+- At least 10 change requests covering every status including 1 rejected, 1 emergency, 2 overdue scheduled.
+- Approval rows on at least 5 changes; comments on at least 4; status_history on every non-draft change.
+- Seed users: 2 requesters, 2 implementers, 1 change manager, 1 leadership — JWT email login.
+  Single shared dev password documented in seed SQL comment.
+- Timestamps spread realistically over 90 days.
+
+UI expectation (Streamlit — API is source of truth over HTTP):
+- Requester: create form with service + environment selectboxes (from GET lists), my changes table.
+- Change manager: triage table, approve/reject/schedule actions, services/environments CRUD tables,
+  assign implementer via selectbox (from user/technician list or workload endpoint).
+- Implementer: my queue, start/complete buttons, comment box.
+- Leadership: read-only dashboard metrics/tables.
+- After create/update: lists refresh on next interaction (st.rerun after mutations).
+- Local dev README: uvicorn `--reload --port 8000` (optional `--reload-dir app --reload-dir schemas` if reload storms).
+
+API contracts (architect MUST include collection GET for every catalog entity):
+| Method | Path | Notes |
+| POST | /api/v1/auth/token | JWT login |
+| GET | /health | no auth |
+| GET | /api/v1/services | paginated list — required for Streamlit catalog |
+| POST | /api/v1/services | change manager |
+| PATCH | /api/v1/services/{id} | change manager |
+| GET | /api/v1/environments | paginated list |
+| POST | /api/v1/environments | change manager |
+| GET | /api/v1/blackout-windows | list by environment filter |
+| POST | /api/v1/blackout-windows | change manager |
+| GET | /api/v1/change-requests | role-scoped paginated list |
+| POST | /api/v1/change-requests | requester/manager |
+| GET | /api/v1/change-requests/{id} | detail + comments + history |
+| PATCH | /api/v1/change-requests/{id}/status | workflow transitions |
+| PATCH | /api/v1/change-requests/{id}/assign | manager assigns implementer |
+| POST | /api/v1/change-requests/{id}/comments | requester/implementer/manager |
+| GET | /api/v1/change-requests/{id}/comments | thread read |
+| GET | /api/v1/dashboard/summary | leadership + manager |
+
+Stack: FastAPI, SQLAlchemy, Postgres (TIMESTAMPTZ on all *_at columns), JWT Bearer, Streamlit Pattern C.
+
+Tests: invalid transition 422, blackout overlap blocked, requester approve 403, append-only history,
+role-scoped list counts, emergency path, overdue flag on detail/list.
+
+Out of scope:
+- SSO, ServiceNow/Jira sync, email notifications, CAB calendar invites
+- Auto-implementation, CI/CD hooks, multi-tenant org isolation
+- File attachments beyond rollback_plan text field
+
+Target app slug: change-request-hub
+Output directory: target-apps/change-request-hub/
