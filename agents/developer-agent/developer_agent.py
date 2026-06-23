@@ -412,7 +412,8 @@ The Streamlit template includes:
 ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
 startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
 **UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
-list APIs; call `st.rerun()` after mutations. `dev_validate_app` enforces UI_PARITY when Streamlit is required.
+list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
+inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
 README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
 `streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
 """,

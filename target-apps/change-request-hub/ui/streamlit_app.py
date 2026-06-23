@@ -13,6 +13,19 @@ import streamlit as st
 
 # Config
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+_REQUEST_TIMEOUT = 30
+
+
+class _ErrorResponse:
+    """Stand-in when requests fails so views can show errors without crashing."""
+
+    status_code = 0
+
+    def __init__(self, detail: str) -> None:
+        self._detail = detail
+
+    def json(self) -> dict:
+        return {"detail": self._detail}
 
 
 # ---- HTTP helpers ----
@@ -24,18 +37,56 @@ def _headers() -> dict:
 
 
 def _get(path: str, params: dict | None = None):
-    resp = requests.get(f"{API_BASE_URL}{path}", headers=_headers(), params=params, timeout=10)
-    return resp
+    try:
+        return requests.get(
+            f"{API_BASE_URL}{path}",
+            headers=_headers(),
+            params=params,
+            timeout=_REQUEST_TIMEOUT,
+        )
+    except requests.Timeout:
+        return _ErrorResponse(
+            "API read timed out. Ensure Terminal 1 is running and use "
+            "`uvicorn ... --reload-dir app --reload-dir schemas` (not bare `--reload`)."
+        )
+    except requests.ConnectionError:
+        return _ErrorResponse(f"Cannot connect to API at {API_BASE_URL}")
 
 
 def _post(path: str, json: dict | None = None):
-    resp = requests.post(f"{API_BASE_URL}{path}", headers=_headers(), json=json, timeout=10)
-    return resp
+    try:
+        return requests.post(
+            f"{API_BASE_URL}{path}",
+            headers=_headers(),
+            json=json,
+            timeout=_REQUEST_TIMEOUT,
+        )
+    except requests.Timeout:
+        return _ErrorResponse("API timed out on POST")
+    except requests.ConnectionError:
+        return _ErrorResponse(f"Cannot connect to API at {API_BASE_URL}")
 
 
 def _patch(path: str, json: dict | None = None):
-    resp = requests.patch(f"{API_BASE_URL}{path}", headers=_headers(), json=json, timeout=10)
-    return resp
+    try:
+        return requests.patch(
+            f"{API_BASE_URL}{path}",
+            headers=_headers(),
+            json=json,
+            timeout=_REQUEST_TIMEOUT,
+        )
+    except requests.Timeout:
+        return _ErrorResponse("API timed out on PATCH")
+    except requests.ConnectionError:
+        return _ErrorResponse(f"Cannot connect to API at {API_BASE_URL}")
+
+
+def _implementer_options() -> dict[str, str]:
+    """Load implementers once per render (never inside a per-row loop)."""
+    users_resp = _get("/api/v1/users", params={"role": "implementer", "page_size": 50})
+    if users_resp.status_code == 200:
+        return {u["display_name"]: u["id"] for u in users_resp.json()["items"]}
+    return {}
 
 
 def _ensure_api_reachable():
@@ -44,7 +95,7 @@ def _ensure_api_reachable():
         if r.status_code != 200:
             st.error(f"API health check returned {r.status_code}. Ensure the API is running.")
             st.stop()
-    except requests.ConnectionError:
+    except (requests.ConnectionError, requests.Timeout):
         st.error(f"Cannot connect to API at {API_BASE_URL}. Start the API first (Terminal 1).")
         st.stop()
 
@@ -154,6 +205,7 @@ def manager_view():
 
     with tab1:
         resp = _get("/api/v1/change-requests", params={"page_size": 50})
+        impl_map = _implementer_options()
         if resp.status_code == 200:
             items = resp.json()["items"]
             if items:
@@ -203,20 +255,28 @@ def manager_view():
 
                         # Assign implementer
                         with col3:
-                            users_resp = _get("/api/v1/users", params={"role": "implementer", "page_size": 50})
-                            if users_resp.status_code == 200:
-                                impls = users_resp.json()["items"]
-                                impl_map = {u["display_name"]: u["id"] for u in impls}
-                                sel = st.selectbox("Assign", [""] + list(impl_map.keys()), key=f"assign_sel_{cr['id']}")
+                            if impl_map:
+                                sel = st.selectbox(
+                                    "Assign",
+                                    [""] + list(impl_map.keys()),
+                                    key=f"assign_sel_{cr['id']}",
+                                )
                                 if sel and st.button("Assign", key=f"assign_{cr['id']}"):
-                                    r = _patch(f"/api/v1/change-requests/{cr['id']}/assign", json={"implementer_id": impl_map[sel]})
+                                    r = _patch(
+                                        f"/api/v1/change-requests/{cr['id']}/assign",
+                                        json={"implementer_id": impl_map[sel]},
+                                    )
                                     if r.status_code == 200:
                                         st.success("Assigned")
                                         st.rerun()
                                     else:
                                         st.error(r.json().get("detail", "Error"))
+                            else:
+                                st.caption("No implementers loaded")
             else:
                 st.info("No change requests.")
+        else:
+            st.error(resp.json().get("detail", "Failed to load change requests"))
 
     with tab2:
         st.subheader("Services")
