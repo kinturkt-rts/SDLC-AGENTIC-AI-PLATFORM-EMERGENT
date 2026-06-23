@@ -8,7 +8,7 @@
 | **database-agent** | `database-agent/database_agent.py` | Postgres MCP + MongoDB MCP |
 | **developer-agent** | `developer-agent/developer_agent.py` | Scoped file tools (writes under `target-apps/`) |
 | **orchestrator-agent** | `orchestrator-agent/orchestrator_agent.py` | A2A peers via `_shared/runner.py` |
-| **qa-agent** | `qa-agent/qa_agent.py` | SDLC QA: pytest + Postman + Playwright MCP (optional) |
+| **qa-agent** | `qa-agent/qa_agent.py` | Scoped test tools + pytest runner (GitLab optional) |
 | **devops-agent** | `devops-agent/devops_agent.py` | GitLab via `_shared/runner.py` |
 | **security-agent** | `security-agent/security_agent.py` | A2A peers via `_shared/runner.py` |
 

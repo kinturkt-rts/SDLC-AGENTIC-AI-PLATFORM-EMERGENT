@@ -14,12 +14,31 @@ _STREAMLIT_MARKERS = (
 )
 _REACT_MARKERS = ("react", "next.js", "nextjs", "vite", "frontend/")
 
+_STREAMLIT_NEGATED = re.compile(
+    r"\b(?:no|without|not|omit)\s+(?:\w+\s+){0,2}streamlit\b|"
+    r"\bapi[- ]only\b|"
+    r"\bno\s+ui\s+folder\b|"
+    r"streamlit/react\s+ui",
+    re.IGNORECASE,
+)
+_REACT_NEGATED = re.compile(
+    r"\b(?:no|without|not|omit)\s+(?:\w+\s+){0,2}react\b|"
+    r"streamlit/react\s+ui",
+    re.IGNORECASE,
+)
+
+
+def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pattern[str]) -> bool:
+    if negated.search(text_lower):
+        return False
+    return any(marker in text_lower for marker in markers)
+
 
 def scan_delivery_text(text: str) -> dict[str, Any]:
     """Infer delivery profile flags from PRD, input brief, or design markdown."""
     lower = text.lower()
-    requires_streamlit = any(marker in lower for marker in _STREAMLIT_MARKERS)
-    requires_react = any(marker in lower for marker in _REACT_MARKERS)
+    requires_streamlit = _feature_required(lower, _STREAMLIT_MARKERS, _STREAMLIT_NEGATED)
+    requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
     ui_required = (
         requires_streamlit
         or requires_react

@@ -1,0 +1,26 @@
+{
+  "writtenFiles": [
+    "target-apps/gitlab-pipeline-smoke/ui/streamlit_app.py"
+  ],
+  "targetApp": "gitlab-pipeline-smoke",
+  "jiraKey": null,
+  "dbBackend": "postgres",
+  "designDocPath": "docs/design/gitlab-pipeline-smoke.md",
+  "prdPath": "docs/PRD/gitlab-pipeline-smoke.md",
+  "databaseHandoffPath": "target-apps/gitlab-pipeline-smoke/db/HANDOFF.md",
+  "runCommandLocal": "cd target-apps/gitlab-pipeline-smoke && uvicorn app.main:app --reload --port 8000",
+  "testCommand": "cd target-apps/gitlab-pipeline-smoke && pytest tests/ -q",
+  "deploymentHandoff": {
+    "targetEnvironment": "aws-dev",
+    "port": 8000,
+    "healthCheckPath": "/health",
+    "containerEntrypoint": "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}",
+    "envVarNames": [
+      "PORT"
+    ],
+    "secretsSource": "AWS Secrets Manager, SSM, or ECS task IAM role \u2014 not committed .env",
+    "dockerReady": true,
+    "notes": "devops-agent owns Dockerfile, CI/CD, and AWS deploy for target-apps/gitlab-pipeline-smoke/. App code must not hardcode localhost or fixed cloud hostnames."
+  },
+  "runCommand": "cd target-apps/gitlab-pipeline-smoke && uvicorn app.main:app --reload --port 8000"
+}

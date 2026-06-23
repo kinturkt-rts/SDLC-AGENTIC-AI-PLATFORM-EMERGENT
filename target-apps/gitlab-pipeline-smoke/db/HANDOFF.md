@@ -1,6 +1,6 @@
 # Database handoff — gitlab-pipeline-smoke
 
-_Generated 2026-06-23 21:11 UTC by database-agent._
+_Generated 2026-06-23 20:19 UTC by database-agent._
 
 ## For developer-agent
 
@@ -33,10 +33,33 @@ Add `sqlalchemy`, `psycopg[binary]`, and `alembic` in the service `requirements.
 
 ## SQL files (apply order)
 
-1. `target-apps/gitlab-pipeline-smoke/db/sql/001_schema.sql`
-2. `target-apps/gitlab-pipeline-smoke/db/sql/002_seed.sql`
+1. `target-apps/gitlab-pipeline-smoke/db/sql/000_enable_extensions.sql`
+2. `target-apps/gitlab-pipeline-smoke/db/sql/001_create_categories.sql`
+3. `target-apps/gitlab-pipeline-smoke/db/sql/002_create_notices.sql`
+4. `target-apps/gitlab-pipeline-smoke/db/sql/003_seed.sql`
 
 **Connection:** load credentials from env/Key Vault (NFR-5). Use schema `gitlab_pipeline_smoke` (`search_path` or qualified table names). Do not rely on unqualified `public` for app tables.
+
+## Schema summary (database-agent)
+
+- **2 PostgreSQL tables**: categories (lookup), notices (main content) in gitlab_pipeline_smoke schema
+- **PRD mapping**: FR-2 (category management), FR-3/4/5/6 (notice CRUD/filtering/search/archival), FR-7 (uniqueness), FR-8 (date validation)
+- **Categories table**: id (uuid PK), name (text unique 1-60 chars), description (text nullable ≤240), created_at
+- **Notices table**: id (uuid PK), category_id (FK), title/body/author_name (text with length limits), starts_at/ends_at (timestamptz), is_archived (boolean), created_at/updated_at
+- **Extensions**: pg_trgm for case-insensitive text search on title/body fields
+- **Constraints**: Foreign key with RESTRICT, date validation (ends_at ≥ starts_at), field length checks
+- **Indexes**: Unique on category name, composite for active filtering, GIN for text search
+- **No authentication tables**: API uses single shared key from environment (no user/password persistence)
+
+## Implementation notes (database-agent)
+
+- **Schema**: `gitlab_pipeline_smoke` - set search_path in SQLAlchemy connection
+- **DSN pattern**: `postgresql://{user}:{pass}@{host}:{port}/sdlc_agentic_ai` with schema qualification
+- **Active filtering**: `WHERE is_archived = false AND starts_at <= NOW() AND ends_at >= NOW()`
+- **Text search**: Use GIN indexes for ILIKE queries on title/body, pg_trgm enabled for fuzzy matching
+- **Foreign keys**: category_id uses RESTRICT - prevent category deletion with existing notices
+- **Stable UUIDs**: Categories (550e8400-e29b-...-44665544000[0-2]), Notices (660e8400-e29b-...-44665544000[0-7])
+- **Seed data**: 3 categories, 8 notices (4 active, 1 future, 1 expired, 1 archived, 1 additional active)
 
 ## ORM parity (required for live RDS)
 

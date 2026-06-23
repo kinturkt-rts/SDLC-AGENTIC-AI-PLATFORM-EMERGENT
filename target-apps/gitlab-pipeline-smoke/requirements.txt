@@ -1,0 +1,26 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Database (Postgres / RDS) — add when wiring to RDS
+sqlalchemy>=2.0.0
+psycopg[binary]>=3.1.0
+
+# Auth — add/swap when auth provider is confirmed (design §5)
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0,<6.0.0
+
+# HTTP client (external API calls — Graph, Jira, etc.)
+httpx>=0.27.0
+
+# LLM (AWS Bedrock) — omit from forked services when design §2 has no AI
+boto3>=1.35.0
+
+# RAG (pgvector local pattern) — add only when design uses document Q&A
+# pypdf>=5.0.0
+# pgvector>=0.3.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

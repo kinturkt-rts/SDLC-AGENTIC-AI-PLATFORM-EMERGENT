@@ -1,11 +1,13 @@
 # SDLC pipeline commands
 
-Run everything from the **repo root** after AWS login:
+Run everything from the **repo root** after AWS SSO login:
 
 ```powershell
 aws sso login --profile eks-admin-user
-$env:AWS_PROFILE = "eks-admin-user"
 ```
+
+Ensure `.env` has `AWS_PROFILE=eks-admin-user` (no active `AWS_ACCESS_KEY_ID` / session token lines).
+One-time CLI profile setup: `aws configure sso --profile eks-admin-user` (writes `~/.aws/config`, not the repo).
 
 ## Default command (full chain)
 
@@ -31,20 +33,12 @@ Equivalent test wrapper:
 | 3b | apply_sql_to_rds.py | **Applies SQL to RDS Postgres** (when DB step runs) |
 | 4 | developer-agent | FastAPI app under `target-apps/<feature>/` |
 | 5 | local verify | Import smoke + `pytest` in app folder |
+| 6 | **gitlab-agent** | MCP push to `sdlc/<feature>` on GitLab origin (default when `GITLAB_*` in `.env`) |
+| 7 | **qa-agent** | Full pytest + edge tests (opt-in via `-WithQa`) |
 
-QA and GitHub publish are **opt-in** (`-WithQa` or `-WithGithub`).
+GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. Legacy GitHub showcase: **`-WithGithub`** (disables default GitLab publish).
 
-**Hard dev-agent stress test** (Streamlit + JWT + workflow + UI parity gates):
-
-```powershell
-.\scripts\run-pipeline-test.ps1 -Level hard
-# same as:
-.\scripts\run-sdlc.ps1 -Feature change-request-hub -InputFile inputs\change-request-hub.txt
-```
-
-Local verify now runs `scripts/verify_app_parity.py` (RDS_PARITY + UI_PARITY) after pytest.
-
-### GitHub SDLC mirror (`-WithGithub`)
+### Legacy GitHub showcase (`-WithGithub`)
 
 Mirrors **developer pushes branch → QA tests and comments on PR**:
 
@@ -52,8 +46,8 @@ Mirrors **developer pushes branch → QA tests and comments on PR**:
 |------|--------|----------------|
 | 1–4 | (same as above) | product → architect → database → developer |
 | 5 | local verify | Quick pytest before publish |
-| 6 | **devops-agent** | `git` commit on `sdlc/<feature>`, push, open GitHub PR |
-| 7 | **qa-agent** | Test plan, pytest, Postman API runs, Playwright E2E (when UI), QA handoff |
+| 6 | **github-agent** | `git` commit on `sdlc/<feature>`, push, open GitHub PR (legacy; not default) |
+| 7 | **qa-agent** | Full pytest + edge tests locally; post PR review via GitHub MCP |
 
 ```powershell
 # .env: GITHUB_PERSONAL_ACCESS_TOKEN, GITHUB_OWNER, GITHUB_REPO
@@ -117,6 +111,7 @@ Jira is **never** created unless you pass `-WithJira`. Atlassian MCP must be con
 | `-SkipDb` | Skip database-agent entirely |
 | `-SkipPostgres` | Run database-agent (SQL files) but **do not** apply to RDS |
 | `-SkipDeveloper` | Skip FastAPI implementation |
+| `-SkipGitlab` | Skip gitlab-agent publish (default is ON after developer when GitLab env is set) |
 | `-SkipQa` | Skip qa-agent |
 | `-SkipVerify` | Skip end-of-pipeline import + pytest |
 

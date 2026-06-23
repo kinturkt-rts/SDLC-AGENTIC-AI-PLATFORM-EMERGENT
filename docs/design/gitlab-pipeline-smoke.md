@@ -1,51 +1,43 @@
-# gitlab-pipeline-smoke — Solution Design
+# Team Notice Board — Solution Design
 
 ## 1. Summary
-Team Notice Board API: a FastAPI + PostgreSQL service for creating, filtering, and archiving short-form team notices with API-key-protected writes and anonymous reads. Streamlit UI at `ui/streamlit_app.py` calls FastAPI over HTTP. TBD: `/health` DB-ping vs static; un-archive support; Postgres sslmode in local Docker.
-
-Diagram: `docs/diagrams/generated-diagrams/gitlab-pipeline-smoke.png`
+Team Notice Board API manages announcements and wins with FastAPI/Postgres backend and Streamlit dashboard. API-key auth for write operations, public read access for dashboards/bots. TBD: concurrent load expectations, rate limiting strategy.
 
 ## 2. Stack
-| Layer | Technology | Path |
-|-------|------------|------|
-| UI | Streamlit | `ui/streamlit_app.py` calls FastAPI over HTTP (port 8501) |
-| API | FastAPI + Pydantic v2 | `target-apps/gitlab-pipeline-smoke/app/` |
-| ORM | SQLAlchemy 2.x sync | `app/database.py` dialect guard (Postgres/SQLite) |
-| DB | PostgreSQL (schema `gitlab_pipeline_smoke`) | `psycopg[binary]`; SQLite in-memory for pytest |
-| Auth | API key via `X-API-Key` header (PyJWT-free) | `app/dependencies.py` checks `API_KEY` env var |
-| Config | pydantic-settings + `.env` | `DATABASE_URL`, `POSTGRES_SCHEMA`, `API_KEY`, `PORT` |
+| Layer | Technology | Notes |
+|-------|------------|-------|
+| UI | Streamlit | ui/streamlit_app.py calls FastAPI over HTTP (port 8501) |
+| API | FastAPI | target-apps/gitlab-pipeline-smoke/ with Swagger /docs |
+| Database | PostgreSQL | RDS with gitlab_pipeline_smoke schema |
+| Auth | API key | X-API-Key header validation from env var |
 
 ## 3. Data model
-| Table | Columns | Indexes / constraints |
-|-------|---------|-----------------------|
-| `categories` | `id uuid PK`, `name text NOT NULL UNIQUE`, `description text`, `created_at timestamptz NOT NULL DEFAULT now()` | UNIQUE on `name` |
-| `notices` | `id uuid PK`, `category_id uuid FK→categories.id ON DELETE RESTRICT`, `title text NOT NULL`, `body text NOT NULL`, `author_name text NOT NULL`, `starts_at timestamptz`, `ends_at timestamptz`, `is_archived bool NOT NULL DEFAULT false`, `created_at timestamptz NOT NULL DEFAULT now()`, `updated_at timestamptz NOT NULL DEFAULT now()` | `CREATE INDEX ON notices (is_archived, starts_at DESC)` |
+| Table / collection | Columns (name type PK/FK UNIQUE) | Indexes / constraints |
+|--------------------|----------------------------------|------------------------|
+| categories | id uuid PK, name text UNIQUE, description text, created_at timestamptz | name 1-60 chars, description max 240 |
+| notices | id uuid PK, category_id uuid FK, title text, body text, author_name text, starts_at timestamptz, ends_at timestamptz, is_archived boolean, created_at timestamptz, updated_at timestamptz | title 1-120 chars, body 1-4000 chars, author_name 1-80 chars, ends_at >= starts_at |
 
 ## 4. API surface
 | Method | Path | Request | Response | Notes |
 |--------|------|---------|----------|-------|
-| GET | `/health` | — | `{status, service}` | No auth (FR-1) |
-| GET | `/api/v1/categories` | — | `[{id,name,description,created_at}]` | No auth; sorted by name (FR-9) |
-| GET | `/api/v1/categories/{id}` | — | category obj \| 404 | No auth |
-| POST | `/api/v1/categories` | `{name, description?}` | 201 category | API key; 409 on dup name (FR-9) |
-| PATCH | `/api/v1/categories/{id}` | `{name?, description?}` | 200 category | API key; 409 on name collision |
-| GET | `/api/v1/notices` | `?active_only=true&category_id?&q?&limit=20&offset=0` | `{items,total,limit,offset}` | No auth (FR-2, FR-3, FR-10) |
-| GET | `/api/v1/notices/{id}` | — | notice obj \| 404 | No auth (FR-4) |
-| POST | `/api/v1/notices` | `{title,body,author_name,category_id,starts_at?,ends_at?}` | 201 notice | API key; 404 unknown category; 422 ends_at<starts_at (FR-5) |
-| PATCH | `/api/v1/notices/{id}` | partial notice fields | 200 notice | API key; same validations (FR-6) |
-| POST | `/api/v1/notices/{id}/archive` | — | 204 | API key; idempotent (FR-7) |
+| GET | /health | - | {"status": "ok", "service": "gitlab-pipeline-smoke"} | Public health check |
+| GET | /api/v1/categories | - | List[CategoryResponse] | Public list for UI dropdowns |
+| POST | /api/v1/categories | CategoryCreate | CategoryResponse | Requires X-API-Key |
+| GET | /api/v1/notices | active_only?: bool, q?: str, offset?: int, limit?: int | PaginatedNoticesResponse | Public with filters |
+| POST | /api/v1/notices | NoticeCreate | NoticeResponse | Requires X-API-Key |
+| PATCH | /api/v1/notices/{id} | NoticeUpdate | NoticeResponse | Requires X-API-Key |
+| POST | /api/v1/notices/{id}/archive | - | 204 No Content | Requires X-API-Key, idempotent |
 
 ## 5. Rules
-- **Auth**: `verify_api_key` dependency injected on all POST/PATCH routes; missing/wrong key → 401; key never logged (FR-8, NFR-3, NFR-4).
-- **Active filter**: `is_archived=false AND starts_at <= now() AND (ends_at IS NULL OR ends_at > now())` evaluated in DB with `now()` UTC (FR-2).
-- **Search**: `?q=` applies `ILIKE '%q%'` on `title` and `body`; full-text search deferred to Phase 2 (FR-3).
-- **Timestamps**: `updated_at` bumped in application layer (not DB trigger) for SQLite compatibility (FR-6, NFR-11).
-- **Archive is one-way**: PATCH cannot set `is_archived=false`; only `POST /archive` toggles it to true (NFR-8).
-- **FK guard**: `POST /notices` with unknown `category_id` → 404 before insert (FR-15); `ON DELETE RESTRICT` enforced at DB level.
-- **No DELETE routes**: notices and categories are never physically deleted (NFR-8).
-- **Secrets**: `API_KEY` and `DATABASE_URL` from env only; `.env` in `.gitignore`; `.env.example` ships with placeholder (NFR-4).
+- Auth: X-API-Key header required for POST/PATCH/archive operations, 401 for invalid/missing key
+- Public access: GET /notices and GET /categories require no authentication
+- Active filtering: active_only=true excludes archived, expired (ends_at < now), and future (starts_at > now) notices  
+- Search: q parameter performs case-insensitive partial match on title OR body fields
+- Validation: ends_at >= starts_at, category name uniqueness, field length limits per data model
+- Archival: is_archived=true soft delete, idempotent archive endpoint returns 204
+- Pagination: offset/limit with default limit=20, max limit=100
 
 ## 6. DB delivery
-1. Migration order: `001_schema.sql` (create schema, `categories`, `notices`, index), `002_seed.sql` (seed rows)
-2. Seed (`002_seed.sql`): 3 categories (`General`, `HR`, `Engineering`) with stable UUIDs; 5 notices (1 active, 1 future `starts_at`, 1 expired `ends_at`, 1 archived, 1 active different category) using `ON CONFLICT DO NOTHING` (FR-11)
-3. All tables in schema `gitlab_pipeline_smoke`; set via `SET search_path TO gitlab_pipeline_smoke` at top of each migration file
+1. Migration order: `001_create_categories.sql`, `002_create_notices.sql`
+2. Seed data: 3 categories (General, HR, Engineering), 5 sample notices with mixed states (active, future, expired, archived)
+3. Indexes: category name unique, notice category_id FK with cascade delete restrict

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -106,12 +105,8 @@ async def _call_github_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> di
         raise RuntimeError(f"GitHub MCP {tool_name} failed: {message}") from exc
 
 
-def _github_branch_exists(cfg: dict[str, str], branch: str) -> bool | None:
-    """Check remote branch via GitHub REST (avoids create_branch 422 when branch exists).
-
-    Returns None when the lookup could not complete (flaky DNS/network) so callers can
-    fall back to MCP create_branch instead of failing before MCP runs.
-    """
+def _github_branch_exists(cfg: dict[str, str], branch: str) -> bool:
+    """Check remote branch via GitHub REST (avoids create_branch 422 when branch exists)."""
     token = github_personal_access_token()
     url = (
         f"https://api.github.com/repos/{cfg['owner']}/{cfg['repo']}"
@@ -125,36 +120,20 @@ def _github_branch_exists(cfg: dict[str, str], branch: str) -> bool | None:
             "User-Agent": "sdlc-github-agent",
         },
     )
-    last_url_error: urllib.error.URLError | None = None
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return resp.status == 200
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return False
-            raise RuntimeError(
-                f"GitHub branch lookup failed ({exc.code}): {exc.reason}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            last_url_error = exc
-            if attempt < 2:
-                time.sleep(2**attempt)
-    if last_url_error is not None:
-        reason = getattr(last_url_error, "reason", last_url_error)
-        print(
-            "[github-agent] Branch lookup skipped (DNS/network): "
-            f"{reason}. Proceeding via GitHub MCP create_branch.",
-            flush=True,
-        )
-        return None
-    return False
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise RuntimeError(
+            f"GitHub branch lookup failed ({exc.code}): {exc.reason}"
+        ) from exc
 
 
 async def _ensure_feature_branch(cfg: dict[str, str], branch: str) -> None:
     """Create feature branch from base when missing (legacy server-github does not auto-create)."""
-    exists = _github_branch_exists(cfg, branch)
-    if exists is True:
+    if _github_branch_exists(cfg, branch):
         return
     try:
         await _call_github_mcp_tool(
@@ -175,14 +154,6 @@ async def _ensure_feature_branch(cfg: dict[str, str], branch: str) -> None:
 
 def _batch_files(files: list[dict[str, str]], batch_size: int = _BATCH_SIZE) -> list[list[dict[str, str]]]:
     return [files[i : i + batch_size] for i in range(0, len(files), batch_size)]
-
-
-def publish_commit_message(slug: str) -> str:
-    """Commit/PR title for github-agent publish (same message for every MCP push_files batch)."""
-    custom = os.getenv("GITHUB_PUBLISH_COMMIT_MESSAGE", "").strip()
-    if custom:
-        return custom.replace("{slug}", slug)
-    return f"feat({slug}): SDLC pipeline output"
 
 
 def _pr_body(slug: str, paths: list[str]) -> str:
@@ -224,9 +195,9 @@ async def mcp_publish_feature_async(
 
     batches = _batch_files(files)
     commits: list[str] = []
-    message = publish_commit_message(slug)
     await _ensure_feature_branch(cfg, branch)
-    for batch in batches:
+    for index, batch in enumerate(batches, start=1):
+        message = f"feat({slug}): SDLC pipeline output (batch {index}/{len(batches)})"
         push_result = await _call_github_mcp_tool(
             "push_files",
             {
@@ -245,7 +216,7 @@ async def mcp_publish_feature_async(
         if commit_sha:
             commits.append(str(commit_sha))
 
-    pr_title = publish_commit_message(slug)
+    pr_title = f"feat({slug}): SDLC pipeline output"
     pr_args: dict[str, Any] = {
         "owner": cfg["owner"],
         "repo": cfg["repo"],

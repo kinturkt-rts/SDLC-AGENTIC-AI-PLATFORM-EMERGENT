@@ -26,6 +26,14 @@ def test_scan_detects_streamlit() -> None:
     assert profile["uiPattern"] == "streamlit"
 
 
+def test_scan_ignores_negated_streamlit() -> None:
+    profile = scan_delivery_text(
+        "Pattern B: FastAPI + Postgres. No Streamlit, no JWT. Out of scope: Streamlit/React UI."
+    )
+    assert profile["requiresStreamlit"] is False
+    assert profile["uiRequired"] is False
+
+
 def test_merge_profiles_or_flags() -> None:
     merged = merge_delivery_profiles(
         {"uiRequired": False, "requiresStreamlit": False, "requiresReact": False, "uiPattern": None},
