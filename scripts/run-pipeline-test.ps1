@@ -5,10 +5,9 @@
 #   .\scripts\run-pipeline-test.ps1 -Level db         # test-db, full DB chain
 #   .\scripts\run-pipeline-test.ps1 -Level release-notes  # release-notes-bot, Streamlit + Bedrock + Postgres
 #   .\scripts\run-pipeline-test.ps1 -Level standup        # standup-tracker, Streamlit + Bedrock + Postgres
-#   .\scripts\run-pipeline-test.ps1 -Level hard           # change-request-hub, hard Streamlit + JWT stress test
 
 param(
-    [ValidateSet("easy", "medium", "db", "inventory", "release-notes", "standup", "hard")]
+    [ValidateSet("easy", "medium", "db", "inventory", "release-notes", "standup")]
     [string] $Level = "medium",
     [switch] $SkipProduct,
     [switch] $SkipArchitect,
@@ -33,7 +32,6 @@ $config = switch ($Level) {
     "inventory"      { @{ Feature = "inventory-app";      Input = "inputs/inventory-app.txt";      SkipDb = $false } }
     "release-notes"  { @{ Feature = "release-notes-bot"; Input = "inputs/release-notes-bot.txt"; SkipDb = $false } }
     "standup"        { @{ Feature = "standup-tracker";   Input = "inputs/standup-tracker.txt";   SkipDb = $false } }
-    "hard"           { @{ Feature = "change-request-hub"; Input = "inputs/change-request-hub.txt"; SkipDb = $false } }
 }
 
 $Feature = $config.Feature

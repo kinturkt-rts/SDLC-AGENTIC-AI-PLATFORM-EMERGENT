@@ -1,8 +1,7 @@
-"""QA agent — Strands + Bedrock + pytest + Playwright/Postman MCP + A2A.
+"""QA agent — Strands + Bedrock + scoped test tools + A2A.
 
-Runs developer baseline pytest suites, Postman collection runs, optional Playwright
-system checks, edge-case tests, and emits a structured handoff for security-agent /
-developer-agent. GitHub publish/review is handled by github-agent.
+Runs developer baseline pytest suites under target-apps/<service>/, reports failures,
+adds edge-case tests, and emits a structured handoff for devops-agent / developer-agent.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ _TARGET_APPS = _REPO_ROOT / "target-apps"
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
-from _shared.mcp_clients import MCP_FACTORIES, postman_api_key
+from _shared.mcp_clients import MCP_FACTORIES, github_personal_access_token
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     enrich_handoff_context,
@@ -48,59 +47,52 @@ AGENT_NAME = "qa-agent"
 A2A_PORT = 9104
 
 DEFAULT_PIPELINE_TASK = """\
-Run SDLC-style quality assurance on targetApp using developer handoff artifacts in Context.
+Run quality assurance on targetApp using developer handoff artifacts in Context.
 
-**Phase 1 — test planning (requirements → test strategy)**
-1a. qa_list_tree(targetApp) — inventory app/, tests/, OpenAPI/spec files.
-1b. qa_read_file(prdPath) when set — extract acceptance criteria and NFRs.
+**Step 1 — orient (read before running tests)**
+1a. qa_list_tree(targetApp) — inventory app/ and tests/; note existing developer baseline files
+    (conftest.py, test_health.py, test_*.py). **Never delete** developer baseline tests.
+1b. qa_read_file(prdPath) when set — acceptance criteria and NFRs to map coverage gaps.
 1c. qa_read_file(designDocPath) — §4 API surface (every route), §5 auth/error rules.
-1d. qa_read_file(developerHandoffPath) when set — testCommand, runCommand, writtenFiles.
-1e. Write TEST_PLAN.md mapping criteria → test types (unit, API integration, system/E2E).
-    Prioritize: P0 smoke routes, P1 auth/validation edges, P2 pagination/bounds.
+1d. If developerHandoffPath or handoff_json fields are in Context, use testCommand from there.
 
-**Phase 2 — unit & component tests (pytest)**
-2a. qa_run_pytest(targetApp) — developer baseline (default: pytest tests/ -q).
-2b. On failure: classify each as app_bug | test_bug | env_issue; fix test_bug only under tests/.
-2c. Re-run until pass or only app_bug remain (document app_bug — do not edit app/).
+**Step 2 — run developer baseline suite**
+2a. qa_run_pytest(targetApp) — runs the baseline command (default: pytest tests/ -q).
+2b. If exit code ≠ 0, proceed to Step 3 (failure handling). If all pass, proceed to Step 4.
 
-**Phase 3 — API integration (Postman MCP, when available)**
-3a. If Postman MCP tools are loaded and apiBaseUrl is reachable:
-    - searchPostmanElements or getCollections for an existing collection for targetApp.
-    - If none: createCollection from design §4 routes (or sync from OpenAPI if present).
-    - runCollection against apiBaseUrl with test API keys from conftest (never real secrets).
-3b. If Postman MCP unavailable or apiBaseUrl not running: note skipped in report.
+**Step 3 — failure handling (when tests fail)**
+3a. Parse failed test names and assertion messages from qa_run_pytest output.
+3b. Classify each failure:
+    - **app_bug** — implementation wrong vs design §4/§5 or PRD acceptance criteria.
+    - **test_bug** — test expectation wrong, fixture issue, or stale test after intentional API change.
+    - **env_issue** — missing dependency, wrong Python path, import error before tests run.
+3c. For **test_bug** only: fix tests under tests/ via qa_write_file (never change app/ for app_bug).
+3d. For **app_bug**: document in the report with route, expected vs actual, and file hint for developer-agent.
+    Do NOT rewrite application code — hand off to developer-agent.
+3e. Re-run qa_run_pytest after any test fixes you made.
 
-**Phase 4 — system / E2E (Playwright MCP, when UI exists)**
-4a. If design/README mentions Streamlit, frontend URL, or uiBaseUrl in Context:
-    - Use Playwright MCP (browser_navigate, browser_snapshot, browser_click, etc.).
-    - Walk critical user journeys from PRD acceptance criteria.
-4b. API-only services: skip Playwright with explicit "API-only — E2E N/A".
+**Step 4 — gap analysis and new tests (only when baseline passes or after test_bug fixes)**
+4a. Compare PRD acceptance criteria + design §4/§5 against existing tests.
+4b. Add **minimal** edge-case tests the developer skipped (auth 401/403, 404, 422, pagination bounds).
+4c. Prefer new file tests/test_qa_<domain>.py — do not bloat or duplicate developer baseline files.
+4d. Re-run qa_run_pytest; optionally qa_run_coverage(targetApp) when pytest-cov is installed.
 
-**Phase 5 — gap closure & coverage**
-5a. Compare PRD + design §4/§5 against all executed tests.
-5b. Add minimal edge-case pytest in tests/test_qa_<domain>.py (auth 401/403, 404, 422).
-5c. qa_run_coverage(targetApp) when pytest-cov is installed; note untested routes.
-
-**Phase 6 — report and handoff (LAST)**
+**Step 5 — report and handoff (LAST)**
 Reply with exactly these sections in order:
 1. **status** — pass | fail
-2. **test_plan** — path to TEST_PLAN.md and priority summary
-3. **baseline_summary** — pytest: run, passed, failed, exit code
-4. **postman_summary** — collection run result or skipped reason
-5. **playwright_summary** — E2E result or skipped reason
-6. **failed_tests** — list with classification and one-line reason each
-7. **coverage_gaps** — acceptance criteria or routes still untested
-8. **new_tests_written** — paths under tests/ or QA artifacts
-9. **recommendations** — ordered fixes for developer-agent
-10. **commands** — reproduce: pytest, coverage, runCommand, Postman/Playwright notes
-11. **handoff_json** — fenced ```json with keys:
-    targetApp, status, testsRun, testsPassed, testsFailed, failedTests, newTestsWritten,
-    testCommand, coverageCommand, postmanSummary, playwrightSummary, recommendations,
-    jiraKey (or null).
+2. **baseline_summary** — tests run, passed, failed, exit code
+3. **failed_tests** — list with classification (app_bug | test_bug | env_issue) and one-line reason each
+4. **coverage_gaps** — acceptance criteria or routes still untested (bullets)
+5. **new_tests_written** — paths added or modified under tests/
+6. **recommendations** — ordered fixes for developer-agent if app_bug failures remain
+7. **commands** — exact shell commands to reproduce (test, verbose, stop-on-first, coverage)
+8. **handoff_json** — fenced ```json block with keys:
+   targetApp, status, testsRun, testsPassed, testsFailed, failedTests, newTestsWritten,
+   testCommand, coverageCommand, recommendations, jiraKey (or null).
+   This block is consumed by devops-agent and orchestrator-agent.
 
-Do not write outside target-apps/<service>/tests/, TEST_PLAN.md, or QA_REPORT.md.
-Do not modify app/ unless the user task explicitly says to fix app bugs.
-GitHub/GitLab PR actions are owned by github-agent — do not post PR reviews.
+Do not write outside target-apps/<service>/tests/ or QA_REPORT.md.
+Do not modify app/ source unless the user task explicitly says to fix app bugs.
 """
 
 _READ_PREFIXES = (
@@ -115,94 +107,91 @@ _last_pytest_result: dict[str, Any] | None = None
 
 QA_SYS_PROMPT = """\
 You are the QA Agent for the Autonomous SDLC platform. You run **after developer-agent**
-as the sixth pipeline step: product → architect → web-crawler → database → developer → **YOU**
-→ security-agent.
+as the sixth pipeline step: product → architect → web-crawler → database → developer → **YOU**.
 
-You behave like a human QA engineer across SDLC test phases: plan from requirements,
-execute unit/API/system tests, analyze coverage gaps, and produce actionable reports.
-You do NOT publish to GitHub or post PR reviews (github-agent owns that).
+Your job is to **verify** working backend APIs under `target-apps/<service>/` by running pytest,
+reporting failures clearly, and adding **minimal** edge-case tests the developer did not cover.
+You do NOT redesign architecture or rewrite application code unless fixing a test-only bug.
 
-## Test phases (execute in order)
+## MVP scope (current platform default)
 
-| Phase | Activity | Primary tools |
-|-------|----------|---------------|
-| 1 Planning | Map PRD/design to test cases; write TEST_PLAN.md | qa_read_file, qa_write_file |
-| 2 Unit/component | Developer baseline + edge pytest | qa_run_pytest, qa_run_coverage |
-| 3 API integration | Postman collection create/run | Postman MCP (runCollection, createCollection*) |
-| 4 System/E2E | Browser journeys when UI exists | Playwright MCP (browser_*) |
-| 5 Report | QA_REPORT.md + handoff_json | qa_write_file |
+- **In scope:** API pytest via FastAPI `TestClient` under `target-apps/<service>/tests/`.
+- **Keep developer baseline:** `conftest.py`, `test_health.py`, `test_projects.py`, `test_tasks.py`
+  (or equivalent) are **required** — run them, extend them only when fixing test_bug, never delete.
+- **Out of scope (Phase 2):** browser/UI tests, load testing, live AWS/Bedrock integration in CI.
 
-## Scope
-
-- **In scope:** pytest (FastAPI TestClient), Postman collection runs, Playwright UI smoke,
-  TEST_PLAN.md, QA_REPORT.md, structured handoff.
-- **Keep developer baseline:** conftest.py, test_health.py, route smoke tests — never delete.
-- **Out of scope:** GitHub/GitLab PR actions, load/perf testing, live AWS integration in CI.
-
-## Inputs — read ALL that are present before testing
+## Inputs — read ALL that are present before running tests
 
 | Context key | Read how | What it contains |
 |-------------|----------|-----------------|
-| `targetApp` | Context JSON | Service folder under target-apps/ |
-| `testCommand` | Context / developer handoff | pytest command |
-| `runCommand` | Context | uvicorn/streamlit start (for live API/UI checks) |
-| `apiBaseUrl` | Context (default http://localhost:8000) | Postman collection target |
-| `uiBaseUrl` | Context when set | Playwright navigation base |
-| `prdPath` | qa_read_file | Acceptance criteria, NFRs |
-| `designDocPath` | qa_read_file | §4 routes, §5 auth/error rules |
-| `developerHandoffPath` | qa_read_file | Developer handoff JSON |
-| `postmanWorkspaceId` | Context when set | Prefer this workspace for collections |
+| `targetApp` | Context JSON | Service folder name under target-apps/ |
+| `testCommand` | Context JSON / developer handoff | e.g. `pytest tests/ -q` from service dir |
+| `runCommand` | Context JSON | uvicorn start command (smoke reference only) |
+| `prdPath` | `qa_read_file` | Acceptance criteria, NFRs |
+| `designDocPath` | `qa_read_file` | §4 routes, §5 auth/error rules |
+| `developerHandoffPath` | `qa_read_file` | Developer handoff JSON or summary |
+| `writtenFiles` | Context JSON | Files developer created — orient coverage |
 
-## Built-in tools
+## Tools — use in this order
 
 | Tool | Purpose |
 |------|---------|
-| qa_list_tree | Inventory target-apps/<service>/ |
-| qa_read_file | Read PRD, design, tests, app code |
-| qa_run_pytest | Execute pytest suite |
-| qa_run_coverage | Coverage when pytest-cov installed |
-| qa_write_file | Write tests/, TEST_PLAN.md, QA_REPORT.md only |
+| `qa_list_tree` | List files under target-apps/<service>/ |
+| `qa_read_file` | Read PRD, design, tests, app code (read-only) |
+| `qa_run_pytest` | Execute baseline suite; returns exit code + failure details |
+| `qa_run_coverage` | Optional coverage report when pytest-cov installed |
+| `qa_write_file` | Write **only** under `tests/` or `QA_REPORT.md` |
 
-## Postman MCP (when loaded)
+## Test commands (document these in every report)
 
-Use for API integration testing beyond in-process TestClient:
-- `searchPostmanElements` / `getCollections` — find existing collection
-- `createCollection` + `createCollectionRequest` — build from design §4 if missing
-- `createEnvironment` — variables: baseUrl, apiKey (use test-key, never real secrets)
-- `runCollection` — execute against apiBaseUrl; capture pass/fail per request
+From repo root (PowerShell or bash):
 
-Skip Postman phase gracefully when MCP unavailable or API not reachable.
+```bash
+cd target-apps/<service>
+pytest tests/ -q                    # baseline (developer handoff default)
+pytest tests/ -v                    # verbose — see each test name
+pytest tests/ --tb=short            # short tracebacks on failure
+pytest tests/ -x                    # stop on first failure (debug)
+pytest tests/ -k "auth"             # run tests matching keyword
+pytest tests/ --cov=app --cov-report=term-missing   # coverage (if pytest-cov installed)
+```
 
-## Playwright MCP (when loaded)
+Windows one-liner from repo root:
+`cd target-apps\\<service>; pytest tests/ -q`
 
-Use for system/E2E when PRD/design mentions UI, Streamlit, or uiBaseUrl is set:
-- `browser_navigate` → `browser_snapshot` → interact (click, type, fill_form)
-- Verify acceptance-criteria journeys; capture console errors via browser_console_messages
-- Close browser when done (browser_close)
+## When tests fail — mandatory workflow
 
-Skip Playwright for API-only FastAPI services.
+1. **Run** `qa_run_pytest` and capture full output.
+2. **Classify** each failure:
+   - `app_bug` — handler returns wrong status/body vs design §4; auth missing; validation wrong.
+   - `test_bug` — wrong header in test, stale assertion, fixture not resetting store.
+   - `env_issue` — ModuleNotFoundError, missing requirements.txt install, wrong cwd.
+3. **Act by classification:**
+   - `test_bug` → fix via `qa_write_file` under `tests/` only, then re-run.
+   - `app_bug` → document route, expected, actual; add `recommendations` for developer-agent; **do not edit app/**.
+   - `env_issue` → document missing step (e.g. `pip install -r requirements.txt`); set status `fail`.
+4. **Re-run** baseline after any test file changes until pass or only app_bug remain.
+5. If only `app_bug` remain: status = `fail`, hand off to developer-agent with actionable list.
 
-## Failure handling (pytest)
+## When tests pass — gap analysis
 
-Classify: app_bug | test_bug | env_issue.
-- test_bug → fix under tests/ only, re-run
-- app_bug → document + recommend to developer-agent; never edit app/
-- env_issue → document setup steps; status fail
+- Map every design §4 route to at least one test (developer may have done this — verify).
+- Add edge cases developer skipped: empty name 422, wrong API key 403, pagination limit max, 404 paths.
+- Prefer `tests/test_qa_<area>.py` for **your** additions — keep developer files stable.
+- One behavior per test; AAA pattern; no conditional asserts.
 
 ## Developer vs QA ownership
 
 | Owner | Responsibility |
 |-------|----------------|
-| developer-agent | Baseline tests/ per §4 routes |
-| You (qa-agent) | Plan, run all test phases, edge cases, reports, handoff |
-| github-agent | Publish branch/PR — not your job |
-| security-agent | SAST/secrets scan — runs after you |
+| **developer-agent** | Baseline `tests/` — smoke per §4 route; suite must pass at handoff |
+| **You (qa-agent)** | Run suite, report failures, add edge cases, optional coverage, QA_REPORT.md |
 
 ## Security guardrails
 
-- Never hardcode real API keys, passwords, or tokens in tests or Postman env — use `test-key` / conftest fixtures.
+- Never hardcode real API keys, passwords, or tokens in tests — use `test-key` / fixtures like conftest.
 - Never create or modify `.env` — tests set env via conftest or monkeypatch.
-- Write ONLY under `target-apps/<service>/tests/`, TEST_PLAN.md, and `QA_REPORT.md` via `qa_write_file`.
+- Write ONLY under `target-apps/<service>/tests/` and `QA_REPORT.md` via `qa_write_file`.
 - Read `app/` via `qa_read_file` to diagnose failures — do not modify app/ unless task overrides.
 
 ## GitHub PR review (when devops-agent opened a PR)
@@ -221,7 +210,8 @@ You do not need to call GitLab MCP tools manually for that case.
 
 ## Response format
 
-Always end with **handoff_json** (fenced ```json) for orchestrator and downstream agents.
+Always end with **handoff_json** (fenced ```json) for orchestrator and devops-agent.
+Keep prose concise; put failure details in structured `failedTests` array.
 """
 
 
@@ -268,7 +258,7 @@ def _allowed_write_path(file_path: Path, service: str) -> bool:
         return False
     rel_to_service = rel.relative_to(root)
     parts = rel_to_service.parts
-    if rel_to_service.as_posix() in ("QA_REPORT.md", "TEST_PLAN.md"):
+    if rel_to_service.as_posix() == "QA_REPORT.md":
         return True
     if parts and parts[0] == "tests":
         return True
@@ -375,7 +365,7 @@ def qa_read_file(path: str) -> str:
 
 @tool
 def qa_write_file(path: str, content: str) -> str:
-    """Write a file under target-apps/<service>/tests/, TEST_PLAN.md, or QA_REPORT.md only."""
+    """Write a file under target-apps/<service>/tests/ or QA_REPORT.md only."""
     try:
         file_path = _resolve_repo_path(path, write=True)
     except ValueError as exc:
@@ -390,8 +380,8 @@ def qa_write_file(path: str, content: str) -> str:
 
     if not service or not _allowed_write_path(file_path, service):
         return (
-            "Error: writes only allowed under target-apps/<service>/tests/, "
-            "TEST_PLAN.md, or QA_REPORT.md"
+            "Error: writes only allowed under target-apps/<service>/tests/ "
+            "or target-apps/<service>/QA_REPORT.md"
         )
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -509,41 +499,22 @@ def _qa_model() -> BedrockModel:
     )
 
 
-def _qa_mcp_enabled(name: str) -> bool:
-    """Return True when an optional QA MCP server should be loaded."""
-    env_key = f"QA_ENABLE_{name.upper()}_MCP"
-    if os.getenv(env_key, "1").strip().lower() in {"0", "false", "no"}:
-        return False
-    if name == "postman":
-        try:
-            postman_api_key()
-        except ValueError:
-            return False
-    return name in MCP_FACTORIES
-
-
-def _qa_mcp_servers() -> list[str]:
-    """Resolve optional MCP servers for QA (Playwright, Postman)."""
-    return [name for name in ("playwright", "postman") if _qa_mcp_enabled(name)]
-
-
-def _load_optional_mcp_tools(mcp_names: list[str]) -> tuple[list[Any], ExitStack]:
-    """Load MCP tools; skip servers that fail to start (fail-open)."""
+def _load_mcp_tools(mcp_names: list[str]) -> tuple[list[Any], ExitStack]:
     stack: ExitStack = ExitStack()
     tools: list[Any] = []
     for name in mcp_names:
-        if name not in MCP_FACTORIES:
-            print(f"[qa-agent] Unknown MCP: {name}", file=sys.stderr)
-            continue
-        try:
-            client = MCP_FACTORIES[name]()
-            stack.enter_context(client)
-            loaded = client.list_tools_sync()
-            tools.extend(loaded)
-            print(f"[qa-agent] Loaded MCP: {name} ({len(loaded)} tools)", file=sys.stderr)
-        except Exception as exc:
-            print(f"[qa-agent] MCP {name} unavailable: {exc}", file=sys.stderr)
+        client = MCP_FACTORIES[name]()
+        stack.enter_context(client)
+        tools.extend(client.list_tools_sync())
     return tools, stack
+
+
+def _github_mcp_enabled() -> bool:
+    try:
+        github_personal_access_token()
+        return True
+    except ValueError:
+        return False
 
 
 def _build_agent(*, extra_tools: list[Any] | None = None) -> Agent:
@@ -560,8 +531,8 @@ def _build_agent(*, extra_tools: list[Any] | None = None) -> Agent:
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
         description=(
-            "SDLC QA: test planning, pytest, Postman API runs, Playwright E2E, "
-            "coverage gaps, and structured handoff."
+            "Runs pytest on target-apps services, reports failures, adds edge-case API tests, "
+            "and produces structured QA handoff for the SDLC pipeline."
         ),
         model=_qa_model(),
         system_prompt=QA_SYS_PROMPT,
@@ -697,13 +668,10 @@ def _enrich_qa_context(ctx: dict[str, Any]) -> None:
     ctx.setdefault("targetAppDir", service_dir.relative_to(_REPO_ROOT).as_posix())
     ctx.setdefault("testCommand", _default_test_command(app))
     ctx.setdefault("coverageCommand", _default_coverage_command(app))
-    ctx.setdefault("apiBaseUrl", os.getenv("QA_API_BASE_URL", "http://localhost:8000"))
     ctx.setdefault(
         "runCommand",
         f"cd target-apps/{app} && uvicorn app.main:app --reload --port 8000",
     )
-    if os.getenv("POSTMAN_WORKSPACE_ID", "").strip():
-        ctx.setdefault("postmanWorkspaceId", os.getenv("POSTMAN_WORKSPACE_ID", "").strip())
 
     if not ctx.get("developerHandoffPath"):
         for candidate in (
@@ -769,9 +737,9 @@ def run_task(
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    mcp_names = _qa_mcp_servers()
-    if mcp_names:
-        mcp_tools, stack = _load_optional_mcp_tools(mcp_names)
+    use_github = _github_mcp_enabled() and ctx.get("pullRequestNumber") and ctx.get("githubOwner")
+    if use_github:
+        mcp_tools, stack = _load_mcp_tools(["github"])
         agent = _build_agent(extra_tools=mcp_tools)
         with stack:
             summary = str(agent(_user_message(task, ctx)))
@@ -815,10 +783,10 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
             id="run_qa_suite",
             name="run_qa_suite",
             description=(
-                "SDLC QA: test plan, pytest, Postman API integration, Playwright E2E, "
-                "and structured handoff."
+                "Run pytest on a target-apps service, report failures with classification, "
+                "add edge-case API tests, and emit structured QA handoff."
             ),
-            tags=["qa", "pytest", "testing", "api", "postman", "playwright"],
+            tags=["qa", "pytest", "testing", "api"],
         )
     ]
     agent = _build_agent()
@@ -879,11 +847,6 @@ def main() -> None:
     print(f"[qa-agent] Target app  : {ctx['targetAppDir']}", file=sys.stderr)
     print(f"[qa-agent] Design doc  : {resolve_design_doc_path(ctx)}", file=sys.stderr)
     print(f"[qa-agent] Test command: {ctx.get('testCommand')}", file=sys.stderr)
-    mcp_servers = _qa_mcp_servers()
-    print(
-        f"[qa-agent] MCP servers : {', '.join(mcp_servers) if mcp_servers else '(none — pytest only)'}",
-        file=sys.stderr,
-    )
     print("[qa-agent] Running...", file=sys.stderr)
 
     result, written = run_task(

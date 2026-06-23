@@ -9,7 +9,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 from mcp import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
 from strands.tools.mcp import MCPClient
 
 AWS_DIAGRAM_MCP_VERSION = os.getenv("AWS_DIAGRAM_MCP_VERSION", "1.0.23")
@@ -27,12 +26,6 @@ MONGODB_MCP_COMMAND = os.getenv("MONGODB_MCP_COMMAND", "npx")
 MONGODB_MCP_ARGS = os.getenv("MONGODB_MCP_ARGS", "-y mongodb-mcp-server")
 FIRECRAWL_MCP_COMMAND = os.getenv("FIRECRAWL_MCP_COMMAND", "npx")
 FIRECRAWL_MCP_ARGS = os.getenv("FIRECRAWL_MCP_ARGS", "-y firecrawl-mcp")
-PLAYWRIGHT_MCP_COMMAND = os.getenv("PLAYWRIGHT_MCP_COMMAND", "npx")
-PLAYWRIGHT_MCP_ARGS = os.getenv(
-    "PLAYWRIGHT_MCP_ARGS",
-    "-y @playwright/mcp@latest --headless --isolated",
-)
-POSTMAN_MCP_URL = os.getenv("POSTMAN_MCP_URL", "https://mcp.postman.com/mcp")
 
 
 def firecrawl_api_key() -> str:
@@ -303,53 +296,6 @@ def mongodb_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
 
     return MCPClient(transport, prefix="mongodb", startup_timeout=120)
 
-
-def postman_api_key() -> str:
-    """Resolve Postman API key from env (.env supports POSTMAN_API_KEY)."""
-    for key in ("POSTMAN_API_KEY", "Postman_API_Key"):
-        value = os.getenv(key, "").strip()
-        if value:
-            return value
-    raise ValueError(
-        "POSTMAN_API_KEY is not set. Add it to .env for Postman MCP in agents."
-    )
-
-
-def playwright_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
-    """Playwright MCP Server — browser automation for system/E2E checks."""
-
-    workdir = str(cwd) if cwd else os.getcwd()
-    args = shlex.split(PLAYWRIGHT_MCP_ARGS)
-    if not args:
-        raise ValueError("PLAYWRIGHT_MCP_ARGS must provide at least one arg")
-
-    def transport() -> object:
-        return stdio_client(
-            StdioServerParameters(
-                command=PLAYWRIGHT_MCP_COMMAND,
-                args=args,
-                cwd=workdir,
-                env={**os.environ},
-            )
-        )
-
-    return MCPClient(transport, prefix="playwright", startup_timeout=180)
-
-
-def postman_mcp_client() -> MCPClient:
-    """Postman MCP Server — collections, environments, runCollection (HTTP transport)."""
-
-    api_key = postman_api_key()
-
-    def transport() -> object:
-        return streamablehttp_client(
-            POSTMAN_MCP_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-
-    return MCPClient(transport, prefix="postman", startup_timeout=90)
-
-
 MCP_FACTORIES: dict[str, Callable[[], MCPClient]] = {
     "atlassian": atlassian_mcp_client,
     "github": github_mcp_client,
@@ -357,6 +303,4 @@ MCP_FACTORIES: dict[str, Callable[[], MCPClient]] = {
     "mongodb": mongodb_mcp_client,
     "supabase": supabase_mcp_client,
     "firecrawl": firecrawl_mcp_client,
-    "playwright": playwright_mcp_client,
-    "postman": postman_mcp_client,
 }

@@ -1,0 +1,21 @@
+digraph "Desk Booking MVP" {
+	graph [fontcolor="#2D3436" fontname="Sans-Serif" fontsize=15 label="Desk Booking MVP" nodesep=0.60 pad=2.0 rankdir=LR ranksep=0.75 splines=ortho]
+	node [fixedsize=true fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13 height=1.4 imagescale=true labelloc=b shape=box style=rounded width=1.4]
+	edge [color="#7B8894"]
+	subgraph cluster_Users {
+		graph [bgcolor="#E5F5FD" fontname="Sans-Serif" fontsize=12 label=Users labeljust=l pencolor="#AEB6BE" rankdir=LR shape=box style=rounded]
+		d31ff146e283431187015cfb3c96a8d0 [label=Employees height=1.9 image="C:\Users\RahulNayak\AppData\Local\uv\cache\archive-v0\iLfTrlTIWY5b5vXr\Lib\site-packages\resources/aws/general\users.png" shape=none]
+	}
+	subgraph cluster_Application {
+		graph [bgcolor="#E5F5FD" fontname="Sans-Serif" fontsize=12 label=Application labeljust=l pencolor="#AEB6BE" rankdir=LR shape=box style=rounded]
+		"7ee545b6ff234a218ed9d4ea3807d9a5" [label="Load Balancer" height=1.9 image="C:\Users\RahulNayak\AppData\Local\uv\cache\archive-v0\iLfTrlTIWY5b5vXr\Lib\site-packages\resources/aws/network\elastic-load-balancing.png" shape=none]
+		bb391ba2c0fb40b49367898245cc0179 [label="FastAPI App" height=1.9 image="C:\Users\RahulNayak\AppData\Local\uv\cache\archive-v0\iLfTrlTIWY5b5vXr\Lib\site-packages\resources/aws/compute\ec2.png" shape=none]
+	}
+	subgraph cluster_Data {
+		graph [bgcolor="#E5F5FD" fontname="Sans-Serif" fontsize=12 label=Data labeljust=l pencolor="#AEB6BE" rankdir=LR shape=box style=rounded]
+		"0f001cf7d3c646ea88683c43b53359cc" [label=PostgreSQL height=1.9 image="C:\Users\RahulNayak\AppData\Local\uv\cache\archive-v0\iLfTrlTIWY5b5vXr\Lib\site-packages\resources/aws/database\rds.png" shape=none]
+	}
+	d31ff146e283431187015cfb3c96a8d0 -> "7ee545b6ff234a218ed9d4ea3807d9a5" [dir=forward fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13]
+	"7ee545b6ff234a218ed9d4ea3807d9a5" -> bb391ba2c0fb40b49367898245cc0179 [dir=forward fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13]
+	bb391ba2c0fb40b49367898245cc0179 -> "0f001cf7d3c646ea88683c43b53359cc" [dir=forward fontcolor="#2D3436" fontname="Sans-Serif" fontsize=13]
+}
