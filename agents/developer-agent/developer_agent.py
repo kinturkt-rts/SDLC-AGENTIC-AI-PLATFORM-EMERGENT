@@ -1,4 +1,4 @@
-"""Developer agent - Strands + Bedrock (Claude Opus) + scoped repo file tools
+"""Developer agent - Strands + Bedrock (Claude) + scoped repo file tools
 
 Generates code under target-apps/<service>/ and writes
 agents/pipeline/<app>.developer-handoff.json for qa-agent / devops-agent.
@@ -1849,10 +1849,7 @@ class _DeveloperCallbackHandler:
 
 
 def _coding_model_id() -> str:
-    return os.getenv(
-        "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-opus-4-6-v1"),
-    )
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 
 def _coding_model() -> BedrockModel:
@@ -1876,15 +1873,7 @@ def _coding_model() -> BedrockModel:
             "thinking": {"type": "enabled", "budget_tokens": _thinking_budget_tokens()},
         }
 
-    # ── Sonnet 4.6 upgrade — uncomment this block (and delete the one above) when MODEL_ID/CODING_MODEL_ID
-    # in .env are switched to a Sonnet 4.5+ inference profile. It makes the thinking type env-driven so you
-    # can flip between "enabled"/"adaptive"/"disabled" via THINKING_TYPE without touching code again.
-    #
-    # if _thinking_enabled():
-    #     thinking_type = os.getenv("THINKING_TYPE", "adaptive")  # "enabled" | "adaptive" | "disabled"
-    #     model_kwargs["additional_request_fields"] = {
-    #         "thinking": {"type": thinking_type, "budget_tokens": _thinking_budget_tokens()},
-    #     }
+    # Sonnet 4.6 uses THINKING_TYPE=adaptive when DEVELOPER_AGENT_THINKING=1 (see .env.example).
     return BedrockModel(**model_kwargs)
 
 

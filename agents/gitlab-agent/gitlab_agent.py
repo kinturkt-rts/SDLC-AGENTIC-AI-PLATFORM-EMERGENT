@@ -1,6 +1,6 @@
-"""GitLab agent — publishes SDLC artifacts via jmrplens MCP after developer-agent.
+"""GitLab agent — publishes SDLC artifacts via  MCP after developer-agent.
 
-Deterministic gitlab_commit_create via jmrplens/gitlab-mcp-server (same binary as Cursor).
+Deterministic gitlab_commit_create via gitlab-mcp-server.
 Each target app uses branch sdlc/<app>; republishs update files on that branch.
 MR to main is opt-in (--open-mr).
 """
@@ -20,13 +20,14 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.github_publish import collect_feature_artifact_paths, slugify_feature
-from _shared.gitlab_mcp_ops import (
+from _shared.gitlab_mcp_actions import (
     create_mr_note,
+    gitlab_repo_config,
     list_branch_files,
     list_mr_notes,
     list_projects,
+    publish_feature,
 )
-from _shared.gitlab_mcp_publish import gitlab_repo_config, publish_feature
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     enrich_handoff_context,

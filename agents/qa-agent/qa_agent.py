@@ -663,7 +663,7 @@ def _post_gitlab_mr_qa_comment(
     if iid is None or not project:
         return None
     try:
-        from _shared.gitlab_mcp_ops import create_mr_note
+        from _shared.gitlab_mcp_actions import create_mr_note
 
         body = _format_gitlab_qa_mr_comment(
             pytest_snapshot,

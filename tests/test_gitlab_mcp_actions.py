@@ -1,4 +1,4 @@
-"""Unit tests for GitLab env helpers (no network)."""
+"""Tests for GitLab MCP actions (no network)."""
 
 from __future__ import annotations
 
@@ -9,12 +9,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
 
-from _shared.gitlab_api import (  # noqa: E402
+from _shared.gitlab_mcp_actions import (  # noqa: E402
+    _mcp_error_message,
+    create_mr_note,
     gitlab_api_url,
     gitlab_base_branch,
     gitlab_personal_access_token,
     gitlab_project_path,
 )
+from _shared.gitlab_mcp_client import GitLabMcpError  # noqa: E402
+
+
+def test_create_mr_note_requires_body() -> None:
+    result = create_mr_note(mr_iid=1, body="   ")
+    assert result["ok"] is False
+    assert "body" in result["error"].lower()
 
 
 def test_gitlab_project_path_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,3 +52,9 @@ def test_gitlab_personal_access_token_missing_raises(monkeypatch: pytest.MonkeyP
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(ValueError, match="GITLAB_PERSONAL_ACCESS_TOKEN"):
         gitlab_personal_access_token()
+
+
+def test_mcp_error_message_unwraps_nested_exception_group() -> None:
+    inner = GitLabMcpError("Token is expired")
+    wrapped = BaseExceptionGroup("task group", [BaseExceptionGroup("inner", [inner])])
+    assert _mcp_error_message(wrapped) == "Token is expired"

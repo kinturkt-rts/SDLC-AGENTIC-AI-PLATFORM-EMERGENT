@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-"""Cursor/IDE stdio entrypoint for jmrplens/gitlab-mcp-server (GitLab Free).
-
-Loads repo .env, maps GITLAB_PERSONAL_ACCESS_TOKEN → GITLAB_TOKEN, and runs the
-jmrplens binary from bin/ (see scripts/install-jmrplens-gitlab-mcp.ps1).
-"""
-
 from __future__ import annotations
 
 import os
@@ -15,7 +8,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
-from _shared.env import load_repo_env  # noqa: E402
+from _shared.env import load_repo_env
 
 load_repo_env()
 

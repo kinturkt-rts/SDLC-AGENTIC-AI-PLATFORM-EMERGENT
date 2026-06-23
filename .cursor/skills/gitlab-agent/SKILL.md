@@ -18,9 +18,10 @@ Uses **jmrplens/gitlab-mcp-server** in Cursor (GitLab Free via REST API v4).
 
 | Item | Location |
 |------|----------|
-| CLI publish | `agents/gitlab-agent/gitlab_agent.py` → jmrplens MCP (`gitlab_commit_create`) |
-| MCP (Cursor) | `scripts/gitlab_jmrplens_stdio.py` → `bin/gitlab-mcp-server.exe` |
-| Env config | `agents/_shared/gitlab_api.py` |
+| CLI publish | `agents/gitlab-agent/gitlab_agent.py` → `gitlab_mcp_actions.publish_feature` |
+| MCP client | `agents/_shared/gitlab_mcp_client.py` |
+| MCP server | `scripts/gitlab_mcp_server.py` → `bin/gitlab-mcp-server.exe` |
+| MCP actions | `agents/_shared/gitlab_mcp_actions.py` (env, publish, MR notes) |
 | A2A port | 9110 |
 | Handoff | `agents/pipeline/<app>.gitlab-handoff.json` |
 

@@ -27,7 +27,7 @@ def _server_params() -> StdioServerParameters:
     python = os.environ.get("GITLAB_MCP_PYTHON", sys.executable)
     return StdioServerParameters(
         command=python,
-        args=[str(_REPO_ROOT / "scripts" / "gitlab_jmrplens_stdio.py")],
+        args=[str(_REPO_ROOT / "scripts" / "gitlab_mcp_server.py")],
         env=_mcp_env(),
     )
 

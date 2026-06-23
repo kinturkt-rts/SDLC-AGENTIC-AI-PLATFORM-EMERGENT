@@ -13,7 +13,7 @@ _AGENT_PATH = _REPO / "agents" / "gitlab-agent" / "gitlab_agent.py"
 
 def test_publish_branch_name_is_stable_per_app() -> None:
     sys.path.insert(0, str(_REPO / "agents"))
-    from _shared.gitlab_mcp_publish import publish_branch_name
+    from _shared.gitlab_mcp_actions import publish_branch_name
 
     assert publish_branch_name("training-compliance") == "sdlc/training-compliance"
     assert publish_branch_name("jwt-rag-streamlit") == "sdlc/jwt-rag-streamlit"
@@ -22,7 +22,7 @@ def test_publish_branch_name_is_stable_per_app() -> None:
 
 def test_branch_tree_url_encodes_slashes() -> None:
     sys.path.insert(0, str(_REPO / "agents"))
-    from _shared.gitlab_mcp_publish import _branch_tree_url
+    from _shared.gitlab_mcp_actions import _branch_tree_url
 
     url = _branch_tree_url(
         "https://code.junodev.net/group/project",
@@ -33,7 +33,7 @@ def test_branch_tree_url_encodes_slashes() -> None:
 
 def test_commit_actions_normalize_empty_content() -> None:
     sys.path.insert(0, str(_REPO / "agents"))
-    from _shared.gitlab_mcp_publish import _commit_actions
+    from _shared.gitlab_mcp_actions import _commit_actions
 
     batch = [{"path": "pkg/__init__.py", "content": ""}]
     actions = _commit_actions(batch, set())

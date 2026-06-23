@@ -327,10 +327,7 @@ def _max_output_tokens() -> int:
 
 
 def _coding_model() -> BedrockModel:
-    model_id = os.getenv(
-        "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
-    )
+    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     max_tokens = _max_output_tokens()
     return BedrockModel(
@@ -640,7 +637,7 @@ def main() -> None:
 
     task = args.task or DEFAULT_PIPELINE_TASK
 
-    model_id = os.getenv("CODING_MODEL_ID", os.getenv("MODEL_ID", ""))
+    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     print(f"[database-agent] Model: {model_id}", file=sys.stderr)
     if use_postgres:
         params = context.get("postgresMcpParams") or {}

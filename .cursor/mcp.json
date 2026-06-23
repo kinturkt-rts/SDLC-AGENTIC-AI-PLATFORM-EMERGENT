@@ -1,9 +1,12 @@
 {
   "mcpServers": {
     "GitLab": {
-      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "python",
       "args": [
-        "${workspaceFolder}/scripts/gitlab_jmrplens_stdio.py"
+        "${workspaceFolder}/scripts/gitlab_mcp_server.py"
       ],
       "envFile": "${workspaceFolder}/.env"
     },

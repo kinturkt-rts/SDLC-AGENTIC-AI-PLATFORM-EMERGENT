@@ -1,20 +1,75 @@
-"""Publish SDLC feature artifacts to GitLab via jmrplens MCP (same server as Cursor)."""
+"""GitLab MCP actions: env config, CLI helpers, and SDLC publish workflow."""
 
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from .github_publish import collect_feature_artifact_paths, default_branch_name, repo_root, slugify_feature
-from .gitlab_api import gitlab_base_branch, gitlab_personal_access_token, gitlab_project_path
-from .gitlab_jmrplens_mcp import (
+from .gitlab_mcp_client import (
     GitLabMcpError,
+    _list_repository_tree_async,
     call_gitlab_mcp_tool,
     gitlab_mcp_session,
     list_existing_blob_paths,
 )
 
+_DEFAULT_API_URL = "https://code.junodev.net/api/v4"
+_DEFAULT_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform"
 _BATCH_SIZE = 20
+
+
+def gitlab_personal_access_token() -> str:
+    for key in ("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GL_TOKEN"):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    raise ValueError(
+        "GITLAB_PERSONAL_ACCESS_TOKEN is not set. Add a GitLab PAT to .env "
+        "(scopes: api, read_api, read_repository, write_repository)."
+    )
+
+
+def gitlab_api_url() -> str:
+    return (os.getenv("GITLAB_API_URL") or _DEFAULT_API_URL).strip().rstrip("/")
+
+
+def gitlab_project_path() -> str:
+    return (
+        os.getenv("GITLAB_PROJECT_PATH")
+        or os.getenv("GITLAB_PROJECT_ID")
+        or _DEFAULT_PROJECT_PATH
+    ).strip()
+
+
+def gitlab_base_branch() -> str:
+    return (os.getenv("GITLAB_BASE_BRANCH") or "main").strip() or "main"
+
+
+def _mcp_error_message(exc: BaseException) -> str | None:
+    """Extract GitLabMcpError text from nested asyncio/ExceptionGroup wrappers."""
+    if isinstance(exc, GitLabMcpError):
+        return str(exc)
+    if isinstance(exc, BaseExceptionGroup):
+        for nested in exc.exceptions:
+            msg = _mcp_error_message(nested)
+            if msg:
+                return msg
+    return None
+
+
+def _run(coro: Any) -> dict[str, Any]:
+    try:
+        return asyncio.run(coro)
+    except BaseException as exc:
+        msg = _mcp_error_message(exc)
+        if msg:
+            return {"ok": False, "error": msg}
+        return {"ok": False, "error": str(exc)}
+
+
+# --- Repo config & publish helpers ---
 
 
 def publish_branch_name(feature: str) -> str:
@@ -110,6 +165,147 @@ def _commit_actions(
             }
         )
     return actions
+
+
+# --- MCP tool actions (projects, branch files, MR notes) ---
+
+
+async def list_projects_async(
+    *,
+    project_id: str | None = None,
+    membership: bool = True,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """List GitLab projects visible to the authenticated user."""
+    gitlab_personal_access_token()
+    project = (project_id or gitlab_project_path()).strip()
+    async with gitlab_mcp_session() as session:
+        data = await call_gitlab_mcp_tool(
+            session,
+            "gitlab_project_list",
+            {
+                "membership": membership,
+                "page": page,
+                "per_page": per_page,
+            },
+        )
+        projects = data.get("projects") or data.get("items") or []
+        return {
+            "ok": True,
+            "projects": projects,
+            "pagination": data.get("pagination"),
+            "scopeProject": project,
+        }
+
+
+async def list_branch_files_async(
+    *,
+    branch: str,
+    project_id: str | None = None,
+    blobs_only: bool = False,
+) -> dict[str, Any]:
+    """List repository tree entries on a branch (files and folders)."""
+    ref = branch.strip()
+    if not ref:
+        return {"ok": False, "error": "branch is required"}
+
+    gitlab_personal_access_token()
+    project = (project_id or gitlab_project_path()).strip()
+
+    async with gitlab_mcp_session() as session:
+        entries = await _list_repository_tree_async(session, project_id=project, ref=ref)
+        if blobs_only:
+            entries = [entry for entry in entries if entry["type"] == "blob"]
+        return {
+            "ok": True,
+            "project": project,
+            "branch": ref,
+            "entries": entries,
+            "count": len(entries),
+        }
+
+
+async def list_mr_notes_async(
+    *,
+    mr_iid: int,
+    project_id: str | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """List top-level notes (comments) on a merge request."""
+    gitlab_personal_access_token()
+    project = (project_id or gitlab_project_path()).strip()
+    async with gitlab_mcp_session() as session:
+        data = await call_gitlab_mcp_tool(
+            session,
+            "gitlab_mr_notes_list",
+            {
+                "project_id": project,
+                "merge_request_iid": mr_iid,
+                "page": page,
+                "per_page": per_page,
+            },
+        )
+        notes = data.get("notes") or data.get("items") or []
+        return {
+            "ok": True,
+            "project": project,
+            "mrIid": mr_iid,
+            "notes": notes,
+            "pagination": data.get("pagination"),
+        }
+
+
+async def create_mr_note_async(
+    *,
+    mr_iid: int,
+    body: str,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Add a comment to a merge request."""
+    text = body.strip()
+    if not text:
+        return {"ok": False, "error": "comment body is required"}
+
+    gitlab_personal_access_token()
+    project = (project_id or gitlab_project_path()).strip()
+
+    async with gitlab_mcp_session() as session:
+        note = await call_gitlab_mcp_tool(
+            session,
+            "gitlab_mr_note_create",
+            {
+                "project_id": project,
+                "merge_request_iid": mr_iid,
+                "body": text,
+            },
+        )
+        return {
+            "ok": True,
+            "project": project,
+            "mrIid": mr_iid,
+            "note": note,
+        }
+
+
+def list_projects(**kwargs: Any) -> dict[str, Any]:
+    return _run(list_projects_async(**kwargs))
+
+
+def list_branch_files(**kwargs: Any) -> dict[str, Any]:
+    return _run(list_branch_files_async(**kwargs))
+
+
+def list_mr_notes(**kwargs: Any) -> dict[str, Any]:
+    return _run(list_mr_notes_async(**kwargs))
+
+
+def create_mr_note(**kwargs: Any) -> dict[str, Any]:
+    return _run(create_mr_note_async(**kwargs))
+
+
+# --- SDLC publish workflow ---
 
 
 async def _publish_binary_files(
