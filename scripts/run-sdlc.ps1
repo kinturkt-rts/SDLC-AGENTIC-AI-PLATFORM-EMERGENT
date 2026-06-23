@@ -1,19 +1,23 @@
-# Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> verify
-# Optional publish: -WithGitlab (GitLab MR) or -WithGithub (GitHub showcase PR). No QA in Phase 1 MVP.
+# Full SDLC chain (default): brief -> PRD -> design -> db -> apply RDS -> developer -> verify -> gitlab publish
+# Default publish: gitlab-agent → branch sdlc/<app> on GitLab origin (code.junodev.net).
+# Legacy opt-in: -WithGithub (github-agent showcase repo). Use -SkipGitlab to skip publish.
 #
-# DEFAULT (Postgres app, full chain):
+# DEFAULT (Postgres app, full chain + GitLab publish when .env has GITLAB_*):
 #   .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 #
-# Opt-in extras:
-#   -WithGitlab                          # gitlab-agent: MCP push + MR to GitLab origin
+# GitLab overrides:
 #   -GitlabProject / -GitlabBase         # override GITLAB_PROJECT_PATH / GITLAB_BASE_BRANCH
-#   -WithGithub                          # github-agent: MCP push + PR to showcase repo
+#   -SkipGitlab                          # skip gitlab-agent publish step
+#
+# Legacy GitHub showcase (mutually exclusive with default GitLab publish):
+#   -WithGithub                          # github-agent: MCP push + PR to separate showcase repo
 #   -GithubOwner / -GithubRepo           # override GITHUB_OWNER / GITHUB_REPO from .env
 #
 #   -WithWebCrawler                      # scrape URLs into Postgres (optional step 2b)
 #
 # Opt-out (skip steps):
 #   -SkipDb -SkipPostgres                 # no database-agent, no RDS apply
+#   -SkipGitlab                           # skip gitlab-agent publish (default is ON after developer)
 #   -SkipQa                               # skip qa-agent
 #   -SkipVerify                           # skip local import + pytest at end
 #   -SkipProduct -SkipArchitect           # resume from DB or developer only
@@ -36,6 +40,7 @@ param(
     [switch] $SkipPostgres,
     [switch] $SkipQa,
     [switch] $SkipVerify,
+    [switch] $SkipGitlab,
     [switch] $WithJira,
     [switch] $WithGithub,
     [switch] $WithGitlab,
@@ -56,18 +61,81 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+function Import-RepoEnv {
+    foreach ($path in @(
+        (Join-Path $RepoRoot ".env"),
+        (Join-Path $RepoRoot ".env.local")
+    )) {
+        if (-not (Test-Path $path)) { continue }
+        Get-Content $path | ForEach-Object {
+            $line = $_.Trim()
+            if (-not $line -or $line.StartsWith("#")) { return }
+            $idx = $line.IndexOf("=")
+            if ($idx -lt 1) { return }
+            $name = $line.Substring(0, $idx).Trim()
+            $value = $line.Substring($idx + 1).Trim().Trim('"').Trim("'")
+            if ($name -and -not (Test-Path "env:$name")) {
+                Set-Item -Path "env:$name" -Value $value
+            }
+        }
+    }
+}
+Import-RepoEnv
+
+$venvScripts = Join-Path $RepoRoot ".venv\Scripts"
+if (Test-Path $venvScripts) {
+    $env:PATH = "$venvScripts;$env:PATH"
+}
+
+if (-not $env:GITLAB_PROJECT_PATH -and $env:GITLAB_PROJECT) {
+    $env:GITLAB_PROJECT_PATH = $env:GITLAB_PROJECT
+}
+
 $ctxPath = Join-Path $RepoRoot ($ContextFile -replace "/", "\")
 $ctxDir = Split-Path $ctxPath -Parent
 if (-not (Test-Path $ctxDir)) { New-Item -ItemType Directory -Path $ctxDir -Force | Out-Null }
+
+function Invoke-PipelinePython {
+    param([Parameter(Mandatory = $true)][string[]]$ArgumentList)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $prevNative = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $prevNative = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    & python @ArgumentList 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) {
+            # Python agents log progress to stderr; PS wraps each line as ErrorRecord.
+            $line = [string]$_
+            if ([string]::IsNullOrWhiteSpace($line)) { return }
+            if ($line -eq "System.Management.Automation.RemoteException") { return }
+            Write-Host $line
+        } else {
+            Write-Host $_
+        }
+    }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($null -ne $prevNative) {
+        $PSNativeCommandUseErrorActionPreference = $prevNative
+    }
+    return $code
+}
 
 # Full chain defaults: RDS apply when DB runs; QA only when -WithQa (Phase 3)
 $applyPostgres = (-not $SkipDb) -and (-not $SkipPostgres)
 $runQa = $false
 if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
 $runGithub = $WithGithub -and (-not $SkipDeveloper)
-$runGitlab = $WithGitlab -and (-not $SkipDeveloper)
+# GitLab publish runs after verify unless skipped (-SkipGitlab or legacy -WithGithub).
+$runGitlab = (-not $SkipGitlab) -and (-not $WithGithub)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
+
+if ($WithGithub -and $WithGitlab) {
+    throw "Use -WithGithub or default GitLab publish, not both. Omit -WithGitlab (GitLab is already default) or drop -WithGithub."
+}
 
 if ($WithJira -and $SkipProduct) {
     throw "-WithJira requires the product step (do not use -SkipProduct). Re-run product-agent manually with --create-jira-tickets if PRD already exists."
@@ -78,11 +146,14 @@ if ($WithGithub -and (-not $GithubOwner) -and (-not $env:GITHUB_OWNER)) {
 if ($WithGithub -and (-not $GithubRepo) -and (-not $env:GITHUB_REPO)) {
     throw "-WithGithub requires -GithubRepo or GITHUB_REPO in .env"
 }
-if ($WithGitlab -and (-not $env:GITLAB_PERSONAL_ACCESS_TOKEN)) {
-    throw "-WithGitlab requires GITLAB_PERSONAL_ACCESS_TOKEN in .env"
-}
-if ($WithGitlab -and (-not $GitlabProject) -and (-not $env:GITLAB_PROJECT_PATH)) {
-    throw "-WithGitlab requires -GitlabProject or GITLAB_PROJECT_PATH in .env"
+if ($runGitlab) {
+    if (-not $env:GITLAB_PERSONAL_ACCESS_TOKEN) {
+        Write-Warning "Skipping gitlab-agent: GITLAB_PERSONAL_ACCESS_TOKEN not set in .env (use -SkipGitlab to silence)."
+        $runGitlab = $false
+    } elseif (-not $GitlabProject -and -not $env:GITLAB_PROJECT_PATH -and -not $env:GITLAB_PROJECT_ID) {
+        Write-Warning "Skipping gitlab-agent: set GITLAB_PROJECT_PATH in .env or pass -GitlabProject."
+        $runGitlab = $false
+    }
 }
 
 if ($WithJira -and -not $JiraProject) {
@@ -143,16 +214,16 @@ function Sync-DeliveryProfile {
     if ($InputFileRel) {
         $syncArgs += @("--input-file", $InputFileRel)
     }
-    python @syncArgs
-    if ($LASTEXITCODE -ne 0) { throw "deliveryProfile sync failed" }
+    if ((Invoke-PipelinePython -ArgumentList $syncArgs) -ne 0) { throw "deliveryProfile sync failed" }
 }
 
 function Invoke-DeliveryVerify {
     param([ValidateSet("design", "app")][string]$Stage)
     if (-not (Test-Path $ctxPath)) { return }
     Write-Host "`n=== Delivery profile verify ($Stage) ===" -ForegroundColor Green
-    python agents/_shared/delivery_profile.py --context-file $ContextFile --repo-root $RepoRoot --check $Stage
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/_shared/delivery_profile.py", "--context-file", $ContextFile, "--repo-root", $RepoRoot, "--check", $Stage
+    )) -ne 0) {
         throw "deliveryProfile check failed ($Stage). UI required by brief/PRD was dropped - fix design or developer output."
     }
 }
@@ -163,8 +234,7 @@ function Invoke-RdsApply {
         return
     }
     Write-Host "`n=== Apply SQL to RDS (apply_sql_to_rds.py) ===" -ForegroundColor Green
-    python scripts/apply_sql_to_rds.py --target-app $Feature
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-PipelinePython -ArgumentList @("scripts/apply_sql_to_rds.py", "--target-app", $Feature)) -ne 0) {
         throw "RDS apply failed. Fix network/credentials (.env.local POSTGRES_MCP_*) then re-run: python scripts/apply_sql_to_rds.py --target-app $Feature"
     }
 }
@@ -172,8 +242,9 @@ function Invoke-RdsApply {
 function Invoke-SeedMaterialize {
     param([string]$TargetFeature)
     Write-Host "`n=== Materialize seed passwords on RDS (materialize_seed_passwords.py) ===" -ForegroundColor Green
-    python agents/_shared/materialize_seed_passwords.py --target-app $TargetFeature --repo-root $RepoRoot
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/_shared/materialize_seed_passwords.py", "--target-app", $TargetFeature, "--repo-root", $RepoRoot
+    )) -ne 0) {
         throw "Seed password materialization failed - check HANDOFF seedCredentials or seed SQL password comment."
     }
 }
@@ -305,7 +376,7 @@ if (-not $SkipProduct) {
         if ($JiraStoryTitleStyle) { $productArgs += @("--story-title-style", $JiraStoryTitleStyle) }
         Write-Host "  Jira: Epic + 5 user stories -> project $JiraProject" -ForegroundColor DarkGray
     }
-    python @productArgs
+    if ((Invoke-PipelinePython -ArgumentList $productArgs) -ne 0) { throw "product-agent failed" }
     if (-not (Test-Path "docs/PRD/$Feature.md")) { throw "PRD not found: docs/PRD/$Feature.md" }
     $ctxFields = @{
         prdPath            = "docs/PRD/$Feature.md"
@@ -331,10 +402,12 @@ elseif (Test-Path $ctxPath) {
 # 2) Architect -> PNG + design.md
 if (-not $SkipArchitect) {
     Write-Host "`n=== 2/6 architect-agent (diagram + design.md) ===" -ForegroundColor Green
-    python agents/architect-agent/architect_agent.py `
-        --diagram-name $Feature `
-        --context-file $ContextFile `
-        --task "$Feature MVP"
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/architect-agent/architect_agent.py",
+        "--diagram-name", $Feature,
+        "--context-file", $ContextFile,
+        "--task", "$Feature MVP"
+    )) -ne 0) { throw "architect-agent failed" }
     $png = "docs/diagrams/generated-diagrams/$Feature.png"
     if (-not (Test-Path $png)) { Write-Warning "Diagram missing: $png" }
     $designRel = "docs/design/$Feature.md"
@@ -350,11 +423,13 @@ else {
 $runWebCrawler = $WithWebCrawler -and -not $SkipWebCrawler
 if ($runWebCrawler) {
     Write-Host "`n=== 2b/6 web-crawler-agent ===" -ForegroundColor Green
-    python agents/web-crawler/web_crawler_agent.py `
-        --target-app $Feature `
-        --context-file $ContextFile `
-        --with-postgres `
-        --task "Scrape URLs from context scrapeUrls or requirements; persist markdown and Postgres rows."
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/web-crawler/web_crawler_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile,
+        "--with-postgres",
+        "--task", "Scrape URLs from context scrapeUrls or requirements; persist markdown and Postgres rows."
+    )) -ne 0) { throw "web-crawler-agent failed" }
     Update-Context @{
         webScrapeCompleted = $true
         scrapedOutputDir     = "docs/PRD/scraped/$Feature"
@@ -371,21 +446,22 @@ if (-not $SkipDb) {
         "--task", "Implement data model from designDocPath §3/§6: numbered sql/ migrations, dev seed with __BCRYPT_PLACEHOLDER__ for password_hash columns, documented password in SQL comment, ### seedCredentials table in HANDOFF.md, stable UUIDs."
     )
     if ($applyPostgres) { $dbArgs += "--with-postgres" }
-    python @dbArgs
-    if ($LASTEXITCODE -ne 0) { throw "database-agent failed" }
+    if ((Invoke-PipelinePython -ArgumentList $dbArgs) -ne 0) { throw "database-agent failed" }
 
     # Explicit RDS apply (idempotent)  - ensures schema exists even if agent apply was skipped
     if ($applyPostgres) {
         Invoke-RdsApply
         Invoke-SeedMaterialize -TargetFeature $Feature
         Write-Host "`n=== Verify seed bcrypt hashes (SQL files) ===" -ForegroundColor Green
-        python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot
-        if ($LASTEXITCODE -ne 0) {
+        if ((Invoke-PipelinePython -ArgumentList @(
+            "agents/_shared/verify_seed_bcrypt.py", "--target-app", $Feature, "--repo-root", $RepoRoot
+        )) -ne 0) {
             throw "Seed bcrypt verification failed - placeholder password hashes will break RDS login."
         }
         Write-Host "`n=== Verify seed bcrypt on RDS ===" -ForegroundColor Green
-        python agents/_shared/verify_seed_bcrypt.py --target-app $Feature --repo-root $RepoRoot --check-rds
-        if ($LASTEXITCODE -ne 0) {
+        if ((Invoke-PipelinePython -ArgumentList @(
+            "agents/_shared/verify_seed_bcrypt.py", "--target-app", $Feature, "--repo-root", $RepoRoot, "--check-rds"
+        )) -ne 0) {
             throw "RDS seed password verification failed - Swagger/Streamlit login will 401."
         }
     }
@@ -395,21 +471,45 @@ if (-not $SkipDb) {
 if (-not $SkipDeveloper) {
     Write-Host "`n=== 4/6 developer-agent (FastAPI) ===" -ForegroundColor Green
     $task = if ($SkipDb) { $devTaskNoDb } else { $devTaskDb }
-    python agents/developer-agent/developer_agent.py `
-        --target-app $Feature `
-        --context-file $ContextFile `
-        --task $task
-    if ($LASTEXITCODE -ne 0) { throw "developer-agent failed" }
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/developer-agent/developer_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile,
+        "--task", $task
+    )) -ne 0) { throw "developer-agent failed" }
 }
 
 # 5) Local verify (before publish - do not push broken code)
-if (-not $SkipVerify -and -not $SkipDeveloper) {
+if (-not $SkipVerify) {
     Invoke-LocalVerify -TargetFeature $Feature
 }
 
-# 6) GitHub-agent -> MCP push + PR (showcase repo, one branch per app)
+# 6) GitLab-agent -> MCP push to sdlc/<app> branch (default publish; MR opt-in via gitlab-agent --open-mr)
+if ($runGitlab) {
+    Write-Host "`n=== 6/6 gitlab-agent (MCP publish to sdlc/<app> branch) ===" -ForegroundColor Green
+    $gitlabArgs = @(
+        "agents/gitlab-agent/gitlab_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile
+    )
+    if ($GitlabProject) { $gitlabArgs += @("--gitlab-project", $GitlabProject) }
+    if ($GitlabBase) { $gitlabArgs += @("--gitlab-base", $GitlabBase) }
+    if ((Invoke-PipelinePython -ArgumentList $gitlabArgs) -ne 0) { Write-Warning "gitlab-agent reported issues - review before merge." }
+    $gitlabHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.gitlab-handoff.json"
+    if (Test-Path $gitlabHandoff) {
+        $gitlabJson = Get-Content $gitlabHandoff -Raw | ConvertFrom-Json
+        Update-Context @{
+            mergeRequestIid   = $gitlabJson.mergeRequestIid
+            mergeRequestUrl   = $gitlabJson.mergeRequestUrl
+            gitlabProject     = $gitlabJson.gitlabProject
+            featureBranch     = $gitlabJson.branch
+        }
+    }
+}
+
+# 6b) Legacy github-agent -> MCP push + PR (showcase repo; use -WithGithub; disables default GitLab publish)
 if ($runGithub) {
-    Write-Host "`n=== 6/6 github-agent (MCP publish + PR) ===" -ForegroundColor Green
+    Write-Host "`n=== github-agent (legacy MCP publish + PR) ===" -ForegroundColor Green
     $githubArgs = @(
         "agents/github-agent/github_agent.py",
         "--target-app", $Feature,
@@ -418,8 +518,7 @@ if ($runGithub) {
     if ($GithubOwner) { $githubArgs += @("--github-owner", $GithubOwner) }
     if ($GithubRepo) { $githubArgs += @("--github-repo", $GithubRepo) }
     if ($GithubBase) { $githubArgs += @("--github-base", $GithubBase) }
-    python @githubArgs
-    if ($LASTEXITCODE -ne 0) { Write-Warning "github-agent reported issues - review before merge." }
+    if ((Invoke-PipelinePython -ArgumentList $githubArgs) -ne 0) { Write-Warning "github-agent reported issues - review before merge." }
     $githubHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.github-handoff.json"
     if (Test-Path $githubHandoff) {
         $githubJson = Get-Content $githubHandoff -Raw | ConvertFrom-Json
@@ -433,37 +532,14 @@ if ($runGithub) {
     }
 }
 
-# 6b) GitLab-agent -> MCP push to sdlc/<app> branch (MR opt-in via --open-mr)
-if ($runGitlab) {
-    Write-Host "`n=== gitlab-agent (MCP publish to sdlc/<app> branch) ===" -ForegroundColor Green
-    $gitlabArgs = @(
-        "agents/gitlab-agent/gitlab_agent.py",
-        "--target-app", $Feature,
-        "--context-file", $ContextFile
-    )
-    if ($GitlabProject) { $gitlabArgs += @("--gitlab-project", $GitlabProject) }
-    if ($GitlabBase) { $gitlabArgs += @("--gitlab-base", $GitlabBase) }
-    python @gitlabArgs
-    if ($LASTEXITCODE -ne 0) { Write-Warning "gitlab-agent reported issues - review before merge." }
-    $gitlabHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.gitlab-handoff.json"
-    if (Test-Path $gitlabHandoff) {
-        $gitlabJson = Get-Content $gitlabHandoff -Raw | ConvertFrom-Json
-        Update-Context @{
-            mergeRequestIid   = $gitlabJson.mergeRequestIid
-            mergeRequestUrl   = $gitlabJson.mergeRequestUrl
-            gitlabProject     = $gitlabJson.gitlabProject
-            featureBranch     = $gitlabJson.branch
-        }
-    }
-}
-
 # 7) QA -> pytest (Phase 3 — opt-in via -WithQa)
 if ($runQa) {
     Write-Host "`n=== qa-agent (pytest) ===" -ForegroundColor Green
-    python agents/qa-agent/qa_agent.py `
-        --target-app $Feature `
-        --context-file $ContextFile
-    if ($LASTEXITCODE -ne 0) { Write-Warning "qa-agent reported issues - review before shipping." }
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/qa-agent/qa_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile
+    )) -ne 0) { Write-Warning "qa-agent reported issues - review before shipping." }
 }
 
 Write-Host "`n[pipeline] Done. Artifacts:" -ForegroundColor Cyan
@@ -481,7 +557,7 @@ if ($runGithub) {
     if (Test-Path $githubHandoff) {
         Write-Host "  GitHub:  agents/pipeline/$Feature.github-handoff.json"
     } else {
-        Write-Host "  GitHub:  publish failed (no handoff file — retry github-agent when online)" -ForegroundColor Yellow
+        Write-Host "  GitHub:  publish failed (no handoff file - retry github-agent when online)" -ForegroundColor Yellow
     }
 }
 if ($runGitlab) {
@@ -489,7 +565,7 @@ if ($runGitlab) {
     if (Test-Path $gitlabHandoff) {
         Write-Host "  GitLab:  agents/pipeline/$Feature.gitlab-handoff.json"
     } else {
-        Write-Host "  GitLab:  publish failed (no handoff file — retry gitlab-agent when online)" -ForegroundColor Yellow
+        Write-Host "  GitLab:  publish failed (no handoff file - retry gitlab-agent when online)" -ForegroundColor Yellow
     }
 }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }

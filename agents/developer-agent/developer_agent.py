@@ -1415,9 +1415,56 @@ def _python_for_service(service_dir: Path) -> str:
 
     if platform.system() == "Windows":
         venv_python = service_dir / ".venv" / "Scripts" / "python.exe"
+        repo_python = _REPO_ROOT / ".venv" / "Scripts" / "python.exe"
     else:
         venv_python = service_dir / ".venv" / "bin" / "python"
-    return str(venv_python) if venv_python.is_file() else "python"
+        repo_python = _REPO_ROOT / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return str(venv_python)
+    if repo_python.is_file():
+        return str(repo_python)
+    return "python"
+
+
+def _ensure_service_requirements_installed(
+    service_dir: Path,
+    python_cmd: str,
+) -> tuple[bool, str]:
+    """Install target-app requirements into the interpreter used for validation."""
+    import subprocess
+
+    req_files: list[Path] = []
+    main_reqs = service_dir / "requirements.txt"
+    if main_reqs.is_file():
+        req_files.append(main_reqs)
+    ui_reqs = service_dir / "ui" / "requirements.txt"
+    if ui_reqs.is_file():
+        req_files.append(ui_reqs)
+
+    if not req_files:
+        return True, "DEPS OK (no requirements files)"
+
+    messages: list[str] = []
+    for req_file in req_files:
+        rel = req_file.relative_to(service_dir).as_posix()
+        try:
+            result = subprocess.run(
+                [python_cmd, "-m", "pip", "install", "-q", "-r", str(req_file)],
+                cwd=str(service_dir),
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"DEPS FAILED: pip install timed out for {rel}"
+        if result.returncode != 0:
+            detail = (result.stdout + result.stderr).strip()
+            if len(detail) > 2000:
+                detail = detail[-2000:]
+            return False, f"DEPS FAILED: pip install -r {rel}:\n{detail}"
+        messages.append(f"DEPS OK ({rel})")
+
+    return True, "\n".join(messages)
 
 
 def _validation_env(service_dir: Path) -> dict[str, str]:
@@ -1492,6 +1539,19 @@ def run_service_validation(
     python_cmd = _python_for_service(service_dir)
     env = _validation_env(service_dir)
     output_parts: list[str] = []
+
+    skip_pip = os.getenv("DEVELOPER_AGENT_SKIP_PIP_SYNC", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if skip_pip:
+        output_parts.append("DEPS SKIP (DEVELOPER_AGENT_SKIP_PIP_SYNC)")
+    else:
+        deps_ok, deps_msg = _ensure_service_requirements_installed(service_dir, python_cmd)
+        output_parts.append(deps_msg)
+        if not deps_ok:
+            return False, "\n".join(output_parts)
 
     required_files = [
         "app/__init__.py",

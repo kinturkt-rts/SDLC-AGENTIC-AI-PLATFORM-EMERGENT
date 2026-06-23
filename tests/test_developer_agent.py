@@ -135,3 +135,45 @@ def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> 
     assert mod._validate_dev_write_path(service / "tests" / "test_qa_edge_cases.py") is not None
     assert mod._validate_dev_write_path(service / "tests" / "test_api.py") is None
     assert mod._validate_dev_write_path(service / ".venv" / "pyvenv.cfg") is not None
+
+
+def test_python_for_service_prefers_repo_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-api"
+    service.mkdir(parents=True)
+    repo_venv = tmp_path / ".venv" / "Scripts"
+    repo_venv.mkdir(parents=True)
+    repo_python = repo_venv / "python.exe"
+    repo_python.write_text("", encoding="utf-8")
+    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
+
+    assert mod._python_for_service(service) == str(repo_python)
+
+
+def test_ensure_service_requirements_installed_runs_pip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-api"
+    service.mkdir(parents=True)
+    (service / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Result()
+
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    ok, msg = mod._ensure_service_requirements_installed(service, "python")
+    assert ok is True
+    assert "DEPS OK (requirements.txt)" in msg
+    assert calls[0][:4] == ["python", "-m", "pip", "install"]
