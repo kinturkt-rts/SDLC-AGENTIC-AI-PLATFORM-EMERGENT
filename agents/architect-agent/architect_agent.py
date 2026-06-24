@@ -110,6 +110,7 @@ Briefs explicitly call out the MVP scope (local filesystem, single shared API ke
 | "API key in `.env`" | `X-API-Key` header check | Cognito, API Gateway authorizers |
 | "FastAPI on Postgres" | FastAPI + RDS | API Gateway, Lambda, DynamoDB, ElastiCache |
 | "Bedrock for chat" | `app/services/bedrock_client.py` | SageMaker, Bedrock Agents, Knowledge Bases |
+| "RAG" / "vector search" / "embeddings" (no store named) | **pgvector on existing RDS + Bedrock Titan embed** (`amazon.titan-embed-text-v2:0`, 1024-dim) | ChromaDB, Pinecone, Weaviate, Qdrant, Milvus — any external vector store |
 | Single tenant, internal tool | Single-region single-AZ minimal | WAF, Shield, multi-region, read-replicas |
 | "mock the GitLab fetch" | Mock interface + stub return | Real GitLab integration design |
 
@@ -156,6 +157,11 @@ When React/Next is required (Phase 2), note `frontend/` in Stack — developer i
 - Brief says "JWT" → use library JWT (PyJWT), do not list Cognito.
 - Brief says "API key in env" → header check, do not list Cognito or API Gateway authorizers.
 - Brief says "FastAPI + Postgres" → don't add Lambda, DynamoDB, ElastiCache, WAF.
+- Brief says "RAG" / "embeddings" / "vector search" (no store named) → **pgvector on RDS** (platform
+  default — already provisioned); Bedrock Titan embed (`amazon.titan-embed-text-v2:0`). Do NOT add
+  ChromaDB, Pinecone, Weaviate, or any external vector store. Only use an alternative when the brief
+  explicitly names it (e.g. "use ChromaDB" or "use Pinecone") — developer-agent's rag pattern is
+  built for pgvector and will break if a different store is specified without full integration code.
 If a service is genuinely needed beyond the brief, add it in a one-line "Suggested Phase-2"
 note under Summary — never in the Stack table or Data model. database-agent and developer-agent
 treat this table as authoritative; adding Cognito here adds a `cognito_sub` column to users.
