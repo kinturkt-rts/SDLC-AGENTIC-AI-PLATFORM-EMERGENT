@@ -22,7 +22,7 @@ _TARGET_APPS = _REPO_ROOT / "target-apps"
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
-from _shared.mcp_clients import MCP_FACTORIES, github_personal_access_token
+from _shared.mcp_clients import MCP_FACTORIES
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     enrich_handoff_context,
@@ -194,18 +194,8 @@ Windows one-liner from repo root:
 - Write ONLY under `target-apps/<service>/tests/` and `QA_REPORT.md` via `qa_write_file`.
 - Read `app/` via `qa_read_file` to diagnose failures — do not modify app/ unless task overrides.
 
-## GitHub PR review (when devops-agent opened a PR)
-
-When `pullRequestNumber`, `githubOwner`, and `githubRepo` are in Context (from devops-handoff):
-1. Complete Steps 1–5 (local pytest on the same checkout — mirrors QA testing a dev branch).
-2. Post results on the PR using GitHub MCP `pull_request_review_write`:
-   - method: `create`
-   - event: `COMMENT` if all tests pass; `REQUEST_CHANGES` if app_bug failures remain
-   - body: markdown summary with baseline_summary, failed_tests, new_tests_written, commands
-3. If GitHub MCP is unavailable, skip silently and keep handoff_json only.
-
-Legacy GitLab: when `mergeRequestIid` and `gitlabProject` are in Context (from gitlab-handoff),
-the agent posts a QA summary comment on the MR automatically after pytest (gitlab_mr_note_create).
+When `mergeRequestIid` and `gitlabProject` are in Context (from gitlab-handoff),
+the agent posts a QA summary comment on the MR automatically after pytest.
 You do not need to call GitLab MCP tools manually for that case.
 
 ## Response format
@@ -509,14 +499,6 @@ def _load_mcp_tools(mcp_names: list[str]) -> tuple[list[Any], ExitStack]:
     return tools, stack
 
 
-def _github_mcp_enabled() -> bool:
-    try:
-        github_personal_access_token()
-        return True
-    except ValueError:
-        return False
-
-
 def _build_agent(*, extra_tools: list[Any] | None = None) -> Agent:
     tools: list[Any] = [
         qa_list_tree,
@@ -539,33 +521,6 @@ def _build_agent(*, extra_tools: list[Any] | None = None) -> Agent:
         tools=tools,
         callback_handler=_QACallbackHandler(),
     )
-
-
-def _enrich_devops_handoff(ctx: dict[str, Any]) -> None:
-    """Merge devops-handoff.json into context for GitHub PR review."""
-    app = slugify(str(ctx["targetApp"]))
-    handoff_path = _REPO_ROOT / "agents" / "pipeline" / f"{app}.devops-handoff.json"
-    if not handoff_path.is_file():
-        return
-    try:
-        data = json.loads(handoff_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return
-    if not isinstance(data, dict):
-        return
-    for key in (
-        "pullRequestNumber",
-        "pullRequestUrl",
-        "githubOwner",
-        "githubRepo",
-        "githubBaseBranch",
-        "featureBranch",
-        "branch",
-    ):
-        if data.get(key) is not None:
-            ctx.setdefault(key, data[key])
-    if data.get("branch") and not ctx.get("featureBranch"):
-        ctx["featureBranch"] = data["branch"]
 
 
 def _enrich_gitlab_handoff(ctx: dict[str, Any]) -> None:
@@ -732,20 +687,12 @@ def run_task(
     ctx.setdefault("targetApp", app)
     enrich_handoff_context(ctx, include_db_paths=False)
     _enrich_qa_context(ctx)
-    _enrich_devops_handoff(ctx)
     _enrich_gitlab_handoff(ctx)
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    use_github = _github_mcp_enabled() and ctx.get("pullRequestNumber") and ctx.get("githubOwner")
-    if use_github:
-        mcp_tools, stack = _load_mcp_tools(["github"])
-        agent = _build_agent(extra_tools=mcp_tools)
-        with stack:
-            summary = str(agent(_user_message(task, ctx)))
-    else:
-        agent = _build_agent()
-        summary = str(agent(_user_message(task, ctx)))
+    agent = _build_agent()
+    summary = str(agent(_user_message(task, ctx)))
 
     if _written_files:
         files_block = "\n".join(f"- `{p}`" for p in _written_files)

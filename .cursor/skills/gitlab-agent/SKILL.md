@@ -79,5 +79,4 @@ python agents/gitlab-agent/gitlab_agent.py --mr-comment 3 --comment-body "QA pas
 
 ## Not in scope
 
-- GitHub showcase repo (use **github-agent** with `-WithGithub`)
 - Terraform / ECS (devops-agent Phase 2)

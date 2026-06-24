@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Any
 
-from .github_publish import collect_feature_artifact_paths, default_branch_name, repo_root, slugify_feature
 from .gitlab_mcp_client import (
     GitLabMcpError,
     _list_repository_tree_async,
@@ -18,6 +18,59 @@ from .gitlab_mcp_client import (
 _DEFAULT_API_URL = "https://code.junodev.net/api/v4"
 _DEFAULT_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform"
 _BATCH_SIZE = 20
+
+_EXCLUDE_DIR_NAMES = frozenset(
+    {".venv", "__pycache__", ".pytest_cache", "node_modules", ".git"}
+)
+_EXCLUDE_FILE_NAMES = frozenset({".env", ".coverage"})
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def slugify_feature(feature: str) -> str:
+    return feature.strip().lower().replace("_", "-")
+
+
+def should_include_file(path: Path) -> bool:
+    if path.name in _EXCLUDE_FILE_NAMES:
+        return False
+    if path.suffix in {".pyc", ".pyo"}:
+        return False
+    return not any(part in _EXCLUDE_DIR_NAMES for part in path.parts)
+
+
+def collect_feature_artifact_paths(feature: str, *, root: Path | None = None) -> list[str]:
+    """Return repo-relative paths to publish for one SDLC feature (monorepo layout)."""
+    root = root or repo_root()
+    slug = slugify_feature(feature)
+    rel_paths: set[str] = set()
+
+    app_dir = root / "target-apps" / slug
+    if app_dir.is_dir():
+        for file_path in app_dir.rglob("*"):
+            if file_path.is_file() and should_include_file(file_path):
+                rel_paths.add(file_path.relative_to(root).as_posix())
+
+    for candidate in (
+        root / "docs" / "PRD" / f"{slug}.md",
+        root / "docs" / "design" / f"{slug}.md",
+        root / "docs" / "diagrams" / "generated-diagrams" / f"{slug}.png",
+        root / "agents" / "pipeline" / f"{slug}.context.json",
+        root / "agents" / "pipeline" / f"{slug}.developer-handoff.json",
+        root / "agents" / "pipeline" / f"{slug}.qa-handoff.json",
+        root / "agents" / "pipeline" / f"{slug}.devops-handoff.json",
+        root / "agents" / "pipeline" / f"{slug}.gitlab-handoff.json",
+    ):
+        if candidate.is_file():
+            rel_paths.add(candidate.relative_to(root).as_posix())
+
+    return sorted(rel_paths)
+
+
+def default_branch_name(feature: str) -> str:
+    return f"sdlc/{slugify_feature(feature)}"
 
 
 def gitlab_personal_access_token() -> str:

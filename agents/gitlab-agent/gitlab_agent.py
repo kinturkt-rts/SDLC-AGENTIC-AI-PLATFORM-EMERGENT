@@ -19,14 +19,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
-from _shared.github_publish import collect_feature_artifact_paths, slugify_feature
 from _shared.gitlab_mcp_actions import (
+    collect_feature_artifact_paths,
     create_mr_note,
     gitlab_repo_config,
     list_branch_files,
     list_mr_notes,
     list_projects,
     publish_feature,
+    slugify_feature,
 )
 from _shared.pipeline_context import (
     TargetAppRequiredError,

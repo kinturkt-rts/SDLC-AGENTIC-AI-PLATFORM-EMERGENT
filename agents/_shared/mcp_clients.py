@@ -173,32 +173,6 @@ def atlassian_mcp_client() -> MCPClient:
     return MCPClient(transport, prefix="atlassian", startup_timeout=120)
 
 
-def github_personal_access_token() -> str:
-    for key in ("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
-        value = os.getenv(key, "").strip()
-        if value:
-            return value
-    raise ValueError(
-        "GITHUB_PERSONAL_ACCESS_TOKEN is not set. Add it to .env for GitHub MCP in agents."
-    )
-
-
-def github_mcp_client() -> MCPClient:
-    """Stdio transport to @modelcontextprotocol/server-github (Strands agents)."""
-
-    token = github_personal_access_token()
-
-    def transport() -> object:
-        return stdio_client(
-            StdioServerParameters(
-                command="npx",
-                args=["-y", "@modelcontextprotocol/server-github"],
-                env={**os.environ, "GITHUB_PERSONAL_ACCESS_TOKEN": token},
-            )
-        )
-
-    return MCPClient(transport, prefix="github", startup_timeout=90)
-
 def aws_diagram_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
     """AWS Diagram MCP Server"""
 
@@ -298,7 +272,6 @@ def mongodb_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
 
 MCP_FACTORIES: dict[str, Callable[[], MCPClient]] = {
     "atlassian": atlassian_mcp_client,
-    "github": github_mcp_client,
     "postgres": postgres_mcp_client,
     "mongodb": mongodb_mcp_client,
     "supabase": supabase_mcp_client,

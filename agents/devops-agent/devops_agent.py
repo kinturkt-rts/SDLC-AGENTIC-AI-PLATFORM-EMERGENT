@@ -1,7 +1,6 @@
-"""DevOps agent — Phase 2: Terraform, CI/CD, ECS (not GitHub publish).
+"""DevOps agent — Phase 2: Terraform, CI/CD, ECS (not publish).
 
-GitHub publish is handled by github-agent after developer-agent (Phase 1 MVP).
-GitLab publish to origin is handled by gitlab-agent (self-hosted MCP).
+GitLab publish to origin is handled by gitlab-agent after developer-agent.
 """
 
 from __future__ import annotations
@@ -41,8 +40,8 @@ DEVOPS_SYS_PROMPT = """\
 You are the DevOps Agent for the Autonomous SDLC platform (Phase 2).
 
 ## Phase 1 (implemented elsewhere)
-- **github-agent** publishes generated apps to GitHub via MCP after developer-agent.
-- Do not push code or open pull requests — delegate to github-agent or gitlab-agent.
+- **gitlab-agent** publishes generated apps to GitLab via MCP after developer-agent.
+- Do not push code or open merge requests — delegate to gitlab-agent.
 
 ## Phase 2 scope (your future job)
 - Terraform modules under infrastructure/
@@ -52,9 +51,8 @@ You are the DevOps Agent for the Autonomous SDLC platform (Phase 2).
 - Slack/email notifications on deploy events
 
 ## Today
-If asked to publish to GitHub, tell the user to run:
+If asked to publish code, tell the user to run:
 `python agents/gitlab-agent/gitlab_agent.py --target-app <app>`
-`python agents/github-agent/github_agent.py --target-app <app>`
 """
 
 
@@ -113,7 +111,7 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="DevOps agent — Phase 2 infra (not GitHub publish)")
+    parser = argparse.ArgumentParser(description="DevOps agent — Phase 2 infra (not publish)")
     parser.add_argument("--task", default="Summarize Phase 2 DevOps scope for this target app.")
     parser.add_argument("--target-app", help="Feature slug")
     parser.add_argument(
@@ -141,7 +139,7 @@ def main() -> None:
     except TargetAppRequiredError as exc:
         parser.error(str(exc))
 
-    print(f"[{AGENT_NAME}] Phase 2 — use github-agent for publish.")
+    print(f"[{AGENT_NAME}] Phase 2 — use gitlab-agent for publish.")
     summary = run_task(args.task, ctx, target_app=target)
     print("\n" + "=" * 60)
     print(summary)

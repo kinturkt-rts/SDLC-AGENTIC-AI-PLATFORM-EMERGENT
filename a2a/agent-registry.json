@@ -21,10 +21,6 @@
       "url": "http://127.0.0.1:9104",
       "port": 9104
     },
-    "github-agent": {
-      "url": "http://127.0.0.1:9107",
-      "port": 9107
-    },
     "gitlab-agent": {
       "url": "http://127.0.0.1:9110",
       "port": 9110
