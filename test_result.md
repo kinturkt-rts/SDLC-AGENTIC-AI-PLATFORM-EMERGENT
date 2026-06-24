@@ -130,6 +130,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "✅ REBRAND VERIFIED. Health endpoints working correctly with new service name. GET /api/health and GET /api both return 200 with service='sdlc-agentic-platform', status='ok', mode='mock', and time field. Catch-all route also working: GET /api/does-not-exist returns 404 with error message."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ REGRESSION TEST PASSED. Health endpoints verified working after frontend changes (gitlab-agent addition). GET /api/health → 200 {service:'sdlc-agentic-platform', status:'ok', mode:'mock', time:<ISO>}. GET /api → 200 with identical structure. GET /api/does-not-exist → 404 with error message. All health endpoints functioning correctly."
 
   - task: "MCP Registry CRUD + persistence (data/mcp.json, Cursor format)"
     implemented: true
@@ -145,6 +148,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "✅ ALL MCP CRUD TESTS PASSED (8/8). Comprehensive testing completed: (1) GET /api/mcp returns 200 with mcpServers containing all 7 seeded servers (Atlassian, GitLab, Postgres, MongoDB, Firecrawl, AWS Diagram, Terraform). (2) POST /api/mcp/validate correctly rejects raw secrets (valid=false with error mentioning secret reference) and accepts ${env:...} references (valid=true). (3) Validation correctly requires command OR url (rejects when both missing, accepts url-only remote servers). (4) POST /api/mcp successfully adds valid server (SmokeTestServer) with 200 {ok:true, name, mcpServers}. (5) POST /api/mcp correctly rejects invalid server with raw secret (400 with errors), and BadServer NOT persisted to registry. (6) PERSISTENCE verified: added server present in GET, DELETE returns 200 {ok:true}, deleted server absent in subsequent GET. (7) DELETE /api/mcp/NonExistentXYZ returns 404 with error message. (8) Cleanup successful - all test artifacts removed. All validation rules working correctly (secret references, command/url requirements, type checking)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ REGRESSION TEST PASSED. MCP Registry CRUD fully functional after frontend changes. All 8 tests passed: (1) GET /api/mcp → 200 with 7 seeded servers. (2) POST /api/mcp/validate correctly rejects raw secrets and accepts ${env:...} references. (3) Validation enforces command OR url requirement. (4) POST /api/mcp adds valid servers successfully. (5) POST /api/mcp rejects invalid servers with 400. (6) Persistence working: add→GET→DELETE→GET cycle verified. (7) DELETE returns 404 for nonexistent servers. (8) Cleanup successful. All validation rules and CRUD operations functioning correctly."
   - task: "Projects discovery stub GET /api/v1/projects"
     implemented: true
     working: true
@@ -159,6 +165,9 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "✅ PROJECTS API WORKING. GET /api/v1/projects returns 200 with {projects:[...]} containing exactly 7 projects. All required slugs present including 'customer-feedback-hub' and 'meeting-action-tracker'. Verified NO 'environment' field in any project (correctly omitted from API response). All projects have required fields (slug, name, status). API correctly filters out internal fields."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ REGRESSION TEST PASSED. Projects API verified working after frontend changes. GET /api/v1/projects → 200 with {projects:[...]} containing exactly 7 projects (finops-web-app, meeting-assistant, rag-pdf-system, incident-triage-bot, demo-api, customer-feedback-hub, meeting-action-tracker). NO 'environment' field in any project (correctly omitted). All required fields present (slug, name, description, pipelineStatus, artifactCount, lastRunAt, repo). API functioning correctly."
 
 frontend:
   - task: "Rebrand to SDLC Agentic AI Platform + remove environment UI"
@@ -333,14 +342,66 @@ frontend:
         -agent: "testing"
         -comment: "Automated smoke test passed. Discriminated RunEvent feed renders multiple event kinds correctly: (1) Event stream panel found on /runs/run-8f2a91. (2) Multiple event kinds verified - found 4 distinct types: Phase events (7 instances of started/completed), Artifact events (3 instances with filenames like PRD.md, schema.sql), Log events (2 instances with info/error/warn/debug levels), Agent message events (1 instance with task.assign/result). (3) All event types render with correct formatting and icons. (4) Exceeds requirement of at least 3 distinct event types. No console errors detected."
 
+  - task: "GitLab Agent added to types and mock data"
+    implemented: true
+    working: true
+    file: "src/types/index.ts, src/mocks/agents.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Added 'gitlab-agent' to AgentName union type and mockAgents array. Pipeline-integrated publish agent with MCP tools, port 9109, availability online. Shows in /agents page correctly."
+
+frontend:
+  - task: "Dashboard UI enhancement - Agentic SDLC Control Center"
+    implemented: true
+    working: true
+    file: "src/app/(app)/dashboard/page.tsx, src/app/globals.css, src/components/shell/Sidebar.tsx, src/components/shell/Topbar.tsx, src/components/shell/AppShell.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Complete dashboard redesign: Hero section, SDLC Pipeline visualization (Product→Architecture→Database→Development→Publish), 5 Active Agent cards, 3 Coming Soon agents (locked), Live Activity timeline, Token Usage section with per-agent breakdown, enhanced stat cards, HITL approvals, MCP health. Premium dark theme with glassmorphism, gradient borders, animations. Sidebar/Topbar polished."
+
+  - task: "Rebrand to SDLC Agentic AI Platform + remove environment UI"
+    implemented: true
+    working: true
+    file: "src/components/shell/Sidebar.tsx, src/components/shell/Topbar.tsx, src/app/layout.tsx, src/app/(app)/projects/page.tsx, src/app/(app)/projects/[id]/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "Previously verified. Sidebar displays 'SDLC Agentic AI Platform' and 'Control Plane' correctly."
+
+  - task: "All existing pages and features preserved"
+    implemented: true
+    working: true
+    file: "src/app/(app)/**/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Verified visually: /agents shows 10 agents including new GitLab agent. /runs shows all 6 runs correctly. Dashboard has all new sections plus existing data from hooks."
+
 metadata:
   created_by: "main_agent"
-  version: "1.4"
-  test_sequence: 4
+  version: "1.5"
+  test_sequence: 6
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "GitLab Agent added to types and mock data"
+    - "Dashboard UI enhancement - Agentic SDLC Control Center"
+    - "All existing pages and features preserved"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -616,3 +677,65 @@ agent_communication:
       - All regression tests passed
       
       The NEW UX is production-ready and all requirements met.
+
+    -agent: "testing"
+    -message: |
+      🎉 BACKEND REGRESSION TEST COMPLETE - ALL 12 TESTS PASSED ✅
+      
+      Executed comprehensive backend API regression test suite after frontend changes (gitlab-agent addition).
+      Base URL: https://47384073-6ab4-4093-8498-5b5d604f2562.preview.emergentagent.com/api
+      
+      TEST RESULTS (12/12 PASSED):
+      
+      ✅ Test 1: GET /api/mcp - Initial seed with 7 servers
+         - Returns 200 with mcpServers containing all 7 seeded servers
+         - Servers: Atlassian, GitLab, Postgres, MongoDB, Firecrawl, AWS Diagram, Terraform
+      
+      ✅ Test 2a: POST /api/mcp/validate - Reject raw secret
+         - Correctly rejects raw secrets with valid=false
+         - Error: "env.K must be a secret reference like ${env:NAME} or ${workspaceFolder}/.env (no raw secrets)."
+      
+      ✅ Test 2b: POST /api/mcp/validate - Accept secret reference
+         - Correctly accepts ${env:...} references with valid=true
+      
+      ✅ Test 2c: POST /api/mcp/validate - Reject no command, no url
+         - Correctly rejects config with neither command nor url
+         - Error: "command is required for stdio servers (or provide url for a remote server)."
+      
+      ✅ Test 2d: POST /api/mcp/validate - Accept url-only remote server
+         - Correctly accepts url-only remote servers with valid=true
+      
+      ✅ Test 3a: POST /api/mcp - Add valid server
+         - Successfully adds SmokeTestServer with 200 {ok:true, name, mcpServers}
+      
+      ✅ Test 4: PERSISTENCE - Add, verify, delete, verify absent
+         - SmokeTestServer present after add
+         - DELETE returns 200 {ok:true}
+         - SmokeTestServer absent after delete
+         - File persistence working correctly
+      
+      ✅ Test 3b: POST /api/mcp - Reject invalid server (raw secret)
+         - Correctly rejects invalid server with 400 and errors array
+         - BadServer NOT persisted to registry
+      
+      ✅ Test 5: DELETE /api/mcp/NonExistentXYZ - 404 for missing server
+         - Returns 404 with error: "Server 'NonExistentXYZ' not found"
+      
+      ✅ Test 6: GET /api/v1/projects - 7 projects, no environment field
+         - Returns 200 with exactly 7 projects
+         - Slugs: finops-web-app, meeting-assistant, rag-pdf-system, incident-triage-bot, demo-api, customer-feedback-hub, meeting-action-tracker
+         - NO "environment" field in any project (correctly omitted)
+      
+      ✅ Test 7: Health endpoints - service='sdlc-agentic-platform'
+         - GET /api/health → 200 {service:'sdlc-agentic-platform', status:'ok', mode:'mock', time:<ISO>}
+         - GET /api → 200 with identical structure
+      
+      ✅ Test 8: GET /api/does-not-exist - 404 for unknown route
+         - Returns 404 with {error:"Route /does-not-exist not found"}
+      
+      ✅ Cleanup: Test artifacts removed successfully
+      
+      SUMMARY: Zero critical issues found. All backend APIs remain fully functional after frontend changes.
+      The gitlab-agent addition to frontend mock data did NOT impact backend API functionality. All endpoints
+      working correctly: Health, MCP Registry CRUD with validation and persistence, Projects API. Backend is
+      stable and production-ready.

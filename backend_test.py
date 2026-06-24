@@ -10,7 +10,7 @@ import sys
 from typing import Dict, Any, List
 
 # Base URL from environment
-BASE_URL = "https://dynamic-repo-load.preview.emergentagent.com"
+BASE_URL = "https://47384073-6ab4-4093-8498-5b5d604f2562.preview.emergentagent.com"
 API_BASE = f"{BASE_URL}/api"
 
 class TestResult:

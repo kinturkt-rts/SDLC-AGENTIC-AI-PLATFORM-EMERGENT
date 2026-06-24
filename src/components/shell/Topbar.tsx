@@ -19,9 +19,9 @@ export function Topbar() {
   const setCurrentProject = useUiStore((s) => s.setCurrentProject);
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border/60 bg-background/70 px-4 backdrop-blur-xl">
       <Select value={currentProjectId} onValueChange={setCurrentProject}>
-        <SelectTrigger className="h-9 w-[220px] gap-1 border-border">
+        <SelectTrigger className="h-9 w-[220px] gap-1 border-white/[0.08] bg-white/[0.02] text-sm transition-colors hover:border-white/[0.14]">
           <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
           <SelectValue placeholder="Select project" />
         </SelectTrigger>
@@ -35,8 +35,12 @@ export function Topbar() {
       </Select>
 
       <div className="relative ml-auto hidden w-full max-w-sm md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Search runs, agents, artifacts..." className="h-9 pl-9" disabled />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
+        <Input
+          placeholder="Search runs, agents, artifacts..."
+          className="h-9 border-white/[0.06] bg-white/[0.02] pl-9 text-sm placeholder:text-muted-foreground/40 focus:border-teal-500/30 focus:ring-teal-500/10"
+          disabled
+        />
       </div>
 
       <ThemeToggle />
