@@ -1,18 +1,20 @@
-﻿{
-    "productAgentOutput":  "See prdPath for gitlab-pipeline-smoke MVP requirements.",
-    "targetApp":  "gitlab-pipeline-smoke",
-    "prdPath":  "docs/PRD/gitlab-pipeline-smoke.md",
-    "designDocPath":  "docs/design/gitlab-pipeline-smoke.md",
-    "inputPath":  "inputs/gitlab-pipeline-smoke.txt",
-    "deliveryProfile":  {
-                            "streamlitRequirementsPath":  "ui/requirements.txt",
-                            "streamlitPath":  "ui/streamlit_app.py",
-                            "uiPattern":  null,
-                            "uiRequired":  false,
-                            "requiresReact":  false,
-                            "requiresStreamlit":  false
-                        },
-    "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/gitlab-pipeline-smoke.png"
-                     ]
+{
+  "productAgentOutput": "See prdPath for gitlab-pipeline-smoke MVP requirements.",
+  "targetApp": "gitlab-pipeline-smoke",
+  "prdPath": "docs/PRD/gitlab-pipeline-smoke.md",
+  "designDocPath": "docs/design/gitlab-pipeline-smoke.md",
+  "inputPath": "inputs/gitlab-pipeline-smoke.txt",
+  "deliveryProfile": {
+    "uiRequired": false,
+    "requiresStreamlit": false,
+    "requiresReact": false,
+    "uiPattern": null,
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "diagramPaths": [
+    {
+      "Length": 58
+    }
+  ]
 }

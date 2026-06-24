@@ -1,0 +1,61 @@
+Team Notice Board — shared announcements with a browser UI for organizers
+
+Client story:
+Morgan runs internal comms for a mid-size company. Important updates — all-hands reminders,
+policy changes, team wins — get posted in Slack and disappear within a day. Organizers who
+are not developers need a simple web page to post and manage notices; everyone else should
+be able to browse what is active this week without installing anything or using Swagger.
+
+MVP:
+- Notice categories (e.g. General, HR, Engineering) with a short name and optional description.
+- Notices: title, body (plain text), category, author display name, optional publish window
+  (when it should start showing and when it should stop), and an archived flag.
+- Anyone can browse active notices in a web UI — filter by category, search by words in
+  title or body.
+- Organizers use the same web UI to create notices, edit them, manage categories, and archive
+  outdated items. Writes require a shared organizer secret (configured in environment — not
+  a login screen with usernames/passwords).
+- Expired or not-yet-started notices should not appear in the default “active” browse view
+  (rows stay in the database; they are just hidden from the default list).
+- Archived notices are hidden from browse but kept for history.
+
+Personas (who needs what):
+- Employee / reader — browse and search active notices; read full notice text.
+- Organizer — create and edit notices and categories; archive notices; uses organizer secret
+  when saving from the UI.
+- Anonymous / unauthenticated — health check only for ops monitoring.
+
+Business rules worth getting right:
+- Default browse shows only active notices: not archived, not past end date, not before start date.
+- Search is forgiving (partial match on title or body, case-insensitive).
+- Cannot attach a notice to a category that does not exist.
+- End date cannot be before start date when both are set.
+- Category names must be unique.
+- Archiving is idempotent — archiving twice is fine.
+- List responses should support paging when there are many notices.
+- The web UI must load categories and notices from the backend over HTTP (not by importing
+  backend code directly). API remains the source of truth.
+
+Demo data expectations:
+- Three categories: General, HR, Engineering.
+- About five sample notices: some active now, one scheduled for the future, one past its end
+  date, one archived — so browse vs hidden behavior is obvious in demos.
+- Realistic author names (e.g. "Jordan Lee", "Sam Patel").
+
+UI expectation:
+- Streamlit browser app with at least:
+  - **Browse** — table of active notices, category filter, search box.
+  - **Create notice** — form (category, title, body, author, optional dates); needs organizer secret.
+  - **Categories** — list existing categories; form to add a new one when organizer secret is set.
+- Clear message when the API is down or organizer secret is missing/wrong.
+- Run API on port 8000; Streamlit on port 8501. Swagger at /docs is fine for developers but
+  organizers should not depend on it.
+
+Out of scope:
+- User accounts, JWT login, password reset, or per-user permissions beyond organizer vs reader
+- AI/LLM content generation, email or Slack notifications
+- File attachments, rich media, comments on notices
+- Multi-tenant or public internet exposure
+
+Target app slug: notice-board-ui
+Output directory: target-apps/notice-board-ui/

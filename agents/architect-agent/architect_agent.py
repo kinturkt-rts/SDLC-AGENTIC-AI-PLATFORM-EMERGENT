@@ -524,6 +524,13 @@ def main() -> None:
         serve_a2a(host=args.host, port=args.port)
         return
 
+    # Bedrock/Strands stream Unicode (e.g. →) during run_task; Windows cp1252 crashes if set too late.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     if not args.task:
         args.task = DEFAULT_PIPELINE_TASK
 
@@ -563,8 +570,6 @@ def main() -> None:
         diagram_base_name=args.diagram_name,
         skip_design=args.skip_design,
     )
-    # Bedrock may emit emoji; Windows cp1252 console cannot print them by default.
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(result)
     if saved:
         for path in sorted(saved):

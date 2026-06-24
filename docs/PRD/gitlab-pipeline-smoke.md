@@ -2,123 +2,131 @@
 
 ## 1. Overview
 
-Internal teams currently post announcements, reminders, and wins in Slack where they get buried and become hard to reference. There is no simple read API for dashboards or bots to surface "what's active this week." This project delivers a Team Notice Board API that allows anyone to read active notices while organizers with a shared API key can create, update, and archive notices. The solution uses FastAPI with Postgres and provides Swagger documentation, serving as an end-to-end test for the SDLC agent pipeline while following Pattern B (Postgres CRUD + API-key auth).
+Internal teams currently post updates in Slack where they get buried and lack discoverability for dashboards or bots. The Team Notice Board API provides a simple REST API for teams to post notices (announcements, reminders, wins) on a shared board with categorization and time-based visibility controls.
+
+The solution enables anonymous read access for notices and categories via public endpoints, while organizers use API key authentication to create, update, and archive notices. The system automatically handles time-based visibility, filtering out expired or future-scheduled notices from default list views.
 
 ## 2. Goals & Success Metrics
 
 | Goal | Metric | Target | Notes |
 |------|--------|--------|-------|
-| Pipeline validation | Full SDLC agent chain completion | 100% success rate | product-agent → architect-agent → database-agent → developer-agent → gitlab-agent |
-| API functionality | All endpoints return correct responses | 100% test coverage | Health, categories, notices CRUD with proper auth |
-| GitLab integration | Successful branch publish | Artifacts appear in sdlc/gitlab-pipeline-smoke | PRD, design, SQL, FastAPI app, tests |
-| Developer experience | Local development works | uvicorn + Swagger /docs accessible | After RDS apply and .env setup |
+| Replace buried Slack updates | Active notices posted weekly | >10 notices/week | Measured via GET /notices analytics |
+| Enable dashboard integration | API response time | <200ms p95 | For external systems consuming notices |
+| Reduce information fragmentation | Notice categories utilized | 100% of notices categorized | All notices must have valid category_id |
+| Support automated consumption | API uptime | 99.5% | Critical for bot/dashboard integrations |
 
 ## 3. Non-Goals / Out of Scope
 
-- JWT/login authentication system
-- Bedrock/LLM integration
-- pgvector/RAG capabilities
-- Streamlit/React UI components
-- Email notifications
-- Redis caching
-- S3 storage
-- Terraform infrastructure
-- Automatic GitLab MR creation from run-sdlc.ps1
+- User authentication with login/JWT tokens
+- Streamlit or React UI components
+- LLM/AI content generation or analysis
+- Email notifications for new notices
+- Real-time updates via WebSocket
+- File attachments or rich media
+- Comment threads on notices
+- User management or role-based permissions beyond API key
+- Integration with external notification systems
 
 ## 4. Users & Use Cases
 
 | Persona | Need | Primary use case |
 |---------|------|------------------|
-| Anonymous reader | View active team notices | GET /notices to see current announcements for dashboards/bots |
-| Team organizer | Manage notices and categories | POST/PATCH notices with API key for announcements, reminders, wins |
-| Dashboard developer | Integrate notice data | Consume REST API endpoints for displaying team updates |
-| Bot developer | Surface active notices | Query filtered notices by category or search terms |
+| Anonymous Reader | View current team announcements | GET /notices to see active notices for dashboard display |
+| Dashboard System | Programmatically fetch notices | Automated polling of API endpoints for display integration |
+| Team Organizer | Post and manage announcements | Create notices with time windows; archive outdated content |
+| Bot Developer | Search and filter notices | Use query parameters to find specific notices by category or content |
 
 ## 5. Functional Requirements
 
 | ID | Description | Priority | Acceptance criteria (Given / When / Then) |
 |----|-------------|----------|---------------------------------------------|
-| FR-1 | Health check endpoint | P0 | Given API is running / When GET /health called / Then return 200 with {"status":"ok","service":"gitlab-pipeline-smoke"} |
-| FR-2 | Category management with API key auth | P0 | Given valid API key / When POST /categories with name and description / Then create category and return 201 / Given invalid key / Then return 401 |
-| FR-3 | Notice CRUD operations | P0 | Given valid API key / When POST /notices with title, body, category_id, author_name / Then create notice and return 201 / Given missing API key / Then return 401 |
-| FR-4 | Public notice listing with filters | P0 | Given no auth required / When GET /notices?active_only=true / Then return paginated list excluding archived, expired, and future notices |
-| FR-5 | Notice search functionality | P1 | Given no auth required / When GET /notices?q=searchterm / Then return notices with case-insensitive partial match on title OR body |
-| FR-6 | Notice archival | P1 | Given valid API key / When POST /notices/{id}/archive / Then set is_archived=true and return 204 / Given already archived / Then return 204 idempotently |
-| FR-7 | Category uniqueness validation | P1 | Given valid API key / When POST /categories with duplicate name / Then return 409 conflict error |
-| FR-8 | Date validation for notices | P1 | Given valid API key / When POST /notices with ends_at < starts_at / Then return 422 validation error |
+| FR-1 | Public notice listing with filtering | P0 | Given active notices exist / When GET /notices called / Then returns paginated list excluding archived and expired notices |
+| FR-2 | API key authentication for write operations | P0 | Given valid API key in X-API-Key header / When POST /notices called / Then creates notice with 201 status |
+| FR-3 | Category management system | P0 | Given organizer authentication / When POST /categories with unique name / Then creates category with 201 status |
+| FR-4 | Time-based notice visibility | P0 | Given notice with ends_at in past / When GET /notices?active_only=true / Then notice excluded from results |
+| FR-5 | Notice archival functionality | P1 | Given existing notice ID / When POST /notices/{id}/archive with API key / Then sets is_archived=true with 204 status |
+| FR-6 | Search functionality across notices | P1 | Given notices with searchable content / When GET /notices?q=term / Then returns notices with case-insensitive partial match on title or body |
+| FR-7 | Notice scheduling with start dates | P2 | Given notice with future starts_at / When GET /notices?active_only=true / Then notice excluded until starts_at reached |
 
 ## 6. Non-Functional Requirements
 
 | ID | Category | Target | Measurement / verification | Notes |
 |----|----------|--------|---------------------------|-------|
-| NFR-1 | Performance | API response time < 200ms | Load testing with typical payloads | For list and single item endpoints |
-| NFR-2 | Security | API key authentication required for writes | Penetration testing of auth bypass attempts | 401 returned for missing/invalid keys |
-| NFR-3 | Availability | 99.9% uptime during business hours | Health check monitoring | (Assumption) |
-| NFR-4 | Data integrity | ACID compliance for all database operations | Transaction testing and rollback scenarios | PostgreSQL default isolation level |
-| NFR-5 | Scalability | Support 1000+ notices with pagination | Performance testing with large datasets | Offset/limit pagination implementation |
-| NFR-6 | Observability | Structured logging for all API calls | Log aggregation and monitoring setup | FastAPI request/response logging |
-| NFR-7 | Data retention | Soft delete via archival flag | Verify archived notices excluded from active lists | No hard deletion of notice records |
+| NFR-1 | Performance | <200ms response time p95 | Load testing with 100 concurrent requests | Critical for dashboard integrations |
+| NFR-2 | Security | API key validation on all write operations | Automated security tests verify 401 responses | Single shared API key for MVP |
+| NFR-3 | Availability | 99.5% uptime | Monitoring and alerting on service health | (Assumption) |
+| NFR-4 | Scalability | Support 1000 notices and 50 categories | Database performance testing | (Assumption) |
+| NFR-5 | Data Integrity | Foreign key constraints enforced | Database schema validation tests | category_id must reference valid category |
+| NFR-6 | API Documentation | OpenAPI spec available at /docs | Swagger UI accessibility verification | FastAPI auto-generates documentation |
+| NFR-7 | Error Handling | Consistent HTTP status codes and error messages | API contract testing | 404 for missing resources, 409 for conflicts, 422 for validation |
 
 ## 7. Data & Integrations
 
-**Database Entities:**
-- categories: id (uuid PK), name (text unique 1-60 chars), description (text nullable max 240), created_at
-- notices: id (uuid PK), category_id (FK), title (1-120 chars), body (1-4000 chars), author_name (1-80 chars), starts_at, ends_at, is_archived (bool), created_at, updated_at
+**Core Entities:**
+- Categories: id (UUID), name (unique, 1-60 chars), description (optional, max 240), created_at
+- Notices: id (UUID), category_id (FK), title (1-120 chars), body (1-4000 chars), author_name (1-80 chars), starts_at, ends_at, is_archived, created_at, updated_at
 
 **External Systems:**
-- PostgreSQL database via DATABASE_URL environment variable
-- GitLab repository for artifact publishing via GITLAB_* environment variables
+- PostgreSQL database with gitlab_pipeline_smoke schema
+- GitLab repository for code deployment and CI/CD pipeline
 
-**Seed Data:**
-- 3 default categories: General, HR, Engineering
-- 5 sample notices with mix of active, future, expired, and archived states
+**APIs:**
+- REST API with OpenAPI specification
+- Health check endpoint for monitoring systems
 
 ## 8. Analytics & Observability
 
-- FastAPI automatic request/response logging
-- Health check endpoint for monitoring
-- Database connection health monitoring
-- API key usage tracking in logs
-- Error rate monitoring for 4xx/5xx responses
-- Response time metrics collection
+**Logging:**
+- API request/response logging with request IDs
+- Authentication failures and security events
+- Database query performance metrics
+
+**Metrics:**
+- Notice creation/update/archive rates
+- API endpoint response times and error rates
+- Database connection pool utilization
+
+**Health Checks:**
+- /health endpoint returning service status
+- Database connectivity verification
+- API key validation monitoring
 
 ## 9. Risks & Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| API key exposure in logs | High - unauthorized access | Ensure API keys are masked in all logging output |
-| Database connection failures | High - service unavailable | Implement connection retry logic and health checks |
-| Large notice body causing performance issues | Medium - slow responses | Enforce 4000 character limit on notice body field |
-| Timezone handling for starts_at/ends_at | Medium - incorrect filtering | Use timestamptz data type and UTC standardization |
-| Pipeline agent chain failure | Medium - development blocker | Implement retry mechanism and clear error reporting |
+| API key compromise | Medium - unauthorized notice management | Use environment variable for API key, plan key rotation process |
+| Database performance degradation | High - slow API responses | Index on (is_archived, starts_at DESC) for efficient queries |
+| Notice content quality issues | Low - inappropriate content posted | Manual moderation by organizers using archive functionality |
+| Category name conflicts | Low - API errors on duplicate names | Database unique constraint with proper 409 error handling |
 
 ## 10. Open Questions
 
 | # | Question | Suggested owner |
 |---|----------|-----------------|
-| 1 | What is the expected concurrent user load? | Product Owner |
-| 2 | Should we implement rate limiting per API key? | Technical Lead |
-| 3 | How long should archived notices be retained? | Business Stakeholder |
-| 4 | What monitoring/alerting tools will be integrated? | DevOps Team |
-| 5 | Should notice body support rich markdown rendering? | UX Team |
+| 1 | What is the expected peak concurrent API usage? | Product Manager |
+| 2 | Should we implement soft delete for notices instead of archive flag? | Database Architect |
+| 3 | Are there specific compliance requirements for notice data retention? | Legal/Compliance |
+| 4 | Should API key have expiration or rotation mechanism? | Security Team |
 
 ## 11. Delivery & Client Surface
 
 | Concern | Choice | Implementation notes |
 |---------|--------|---------------------|
-| Client UI | API-only (Swagger) | Swagger UI available at /docs endpoint |
-| API | FastAPI under `target-apps/gitlab-pipeline-smoke/` | REST + OpenAPI specification |
-| UI location | N/A - API only | No Streamlit or React components |
-| Auth for API | API key via X-API-Key header | Single shared key from environment variable |
+| Client UI | API-only (Swagger) | No Streamlit or React - FastAPI serves OpenAPI docs at /docs |
+| API | FastAPI under `target-apps/gitlab-pipeline-smoke/` | REST + OpenAPI with pydantic schemas |
+| UI location | N/A | Swagger UI at /docs endpoint only |
+| Auth for UI | API key in request headers | X-API-Key header for write operations |
 
 ## Appendix: Assumptions
 
-- Single API key shared among all organizers is sufficient for MVP
-- PostgreSQL schema name gitlab_pipeline_smoke is acceptable
-- UTC timezone handling is adequate for starts_at/ends_at fields
-- 1000+ notices represents reasonable scale for MVP
-- Swagger UI documentation is sufficient for API consumer onboarding
-- Soft delete via is_archived flag meets compliance requirements
-- Case-insensitive search without full-text indexing is adequate
-- Standard FastAPI error handling meets user experience needs
-- Agent pipeline success criteria are well-defined in existing tooling
+- Single shared API key sufficient for MVP organizer authentication
+- PostgreSQL performance adequate for expected notice volume
+- 99.5% availability target reasonable for internal tool
+- Case-insensitive search sufficient for initial implementation
+- Manual moderation acceptable for content quality control
+- Standard HTTP status codes meet client integration needs
+- OpenAPI documentation sufficient for developer onboarding
+- Time zone handling via UTC timestamps in database
+- Markdown support in notice body limited to plain text storage
+- No backup/disaster recovery requirements specified
