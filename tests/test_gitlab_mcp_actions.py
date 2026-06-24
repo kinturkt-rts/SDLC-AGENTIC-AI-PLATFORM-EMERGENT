@@ -10,7 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
 
 from _shared.gitlab_mcp_actions import (  # noqa: E402
+    _is_branch_not_found,
     _mcp_error_message,
+    _publish_commit_message,
+    _publish_error,
     create_mr_note,
     gitlab_api_url,
     gitlab_base_branch,
@@ -58,3 +61,28 @@ def test_mcp_error_message_unwraps_nested_exception_group() -> None:
     inner = GitLabMcpError("Token is expired")
     wrapped = BaseExceptionGroup("task group", [BaseExceptionGroup("inner", [inner])])
     assert _mcp_error_message(wrapped) == "Token is expired"
+
+
+def test_is_branch_not_found_detects_gitlab_message() -> None:
+    exc = GitLabMcpError("Branch Not Found: notice-board-ui")
+    assert _is_branch_not_found(exc) is True
+    assert _is_branch_not_found(GitLabMcpError("commit failed")) is False
+
+
+def test_publish_commit_message_generic_and_batched() -> None:
+    assert _publish_commit_message("notice-board-ui") == "feat(notice-board-ui): SDLC pipeline output"
+    assert (
+        _publish_commit_message("notice-board-ui", batch=2, total=3)
+        == "feat(notice-board-ui): SDLC pipeline output (batch 2/3)"
+    )
+
+
+def test_publish_error_includes_project_and_unwraps_group() -> None:
+    inner = GitLabMcpError("file already exists")
+    wrapped = BaseExceptionGroup("task group", [inner])
+    cfg = {"project": "group/apps", "base": "main"}
+    result = _publish_error("notice-board-ui", "notice-board-ui", cfg, wrapped)
+    assert result["ok"] is False
+    assert result["error"] == "file already exists"
+    assert result["gitlabProject"] == "group/apps"
+    assert result["gitlabBaseBranch"] == "main"

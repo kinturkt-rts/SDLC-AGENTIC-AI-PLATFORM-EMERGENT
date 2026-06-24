@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .gitlab_mcp_client import (
     GitLabMcpError,
@@ -17,7 +17,10 @@ from .gitlab_mcp_client import (
 
 _DEFAULT_API_URL = "https://code.junodev.net/api/v4"
 _DEFAULT_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform"
+_DEFAULT_APPS_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps"
 _BATCH_SIZE = 20
+
+PublishLayout = Literal["monorepo", "apps"]
 
 _EXCLUDE_DIR_NAMES = frozenset(
     {".venv", "__pycache__", ".pytest_cache", "node_modules", ".git"}
@@ -73,6 +76,19 @@ def default_branch_name(feature: str) -> str:
     return f"sdlc/{slugify_feature(feature)}"
 
 
+def apps_branch_name(feature: str) -> str:
+    """Branch name for sdlc-agentic-ai-platform-apps (one branch per app, no sdlc/ prefix)."""
+    return slugify_feature(feature)
+
+
+def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
+    """Map target-apps/<slug>/... to repo-root paths for the apps GitLab project."""
+    prefix = f"target-apps/{slug}/"
+    if rel_path.startswith(prefix):
+        return rel_path[len(prefix) :]
+    return None
+
+
 def gitlab_personal_access_token() -> str:
     for key in ("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GL_TOKEN"):
         value = os.getenv(key, "").strip()
@@ -100,26 +116,32 @@ def gitlab_base_branch() -> str:
     return (os.getenv("GITLAB_BASE_BRANCH") or "main").strip() or "main"
 
 
-def _mcp_error_message(exc: BaseException) -> str | None:
-    """Extract GitLabMcpError text from nested asyncio/ExceptionGroup wrappers."""
+def gitlab_apps_project_path() -> str:
+    return (os.getenv("GITLAB_APPS_PROJECT_PATH") or _DEFAULT_APPS_PROJECT_PATH).strip()
+
+
+def _mcp_error_message(exc: BaseException) -> str:
+    """Extract a useful message from GitLabMcpError or nested ExceptionGroup wrappers."""
     if isinstance(exc, GitLabMcpError):
         return str(exc)
     if isinstance(exc, BaseExceptionGroup):
         for nested in exc.exceptions:
             msg = _mcp_error_message(nested)
-            if msg:
+            if msg and msg != str(exc):
                 return msg
-    return None
+    return str(exc)
+
+
+def _is_branch_not_found(exc: BaseException) -> bool:
+    message = _mcp_error_message(exc).lower()
+    return "branch" in message and "not found" in message
 
 
 def _run(coro: Any) -> dict[str, Any]:
     try:
         return asyncio.run(coro)
     except BaseException as exc:
-        msg = _mcp_error_message(exc)
-        if msg:
-            return {"ok": False, "error": msg}
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": _mcp_error_message(exc)}
 
 
 # --- Repo config & publish helpers ---
@@ -184,6 +206,32 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
 
             content = base64.b64encode(data).decode("ascii")
         files.append({"path": rel, "content": content, "binary": src.suffix.lower() == ".png"})
+    return files
+
+
+def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, str]]:
+    """Publish only target-apps/<slug>/ files at branch root (apps GitLab project)."""
+    root_path = root or repo_root()
+    slug = slugify_feature(feature)
+    text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
+    files: list[dict[str, str]] = []
+    for rel in collect_feature_artifact_paths(slug, root=root_path):
+        dest = dest_path_for_apps_repo(rel, slug)
+        if dest is None:
+            continue
+        src = root_path / rel
+        data = src.read_bytes()
+        if src.suffix.lower() == ".png":
+            import base64
+
+            content = base64.b64encode(data).decode("ascii")
+        elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
+            content = data.decode("utf-8")
+        else:
+            import base64
+
+            content = base64.b64encode(data).decode("ascii")
+        files.append({"path": dest, "content": content, "binary": src.suffix.lower() == ".png"})
     return files
 
 
@@ -361,6 +409,12 @@ def create_mr_note(**kwargs: Any) -> dict[str, Any]:
 # --- SDLC publish workflow ---
 
 
+def _publish_commit_message(slug: str, *, batch: int | None = None, total: int | None = None) -> str:
+    if batch is not None and total is not None and total > 1:
+        return f"feat({slug}): SDLC pipeline output (batch {batch}/{total})"
+    return f"feat({slug}): SDLC pipeline output"
+
+
 async def _publish_binary_files(
     session: Any,
     *,
@@ -384,7 +438,7 @@ async def _publish_binary_files(
                 "branch": branch,
                 "content": item["content"],
                 "encoding": "base64",
-                "commit_message": f"feat({slug}): add binary artifact {path}",
+                "commit_message": _publish_commit_message(slug),
             },
         )
         existing_paths.add(path)
@@ -407,13 +461,14 @@ async def _ensure_publish_branch(
             "gitlab_branch_get",
             {"project_id": project_id, "branch_name": branch},
         )
-    except GitLabMcpError:
+    except (GitLabMcpError, BaseExceptionGroup) as exc:
+        if not _is_branch_not_found(exc):
+            raise
         await call_gitlab_mcp_tool(
             session,
             "gitlab_branch_create",
             {"project_id": project_id, "branch_name": branch, "ref": base_branch},
         )
-        return set()
     return await list_existing_blob_paths(session, project_id=project_id, ref=branch)
 
 
@@ -425,10 +480,11 @@ def _publish_error(
 ) -> dict[str, Any]:
     return {
         "ok": False,
-        "error": str(exc),
+        "error": _mcp_error_message(exc),
         "targetApp": slug,
         "branch": publish_branch,
-        **cfg,
+        "gitlabProject": cfg["project"],
+        "gitlabBaseBranch": cfg["base"],
     }
 
 
@@ -441,16 +497,21 @@ async def publish_feature_async(
     draft_mr: bool = False,
     open_mr: bool = False,
     root: Any | None = None,
+    layout: PublishLayout = "monorepo",
 ) -> dict[str, Any]:
     """Push feature artifacts via jmrplens MCP (gitlab_commit_create); MR is opt-in."""
     gitlab_personal_access_token()
     root_path = root or repo_root()
     slug = slugify_feature(feature)
     cfg = gitlab_repo_config(project=project, base_branch=base_branch)
-    publish_branch = (branch or publish_branch_name(slug)).strip()
+    if layout == "apps":
+        publish_branch = (branch or apps_branch_name(slug)).strip()
+        files = _collect_apps_repo_publish_files(slug, root=root_path)
+    else:
+        publish_branch = (branch or publish_branch_name(slug)).strip()
+        files = _collect_monorepo_publish_files(slug, root=root_path)
     project_id = cfg["project"]
 
-    files = _collect_monorepo_publish_files(slug, root=root_path)
     if not files:
         return {
             "ok": False,
@@ -483,7 +544,7 @@ async def publish_feature_async(
             text_files, binary_files = _split_publish_files(files)
             batches = _batch_files(text_files)
             for index, batch in enumerate(batches, start=1):
-                message = f"feat({slug}): SDLC pipeline output (batch {index}/{len(batches)})"
+                message = _publish_commit_message(slug, batch=index, total=len(batches))
                 commit_result = await call_gitlab_mcp_tool(
                     session,
                     "gitlab_commit_create",
@@ -526,12 +587,7 @@ async def publish_feature_async(
                         "description": _mr_body(slug, [f["path"] for f in files]),
                     },
                 )
-    except GitLabMcpError as exc:
-        return _publish_error(slug, publish_branch, cfg, exc)
-    except BaseExceptionGroup as exc:
-        for nested in exc.exceptions:
-            if isinstance(nested, GitLabMcpError):
-                return _publish_error(slug, publish_branch, cfg, nested)
+    except (GitLabMcpError, BaseExceptionGroup) as exc:
         return _publish_error(slug, publish_branch, cfg, exc)
 
     mr_url = str(mr_result.get("web_url") or "")
@@ -543,6 +599,7 @@ async def publish_feature_async(
         "branch": publish_branch,
         "gitlabProject": cfg["project"],
         "gitlabBaseBranch": cfg["base"],
+        "publishLayout": layout,
         "openMergeRequest": open_mr,
         "pathsPublished": [f["path"] for f in files],
         "commits": commits,
@@ -562,8 +619,9 @@ def publish_feature(
     draft_mr: bool = False,
     open_mr: bool = False,
     root: Any | None = None,
+    layout: PublishLayout = "monorepo",
 ) -> dict[str, Any]:
-    return asyncio.run(
+    return _run(
         publish_feature_async(
             feature,
             project=project,
@@ -572,5 +630,6 @@ def publish_feature(
             draft_mr=draft_mr,
             open_mr=open_mr,
             root=root,
+            layout=layout,
         )
     )

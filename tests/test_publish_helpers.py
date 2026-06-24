@@ -5,14 +5,25 @@ from __future__ import annotations
 from pathlib import Path
 
 from agents._shared.gitlab_mcp_actions import (
+    apps_branch_name,
     collect_feature_artifact_paths,
     default_branch_name,
+    dest_path_for_apps_repo,
     should_include_file,
 )
 
 
 def test_default_branch_name() -> None:
     assert default_branch_name("customer-feedback-hub") == "sdlc/customer-feedback-hub"
+
+
+def test_apps_branch_name() -> None:
+    assert apps_branch_name("notice-board-ui") == "notice-board-ui"
+
+
+def test_dest_path_for_apps_repo() -> None:
+    assert dest_path_for_apps_repo("target-apps/notice-board-ui/app/main.py", "notice-board-ui") == "app/main.py"
+    assert dest_path_for_apps_repo("docs/PRD/notice-board-ui.md", "notice-board-ui") is None
 
 
 def test_should_exclude_env_and_venv(tmp_path: Path) -> None:

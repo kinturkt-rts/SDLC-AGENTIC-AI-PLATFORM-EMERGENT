@@ -22,6 +22,8 @@ from _shared.env import load_repo_env
 from _shared.gitlab_mcp_actions import (
     collect_feature_artifact_paths,
     create_mr_note,
+    gitlab_apps_project_path,
+    gitlab_base_branch,
     gitlab_repo_config,
     list_branch_files,
     list_mr_notes,
@@ -62,14 +64,17 @@ def _write_gitlab_handoff(app: str, handoff: dict[str, Any]) -> str:
     return path.relative_to(_REPO_ROOT).as_posix()
 
 
-def _enrich_gitlab_context(ctx: dict[str, Any]) -> None:
+def _enrich_gitlab_context(ctx: dict[str, Any], *, layout: str = "monorepo") -> None:
     app = slugify_feature(str(ctx["targetApp"]))
-    cfg = gitlab_repo_config(
-        project=str(ctx.get("gitlabProject") or ""),
-        base_branch=str(ctx.get("gitlabBaseBranch") or ""),
-    )
-    ctx.setdefault("gitlabProject", cfg["project"])
-    ctx.setdefault("gitlabBaseBranch", cfg["base"])
+    if layout == "apps":
+        ctx.setdefault("gitlabProject", gitlab_apps_project_path())
+    else:
+        cfg = gitlab_repo_config(
+            project=str(ctx.get("gitlabProject") or ""),
+            base_branch=str(ctx.get("gitlabBaseBranch") or ""),
+        )
+        ctx.setdefault("gitlabProject", cfg["project"])
+    ctx.setdefault("gitlabBaseBranch", gitlab_base_branch())
     ctx.setdefault("publishPaths", collect_feature_artifact_paths(app, root=_REPO_ROOT))
 
 
@@ -80,13 +85,16 @@ def run_publish(
     draft_mr: bool = False,
     open_mr: bool = False,
     branch: str | None = None,
+    apps_repo: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Deterministic publish via jmrplens GitLab MCP (no LLM)."""
     ctx = dict(context or {})
     app = resolve_target_app(target_app, ctx, env_var="GITLAB_TARGET_APP")
     ctx.setdefault("targetApp", app)
     enrich_handoff_context(ctx, include_db_paths=False)
-    _enrich_gitlab_context(ctx)
+
+    layout = "apps" if apps_repo or ctx.get("gitlabPublishLayout") == "apps" else "monorepo"
+    _enrich_gitlab_context(ctx, layout=layout)
 
     result = publish_feature(
         app,
@@ -96,6 +104,7 @@ def run_publish(
         draft_mr=draft_mr or bool(ctx.get("gitlabDraftMr")),
         open_mr=open_mr or bool(ctx.get("gitlabOpenMr")),
         root=_REPO_ROOT,
+        layout=layout,
     )
 
     handoff = {
@@ -194,6 +203,8 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="GitLab agent — MCP publish to platform repo")
     parser.add_argument("--target-app", help="Feature slug under target-apps/")
     parser.add_argument(
@@ -201,7 +212,12 @@ def main() -> None:
         help="GitLab project path or numeric id (default: GITLAB_PROJECT_PATH)",
     )
     parser.add_argument("--gitlab-base", default="", help="Branch to fork from (default: main)")
-    parser.add_argument("--branch", default="", help="Override publish branch (default: sdlc/<app>)")
+    parser.add_argument("--branch", default="", help="Override publish branch (default: sdlc/<app> or <app> with --apps-repo)")
+    parser.add_argument(
+        "--apps-repo",
+        action="store_true",
+        help="Publish to GITLAB_APPS_PROJECT_PATH with app files at branch root (branch default: <app>)",
+    )
     parser.add_argument("--open-mr", action="store_true", help="Open merge request to --gitlab-base / main")
     parser.add_argument("--draft-mr", action="store_true", help="Open MR as draft (requires --open-mr)")
     parser.add_argument(
@@ -288,6 +304,7 @@ def main() -> None:
         draft_mr=args.draft_mr,
         open_mr=args.open_mr,
         branch=args.branch or None,
+        apps_repo=args.apps_repo,
     )
     print("\n" + "=" * 60)
     print(summary)
