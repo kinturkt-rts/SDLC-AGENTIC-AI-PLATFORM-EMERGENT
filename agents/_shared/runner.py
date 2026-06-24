@@ -37,6 +37,14 @@ AGENT_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def coding_model_id() -> str:
+    """Bedrock model for code/SQL agents; prefers CODING_MODEL_ID over MODEL_ID."""
+    explicit = os.getenv("CODING_MODEL_ID", "").strip()
+    if explicit:
+        return explicit
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
+
+
 def _bedrock_model() -> BedrockModel:
     region = os.getenv("AWS_REGION", "us-east-2")
     model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")

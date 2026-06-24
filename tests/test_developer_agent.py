@@ -175,5 +175,5 @@ def test_ensure_service_requirements_installed_runs_pip(
     monkeypatch.setattr(subprocess, "run", _fake_run)
     ok, msg = mod._ensure_service_requirements_installed(service, "python")
     assert ok is True
-    assert "DEPS OK (requirements.txt)" in msg
+    assert msg == ""
     assert calls[0][:4] == ["python", "-m", "pip", "install"]

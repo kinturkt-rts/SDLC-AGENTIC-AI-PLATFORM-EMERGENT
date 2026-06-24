@@ -212,6 +212,11 @@ def main() -> None:
         default="design",
         help="design: after architect; app: after developer",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print on failure",
+    )
     args = parser.parse_args()
     repo_root = Path(args.repo_root).resolve()
     ctx_path = Path(args.context_file)
@@ -237,7 +242,8 @@ def main() -> None:
         for err in errors:
             print(f"ERROR: {err}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"delivery profile OK ({args.check})")
+    if not args.quiet:
+        print(f"delivery profile OK ({args.check})")
 
 
 if __name__ == "__main__":

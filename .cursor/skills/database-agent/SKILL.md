@@ -37,4 +37,4 @@ python agents/database-agent/database_agent.py --with-postgres --with-mongodb
 
 MCP flags **compose**. FinOps MVP is Postgres-only today; MongoDB when design + env creds exist.
 
-Test connectivity: `python scripts/test_postgres_mcp_direct.py`
+Test connectivity: `python tests/test_postgres_mcp_direct.py`

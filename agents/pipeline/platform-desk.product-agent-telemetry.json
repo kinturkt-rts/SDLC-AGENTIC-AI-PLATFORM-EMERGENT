@@ -1,0 +1,15 @@
+{
+  "agent": "product-agent",
+  "targetApp": "platform-desk",
+  "modelId": "us.anthropic.claude-sonnet-4-6",
+  "modelLabel": "sonnet-4-6",
+  "toolCount": 0,
+  "toolNames": [],
+  "inputTokens": 3,
+  "outputTokens": 7284,
+  "cacheReadInputTokens": 0,
+  "cacheWriteInputTokens": 2261,
+  "totalTokens": 7287,
+  "cacheHitRatio": 0.0,
+  "elapsedSec": 155.66
+}

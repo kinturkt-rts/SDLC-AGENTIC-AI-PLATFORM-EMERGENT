@@ -186,6 +186,10 @@ def aws_diagram_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
                 args=[
                     "tool",
                     "run",
+                    "--with",
+                    "sarif-om",
+                    "--with",
+                    "jschema_to_python",
                     "--from",
                     f"awslabs.aws-diagram-mcp-server=={AWS_DIAGRAM_MCP_VERSION}",
                     "awslabs.aws-diagram-mcp-server",

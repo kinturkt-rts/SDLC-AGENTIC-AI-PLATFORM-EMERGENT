@@ -142,6 +142,7 @@ if ($WithJira -and -not $JiraProject) {
 
 $appDir = Join-Path $RepoRoot "target-apps\$Feature"
 $sqlDir = Join-Path $appDir "db\sql"
+$pipelineAgentsRun = @()
 
 function Convert-JsonObjectToHashtable {
     param($Node)
@@ -180,7 +181,7 @@ function Update-Context {
     if (-not $obj["targetApp"]) { $obj["targetApp"] = $Feature }
     if (-not $obj["designDocPath"]) { $obj["designDocPath"] = "docs/design/$Feature.md" }
     $obj | ConvertTo-Json -Depth 5 | Set-Content $ctxPath -Encoding utf8
-    Write-Host "[pipeline] Context -> $ctxPath" -ForegroundColor Cyan
+    Write-Host "[pipeline] Context -> agents/pipeline/$Feature.context.json" -ForegroundColor Cyan
 }
 
 function Sync-DeliveryProfile {
@@ -200,9 +201,8 @@ function Sync-DeliveryProfile {
 function Invoke-DeliveryVerify {
     param([ValidateSet("design", "app")][string]$Stage)
     if (-not (Test-Path $ctxPath)) { return }
-    Write-Host "`n=== Delivery profile verify ($Stage) ===" -ForegroundColor Green
     if ((Invoke-PipelinePython -ArgumentList @(
-        "agents/_shared/delivery_profile.py", "--context-file", $ContextFile, "--repo-root", $RepoRoot, "--check", $Stage
+        "agents/_shared/delivery_profile.py", "--context-file", $ContextFile, "--repo-root", $RepoRoot, "--check", $Stage, "--quiet"
     )) -ne 0) {
         throw "deliveryProfile check failed ($Stage). UI required by brief/PRD was dropped - fix design or developer output."
     }
@@ -234,62 +234,64 @@ function Invoke-LocalVerify {
     $targetDir = Join-Path $RepoRoot "target-apps\$TargetFeature"
     if (-not (Test-Path $targetDir)) { return }
 
-    Write-Host "`n=== Local verify (env + pytest) ===" -ForegroundColor Green
-
-    $envFile = Join-Path $targetDir ".env"
-    $envExample = Join-Path $targetDir ".env.example"
-    if (-not (Test-Path $envFile)) {
-        if (Test-Path $envExample) {
-            Write-Warning "Missing target-apps/$TargetFeature/.env  - copy .env.example and set DATABASE_URL, POSTGRES_SCHEMA, and auth secret (API_KEY or JWT_SECRET_KEY per design Rules)."
-        }
-    }
-
     $testsDir = Join-Path $targetDir "tests"
     if (-not (Test-Path $testsDir)) {
-        Write-Host "  (no tests/  - skip pytest)" -ForegroundColor DarkGray
+        Write-Host "  Local verify skipped (no tests/)" -ForegroundColor DarkGray
+        Invoke-DeliveryVerify -Stage app
+        return
     }
-    else {
-        $venvPython = Join-Path $targetDir ".venv\Scripts\python.exe"
-        $python = if (Test-Path $venvPython) { $venvPython } else { "python" }
 
-        Push-Location $targetDir
-        $prevDbUrl = $env:DATABASE_URL
-        try {
-            $env:DATABASE_URL = "sqlite://"
-            $env:SKIP_STARTUP_CHECKS = "1"
-            Write-Host "  import smoke: from app.main import app" -ForegroundColor DarkGray
-            & $python -c "from app.main import app; print('  import OK')"
-            if ($LASTEXITCODE -ne 0) {
-                throw "app import failed - developer-agent must fix startup errors before pipeline continues."
-            }
+    $venvPython = Join-Path $targetDir ".venv\Scripts\python.exe"
+    $python = if (Test-Path $venvPython) { $venvPython } else { "python" }
 
-            Write-Host "  pytest tests/ -q" -ForegroundColor DarkGray
-            & $python -m pytest tests/ -q --tb=line
-            if ($LASTEXITCODE -ne 0) {
-                throw "pytest failed - developer-agent must fix tests before pipeline continues."
-            }
+    Push-Location $targetDir
+    $prevDbUrl = $env:DATABASE_URL
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $prevNative = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $prevNative = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+        $env:DATABASE_URL = "sqlite://"
+        $env:SKIP_STARTUP_CHECKS = "1"
 
-            Write-Host "  seed bcrypt verify (SQL files)" -ForegroundColor DarkGray
-            & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "Seed bcrypt verification failed - README login will fail on RDS even if pytest passes."
-            }
-            Write-Host "  seed bcrypt verify (RDS stored hash)" -ForegroundColor DarkGray
-            & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds
-            if ($LASTEXITCODE -ne 0) {
-                throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
-            }
+        & $python -c "from app.main import app" 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "app import failed - developer-agent must fix startup errors before pipeline continues."
         }
-        finally {
-            # Restore previous DATABASE_URL to avoid polluting the shell session
-            if ($null -eq $prevDbUrl) {
-                Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
-            } else {
-                $env:DATABASE_URL = $prevDbUrl
-            }
-            Remove-Item Env:SKIP_STARTUP_CHECKS -ErrorAction SilentlyContinue
-            Pop-Location
+
+        $pytestOut = & $python -m pytest tests/ -q --tb=line 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $pytestOut | Write-Host
+            throw "pytest failed - developer-agent must fix tests before pipeline continues."
         }
+        $pytestLine = ($pytestOut | Select-Object -Last 1)
+
+        & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --quiet
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Seed bcrypt verification failed - README login will fail on RDS even if pytest passes."
+        }
+        & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds --quiet
+        if ($LASTEXITCODE -ne 0) {
+            throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
+        }
+
+        Write-Host "  Local verify passed (import, pytest, seed bcrypt, delivery profile). $pytestLine" -ForegroundColor Green
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+        if ($null -ne $prevNative) {
+            $PSNativeCommandUseErrorActionPreference = $prevNative
+        }
+        if ($null -eq $prevDbUrl) {
+            Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+        } else {
+            $env:DATABASE_URL = $prevDbUrl
+        }
+        Remove-Item Env:SKIP_STARTUP_CHECKS -ErrorAction SilentlyContinue
+        Pop-Location
     }
 
     Invoke-DeliveryVerify -Stage app
@@ -374,7 +376,9 @@ if (-not $SkipProduct) {
         Write-Host "  Jira: Epic + 5 user stories -> project $JiraProject" -ForegroundColor DarkGray
     }
     if ((Invoke-PipelinePython -ArgumentList $productArgs) -ne 0) { throw "product-agent failed" }
+    $pipelineAgentsRun += "product-agent"
     if (-not (Test-Path "docs/PRD/$Feature.md")) { throw "PRD not found: docs/PRD/$Feature.md" }
+    Write-Host "[pipeline] PRD -> docs/PRD/$Feature.md" -ForegroundColor Cyan
     $ctxFields = @{
         prdPath            = "docs/PRD/$Feature.md"
         productAgentOutput = "See prdPath for $Feature MVP requirements."
@@ -405,6 +409,7 @@ if (-not $SkipArchitect) {
         "--context-file", $ContextFile,
         "--task", "$Feature MVP"
     )) -ne 0) { throw "architect-agent failed" }
+    $pipelineAgentsRun += "architect-agent"
     $png = "docs/diagrams/generated-diagrams/$Feature.png"
     if (-not (Test-Path $png)) { Write-Warning "Diagram missing: $png" }
     $designRel = "docs/design/$Feature.md"
@@ -444,23 +449,24 @@ if (-not $SkipDb) {
     )
     if ($applyPostgres) { $dbArgs += "--with-postgres" }
     if ((Invoke-PipelinePython -ArgumentList $dbArgs) -ne 0) { throw "database-agent failed" }
+    $pipelineAgentsRun += "database-agent"
 
     # Explicit RDS apply (idempotent)  - ensures schema exists even if agent apply was skipped
     if ($applyPostgres) {
         Invoke-RdsApply
         Invoke-SeedMaterialize -TargetFeature $Feature
-        Write-Host "`n=== Verify seed bcrypt hashes (SQL files) ===" -ForegroundColor Green
+        Write-Host "`n=== Verify seed bcrypt (SQL + RDS) ===" -ForegroundColor Green
         if ((Invoke-PipelinePython -ArgumentList @(
-            "agents/_shared/verify_seed_bcrypt.py", "--target-app", $Feature, "--repo-root", $RepoRoot
+            "agents/_shared/verify_seed_bcrypt.py", "--target-app", $Feature, "--repo-root", $RepoRoot, "--quiet"
         )) -ne 0) {
             throw "Seed bcrypt verification failed - placeholder password hashes will break RDS login."
         }
-        Write-Host "`n=== Verify seed bcrypt on RDS ===" -ForegroundColor Green
         if ((Invoke-PipelinePython -ArgumentList @(
-            "agents/_shared/verify_seed_bcrypt.py", "--target-app", $Feature, "--repo-root", $RepoRoot, "--check-rds"
+            "agents/_shared/verify_seed_bcrypt.py", "--target-app", $Feature, "--repo-root", $RepoRoot, "--check-rds", "--quiet"
         )) -ne 0) {
             throw "RDS seed password verification failed - Swagger/Streamlit login will 401."
         }
+        Write-Host "  seed bcrypt OK (SQL files + RDS)" -ForegroundColor Green
     }
 }
 
@@ -474,6 +480,7 @@ if (-not $SkipDeveloper) {
         "--context-file", $ContextFile,
         "--task", $task
     )) -ne 0) { throw "developer-agent failed" }
+    $pipelineAgentsRun += "developer-agent"
 }
 
 # 5) Local verify (before publish - do not push broken code)
@@ -534,5 +541,15 @@ if ($runGitlab) {
     }
 }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
+
+if ($pipelineAgentsRun.Count -gt 0) {
+    Write-Host "`n=== Pipeline token usage ===" -ForegroundColor Cyan
+    $telemetryArgs = @(
+        "agents/_shared/pipeline_telemetry.py",
+        "--target-app", $Feature,
+        "--agents-run", ($pipelineAgentsRun -join ",")
+    )
+    Invoke-PipelinePython -ArgumentList $telemetryArgs | Out-Null
+}
 
 Write-RunInstructions -TargetFeature $Feature -UsesDb:(-not $SkipDb)

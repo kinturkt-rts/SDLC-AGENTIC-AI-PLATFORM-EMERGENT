@@ -20,6 +20,7 @@ from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.db_handoff import write_db_handoff
 from _shared.env import load_repo_env
 from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_client, postgres_mcp_tool_params
+from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     enrich_handoff_context,
@@ -27,6 +28,7 @@ from _shared.pipeline_context import (
     resolve_target_app,
     slugify,
 )
+from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
 load_repo_env()
 
@@ -362,7 +364,7 @@ def _max_output_tokens() -> int:
 
 
 def _coding_model() -> BedrockModel:
-    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    model_id = coding_model_id()
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     max_tokens = _max_output_tokens()
     return BedrockModel(
@@ -406,7 +408,12 @@ def _user_message(task: str, context: dict[str, Any] | None) -> str:
     return f"{task}\n\nContext:\n{json.dumps(context, indent=2)}"
 
 
-def _build_agent(tools: list[Any]) -> Agent:
+def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:
+    callback = (
+        StrandsTelemetryCallback(AGENT_NAME, telemetry)
+        if telemetry is not None
+        else None
+    )
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
@@ -414,7 +421,7 @@ def _build_agent(tools: list[Any]) -> Agent:
         model=_coding_model(),
         system_prompt=DATABASE_SYS_PROMPT,
         tools=tools,
-        callback_handler=None,
+        callback_handler=callback,
     )
 
 
@@ -475,7 +482,8 @@ def run_task(
     try:
         with ExitStack() as stack:
             toolset = _build_toolset(stack, use_postgres=use_postgres, use_mongodb=use_mongodb)
-            agent = _build_agent(toolset)
+            telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=coding_model_id())
+            agent = _build_agent(toolset, telemetry=telemetry)
             summary = str(agent(_user_message(task, ctx)))
     except MCPClientInitializationError as exc:
         backends = []
@@ -495,6 +503,8 @@ def run_task(
             "\n\n> No files were written under target-apps/. "
             "Use db_write_file to persist SQL/NoSQL scripts.\n"
         )
+    telemetry.extra = {"filesWritten": len(_written_files)}
+    telemetry.finalize()
     return summary, list(_written_files)
 
 
@@ -672,7 +682,7 @@ def main() -> None:
 
     task = args.task or DEFAULT_PIPELINE_TASK
 
-    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    model_id = coding_model_id()
     print(f"[database-agent] Model: {model_id}", file=sys.stderr)
     if use_postgres:
         params = context.get("postgresMcpParams") or {}

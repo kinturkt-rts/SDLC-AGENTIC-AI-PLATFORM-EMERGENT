@@ -31,6 +31,7 @@ sys.path.insert(0, str(_DEV_AGENT_DIR))
 from scaffold import format_scaffold_report, scaffold_service
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
+from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     PIPELINE_DIR,
     TargetAppRequiredError,
@@ -86,19 +87,47 @@ Missing any route = the agent must catch it here, not during re-run.
 **Step 0b — UI manifest (Pattern C / requiresStreamlit ONLY — skip for API-only apps)**
 When `deliveryProfile.requiresStreamlit` is true, build a second manifest from design §4 + PRD roles:
   # UI manifest (Streamlit calls API over HTTP — never import app/):
+  # - Auth gate: login_form() shown when st.session_state.token absent → ALL other content hidden
   # - GET  /api/v1/work-orders     → requester "My Orders" table + admin triage table
   # - GET  /api/v1/sites           → admin Sites table + requester create-WO selectbox
   # - GET  /api/v1/dashboard/sla   → leadership dashboard
+  # - Role tabs: viewer=[A,B]; editor=[A,B,C]; admin=[A,B,C,D]
+The auth gate line is REQUIRED when the PRD or design Rules specify any auth/RBAC requirement.
+"Unauthenticated users see only the login screen" is a UI requirement, NOT just an API 401 — API guards
+alone do NOT satisfy it; the Streamlit app itself must enforce it.
 Every **collection GET** in design §4 (paths without `{id}`) MUST have a Streamlit `_get()` in at least one role view.
 Every **POST create** on a collection (`POST /api/v1/sites`) MUST have matching **GET list** in the API (paginated) — do not ship create-only.
 Forms MUST use `st.selectbox` / `st.multiselect` fed from list GETs — never `st.text_input("Site ID")` when `GET /api/v1/sites` exists.
 After POST/PATCH success call `st.rerun()` so tables refresh.
 **API-only apps** (`requiresStreamlit` false): implement FastAPI + tests only — do NOT create `ui/streamlit_app.py`.
 
+**Step 0c — FR acceptance checklist (MANDATORY when prdPath is set)**
+After Step 1a (reading the PRD), produce a numbered checklist mapping EVERY FR and NFR to its
+implementation before writing any file. This is the FR equivalent of the route manifest:
+  # FR checklist:
+  # FR-1  | Service CRUD               | API: POST/GET/PATCH/DELETE /api/v1/services [services.py]
+  # FR-2  | Runbook lifecycle           | API: POST/PATCH /api/v1/runbooks; guard: editor+ role
+  # FR-13 | Role-gated UI access        | UI: login_form() gate in streamlit_app.py; role-gated tabs
+  # NFR-4 | Auth on all endpoints       | guard: Depends(get_current_user) on every non-/health route
+  # NFR-5 | Audit log                   | service: write to audit_log table on every state change
+
+Rules — apply to every FR regardless of domain:
+- Map EVERY FR/NFR to exactly one layer: API route, Depends() guard, Streamlit section/form,
+  service method, config setting, or "explicit out-of-scope (PRD assumption N)"
+- No FR may be left unmapped — an unmapped FR = implementation gap = must resolve before coding
+- UI-scope FRs (anything describing what a user sees, cannot see, or can access):
+  implementation goes in streamlit_app.py — an API 403 alone does NOT satisfy a UI visibility FR
+- Cross-cutting NFRs (auth, rate-limiting, audit, observability): name the file/layer that handles them
+- After writing all files, revisit every line of this checklist and verify the implementation exists.
+  Any unchecked FR is blocking — same rule as a missing route in the route manifest.
+
 **Step 1 — understand requirements (read before writing a single line of code)**
 1a. dev_read_file(prdPath) if set — read the full doc; locate topics by heading (not fixed numbers):
     overview/goals, user stories, **acceptance criteria**, core **data entities**, **NFRs**
     (auth, rate-limiting, observability). PRD section order varies per feature — search headings.
+    After reading, produce the **Step 0c FR checklist** — write it out now (not later).
+    Every FR and NFR in the PRD must appear in the checklist with its implementation layer named.
+    Do not proceed to Step 2 until the checklist is written and every FR has a mapped layer.
 1b. dev_read_file(designDocPath) — primary implementation blueprint; locate topics by heading:
     **Tech stack** → language/framework (do NOT assume Python if design says otherwise).
     **Architecture** / component map (integrations, LLM services if any).
@@ -239,6 +268,12 @@ After POST/PATCH success call `st.rerun()` so tables refresh.
   - `.gitignore` — present
   - `.env.example` — DATABASE_URL= prefix, KEY=value format, all config.py env vars included
 
+  FR completeness (MANDATORY when prdPath was read — same weight as route manifest):
+  - Step 0c FR checklist fully covered — every FR/NFR has a verified implementation
+  - No FR left unmapped or deferred without explicit "out of scope" justification in open_questions
+  - UI-scope FRs (access control, role-gated views, login screens): confirmed in streamlit_app.py, not just API layer
+  - Cross-cutting NFRs (auth, audit, rate-limiting): confirmed in the named file/layer from the checklist
+
   Route completeness:
   - Route manifest fully covered — every METHOD /path from API surface has a handler
   - count(app/routers/*.py minus __init__.py) == count(include_router calls in main.py)
@@ -286,7 +321,7 @@ After POST/PATCH success call `st.rerun()` so tables refresh.
 **Step 5b — VALIDATE (mandatory — do NOT skip or declare success early)**
 After all files are written and the checklist above is done:
   1. Call `dev_validate_app(service=targetApp, run_pytest=True)` — must end with
-     `IMPORT OK` and `PYTEST OK` in the tool output. Fix every failure and call again.
+     `VALIDATION PASSED` in the tool output. Fix every failure and call again.
   2. **Never** tell the user the app is "fully functional" if import or pytest failed.
      SEED_BCRYPT: non-blocking when seed SQL uses `__BCRYPT_PLACEHOLDER__` with a documented
      password comment (pipeline materializes hashes via `apply_sql_to_rds.py`). Blocking when
@@ -1411,6 +1446,57 @@ def _validate_env_example(service_dir: Path) -> list[str]:
     return ["ENV_EXAMPLE OK"]
 
 
+def _validation_verbose() -> bool:
+    return os.getenv("DEVELOPER_AGENT_VERBOSE_VALIDATE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _extract_pytest_summary(stdout: str) -> str:
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip()
+        if stripped and any(token in stripped for token in ("passed", "failed", "error", "skipped")):
+            return stripped
+    return stdout.strip() or "ok"
+
+
+def _format_validation_success(
+    checks: list[str],
+    warnings: list[str],
+    *,
+    pytest_summary: str | None = None,
+    health_routes: int = 0,
+) -> str:
+    lines = [f"All checks passed: {', '.join(checks)}."]
+    if pytest_summary:
+        lines.append(f"Pytest: {pytest_summary}")
+    if health_routes:
+        lines.append(f"Health smoke: ok ({health_routes} GET route(s) probed)")
+    elif "health" in checks:
+        lines.append("Health smoke: ok")
+    if warnings:
+        lines.append("Notes:")
+        lines.extend(f"  - {w}" for w in warnings)
+    return "\n".join(lines)
+
+
+def _format_validation_failure(
+    failed_step: str,
+    detail: str,
+    passed_checks: list[str],
+    warnings: list[str],
+) -> str:
+    lines = [f"Validation failed at {failed_step}:", detail.rstrip()]
+    if passed_checks:
+        lines.append(f"Passed before failure: {', '.join(passed_checks)}")
+    if warnings:
+        lines.append("Warnings:")
+        lines.extend(f"  - {w}" for w in warnings)
+    return "\n".join(lines)
+
+
 def _python_for_service(service_dir: Path) -> str:
     import platform
 
@@ -1443,9 +1529,8 @@ def _ensure_service_requirements_installed(
         req_files.append(ui_reqs)
 
     if not req_files:
-        return True, "DEPS OK (no requirements files)"
+        return True, ""
 
-    messages: list[str] = []
     for req_file in req_files:
         rel = req_file.relative_to(service_dir).as_posix()
         try:
@@ -1463,9 +1548,8 @@ def _ensure_service_requirements_installed(
             if len(detail) > 2000:
                 detail = detail[-2000:]
             return False, f"DEPS FAILED: pip install -r {rel}:\n{detail}"
-        messages.append(f"DEPS OK ({rel})")
 
-    return True, "\n".join(messages)
+    return True, ""
 
 
 def _validation_env(service_dir: Path) -> dict[str, str]:
@@ -1539,7 +1623,25 @@ def run_service_validation(
 
     python_cmd = _python_for_service(service_dir)
     env = _validation_env(service_dir)
+    verbose = _validation_verbose()
+    checks: list[str] = []
+    warnings: list[str] = []
     output_parts: list[str] = []
+
+    def _ok(name: str, verbose_label: str | None = None) -> None:
+        checks.append(name)
+        if verbose:
+            output_parts.append(verbose_label or f"{name.upper()} OK")
+
+    def _warn(message: str) -> None:
+        warnings.append(message)
+        if verbose:
+            output_parts.append(message)
+
+    def _fail(step: str, detail: str) -> tuple[bool, str]:
+        if verbose:
+            return False, "\n".join(output_parts + [detail])
+        return False, _format_validation_failure(step, detail, checks, warnings)
 
     skip_pip = os.getenv("DEVELOPER_AGENT_SKIP_PIP_SYNC", "").strip().lower() in (
         "1",
@@ -1547,12 +1649,12 @@ def run_service_validation(
         "yes",
     )
     if skip_pip:
-        output_parts.append("DEPS SKIP (DEVELOPER_AGENT_SKIP_PIP_SYNC)")
+        _ok("deps (skipped)", "DEPS SKIP (DEVELOPER_AGENT_SKIP_PIP_SYNC)")
     else:
         deps_ok, deps_msg = _ensure_service_requirements_installed(service_dir, python_cmd)
-        output_parts.append(deps_msg)
         if not deps_ok:
-            return False, "\n".join(output_parts)
+            return _fail("deps", deps_msg)
+        _ok("deps", deps_msg or "DEPS OK")
 
     required_files = [
         "app/__init__.py",
@@ -1565,23 +1667,28 @@ def run_service_validation(
     ]
     missing = [f for f in required_files if not (service_dir / f).is_file()]
     if missing:
-        output_parts.append("STRUCTURE FAILED — missing golden template files:")
-        for f in missing:
-            output_parts.append(f"  - {f}")
-        return False, "\n".join(output_parts)
-    output_parts.append("STRUCTURE OK")
+        detail = "STRUCTURE FAILED — missing golden template files:\n" + "\n".join(
+            f"  - {f}" for f in missing
+        )
+        return _fail("structure", detail)
+    _ok("structure")
 
     env_results = _validate_env_example(service_dir)
-    output_parts.extend(env_results)
     if env_results[0].startswith("ENV_EXAMPLE FAILED"):
-        return False, "\n".join(output_parts)
+        if verbose:
+            output_parts.extend(env_results)
+        return _fail("env_example", "\n".join(env_results))
+    _ok("env_example")
+    if verbose:
+        output_parts.extend(env_results)
 
     antipattern_errors = _scan_router_antipatterns(service_dir)
     if antipattern_errors:
-        output_parts.append("ROUTER_ANTIPATTERN FAILED (fix before import will work):")
-        output_parts.extend(f"  - {e}" for e in antipattern_errors)
-        return False, "\n".join(output_parts)
-    output_parts.append("ROUTER_ANTIPATTERN OK")
+        detail = "ROUTER_ANTIPATTERN FAILED (fix before import will work):\n" + "\n".join(
+            f"  - {e}" for e in antipattern_errors
+        )
+        return _fail("router_antipattern", detail)
+    _ok("router_antipattern")
 
     seed_sql = (
         list((service_dir / "db" / "sql").glob("*seed*.sql"))
@@ -1609,58 +1716,55 @@ def run_service_validation(
                 if result.returncode != 0:
                     detail = (result.stdout + result.stderr).strip()
                     if "without documented password" in detail:
-                        # Missing password comment = real error; materialize can't run without it
-                        output_parts.append(
-                            f"SEED_BCRYPT FAILED — __BCRYPT_PLACEHOLDER__ without documented "
-                            f"password in SQL comment (add `-- Password for all seed users: \"…\"`):\n{detail}"
+                        return _fail(
+                            "seed_bcrypt",
+                            "SEED_BCRYPT FAILED — __BCRYPT_PLACEHOLDER__ without documented "
+                            f"password in SQL comment (add `-- Password for all seed users: \"…\"`):\n{detail}",
                         )
-                        return False, "\n".join(output_parts)
-                    output_parts.append(
-                        f"SEED_BCRYPT WARN (non-blocking — hash mismatch or antipattern; "
-                        f"check whether apply_sql_to_rds.py ran):\n{detail}"
+                    _warn(
+                        "seed_bcrypt: hash mismatch or antipattern (non-blocking; "
+                        "check whether apply_sql_to_rds.py ran)"
                     )
                 else:
-                    output_parts.append("SEED_BCRYPT OK")
-                    # Remind developer agent when placeholders still need pipeline to materialize
+                    _ok("seed_bcrypt")
                     has_placeholders = any(
                         "__BCRYPT_PLACEHOLDER__" in p.read_text(encoding="utf-8", errors="replace")
                         for p in seed_sql
                         if "fix" not in p.name.lower()
                     )
                     if has_placeholders:
-                        output_parts.append(
-                            f"SEED_BCRYPT NOTE — seed SQL uses __BCRYPT_PLACEHOLDER__ "
-                            f"(RDS login will 401 until materialized):\n"
-                            f"  Auto (full pipeline): python scripts/apply_sql_to_rds.py --target-app {service}\n"
-                            f"  Manual (after SQL already applied): "
-                            f"python agents/_shared/materialize_seed_passwords.py --target-app {service}\n"
-                            f"  README Seed Users section MUST include this command."
+                        _warn(
+                            "seed SQL uses __BCRYPT_PLACEHOLDER__ — RDS login will 401 until "
+                            f"materialized (`python scripts/apply_sql_to_rds.py --target-app {service}` "
+                            "or materialize_seed_passwords.py); README Seed Users must document this"
                         )
             except subprocess.TimeoutExpired:
-                output_parts.append("SEED_BCRYPT TIMEOUT (non-blocking)")
+                _warn("seed_bcrypt check timed out (non-blocking)")
 
     from _shared.validate_rds_parity import validate_rds_parity, validate_rds_parity_warnings
 
     rds_errors = validate_rds_parity(service_dir)
     if rds_errors:
-        output_parts.append("RDS_PARITY FAILED (blocks RDS smoke / Streamlit — pytest may still pass):")
-        output_parts.extend(f"  - {e}" for e in rds_errors)
-        return False, "\n".join(output_parts)
-    output_parts.append("RDS_PARITY OK")
+        detail = "RDS_PARITY FAILED (blocks RDS smoke / Streamlit — pytest may still pass):\n" + "\n".join(
+            f"  - {e}" for e in rds_errors
+        )
+        return _fail("rds_parity", detail)
+    _ok("rds_parity")
     for warn in validate_rds_parity_warnings(service_dir):
-        output_parts.append(f"RDS_PARITY WARN: {warn}")
+        _warn(f"rds_parity: {warn}")
 
     from _shared.validate_ui_parity import validate_ui_parity, validate_ui_parity_blocking
 
     ui_errors = validate_ui_parity_blocking(service_dir, _REPO_ROOT)
     if ui_errors:
-        output_parts.append("UI_PARITY FAILED (API vs design / Streamlit coverage):")
-        output_parts.extend(f"  - {e}" for e in ui_errors)
-        return False, "\n".join(output_parts)
-    output_parts.append("UI_PARITY OK")
+        detail = "UI_PARITY FAILED (API vs design / Streamlit coverage):\n" + "\n".join(
+            f"  - {e}" for e in ui_errors
+        )
+        return _fail("ui_parity", detail)
+    _ok("ui_parity")
     for msg in validate_ui_parity(service_dir, _REPO_ROOT):
         if " WARN:" in msg:
-            output_parts.append(f"UI_PARITY WARN: {msg}")
+            _warn(f"ui_parity: {msg}")
 
     if (service_dir / "app" / "startup_checks.py").is_file():
         startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}
@@ -1676,16 +1780,13 @@ def run_service_validation(
                 env=startup_env,
             )
             if result.returncode != 0:
-                blocking = True
-                output_parts.append(
-                    "STARTUP_CONFIG FAILED (uvicorn would refuse to start):\n{}{}".format(
-                        result.stdout, result.stderr
-                    )
+                detail = "STARTUP_CONFIG FAILED (uvicorn would refuse to start):\n{}{}".format(
+                    result.stdout, result.stderr
                 )
-                return False, "\n".join(output_parts)
-            output_parts.append("STARTUP_CONFIG OK")
+                return _fail("startup_config", detail)
+            _ok("startup_config")
         except subprocess.TimeoutExpired:
-            return False, "\n".join(output_parts + ["STARTUP_CONFIG TIMEOUT"])
+            return _fail("startup_config", "STARTUP_CONFIG TIMEOUT")
 
     import_cmd = [python_cmd, "-c", "from app.main import app; print('IMPORT_OK')"]
     try:
@@ -1698,24 +1799,25 @@ def run_service_validation(
             env=env,
         )
         if result.returncode != 0:
-            output_parts.append("IMPORT FAILED (exit code {}):\n{}{}".format(
+            detail = "IMPORT FAILED (exit code {}):\n{}{}".format(
                 result.returncode,
                 result.stdout,
                 result.stderr,
-            ))
+            )
             if "Cannot specify `Depends` in `Annotated`" in result.stderr:
-                output_parts.append(
-                    "Hint: remove `= Depends()` from CurrentUser/DbSession parameters"
+                detail += (
+                    "\nHint: remove `= Depends()` from CurrentUser/DbSession parameters"
                 )
             if "parameter without a default follows parameter with a default" in result.stderr:
-                output_parts.append(
-                    "Hint: move CurrentUser/DbSession before Query(...) parameters"
+                detail += (
+                    "\nHint: move CurrentUser/DbSession before Query(...) parameters"
                 )
-            return False, "\n".join(output_parts)
-        output_parts.append("IMPORT OK")
+            return _fail("import", detail)
+        _ok("import")
     except subprocess.TimeoutExpired:
-        return False, "\n".join(output_parts + ["IMPORT TIMEOUT (>30s)"])
+        return _fail("import", "IMPORT TIMEOUT (>30s)")
 
+    health_routes = 0
     health_cmd = [python_cmd, "-c", _HEALTH_SMOKE_SCRIPT]
     try:
         result = subprocess.run(
@@ -1727,12 +1829,17 @@ def run_service_validation(
             env=env,
         )
         if result.returncode != 0:
-            output_parts.append("HEALTH FAILED:\n{}{}".format(result.stdout, result.stderr))
-            return False, "\n".join(output_parts)
-        output_parts.append(result.stdout.strip() or "HEALTH OK")
+            detail = "HEALTH FAILED:\n{}{}".format(result.stdout, result.stderr)
+            return _fail("health", detail)
+        health_stdout = result.stdout.strip()
+        health_routes = health_stdout.count("API_ROUTE_OK")
+        if verbose:
+            output_parts.append(health_stdout or "HEALTH OK")
+        _ok("health")
     except subprocess.TimeoutExpired:
-        return False, "\n".join(output_parts + ["HEALTH TIMEOUT (>45s)"])
+        return _fail("health", "HEALTH TIMEOUT (>45s)")
 
+    pytest_summary: str | None = None
     tests_dir = service_dir / "tests"
     if run_pytest and tests_dir.is_dir():
         pytest_cmd = [python_cmd, "-m", "pytest", "tests/", "-q", "--tb=short"]
@@ -1748,20 +1855,32 @@ def run_service_validation(
             stdout = result.stdout[-4000:] if len(result.stdout) > 4000 else result.stdout
             stderr = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
             if result.returncode == 0:
-                output_parts.append(f"PYTEST OK:\n{stdout}")
+                pytest_summary = _extract_pytest_summary(stdout)
+                if verbose:
+                    output_parts.append(f"PYTEST OK:\n{stdout}")
+                _ok("pytest")
             else:
-                output_parts.append(f"PYTEST FAILED (exit {result.returncode}):\n{stdout}\n{stderr}")
+                detail = f"PYTEST FAILED (exit {result.returncode}):\n{stdout}\n{stderr}"
                 if "SQLite Date type only accepts Python date objects" in stdout + stderr:
-                    output_parts.append(
-                        "Hint: use date(2024, 1, 1) in ORM fixtures, not '2024-01-01' strings"
+                    detail += (
+                        "\nHint: use date(2024, 1, 1) in ORM fixtures, not '2024-01-01' strings"
                     )
-                return False, "\n".join(output_parts)
+                return _fail("pytest", detail)
         except subprocess.TimeoutExpired:
-            return False, "\n".join(output_parts + ["PYTEST TIMEOUT (>180s)"])
+            return _fail("pytest", "PYTEST TIMEOUT (>180s)")
     elif run_pytest:
-        output_parts.append("PYTEST SKIPPED: no tests/ directory")
+        _ok("pytest (skipped — no tests/)")
+        if verbose:
+            output_parts.append("PYTEST SKIPPED: no tests/ directory")
 
-    return True, "\n".join(output_parts)
+    if verbose:
+        return True, "\n".join(output_parts)
+    return True, _format_validation_success(
+        checks,
+        warnings,
+        pytest_summary=pytest_summary,
+        health_routes=health_routes,
+    )
 
 
 _STARTUP_CONFIG_SCRIPT = """
@@ -1828,7 +1947,7 @@ def dev_validate_app(service: str, run_pytest: bool = True) -> str:
     startup config, import, health smoke, and pytest (default on).
 
     Returns the full report. If output contains FAILED, fix files and call again.
-    Do NOT declare success to the user until you see IMPORT OK and PYTEST OK.
+    Do NOT declare success to the user until you see VALIDATION PASSED.
     """
     passed, report = run_service_validation(service, run_pytest=run_pytest)
     if passed:
@@ -1908,7 +2027,7 @@ class _DeveloperCallbackHandler:
 
 
 def _coding_model_id() -> str:
-    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    return coding_model_id()
 
 
 def _coding_model() -> BedrockModel:
@@ -2055,7 +2174,7 @@ def run_task(
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
 
-    telemetry = RunTelemetry(AGENT_NAME, target_app=app)
+    telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=_coding_model_id())
     agent = _build_agent(ctx, telemetry=telemetry)
     summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
 
@@ -2089,8 +2208,7 @@ def run_task(
         "filesWritten": len(written),
         "pattern": _select_pattern_keys(ctx) or "all",
     }
-    telemetry.print_summary()
-    telemetry.persist()
+    telemetry.finalize()
 
     return summary, written, handoff_rel
 
@@ -2162,15 +2280,6 @@ def main() -> None:
 
     ctx = _build_context(target_app=target, jira_key=args.jira_key, extra=extra or None)
 
-    auto_pattern = os.getenv("DEVELOPER_AGENT_AUTO_PATTERN", "").strip().lower() in {"1", "true", "yes"}
-    print("", file=sys.stderr)
-    print("=" * 64, file=sys.stderr)
-    print(
-        f"  AGENT: {AGENT_NAME}  |  prompt-cache: auto  |  cache_tools: default"
-        f"  |  auto-pattern: {'on' if auto_pattern else 'off'}",
-        file=sys.stderr,
-    )
-    print("=" * 64, file=sys.stderr)
     print(f"[developer-agent] Model      : {_coding_model_id()}", file=sys.stderr)
     if _thinking_enabled():
         print(
@@ -2220,14 +2329,14 @@ def main() -> None:
             jira_key=args.jira_key,
         )
         passed, validate_report = run_service_validation(target, run_pytest=True)
-        print("\n=== Host validation gate ===", file=sys.stderr)
-        print(validate_report, file=sys.stderr)
         if passed:
-            print("[developer-agent] Host validation PASSED", file=sys.stderr)
+            print(f"[developer-agent] Host validation passed — {validate_report}", file=sys.stderr)
             break
+        print("\n[developer-agent] Host validation FAILED:", file=sys.stderr)
+        print(validate_report, file=sys.stderr)
         if attempt >= max_validate_retries:
             print(
-                "[developer-agent] Host validation FAILED after "
+                "[developer-agent] Giving up after "
                 f"{max_validate_retries + 1} attempt(s) — exiting non-zero.",
                 file=sys.stderr,
             )
@@ -2235,7 +2344,7 @@ def main() -> None:
         task = (
             "Host validation failed after your implementation. Fix ALL blocking errors "
             "before handoff. Call dev_validate_app(run_pytest=True) until you see "
-            "IMPORT OK and PYTEST OK.\n\n"
+            "VALIDATION PASSED.\n\n"
             f"{validate_report}\n\n"
             "Do NOT declare the app complete until validation passes."
         )

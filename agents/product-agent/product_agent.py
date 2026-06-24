@@ -11,8 +11,9 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.env import load_repo_env
-from _shared.pipeline_context import diagram_path_for_app
+from _shared.pipeline_context import diagram_path_for_app, repo_rel
 from _shared.delivery_profile import build_delivery_profile_from_paths
+from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
 load_repo_env()
 
@@ -356,7 +357,16 @@ def _bedrock_model() -> BedrockModel:
     )
 
 
-def _build_agent(tools: list[Any]) -> Agent:
+def _model_id() -> str:
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0").strip()
+
+
+def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:
+    callback = (
+        StrandsTelemetryCallback(AGENT_NAME, telemetry)
+        if telemetry is not None
+        else None
+    )
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
@@ -364,6 +374,7 @@ def _build_agent(tools: list[Any]) -> Agent:
         model=_bedrock_model(),
         system_prompt=PRODUCT_SYS_PROMPT,
         tools=tools,
+        callback_handler=callback,
     )
 
 
@@ -417,7 +428,17 @@ def _normalize_prd_markdown(text: str) -> str:
     return body + "\n"
 
 
-def _generate_prd_from_text(*, input_text: str, task_hint: str | None = None) -> str:
+def _generate_prd_from_text(
+    *,
+    input_text: str,
+    task_hint: str | None = None,
+    telemetry: RunTelemetry | None = None,
+) -> str:
+    prd_callback = (
+        StrandsTelemetryCallback(f"{AGENT_NAME}-prd-writer", telemetry, log_tools=False)
+        if telemetry is not None
+        else None
+    )
     prd_agent = Agent(
         agent_id=f"{AGENT_NAME}-prd-writer",
         name=f"{AGENT_NAME}-prd-writer",
@@ -425,6 +446,7 @@ def _generate_prd_from_text(*, input_text: str, task_hint: str | None = None) ->
         model=_bedrock_model(),
         system_prompt=PRD_SYS_PROMPT,
         tools=[],
+        callback_handler=prd_callback,
     )
     task_part = f"\n\nAdditional instructions: {task_hint.strip()}" if task_hint and task_hint.strip() else ""
     user_message = (
@@ -470,12 +492,13 @@ def run_task(
     context: dict[str, Any] | None = None,
     *,
     write_allowed: bool = False,
+    telemetry: RunTelemetry | None = None,
 ) -> str:
     ctx = dict(context or {})
     ctx["jiraWriteAllowed"] = write_allowed
     with _atlassian_mcp() as mcp:
         tools = _filter_tools(mcp.list_tools_sync(), write_allowed=write_allowed)
-        agent = _build_agent(tools)
+        agent = _build_agent(tools, telemetry=telemetry)
         return str(agent(_user_message(task, ctx)))
 
 def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
@@ -595,13 +618,19 @@ def main() -> None:
         prd_dir = _prd_output_dir()
         prd_base = args.prd_name or input_path.stem
         prd_path = (prd_dir / f"{_slugify(prd_base)}.md").resolve()
+        slug = _slugify(prd_base)
+        telemetry = RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
 
-        print(f"[product-agent] Generating PRD -> {prd_path}", file=sys.stderr)
-        prd_markdown = _generate_prd_from_text(input_text=input_text, task_hint=args.task)
+        print(f"[product-agent] Generating PRD -> {repo_rel(prd_path)}", file=sys.stderr)
+        prd_markdown = _generate_prd_from_text(
+            input_text=input_text,
+            task_hint=args.task,
+            telemetry=telemetry,
+        )
         prd_path.write_text(prd_markdown, encoding="utf-8", newline="\n")
-        print(f"[product-agent] Saved PRD: {prd_path}", file=sys.stderr)
 
         _write_pipeline_context(prd_base=prd_base, prd_path=prd_path, input_path=input_path)
+        print(f"[product-agent] PRD: {repo_rel(prd_path)}", file=sys.stderr)
 
         if args.create_jira_tickets:
             if not args.allow_writes:
@@ -610,6 +639,8 @@ def main() -> None:
                     "PRD saved only (no Jira writes).",
                     file=sys.stderr,
                 )
+                telemetry.extra = {"prdSaved": True, "jiraSkipped": True}
+                telemetry.finalize()
                 return
             if "projectKey" not in context:
                 raise SystemExit("Jira project key required: pass --project <PROJECT_KEY>.")
@@ -623,9 +654,13 @@ def main() -> None:
                 f"[product-agent] Creating Jira backlog (Epic + 5 Stories, title style: {story_title_style})...",
                 file=sys.stderr,
             )
-            print(run_task(jira_task, jira_context, write_allowed=True))
+            print(run_task(jira_task, jira_context, write_allowed=True, telemetry=telemetry))
+            telemetry.extra = {"prdSaved": True, "jiraBacklog": True}
+            telemetry.finalize()
             return
 
+        telemetry.extra = {"prdSaved": True}
+        telemetry.finalize()
         print(
             "[product-agent] PRD mode complete. "
             "Rerun with --create-jira-tickets --allow-writes --project <PROJECT_KEY> to create Jira tickets.",
@@ -646,9 +681,11 @@ def main() -> None:
             file=sys.stderr,
         )
 
+    telemetry = RunTelemetry(AGENT_NAME, target_app=None, model_id=_model_id())
     print("[product-agent] Connecting to Atlassian MCP via mcp-remote", file=sys.stderr)
     print("[product-agent] Running...")
-    print(run_task(args.task, context or None, write_allowed=write_allowed))
+    print(run_task(args.task, context or None, write_allowed=write_allowed, telemetry=telemetry))
+    telemetry.finalize()
 
 if __name__ == "__main__":
     main()

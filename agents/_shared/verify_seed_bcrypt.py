@@ -36,6 +36,12 @@ _DOLLAR_QUOTED_BCRYPT_RE = re.compile(
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
 
 
+def seed_targets_user_passwords(seed_text: str) -> bool:
+    """True when seed SQL inserts into password_hash / hashed_password columns."""
+    lowered = seed_text.lower()
+    return "password_hash" in lowered or "hashed_password" in lowered
+
+
 def documented_password(seed_text: str) -> str | None:
     match = _PASSWORD_COMMENT_RE.search(seed_text)
     if not match:
@@ -68,6 +74,11 @@ def scan_sql_antipatterns(path: Path) -> list[str]:
 def verify_seed_file(path: Path) -> list[str]:
     errors = scan_sql_antipatterns(path)
     text = path.read_text(encoding="utf-8")
+    if not seed_targets_user_passwords(text):
+        if f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text:
+            return [f"{path}: __BCRYPT_PLACEHOLDER__ literal without documented password in SQL comment"]
+        return errors
+
     if f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text:
         password = documented_password(text)
         if password:
@@ -216,6 +227,11 @@ def main() -> int:
         action="store_true",
         help="Also verify stored hash on RDS (uses .env.local POSTGRES_MCP_* or app .env)",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print on failure",
+    )
     args = parser.parse_args()
 
     errors = verify_target_app(
@@ -231,7 +247,8 @@ def main() -> int:
         return 1
     for err in errors:
         print(err, file=sys.stderr)
-    print(f"seed bcrypt OK: {args.target_app}")
+    if not args.quiet:
+        print(f"seed bcrypt OK: {args.target_app}")
     return 0
 
 

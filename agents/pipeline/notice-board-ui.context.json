@@ -1,0 +1,18 @@
+﻿{
+    "productAgentOutput":  "See prdPath for notice-board-ui MVP requirements.",
+    "targetApp":  "notice-board-ui",
+    "prdPath":  "docs/PRD/notice-board-ui.md",
+    "designDocPath":  "docs/design/notice-board-ui.md",
+    "inputPath":  "inputs/notice-board-ui.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  false,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/notice-board-ui.png"
+                     ]
+}

@@ -21,6 +21,7 @@ from _shared.pipeline_context import (
     resolve_cli_context,
     resolve_design_doc_path,
 )
+from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
 load_repo_env()
 
@@ -176,10 +177,20 @@ When `deliveryProfile.requiresStreamlit` is true or the PRD describes browse/cat
 - Include `GET` list routes for work orders, sites, categories, or any entity shown in a table/selectbox.
 
 ## 5. Rules
-- Auth / RBAC: (roles + which routes)
-- Audit: (what to log, immutable rules)
-- Idempotency / status enums: (payment or workflow tables if any)
-(Max **8** bullets.)
+Each bullet MUST cite the FR/NFR ID it satisfies AND name the implementation layer.
+"Wrong role → 403" is incomplete. Write instead:
+"RBAC (FR-13, NFR-5): viewer/editor/admin; API: Depends(require_role) on protected routes;
+ Streamlit: login_form() gates ALL views when token absent; tabs scoped per role"
+
+Pattern for every rule:
+  - <Rule name> (FR-N, NFR-N): <what it enforces>; API: <route/guard>; [Streamlit: <UI gate>] if UI present
+  - Auth / RBAC (FR-N, NFR-N): roles + protected routes; if Streamlit in Stack → explicitly add
+    "Streamlit: gate on st.session_state.token; role-gated tabs: viewer=X, editor=Y, admin=Z"
+  - Audit (FR-N): events to log, table/service, immutable rules
+  - Status / idempotency (FR-N): enums, transition guards
+
+(Max **8** bullets. If a bullet has no FR/NFR ID and no implementation layer, developer-agent will
+skip it. Every rule must be actionable enough for developer-agent to write the implementing code.)
 
 ## 6. DB delivery
 1. Migration order: `001_....sql`, `002_....sql`, ...
@@ -244,6 +255,7 @@ def _generate_design_markdown(
     context: dict[str, Any],
     diagram_summary: str,
     diagram_paths: list[Path],
+    telemetry: RunTelemetry | None = None,
 ) -> str:
     prd_text = ""
     prd_path = context.get("prdPath") or context.get("prd_path")
@@ -255,6 +267,11 @@ def _generate_design_markdown(
     product_out = context.get("productAgentOutput") or context.get("product_agent_output") or ""
     paths_block = "\n".join(f"- {p.as_posix()}" for p in diagram_paths) or "(no diagram PNG)"
 
+    design_callback = (
+        StrandsTelemetryCallback(f"{AGENT_NAME}-design-writer", telemetry, log_tools=False)
+        if telemetry is not None
+        else None
+    )
     design_agent = Agent(
         agent_id=f"{AGENT_NAME}-design-writer",
         name=f"{AGENT_NAME}-design-writer",
@@ -262,6 +279,7 @@ def _generate_design_markdown(
         model=_bedrock_model(),
         system_prompt=DESIGN_SYS_PROMPT,
         tools=[],
+        callback_handler=design_callback,
     )
     user_message = (
         "Produce a **compact** solution design (≤ 90 lines). "
@@ -328,7 +346,16 @@ def _bedrock_model() -> BedrockModel:
     )
 
 
-def _build_agent(tools: list[Any]) -> Agent:
+def _model_id() -> str:
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0").strip()
+
+
+def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:
+    callback = (
+        StrandsTelemetryCallback(AGENT_NAME, telemetry)
+        if telemetry is not None
+        else None
+    )
     return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
@@ -336,6 +363,7 @@ def _build_agent(tools: list[Any]) -> Agent:
         model=_bedrock_model(),
         system_prompt=ARCHITECT_SYS_PROMPT,
         tools=tools,
+        callback_handler=callback,
     )
 
 
@@ -442,9 +470,11 @@ def run_task(
     context["designDocPath"] = resolve_design_doc_path(context)
     scan_start = time.time()
     design_path: Path | None = None
+    target_app = str(context.get("targetApp") or context.get("diagramBaseName") or "").strip() or None
+    telemetry = RunTelemetry(AGENT_NAME, target_app=target_app, model_id=_model_id())
     try:
         with aws_diagram_mcp_client(cwd=_REPO_ROOT) as mcp:
-            agent = _build_agent(mcp.list_tools_sync())
+            agent = _build_agent(mcp.list_tools_sync(), telemetry=telemetry)
             summary = str(agent(_user_message(task, context)))
         base = context.get("diagramBaseName", DEFAULT_DIAGRAM_BASE_NAME)
         saved = _normalize_diagram_outputs(out_dir, str(base), scan_start)
@@ -456,10 +486,16 @@ def run_task(
                 context=context,
                 diagram_summary=summary,
                 diagram_paths=saved,
+                telemetry=telemetry,
             )
             design_rel = str(context["designDocPath"])
             design_path = _write_design_doc(design_md, design_rel=design_rel)
             context["architectSummary"] = _architect_summary_from_design(design_md)
+        telemetry.extra = {
+            "diagramsSaved": len(saved),
+            "designWritten": design_path is not None,
+        }
+        telemetry.finalize()
         return summary, saved, design_path
     except MCPClientInitializationError as exc:
         raise SystemExit(

@@ -1,0 +1,146 @@
+Shift Swap Board — internal roster swaps with floor-lead sign-off
+
+Client story:
+Our floor leads coordinate coverage through a group chat. Someone offers to swap a Tuesday shift,
+another person says yes, a manager thinks it is settled — then we discover two people on the same
+slot or nobody on it at all. We need a small internal tool so staff can offer to give up a shift,
+someone else can take it, and the floor lead for that week signs off before it is real. When it
+is final, the roster should match what everyone believes.
+
+MVP:
+- Weekly shift roster: who is scheduled for which date and shift window (morning / afternoon / full).
+- Staff can post a swap offer for one of their own upcoming shifts.
+- Another staff member can claim the offer (volunteer to take that shift).
+- Only the floor lead assigned to that calendar week can approve or deny a claimed swap.
+- On approval, roster assignments update atomically: offerer is removed from the shift, accepter is
+  assigned — one source of truth, not a side spreadsheet.
+- Swap cannot complete if the accepter would end up on two shifts at the same time (overlapping
+  date + window).
+- Every status change and approval/denial is recorded with who did it and when — compliance will ask.
+
+Personas & auth:
+| Role | Login | Can do |
+|------|-------|--------|
+| staff | JWT (same pattern as inventory-app / employee-leave-manager) | View roster; offer own shift; claim open offers; cancel own pending offer |
+| floor_lead | JWT | Approve or deny claimed swaps for weeks where they are the assigned floor lead |
+| admin | JWT | Manage roster seed data, assign floor leads per week, read audit log |
+| anonymous | — | GET /health only |
+
+Auth: `POST /auth/login` → JWT (HS256, `JWT_SECRET_KEY`). Bearer on protected routes.
+Passwords bcrypt-hashed in seed data. **No new corporate SSO** — reuse the same in-house login
+pattern as our other FastAPI apps (username + password → JWT).
+
+Integration (not another silo):
+- Postgres on the same RDS instance and schema naming convention as other target-apps
+  (`POSTGRES_SCHEMA=shift_swap_board`).
+- Roster and swap state live in this app's database — the approved roster **is** the schedule;
+  no parallel spreadsheet or chat thread is authoritative.
+- Streamlit UI calls the FastAPI API over HTTP (Pattern C); API remains source of truth.
+
+Data model (DDL under target-apps/shift-swap-board/db/sql/):
+- users: id uuid PK, username unique, password_hash, role enum (staff | floor_lead | admin),
+  display_name varchar(128), is_active bool default true, created_at timestamptz
+- staff_profiles: id uuid PK, user_id uuid FK unique → users, employee_code varchar(32) unique nullable
+- shift_roster: id uuid PK, staff_id uuid FK → staff_profiles, shift_date date NOT NULL,
+  shift_window enum (morning | afternoon | full) NOT NULL,
+  UNIQUE(staff_id, shift_date, shift_window) — one person cannot be double-booked on same slot
+- floor_lead_weeks: id uuid PK, week_start date NOT NULL (Monday), floor_lead_user_id uuid FK → users,
+  UNIQUE(week_start) — exactly one floor lead per calendar week
+- swap_requests: id uuid PK, offered_shift_id uuid FK → shift_roster (the shift being given up),
+  offered_by_user_id uuid FK → users, status enum
+  (open | claimed | approved | denied | cancelled), claimed_by_user_id uuid FK → users nullable,
+  claimed_at timestamptz nullable, decided_by_user_id uuid FK → users nullable,
+  decided_at timestamptz nullable, decision_note text nullable,
+  created_at timestamptz, updated_at timestamptz
+- swap_audit_log: id uuid PK, swap_request_id uuid FK, action varchar(64) NOT NULL
+  (created | claimed | approved | denied | cancelled | roster_updated),
+  actor_user_id uuid FK → users, detail jsonb nullable, created_at timestamptz NOT NULL DEFAULT now()
+- Indexes: shift_roster(shift_date), swap_requests(status), swap_audit_log(swap_request_id, created_at)
+
+Swap request state machine:
+- (create) → open — staff offers their own future shift
+- open → claimed — another staff member volunteers; record claimed_by + claimed_at
+- open → cancelled — offerer withdraws before anyone claims
+- claimed → approved — floor lead for that shift's week signs off; roster rows update atomically
+- claimed → denied — floor lead rejects; offer returns to open OR stays denied (choose denied terminal;
+  offerer may create a new offer)
+- claimed → cancelled — offerer withdraws after claim but before decision (optional; if implemented,
+  notify via status only — no email in v1)
+
+Business rules (enforce in API, not UI only):
+- Only the shift's current assignee (offered_by) can create an offer for that roster row.
+- Cannot offer a shift in the past or a shift that already has an open/claimed swap.
+- Only one active swap (open or claimed) per offered_shift_id at a time.
+- Claim: accepter cannot be the offerer; accepter must not already hold a shift on the same
+  shift_date + shift_window (422 with clear detail).
+- Approve: caller must be the floor_lead_user_id for the Monday of the shift's ISO week; no other
+  role can approve (403). Re-validate overlap for accepter at approve time.
+- On approve (transaction): delete or unassign offerer's shift_roster row; insert or update accepter's
+  shift_roster row; set swap status approved; append audit rows for decision + roster_updated.
+- Deny: only that week's floor lead; append audit row; status → denied.
+- Staff cannot approve their own swap even if they are floor lead that week (403).
+- Roster list shows current assignments; after approved swap, GET /roster reflects new coverage.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+| GET | /health | none | DB ping; 200 or 503 |
+| POST | /auth/login | none | JWT + role + user id |
+| GET | /roster | JWT | ?from= ?to= optional; list shift_roster with staff display names |
+| GET | /roster/mine | JWT | current user's upcoming shifts |
+| GET | /floor-leads | admin | list floor_lead_weeks |
+| POST | /floor-leads | admin | body week_start, floor_lead_user_id |
+| GET | /swaps | JWT | list swaps; ?status= ?week_start=; staff see relevant offers |
+| POST | /swaps | staff | body offered_shift_id; create open swap; audit created |
+| POST | /swaps/{id}/claim | staff | claim open swap; 409 if already claimed; 422 overlap |
+| POST | /swaps/{id}/approve | floor_lead | week's lead only; atomic roster update; audit |
+| POST | /swaps/{id}/deny | floor_lead | body decision_note?; audit |
+| POST | /swaps/{id}/cancel | staff | offerer only; open or claimed before decision |
+| GET | /swaps/{id}/audit | admin, floor_lead | append-only history for one swap |
+| GET | /audit | admin | recent audit entries; ?limit= paginated |
+
+Stack (developer-agent — Pattern C):
+- Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x sync + psycopg[binary], JWT, passlib.
+- Database: PostgreSQL on RDS; POSTGRES_SCHEMA=shift_swap_board.
+- UI: Streamlit under ui/streamlit_app.py + ui/requirements.txt; API port 8000, Streamlit 8501.
+- app/startup_checks.py fail-fast if DATABASE_URL missing/malformed.
+- .env.example every line KEY=value including DATABASE_URL and JWT_SECRET_KEY.
+
+Streamlit UI (required):
+- **Login** — username/password → store JWT; same flow as other in-house Streamlit apps.
+- **My shifts** — upcoming roster rows; button to offer a shift for swap.
+- **Open swaps** — table of open/claimed requests; claim button for other staff's offers.
+- **Floor lead inbox** — visible when logged-in user is lead for current week: pending claimed
+  swaps with Approve / Deny and optional note.
+- **Roster view** — calendar-style or table by date showing who is on each window.
+- Clear errors on 401/403/422 (show API detail when present).
+
+Demo data expectations:
+- 6–8 staff users + 1 admin; 2 users with floor_lead role capability.
+- floor_lead_weeks for current week and next week.
+- ~12 roster rows across the next 7 days (mix of morning/afternoon/full).
+- 3 swap requests: one open, one claimed awaiting approval, one approved with audit history.
+- Passwords in seed use real bcrypt hashes (pipeline verify_seed_bcrypt).
+
+Tests (pytest):
+- login per role; 401 without token.
+- offer own shift; cannot offer someone else's shift (403).
+- claim blocked when accepter would double-book same date+window (422).
+- approve only by correct week's floor lead (403 for wrong week or staff).
+- approve updates roster: offerer gone from slot, accepter assigned.
+- deny and cancel paths; audit log rows created for each action.
+- self-approve blocked when offerer is floor lead.
+- health 503 when DB unavailable.
+
+Out of scope:
+- Slack or group-chat integration, push notifications, email
+- Payroll, time-clock, or HR system sync
+- Mobile app, OAuth/SSO, multi-tenant
+- AI / Bedrock features
+
+Success criteria:
+- Full pipeline produces target-apps/shift-swap-board/ with green pytest.
+- uvicorn app.main:app --reload --port 8000 + streamlit run ui/streamlit_app.py --server.port 8501.
+- README: venv, .env from .env.example, RDS apply, demo logins, two-terminal run.
+
+Target app slug: shift-swap-board
+Output directory: target-apps/shift-swap-board/

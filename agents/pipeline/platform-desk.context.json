@@ -1,0 +1,18 @@
+{
+    "productAgentOutput":  "See prdPath for platform-desk MVP requirements.",
+    "targetApp":  "platform-desk",
+    "prdPath":  "docs/PRD/platform-desk.md",
+    "designDocPath":  "docs/design/platform-desk.md",
+    "inputPath":  "inputs/platform-desk.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  false,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/platform-desk.png"
+                     ]
+}

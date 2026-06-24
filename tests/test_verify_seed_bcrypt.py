@@ -22,7 +22,7 @@ def test_verify_seed_file_accepts_matching_hash(tmp_path: Path) -> None:
     seed = tmp_path / "009_seed.sql"
     seed.write_text(
         '-- Password for all seed users: "TestPass1!"\n'
-        f"INSERT INTO app.users VALUES ('u1', '{_GOOD_HASH}');\n",
+        f"INSERT INTO users (username, password_hash) VALUES ('u1', '{_GOOD_HASH}');\n",
         encoding="utf-8",
     )
     assert verify_seed_file(seed) == []
@@ -32,7 +32,7 @@ def test_verify_seed_file_rejects_placeholder(tmp_path: Path) -> None:
     seed = tmp_path / "009_seed.sql"
     seed.write_text(
         '-- Password for all seed users: "TestPass1!"\n'
-        "INSERT INTO app.users VALUES ('u1', '$2b$12$LJ3m4ys3Lz0QmXE7U5CvYOFNGrMjK2G0zVQ8Wk3vWJp4lZDoIS5cS');\n",
+        "INSERT INTO users (username, password_hash) VALUES ('u1', '$2b$12$LJ3m4ys3Lz0QmXE7U5CvYOFNGrMjK2G0zVQ8Wk3vWJp4lZDoIS5cS');\n",
         encoding="utf-8",
     )
     errors = verify_seed_file(seed)
@@ -49,3 +49,13 @@ def test_scan_rejects_dollar_quoted_bcrypt(tmp_path: Path) -> None:
     errors = scan_sql_antipatterns(fix)
     assert len(errors) == 1
     assert "dollar-quoted" in errors[0]
+
+
+def test_verify_seed_file_skips_api_key_app_without_user_hashes(tmp_path: Path) -> None:
+    seed = tmp_path / "004_seed.sql"
+    seed.write_text(
+        '-- Password for organizer reference only: "NoticeAdmin2024!"\n'
+        "INSERT INTO categories (name) VALUES ('General');\n",
+        encoding="utf-8",
+    )
+    assert verify_seed_file(seed) == []

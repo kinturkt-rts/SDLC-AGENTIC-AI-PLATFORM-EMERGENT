@@ -121,7 +121,7 @@ def main() -> int:
             print(f"  {i}. {line}")
         print("\nAfter TCP is reachable:")
         print("  python scripts/apply_sql_to_rds.py --target-app <feature>")
-        print("  python scripts/test_postgres_mcp_direct.py")
+        print("  python tests/test_postgres_mcp_direct.py")
         return 1
 
     print("  Network looks OK. Run: python scripts/apply_sql_to_rds.py --target-app <feature>")
