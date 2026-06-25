@@ -2,12 +2,13 @@
   "targetApp": "desk-booking",
   "status": "published",
   "branch": "sdlc/desk-booking",
-  "gitlabProject": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
+  "gitlabProject": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps",
   "gitlabBaseBranch": "main",
   "openMergeRequest": false,
   "pathsPublished": [
     "agents/pipeline/desk-booking.context.json",
     "agents/pipeline/desk-booking.developer-handoff.json",
+    "agents/pipeline/desk-booking.gitlab-handoff.json",
     "docs/PRD/desk-booking.md",
     "docs/design/desk-booking.md",
     "target-apps/desk-booking/.env.example",
@@ -61,7 +62,7 @@
   ],
   "mergeRequestUrl": null,
   "mergeRequestIid": null,
-  "repoUrl": "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
-  "branchUrl": "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform/-/tree/sdlc%2Fdesk-booking",
+  "repoUrl": "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps",
+  "branchUrl": "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps/-/tree/sdlc%2Fdesk-booking",
   "error": null
 }
