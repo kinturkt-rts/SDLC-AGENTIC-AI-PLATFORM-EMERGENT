@@ -29,8 +29,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
   if (!isLoading && !project) {
     return (
-      <Card className="p-10 text-center">
-        <p className="text-sm text-muted-foreground">Project “{params.id}” not found.</p>
+      <Card className="border-white/[0.06] bg-card/80 p-10 text-center">
+        <p className="text-sm text-muted-foreground">Project "{params.id}" not found.</p>
         <Button asChild variant="link"><Link href="/projects">Back to projects</Link></Button>
       </Card>
     );
@@ -44,13 +44,13 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     { key: 'id', header: 'Run', render: (r) => <span className="font-mono text-xs text-foreground">{r.id}</span> },
     { key: 'pipeline', header: 'Pipeline', render: (r) => <span className="text-foreground">{r.pipeline}</span> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
-    { key: 'currentPhase', header: 'Phase', render: (r) => <span className="capitalize text-muted-foreground">{r.currentPhase ?? '—'}</span> },
+    { key: 'currentPhase', header: 'Phase', render: (r) => <span className="capitalize text-muted-foreground">{r.currentPhase ?? '\u2014'}</span> },
     { key: 'elapsed', header: 'Elapsed', render: (r) => <span className="text-muted-foreground">{formatDuration(r.elapsedSec)}</span> },
     { key: 'started', header: 'Started', render: (r) => <span className="text-muted-foreground">{formatRelative(r.startedAt)}</span> },
   ];
   const artCols: Column<Artifact>[] = [
     { key: 'name', header: 'Artifact', render: (a) => <span className="font-mono text-foreground">{a.name}</span> },
-    { key: 'kind', header: 'Kind', render: (a) => <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">{a.kind}</span> },
+    { key: 'kind', header: 'Kind', render: (a) => <span className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">{a.kind}</span> },
     { key: 'producedBy', header: 'Produced by', render: (a) => <span className="text-muted-foreground">{a.producedBy}</span> },
     { key: 'size', header: 'Size', render: (a) => <span className="text-muted-foreground">{a.sizeKb} KB</span> },
     { key: 'created', header: 'Created', render: (a) => <span className="text-muted-foreground">{formatRelative(a.createdAt)}</span> },
@@ -65,7 +65,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
   return (
     <>
-      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground">
+      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground hover:text-foreground">
         <Link href="/projects"><ArrowLeft className="h-4 w-4" /> Projects</Link>
       </Button>
 
@@ -77,7 +77,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
       />
 
       <Tabs defaultValue="overview">
-        <TabsList>
+        <TabsList className="border-white/[0.06] bg-muted/40">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
           <TabsTrigger value="runs">Runs ({projectRuns.length})</TabsTrigger>
@@ -87,15 +87,24 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
         <TabsContent value="overview" className="space-y-4">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-            <Card className="p-4"><p className="text-xs text-muted-foreground">Artifacts</p><p className="mt-1 text-lg font-semibold text-foreground">{project?.artifactCount}</p></Card>
-            <Card className="p-4"><p className="text-xs text-muted-foreground">Total runs</p><p className="mt-1 text-lg font-semibold text-foreground">{projectRuns.length}</p></Card>
-            <Card className="p-4"><p className="text-xs text-muted-foreground">Last run</p><p className="mt-1 text-lg font-semibold text-foreground">{formatRelative(project?.lastRunAt ?? null)}</p></Card>
+            <Card className="border-white/[0.06] bg-card/80 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">Artifacts</p>
+              <p className="mt-1.5 text-2xl font-bold text-foreground">{project?.artifactCount}</p>
+            </Card>
+            <Card className="border-white/[0.06] bg-card/80 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">Total Runs</p>
+              <p className="mt-1.5 text-2xl font-bold text-foreground">{projectRuns.length}</p>
+            </Card>
+            <Card className="border-white/[0.06] bg-card/80 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">Last Run</p>
+              <p className="mt-1.5 text-2xl font-bold text-foreground">{formatRelative(project?.lastRunAt ?? null)}</p>
+            </Card>
           </div>
-          <Card className="p-4">
+          <Card className="border-white/[0.06] bg-card/80 p-4">
             <div className="flex items-center gap-2 text-sm">
-              <GitBranch className="h-4 w-4 text-muted-foreground" />
+              <GitBranch className="h-4 w-4 text-teal-400" />
               <span className="text-muted-foreground">Repository</span>
-              <code className="font-mono text-foreground">{project?.repo}</code>
+              <code className="rounded-md bg-muted/40 px-1.5 py-0.5 font-mono text-foreground">{project?.repo}</code>
               <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
             </div>
           </Card>
@@ -103,7 +112,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
         <TabsContent value="pipelines" className="space-y-3">
           {(pipelines ?? []).map((p) => (
-            <Card key={p.id} className="p-4">
+            <Card key={p.id} className="border-white/[0.06] bg-card/80 p-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-semibold text-foreground">{p.name}</p>
@@ -111,11 +120,11 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                 </div>
                 <span className="text-xs text-muted-foreground">{p.phases.length} phases</span>
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <div className="mt-4 flex flex-wrap items-stretch gap-2">
                 {p.phases.map((ph, i) => (
                   <span key={i} className="inline-flex items-center gap-1.5">
-                    <span className="rounded-md bg-muted px-2 py-1 text-xs capitalize text-foreground">{ph.phase}{ph.hitl ? ' ⚑' : ''}</span>
-                    {i < p.phases.length - 1 ? <span className="text-muted-foreground">→</span> : null}
+                    <span className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 text-xs capitalize text-foreground">{ph.phase}{ph.hitl ? ' \u2691' : ''}</span>
+                    {i < p.phases.length - 1 ? <span className="text-muted-foreground/40">\u2192</span> : null}
                   </span>
                 ))}
               </div>

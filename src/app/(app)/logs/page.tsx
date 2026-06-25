@@ -38,9 +38,9 @@ export default function LogsPage() {
         description="Streamed events emitted by agents during pipeline runs."
         actions={
           <div className="flex items-center gap-2">
-            <Input placeholder="Filter messages..." value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-[200px]" />
+            <Input placeholder="Filter messages..." value={q} onChange={(e) => setQ(e.target.value)} className="h-9 w-[200px] border-white/[0.08] bg-white/[0.02] placeholder:text-muted-foreground/40 focus:border-teal-500/30" />
             <Select value={level} onValueChange={(v) => setLevel(v as LogEntry['level'] | 'all')}>
-              <SelectTrigger className="h-9 w-[120px] capitalize"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-[120px] border-white/[0.08] bg-white/[0.02] capitalize"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {LEVELS.map((l) => <SelectItem key={l} value={l} className="capitalize">{l === 'all' ? 'All levels' : l}</SelectItem>)}
               </SelectContent>
@@ -50,16 +50,16 @@ export default function LogsPage() {
       />
 
       {isLoading ? (
-        <Skeleton className="h-96 w-full rounded-lg" />
+        <Skeleton className="h-96 w-full rounded-xl" />
       ) : rows.length === 0 ? (
         <EmptyState icon={ScrollText} title="No logs" description="No log entries match your filters." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card font-mono text-xs">
+        <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-card/80 font-mono text-xs">
           {rows.map((l) => (
-            <div key={l.id} className="flex items-start gap-3 border-b border-border px-3 py-2 last:border-0 hover:bg-accent/40">
+            <div key={l.id} className="flex items-start gap-3 border-b border-white/[0.04] px-3 py-2.5 last:border-0 transition-colors hover:bg-white/[0.02]">
               <span className="w-16 shrink-0 text-muted-foreground">{formatRelative(l.ts)}</span>
               <StatusBadge status={l.level} size="sm" className="shrink-0" />
-              <span className="w-40 shrink-0 truncate text-teal-600 dark:text-teal-400">{l.agent}</span>
+              <span className="w-40 shrink-0 truncate text-teal-400">{l.agent}</span>
               <span className="shrink-0 text-muted-foreground">{l.runId}</span>
               <span className="flex-1 text-foreground">{l.message}</span>
             </div>

@@ -37,12 +37,12 @@ export function DataTable<T>({
     a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left';
 
   return (
-    <div className={cn('overflow-hidden rounded-lg border border-border bg-card', className)}>
+    <div className={cn('overflow-hidden rounded-xl border border-white/[0.06] bg-card/80', className)}>
       <Table>
         <TableHeader>
-          <TableRow className="hover:bg-transparent">
+          <TableRow className="border-white/[0.06] hover:bg-transparent">
             {columns.map((c) => (
-              <TableHead key={c.key} className={cn('h-10 text-xs font-medium uppercase tracking-wide text-muted-foreground', alignClass(c.align), c.className)}>
+              <TableHead key={c.key} className={cn('h-10 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70', alignClass(c.align), c.className)}>
                 {c.header}
               </TableHead>
             ))}
@@ -60,7 +60,7 @@ export function DataTable<T>({
               <TableRow
                 key={getRowId(row)}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
-                className={cn(onRowClick && 'cursor-pointer')}
+                className={cn('border-white/[0.04] transition-colors hover:bg-white/[0.02]', onRowClick && 'cursor-pointer')}
               >
                 {columns.map((c) => (
                   <TableCell key={c.key} className={cn('py-3 text-sm', alignClass(c.align), c.className)}>

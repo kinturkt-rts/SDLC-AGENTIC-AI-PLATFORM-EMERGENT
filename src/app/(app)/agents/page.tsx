@@ -24,7 +24,7 @@ export default function AgentsPage() {
       header: 'Agent',
       render: (a) => (
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-500/10 text-teal-400 ring-1 ring-inset ring-teal-500/20">
             <Bot className="h-4 w-4" />
           </div>
           <div>
@@ -41,7 +41,7 @@ export default function AgentsPage() {
       render: (a) => (
         <div className="flex flex-wrap gap-1">
           {a.mcpTools.slice(0, 2).map((t) => (
-            <span key={t} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{t}</span>
+            <span key={t} className="rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{t}</span>
           ))}
           {a.mcpTools.length > 2 ? <span className="text-[11px] text-muted-foreground">+{a.mcpTools.length - 2}</span> : null}
         </div>
@@ -57,9 +57,9 @@ export default function AgentsPage() {
       <PageHeader
         eyebrow="Design"
         title="Agent Registry"
-        description="Nine specialist agents that execute the SDLC pipeline. Ports 9100–9108."
+        description="Specialist agents that execute the SDLC pipeline. Each runs as a standalone service with MCP tool access."
         actions={
-          <div className="flex items-center rounded-md border border-border p-0.5">
+          <div className="flex items-center rounded-lg border border-white/[0.08] bg-muted/40 p-0.5">
             <Button variant={view === 'cards' ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2" onClick={() => setView('cards')}>
               <LayoutGrid className="h-4 w-4" />
             </Button>
@@ -72,7 +72,7 @@ export default function AgentsPage() {
 
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />)}
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-xl" />)}
         </div>
       ) : view === 'cards' ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

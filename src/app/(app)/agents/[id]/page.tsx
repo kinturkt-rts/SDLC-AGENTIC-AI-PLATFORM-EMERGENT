@@ -34,8 +34,8 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
 
   if (!isLoading && !agent) {
     return (
-      <Card className="p-10 text-center">
-        <p className="text-sm text-muted-foreground">Agent “{params.id}” not found.</p>
+      <Card className="border-white/[0.06] bg-card/80 p-10 text-center">
+        <p className="text-sm text-muted-foreground">Agent "{params.id}" not found.</p>
         <Button asChild variant="link"><Link href="/agents">Back to registry</Link></Button>
       </Card>
     );
@@ -66,7 +66,7 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
 
   return (
     <>
-      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground">
+      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground hover:text-foreground">
         <Link href="/agents"><ArrowLeft className="h-4 w-4" /> Agent Registry</Link>
       </Button>
 
@@ -92,32 +92,32 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
       />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="p-4">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Sparkles className="h-4 w-4 text-teal-500" /> Capabilities & skills</h3>
+        <Card className="border-white/[0.06] bg-card/80 p-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Sparkles className="h-4 w-4 text-teal-400" /> Capabilities & Skills</h3>
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {agent?.skills.map((s) => <Badge key={s} variant="secondary" className="font-normal">{s}</Badge>)}
+            {agent?.skills.map((s) => <Badge key={s} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">{s}</Badge>)}
           </div>
-          <h4 className="mt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">MCP tools</h4>
+          <h4 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">MCP Tools</h4>
           <div className="mt-2 space-y-1">
             {agent?.mcpTools.map((t) => (
-              <code key={t} className="block rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">{t}</code>
+              <code key={t} className="block rounded-md border border-white/[0.04] bg-muted/40 px-2.5 py-1.5 font-mono text-xs text-foreground">{t}</code>
             ))}
           </div>
         </Card>
 
-        <Card className="p-4">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Plug className="h-4 w-4 text-teal-500" /> MCP servers attached</h3>
+        <Card className="border-white/[0.06] bg-card/80 p-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Plug className="h-4 w-4 text-teal-400" /> MCP Servers Attached</h3>
           <div className="mt-3 space-y-2">
             {agent?.mcpServers.map((s) => (
-              <div key={s} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
+              <div key={s} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.01] px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-white/[0.03]">
                 <Plug className="h-3.5 w-3.5 text-muted-foreground" /> {s}
               </div>
             ))}
           </div>
         </Card>
 
-        <Card className="p-4">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Cpu className="h-4 w-4 text-teal-500" /> Runtime</h3>
+        <Card className="border-white/[0.06] bg-card/80 p-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Cpu className="h-4 w-4 text-teal-400" /> Runtime</h3>
           <dl className="mt-3 space-y-3 text-sm">
             <div className="flex items-center justify-between"><dt className="text-muted-foreground">Port</dt><dd className="font-mono text-foreground">:{agent?.port}</dd></div>
             <div className="flex items-center justify-between"><dt className="text-muted-foreground">Availability</dt><dd>{agent ? <StatusBadge status={agent.availability} size="sm" /> : null}</dd></div>
@@ -128,10 +128,10 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
       </div>
 
       <div>
-        <div className="mb-2 flex items-center gap-2">
-          <Bot className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">Execution history</h2>
-          <span className="text-xs text-muted-foreground">({history.length})</span>
+        <div className="mb-3 flex items-center gap-2">
+          <Bot className="h-4 w-4 text-teal-400" />
+          <h2 className="text-sm font-semibold text-foreground">Execution History</h2>
+          <span className="rounded-full bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{history.length}</span>
         </div>
         <DataTable columns={columns} rows={history} getRowId={(r) => r.id} empty="No execution history for this agent yet." />
       </div>

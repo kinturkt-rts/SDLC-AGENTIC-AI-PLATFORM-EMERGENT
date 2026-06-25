@@ -17,7 +17,7 @@ import { useUiStore } from '@/src/store/ui-store';
 
 export default function ContextPage() {
   return (
-    <React.Suspense fallback={<Skeleton className="h-72 w-full rounded-lg" />}>
+    <React.Suspense fallback={<Skeleton className="h-72 w-full rounded-xl" />}>
       <ContextInner />
     </React.Suspense>
   );
@@ -31,7 +31,6 @@ function ContextInner() {
   const paramProject = searchParams.get('project');
   const [selected, setSelected] = React.useState<string>(paramProject ?? currentProjectId);
 
-  // Default to the top-bar selected project unless a ?project= override is present.
   React.useEffect(() => {
     if (!paramProject) setSelected(currentProjectId);
   }, [currentProjectId, paramProject]);
@@ -54,7 +53,7 @@ function ContextInner() {
         description={subtitle}
         actions={
           <Select value={selected} onValueChange={setSelected}>
-            <SelectTrigger className="h-9 w-[220px]">
+            <SelectTrigger className="h-9 w-[220px] border-white/[0.08] bg-white/[0.02]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

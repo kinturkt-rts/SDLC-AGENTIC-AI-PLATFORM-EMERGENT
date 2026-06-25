@@ -43,12 +43,21 @@ const STEP_ICON: Record<StepStatus, typeof Clock> = {
 };
 
 const STEP_ICON_COLOR: Record<StepStatus, string> = {
-  queued: 'text-slate-400',
-  running: 'text-blue-500',
-  completed: 'text-emerald-500',
-  failed: 'text-red-500',
-  waiting_for_human: 'text-amber-500',
-  skipped: 'text-slate-400',
+  queued: 'text-slate-500',
+  running: 'text-blue-400',
+  completed: 'text-emerald-400',
+  failed: 'text-red-400',
+  waiting_for_human: 'text-amber-400',
+  skipped: 'text-slate-500',
+};
+
+const STEP_BG: Record<StepStatus, string> = {
+  queued: 'border-white/[0.06] bg-transparent',
+  running: 'border-blue-500/30 bg-blue-500/[0.04]',
+  completed: 'border-emerald-500/20 bg-emerald-500/[0.03]',
+  failed: 'border-red-500/20 bg-red-500/[0.03]',
+  waiting_for_human: 'border-amber-500/30 bg-amber-500/[0.04]',
+  skipped: 'border-white/[0.04] bg-transparent',
 };
 
 function EventRow({
@@ -65,43 +74,42 @@ function EventRow({
   detail: string;
 }) {
   return (
-    <div className="border-b border-border/60 px-2 py-2 last:border-0">
+    <div className="border-b border-white/[0.04] px-2.5 py-2.5 last:border-0 transition-colors hover:bg-white/[0.01]">
       <div className="flex items-center gap-2">
         <Icon className={cn('h-3.5 w-3.5 shrink-0', color)} />
         <span className="truncate text-foreground">{title}</span>
-        <span className="ml-auto shrink-0 text-muted-foreground">{formatRelative(ts)}</span>
+        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{formatRelative(ts)}</span>
       </div>
-      <p className="mt-1 pl-5 text-muted-foreground">{detail}</p>
+      <p className="mt-1 pl-5 text-[12px] text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
-// Renders a single discriminated RunEvent. TypeScript narrows per `kind`.
 function RunEventItem({ event }: { event: RunEvent }) {
   switch (event.kind) {
     case 'log':
       return (
-        <div className="border-b border-border/60 px-2 py-2 last:border-0">
+        <div className="border-b border-white/[0.04] px-2.5 py-2.5 last:border-0 transition-colors hover:bg-white/[0.01]">
           <div className="flex items-center gap-2">
             <StatusBadge status={event.level} size="sm" />
-            <span className="truncate text-teal-600 dark:text-teal-400">{event.agent}</span>
-            <span className="ml-auto shrink-0 text-muted-foreground">{formatRelative(event.ts)}</span>
+            <span className="truncate text-teal-400">{event.agent}</span>
+            <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{formatRelative(event.ts)}</span>
           </div>
           <p className="mt-1 pl-1 text-foreground">{event.message}</p>
         </div>
       );
     case 'phase.started':
-      return <EventRow icon={PlayCircle} color="text-blue-500" ts={event.ts} title={<>Phase <span className="capitalize">{event.phase}</span> started</>} detail={event.agent} />;
+      return <EventRow icon={PlayCircle} color="text-blue-400" ts={event.ts} title={<>Phase <span className="capitalize">{event.phase}</span> started</>} detail={event.agent} />;
     case 'phase.completed':
-      return <EventRow icon={CheckCircle2} color="text-emerald-500" ts={event.ts} title={<>Phase <span className="capitalize">{event.phase}</span> completed</>} detail={`${event.agent} · ${formatDuration(event.durationSec)}`} />;
+      return <EventRow icon={CheckCircle2} color="text-emerald-400" ts={event.ts} title={<>Phase <span className="capitalize">{event.phase}</span> completed</>} detail={`${event.agent} \u00b7 ${formatDuration(event.durationSec)}`} />;
     case 'step.failed':
-      return <EventRow icon={XCircle} color="text-red-500" ts={event.ts} title={<>Step failed at <span className="capitalize">{event.phase}</span></>} detail={event.error} />;
+      return <EventRow icon={XCircle} color="text-red-400" ts={event.ts} title={<>Step failed at <span className="capitalize">{event.phase}</span></>} detail={event.error} />;
     case 'hitl.requested':
-      return <EventRow icon={UserCheck} color="text-amber-500" ts={event.ts} title="HITL requested" detail={event.title} />;
+      return <EventRow icon={UserCheck} color="text-amber-400" ts={event.ts} title="HITL requested" detail={event.title} />;
     case 'artifact.created':
-      return <EventRow icon={FileBox} color="text-teal-500" ts={event.ts} title={<>Artifact <span className="font-medium">{event.artifactName}</span></>} detail={`${event.artifactKind} · ${event.agent}`} />;
+      return <EventRow icon={FileBox} color="text-teal-400" ts={event.ts} title={<>Artifact <span className="font-medium">{event.artifactName}</span></>} detail={`${event.artifactKind} \u00b7 ${event.agent}`} />;
     case 'agent.message':
-      return <EventRow icon={Send} color="text-blue-500" ts={event.ts} title={<><span className="font-mono">{event.messageType}</span> · {event.from} → {event.to}</>} detail={event.summary} />;
+      return <EventRow icon={Send} color="text-blue-400" ts={event.ts} title={<><span className="font-mono">{event.messageType}</span> \u00b7 {event.from} \u2192 {event.to}</>} detail={event.summary} />;
     default:
       return null;
   }
@@ -119,7 +127,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
   if (!isLoading && !run) {
     return (
-      <Card className="p-10 text-center">
+      <Card className="border-white/[0.06] bg-card/80 p-10 text-center">
         <p className="text-sm text-muted-foreground">Run &ldquo;{params.id}&rdquo; not found.</p>
         <Button asChild variant="link"><Link href="/runs">Back to runs</Link></Button>
       </Card>
@@ -141,19 +149,19 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     setStatusOverride(res.status);
     setBusy(null);
     toast.success(`Run ${action}d`, {
-      description: `${params.id} → ${res.status} (control-plane action, mock — no agents executed).`,
+      description: `${params.id} \u2192 ${res.status} (control-plane action, mock \u2014 no agents executed).`,
     });
   };
 
   const resolveHitl = (id: string, title: string, decision: 'approved' | 'rejected') => {
     setHitlOverride((o) => ({ ...o, [id]: decision }));
-    toast.success(`Checkpoint ${decision}`, { description: `${title} — recorded locally (mock).` });
+    toast.success(`Checkpoint ${decision}`, { description: `${title} \u2014 recorded locally (mock).` });
   };
 
   const controls = (
     <div className="flex items-center gap-2">
       {status === 'running' && (
-        <Button size="sm" variant="outline" className="gap-1.5" disabled={!!busy} onClick={() => control('pause')}>
+        <Button size="sm" variant="outline" className="gap-1.5 border-white/[0.08]" disabled={!!busy} onClick={() => control('pause')}>
           {busy === 'pause' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />} Pause
         </Button>
       )}
@@ -163,7 +171,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
         </Button>
       )}
       {(status === 'running' || status === 'paused' || status === 'queued') && (
-        <Button size="sm" variant="outline" className="gap-1.5 text-red-600 hover:text-red-700" disabled={!!busy} onClick={() => control('cancel')}>
+        <Button size="sm" variant="outline" className="gap-1.5 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300" disabled={!!busy} onClick={() => control('cancel')}>
           {busy === 'cancel' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />} Cancel
         </Button>
       )}
@@ -173,37 +181,37 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
   return (
     <>
-      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground">
+      <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground hover:text-foreground">
         <Link href="/runs"><ArrowLeft className="h-4 w-4" /> Pipeline Runs</Link>
       </Button>
 
       <PageHeader
-        eyebrow={run ? `${run.id} · ${run.pipeline}` : params.id}
+        eyebrow={run ? `${run.id} \u00b7 ${run.pipeline}` : params.id}
         title={run?.projectName ?? params.id}
-        description={run ? `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)} · elapsed ${formatDuration(run.elapsedSec)}` : undefined}
+        description={run ? `Triggered by ${run.triggeredBy} \u00b7 started ${formatRelative(run.startedAt)} \u00b7 elapsed ${formatDuration(run.elapsedSec)}` : undefined}
         actions={isLoading ? null : controls}
       />
 
       {isLoading || !run ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Skeleton className="h-96 w-full rounded-lg lg:col-span-2" />
-          <Skeleton className="h-96 w-full rounded-lg" />
+          <Skeleton className="h-96 w-full rounded-xl lg:col-span-2" />
+          <Skeleton className="h-96 w-full rounded-xl" />
         </div>
       ) : (
         <>
           {/* Active agent banner */}
           {status === 'running' && run.currentAgent ? (
-            <Card className="flex items-center gap-3 border-blue-200/60 bg-blue-50/50 p-4 dark:border-blue-900/50 dark:bg-blue-950/20">
-              <span className="relative flex h-8 w-8 items-center justify-center rounded-md bg-blue-500/15 text-blue-600 dark:text-blue-400">
+            <Card className="flex items-center gap-3 border-blue-500/30 bg-blue-500/[0.05] p-4">
+              <span className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/15 text-blue-400">
                 <Bot className="h-4 w-4" />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">
                   <span className="font-mono">{run.currentAgent}</span> is executing the <span className="capitalize">{run.currentPhase}</span> phase
                 </p>
-                <p className="text-xs text-muted-foreground">Live status from the platform — the control plane does not run the agent.</p>
+                <p className="text-[11px] text-muted-foreground">Live status from the platform \u2014 the control plane does not run the agent.</p>
               </div>
-              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+              <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
             </Card>
           ) : null}
 
@@ -212,10 +220,10 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
             (() => {
               const cp = runCheckpoints.find((c) => c.status === 'pending');
               return (
-                <Card className="border-amber-200/70 bg-amber-50/50 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
+                <Card className="border-amber-500/30 bg-amber-500/[0.04] p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-start gap-3">
-                      <UserCheck className="mt-0.5 h-5 w-5 text-amber-500" />
+                      <UserCheck className="mt-0.5 h-5 w-5 text-amber-400" />
                       <div>
                         <p className="text-sm font-semibold text-foreground">{cp?.title ?? `Human approval required at ${waitingStep.phase}`}</p>
                         <p className="text-xs text-muted-foreground">{cp?.description ?? `The ${waitingStep.agent} paused this run for human review.`}</p>
@@ -223,7 +231,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                     </div>
                     {cp ? (
                       <div className="flex shrink-0 gap-2">
-                        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => resolveHitl(cp.id, cp.title, 'rejected')}><X className="h-4 w-4" /> Reject</Button>
+                        <Button size="sm" variant="outline" className="gap-1.5 border-white/[0.08]" onClick={() => resolveHitl(cp.id, cp.title, 'rejected')}><X className="h-4 w-4" /> Reject</Button>
                         <Button size="sm" className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => resolveHitl(cp.id, cp.title, 'approved')}><Check className="h-4 w-4" /> Approve</Button>
                       </div>
                     ) : null}
@@ -235,9 +243,9 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             {/* Phase stepper / timeline */}
-            <Card className="lg:col-span-2">
-              <div className="border-b border-border px-4 py-3">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Workflow className="h-4 w-4 text-teal-500" /> SDLC phase timeline</h2>
+            <Card className="border-white/[0.06] bg-card/80 lg:col-span-2">
+              <div className="border-b border-white/[0.06] px-4 py-3">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Workflow className="h-4 w-4 text-teal-400" /> SDLC Phase Timeline</h2>
               </div>
               <ol className="p-4">
                 {run.steps.map((step: PipelineStep, i: number) => {
@@ -246,11 +254,17 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                   const active = step.status === 'running' || step.status === 'waiting_for_human';
                   return (
                     <li key={step.id} className="relative flex gap-4 pb-6 last:pb-0">
-                      {!last ? <span className="absolute left-[15px] top-8 h-[calc(100%-1rem)] w-px bg-border" /> : null}
-                      <span className={cn('relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card', STEP_ICON_COLOR[step.status])}>
+                      {!last ? <span className="absolute left-[15px] top-8 h-[calc(100%-1rem)] w-px bg-white/[0.06]" /> : null}
+                      <span className={cn('relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-card', STEP_ICON_COLOR[step.status],
+                        step.status === 'completed' ? 'border-emerald-500/30' :
+                        step.status === 'running' ? 'border-blue-500/30' :
+                        step.status === 'waiting_for_human' ? 'border-amber-500/30' :
+                        step.status === 'failed' ? 'border-red-500/30' :
+                        'border-white/[0.08]'
+                      )}>
                         <Icon className={cn('h-4 w-4', step.status === 'running' && 'animate-spin')} />
                       </span>
-                      <div className={cn('min-w-0 flex-1 rounded-md border p-3', active ? 'border-blue-200/60 bg-blue-50/40 dark:border-blue-900/50 dark:bg-blue-950/20' : 'border-transparent')}>
+                      <div className={cn('min-w-0 flex-1 rounded-lg border p-3 transition-all', STEP_BG[step.status])}>
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-sm font-semibold capitalize text-foreground">{step.phase}</p>
                           <StatusBadge status={step.status} size="sm" />
@@ -258,7 +272,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                         <p className="font-mono text-xs text-muted-foreground">{step.agent}</p>
                         <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
                           {step.startedAt ? <span>started {formatRelative(step.startedAt)}</span> : <span>not started</span>}
-                          {step.durationSec != null ? <span>· {formatDuration(step.durationSec)}</span> : null}
+                          {step.durationSec != null ? <span>\u00b7 {formatDuration(step.durationSec)}</span> : null}
                         </div>
                       </div>
                     </li>
@@ -268,11 +282,11 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
             </Card>
 
             {/* Per-run event stream (SSE-ready) */}
-            <Card className="flex flex-col">
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Radio className="h-4 w-4 text-teal-500" /> Event stream</h2>
+            <Card className="flex flex-col border-white/[0.06] bg-card/80">
+              <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Radio className="h-4 w-4 text-teal-400" /> Event Stream</h2>
                 {isLive ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-400">
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" /> live
                   </span>
                 ) : (
@@ -290,22 +304,22 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
           </div>
 
           {/* Artifacts for this run */}
-          <Card>
-            <div className="border-b border-border px-4 py-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><FileBox className="h-4 w-4 text-teal-500" /> Artifacts produced ({runArtifacts.length})</h2>
+          <Card className="border-white/[0.06] bg-card/80">
+            <div className="border-b border-white/[0.06] px-4 py-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><FileBox className="h-4 w-4 text-teal-400" /> Artifacts Produced ({runArtifacts.length})</h2>
             </div>
             {runArtifacts.length === 0 ? (
               <EmptyState icon={FileBox} title="No artifacts yet" description="This run has not produced any deliverables." className="m-4 border-0" />
             ) : (
-              <div className="divide-y divide-border">
+              <div className="divide-y divide-white/[0.04]">
                 {runArtifacts.map((a) => (
-                  <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div key={a.id} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-white/[0.02]">
                     <FileBox className="h-4 w-4 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-mono text-sm text-foreground">{a.name}</p>
                       <p className="truncate text-xs text-muted-foreground">{a.path}</p>
                     </div>
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">{a.kind}</span>
+                    <span className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">{a.kind}</span>
                     <span className="hidden text-xs text-muted-foreground sm:block">{a.producedBy}</span>
                     <span className="text-xs text-muted-foreground">{formatRelative(a.createdAt)}</span>
                   </div>

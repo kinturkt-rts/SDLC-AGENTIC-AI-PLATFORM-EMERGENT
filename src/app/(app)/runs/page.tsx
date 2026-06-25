@@ -32,7 +32,7 @@ export default function RunsPage() {
     { key: 'projectName', header: 'Project', render: (r) => <span className="font-medium text-foreground">{r.projectName}</span> },
     { key: 'pipeline', header: 'Pipeline', render: (r) => <span className="text-muted-foreground">{r.pipeline}</span> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
-    { key: 'currentAgent', header: 'Current agent', render: (r) => <span className="text-muted-foreground">{r.currentAgent ?? '—'}</span> },
+    { key: 'currentAgent', header: 'Current agent', render: (r) => <span className="text-muted-foreground">{r.currentAgent ?? '\u2014'}</span> },
     { key: 'elapsed', header: 'Elapsed', render: (r) => <span className="text-muted-foreground">{formatDuration(r.elapsedSec)}</span> },
     { key: 'triggeredBy', header: 'Triggered by', render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.triggeredBy}</span> },
     { key: 'started', header: 'Started', render: (r) => <span className="text-muted-foreground">{formatRelative(r.startedAt)}</span> },
@@ -46,7 +46,7 @@ export default function RunsPage() {
         description="Every SDLC pipeline execution across projects. Click a run to open its detail view."
         actions={
           <Select value={filter} onValueChange={(v) => setFilter(v as RunStatus | 'all')}>
-            <SelectTrigger className="h-9 w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-[160px] border-white/[0.08] bg-white/[0.02]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {STATUS_OPTIONS.map((s) => (
                 <SelectItem key={s} value={s} className="capitalize">{s === 'all' ? 'All statuses' : s}</SelectItem>
@@ -57,7 +57,7 @@ export default function RunsPage() {
       />
 
       {isLoading ? (
-        <Skeleton className="h-80 w-full rounded-lg" />
+        <Skeleton className="h-80 w-full rounded-xl" />
       ) : (
         <DataTable
           columns={columns}
