@@ -157,17 +157,18 @@ interface ActivityEvent {
   time: string;
   icon: LucideIcon;
   accent: string;
+  href: string;
 }
 
 const MOCK_ACTIVITY: ActivityEvent[] = [
-  { id: 'act-1', type: 'commit', agent: 'Developer Agent', project: 'FinOps Web App', description: 'Committed budgets_router.py — 4 endpoints, 3 models', time: '2m ago', icon: Code2, accent: 'text-amber-400' },
-  { id: 'act-2', type: 'artifact', agent: 'Database Agent', project: 'FinOps Web App', description: 'Schema migration 0001_init_schema.sql generated', time: '8m ago', icon: Database, accent: 'text-emerald-400' },
-  { id: 'act-3', type: 'handoff', agent: 'Architect Agent', project: 'FinOps Web App', description: 'Architecture doc + C4 diagram handed off to DB Agent', time: '12m ago', icon: Building2, accent: 'text-violet-400' },
-  { id: 'act-4', type: 'phase_complete', agent: 'Product Agent', project: 'FinOps Web App', description: 'PRD finalized — 12 user stories, 5 acceptance criteria', time: '15m ago', icon: FileText, accent: 'text-blue-400' },
-  { id: 'act-5', type: 'publish', agent: 'GitLab Agent', project: 'RAG PDF System', description: 'Published sdlc/rag-pdf-system branch with MR #47', time: '28m ago', icon: GitBranch, accent: 'text-orange-400' },
-  { id: 'act-6', type: 'checkpoint', agent: 'Security Agent', project: 'Meeting Assistant', description: 'HITL gate raised — 2 medium SAST findings require approval', time: '35m ago', icon: Shield, accent: 'text-red-400' },
-  { id: 'act-7', type: 'artifact', agent: 'Developer Agent', project: 'Meeting Assistant', description: 'Generated event-bus service scaffold (3 files)', time: '42m ago', icon: Code2, accent: 'text-amber-400' },
-  { id: 'act-8', type: 'handoff', agent: 'Product Agent', project: 'Meeting Assistant', description: 'PRD v2 approved by human — scope locked', time: '1h ago', icon: FileText, accent: 'text-blue-400' },
+  { id: 'act-1', type: 'commit', agent: 'Developer Agent', project: 'FinOps Web App', description: 'Committed budgets_router.py — 4 endpoints, 3 models', time: '2m ago', icon: Code2, accent: 'text-amber-400', href: '/runs' },
+  { id: 'act-2', type: 'artifact', agent: 'Database Agent', project: 'FinOps Web App', description: 'Schema migration 0001_init_schema.sql generated', time: '8m ago', icon: Database, accent: 'text-emerald-400', href: '/artifacts' },
+  { id: 'act-3', type: 'handoff', agent: 'Architect Agent', project: 'FinOps Web App', description: 'Architecture doc + C4 diagram handed off to DB Agent', time: '12m ago', icon: Building2, accent: 'text-violet-400', href: '/agents/architect-agent' },
+  { id: 'act-4', type: 'phase_complete', agent: 'Product Agent', project: 'FinOps Web App', description: 'PRD finalized — 12 user stories, 5 acceptance criteria', time: '15m ago', icon: FileText, accent: 'text-blue-400', href: '/artifacts' },
+  { id: 'act-5', type: 'publish', agent: 'GitLab Agent', project: 'RAG PDF System', description: 'Published sdlc/rag-pdf-system branch with MR #47', time: '28m ago', icon: GitBranch, accent: 'text-orange-400', href: '/agents/gitlab-agent' },
+  { id: 'act-6', type: 'checkpoint', agent: 'Security Agent', project: 'Meeting Assistant', description: 'HITL gate raised — 2 medium SAST findings require approval', time: '35m ago', icon: Shield, accent: 'text-red-400', href: '/checkpoints' },
+  { id: 'act-7', type: 'artifact', agent: 'Developer Agent', project: 'Meeting Assistant', description: 'Generated event-bus service scaffold (3 files)', time: '42m ago', icon: Code2, accent: 'text-amber-400', href: '/artifacts' },
+  { id: 'act-8', type: 'handoff', agent: 'Product Agent', project: 'Meeting Assistant', description: 'PRD v2 approved by human — scope locked', time: '1h ago', icon: FileText, accent: 'text-blue-400', href: '/checkpoints' },
 ];
 
 /* ─────────────────────────────────────────────────────
@@ -208,6 +209,7 @@ function HeroStatCard({
   sub,
   accent,
   iconAccent,
+  href,
 }: {
   icon: LucideIcon;
   label: string;
@@ -215,18 +217,20 @@ function HeroStatCard({
   sub?: string;
   accent: string;
   iconAccent: string;
+  href: string;
 }) {
   return (
-    <div className={cn('group relative overflow-hidden rounded-xl border border-white/[0.06] bg-card/80 p-4 transition-all duration-300 hover:border-white/[0.12] hover:bg-card', accent)}>
+    <Link href={href} className={cn('group relative block overflow-hidden rounded-xl border border-white/[0.06] bg-card/80 p-4 transition-all duration-300 hover:border-white/[0.12] hover:bg-card cursor-pointer', accent)}>
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-        <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg ring-1 ring-inset', iconAccent)}>
+        <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg ring-1 ring-inset transition-transform group-hover:scale-110', iconAccent)}>
           <Icon className="h-4 w-4" />
         </div>
       </div>
       <p className="mt-2 text-3xl font-bold tracking-tight text-foreground">{value}</p>
       {sub && <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>}
-    </div>
+      <ArrowRight className="absolute bottom-4 right-4 h-4 w-4 text-muted-foreground/0 transition-all group-hover:text-muted-foreground/60" />
+    </Link>
   );
 }
 
@@ -263,8 +267,8 @@ function PipelineVisualization({ currentPhase }: { currentPhase: string | null }
           return (
             <div key={step.id} className="flex flex-1 items-center">
               {/* Node */}
-              <div className={cn(
-                'group relative flex flex-1 flex-col items-center gap-2 rounded-xl border p-3 transition-all duration-300',
+              <Link href={`/agents/${step.agentId}`} className={cn(
+                'group relative flex flex-1 flex-col items-center gap-2 rounded-xl border p-3 transition-all duration-300 cursor-pointer',
                 isActive
                   ? 'border-teal-500/40 bg-teal-500/[0.06] glow-teal-sm'
                   : isCompleted
@@ -291,7 +295,7 @@ function PipelineVisualization({ currentPhase }: { currentPhase: string | null }
                 {isCompleted && (
                   <span className="absolute -top-1.5 right-2 rounded-full bg-emerald-500/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">Done</span>
                 )}
-              </div>
+              </Link>
               {/* Connector */}
               {idx < PIPELINE_STEPS.length - 1 && (
                 <div className="relative mx-1 flex h-[2px] w-8 shrink-0 items-center lg:w-12">
@@ -366,6 +370,7 @@ function AgentCard({ agent }: { agent: AgentCardData }) {
 
 function FutureAgentCard({ agent }: { agent: typeof FUTURE_AGENTS[0] }) {
   return (
+    <Link href="/agents" className="block">
     <Card className="group relative overflow-hidden border-white/[0.04] bg-card/30 p-4 opacity-60 transition-all duration-300 hover:opacity-80">
       <div className="absolute inset-0 bg-gradient-to-br from-white/[0.01] to-transparent" />
       <div className="relative flex items-start gap-3">
@@ -384,6 +389,7 @@ function FutureAgentCard({ agent }: { agent: typeof FUTURE_AGENTS[0] }) {
         </div>
       </div>
     </Card>
+    </Link>
   );
 }
 
@@ -417,7 +423,7 @@ function TokenUsageSection() {
         {/* Per-agent breakdown */}
         <div className="space-y-2.5">
           {MOCK_TOKEN_USAGE.map((entry) => (
-            <div key={entry.agentId} className="group flex items-center gap-3">
+            <Link key={entry.agentId} href={`/agents/${entry.agentId}`} className="group flex items-center gap-3 rounded-lg -mx-1 px-1 py-0.5 transition-colors hover:bg-white/[0.02]">
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/40">
                 <entry.icon className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
@@ -437,7 +443,7 @@ function TokenUsageSection() {
                   />
                 </div>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       </div>
@@ -503,6 +509,7 @@ export default function DashboardPage() {
                   sub="currently executing"
                   accent="glow-blue-sm"
                   iconAccent="bg-blue-500/10 text-blue-400 ring-blue-500/20"
+                  href="/runs"
                 />
                 <HeroStatCard
                   icon={UserCheck}
@@ -511,6 +518,7 @@ export default function DashboardPage() {
                   sub="awaiting human review"
                   accent=""
                   iconAccent="bg-amber-500/10 text-amber-400 ring-amber-500/20"
+                  href="/checkpoints"
                 />
                 <HeroStatCard
                   icon={Bot}
@@ -519,6 +527,7 @@ export default function DashboardPage() {
                   sub="specialist agents"
                   accent=""
                   iconAccent="bg-emerald-500/10 text-emerald-400 ring-emerald-500/20"
+                  href="/agents"
                 />
                 <HeroStatCard
                   icon={Plug}
@@ -527,6 +536,7 @@ export default function DashboardPage() {
                   sub="integration servers"
                   accent=""
                   iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20"
+                  href="/mcp"
                 />
               </>
             ) : (
@@ -538,17 +548,18 @@ export default function DashboardPage() {
 
       {/* ── SDLC Pipeline ────────────────────────────── */}
       <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-        <SectionHeader title="SDLC Pipeline" icon={Activity} />
+        <SectionHeader title="SDLC Pipeline" href="/pipelines" icon={Activity} />
         <PipelineVisualization currentPhase={currentPhase} />
       </Card>
 
       {/* ── Agent Fleet ───────────────────────────────── */}
       <div>
-        <div className="mb-3 flex items-center gap-2">
+        <Link href="/agents" className="mb-3 flex items-center gap-2 group w-fit">
           <Bot className="h-4 w-4 text-teal-400" />
-          <h2 className="text-sm font-semibold text-foreground">Active Agents</h2>
+          <h2 className="text-sm font-semibold text-foreground group-hover:text-teal-400 transition-colors">Active Agents</h2>
           <span className="rounded-full bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-400">{ACTIVE_AGENTS.length} agents</span>
-        </div>
+          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/0 transition-all group-hover:text-muted-foreground/60" />
+        </Link>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {ACTIVE_AGENTS.map((agent) => (
             <AgentCard key={agent.id} agent={agent} />
@@ -557,10 +568,11 @@ export default function DashboardPage() {
       </div>
 
       <div>
-        <div className="mb-3 flex items-center gap-2">
+        <Link href="/agents" className="mb-3 flex items-center gap-2 group w-fit">
           <Lock className="h-3.5 w-3.5 text-muted-foreground/60" />
-          <h2 className="text-sm font-medium text-muted-foreground">Roadmap — Coming Soon</h2>
-        </div>
+          <h2 className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">Roadmap — Coming Soon</h2>
+          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/0 transition-all group-hover:text-muted-foreground/60" />
+        </Link>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {FUTURE_AGENTS.map((agent) => (
             <FutureAgentCard key={agent.id} agent={agent} />
@@ -604,7 +616,7 @@ export default function DashboardPage() {
             <SectionHeader title="Recent Artifacts" href="/artifacts" icon={FileBox} count={recentArtifacts.length} />
             <div className="divide-y divide-white/[0.04]">
               {recentArtifacts.map((a) => (
-                <div key={a.id} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-white/[0.02]">
+                <Link key={a.id} href="/artifacts" className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-white/[0.02]">
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/50">
                     <FileBox className="h-3.5 w-3.5 text-muted-foreground" />
                   </div>
@@ -614,7 +626,7 @@ export default function DashboardPage() {
                   </div>
                   <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{a.kind}</span>
                   <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">{formatRelative(a.createdAt)}</span>
-                </div>
+                </Link>
               ))}
             </div>
           </Card>
@@ -627,17 +639,17 @@ export default function DashboardPage() {
         <div className="space-y-4">
           {/* Live Activity Timeline */}
           <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-            <SectionHeader title="Live Activity" icon={Zap} />
+            <SectionHeader title="Live Activity" icon={Zap} href="/logs" />
             <div className="max-h-[420px] overflow-y-auto">
               <div className="relative px-4 py-2">
                 {/* Timeline line */}
                 <div className="absolute bottom-0 left-[29px] top-0 w-px bg-white/[0.06]" />
 
                 {MOCK_ACTIVITY.map((event, idx) => (
-                  <div key={event.id} className="group relative flex gap-3 pb-4 last:pb-2" style={{ animationDelay: `${idx * 50}ms` }}>
+                  <Link key={event.id} href={event.href} className="group relative flex gap-3 pb-4 last:pb-2 transition-colors hover:bg-white/[0.01] rounded-lg -mx-1 px-1" style={{ animationDelay: `${idx * 50}ms` }}>
                     {/* Timeline dot */}
                     <div className={cn(
-                      'relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-card',
+                      'relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-card transition-all group-hover:border-white/[0.16]',
                     )}>
                       <event.icon className={cn('h-3 w-3', event.accent)} />
                     </div>
@@ -651,7 +663,7 @@ export default function DashboardPage() {
                       <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{event.description}</p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground/50">{event.project}</p>
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </div>
@@ -665,10 +677,10 @@ export default function DashboardPage() {
                 <p className="px-2 py-6 text-center text-sm text-muted-foreground">Nothing waiting.</p>
               ) : (
                 pending.map((c) => (
-                  <div key={c.id} className="rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 transition-colors hover:bg-amber-500/[0.07]">
+                  <Link key={c.id} href="/checkpoints" className="block rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 transition-colors hover:bg-amber-500/[0.07]">
                     <p className="text-xs font-medium text-foreground">{c.title}</p>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">{c.projectName} · {c.phase} · {formatRelative(c.requestedAt)}</p>
-                  </div>
+                  </Link>
                 ))
               )}
             </div>
@@ -679,10 +691,10 @@ export default function DashboardPage() {
             <SectionHeader title="MCP Health" href="/mcp" icon={Plug} />
             <div className="space-y-0.5 p-2">
               {(mcp ?? []).map((m) => (
-                <div key={m.id} className="flex items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.02]">
+                <Link key={m.id} href="/mcp" className="flex items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.02]">
                   <span className="text-sm text-foreground">{m.name}</span>
                   <StatusBadge status={m.status} size="sm" />
-                </div>
+                </Link>
               ))}
             </div>
           </Card>
