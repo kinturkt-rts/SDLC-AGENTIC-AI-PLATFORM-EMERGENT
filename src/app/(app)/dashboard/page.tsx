@@ -490,7 +490,7 @@ export default function DashboardPage() {
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-teal-400">Agentic SDLC Control Center</p>
               </div>
               <h1 className="mt-3 text-2xl font-bold tracking-tight text-foreground lg:text-3xl">
-                Autonomous AI Agents for<br className="hidden sm:block" /> End-to-End Software Delivery
+                SDLC Agentic AI
               </h1>
               <p className="mt-2 max-w-lg text-sm text-muted-foreground">
                 Orchestrating {ACTIVE_AGENTS.length} specialist agents across your software delivery lifecycle, with {FUTURE_AGENTS.length} more on the roadmap. Real-time pipeline control, human-in-the-loop checkpoints, and full artifact traceability.
