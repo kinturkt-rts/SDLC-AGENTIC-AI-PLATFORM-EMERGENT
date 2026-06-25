@@ -79,8 +79,8 @@ export default function ArtifactsPage() {
             return (
               <Card
                 key={a.id}
-                onClick={() => a.preview && setPreview(a)}
-                className={`overflow-hidden border-white/[0.06] bg-card/80 p-4 transition-all duration-300 ${a.preview ? 'cursor-pointer hover:border-teal-500/30 hover:bg-card hover:shadow-lg' : ''}`}
+                onClick={() => (a.preview || a.imageUrl) && setPreview(a)}
+                className={`overflow-hidden border-white/[0.06] bg-card/80 p-4 transition-all duration-300 ${(a.preview || a.imageUrl) ? 'cursor-pointer hover:border-teal-500/30 hover:bg-card hover:shadow-lg' : ''}`}
               >
                 <div className="flex items-start gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground ring-1 ring-white/[0.06]">
@@ -96,7 +96,7 @@ export default function ArtifactsPage() {
                   <span>{a.producedBy}</span>
                   <span>{a.sizeKb} KB \u00b7 {formatRelative(a.createdAt)}</span>
                 </div>
-                {a.preview ? <p className="mt-2 text-[11px] font-medium text-teal-400">Click to preview</p> : null}
+                {(a.preview || a.imageUrl) ? <p className="mt-2 text-[11px] font-medium text-teal-400">Click to preview</p> : null}
               </Card>
             );
           })}
@@ -109,9 +109,19 @@ export default function ArtifactsPage() {
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
             <DialogDescription>{preview?.path} \u00b7 produced by {preview?.producedBy}</DialogDescription>
           </DialogHeader>
-          <pre className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
-            {preview?.preview}
-          </pre>
+          {preview?.imageUrl ? (
+            <div className="overflow-hidden rounded-lg border border-white/[0.06] bg-muted/20 p-2">
+              <img
+                src={preview.imageUrl}
+                alt={preview.name}
+                className="w-full rounded-md object-contain"
+              />
+            </div>
+          ) : (
+            <pre className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
+              {preview?.preview}
+            </pre>
+          )}
         </DialogContent>
       </Dialog>
     </>

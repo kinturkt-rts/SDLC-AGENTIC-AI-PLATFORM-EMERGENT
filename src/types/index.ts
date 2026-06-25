@@ -113,6 +113,7 @@ export interface Artifact {
   sizeKb: number;
   createdAt: string;
   preview?: string;
+  imageUrl?: string;
 }
 
 export interface HITLCheckpoint {
