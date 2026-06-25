@@ -940,3 +940,72 @@ agent_communication:
       - All routes respond within acceptable timeframes
       
       SUMMARY: Premium styling enhancement is production-ready. All 15+ pages tested, all functionality preserved, zero regressions. The SDLC Agentic AI Platform maintains full functionality with enhanced visual polish across the entire application.
+
+    -agent: "testing"
+    -message: |
+      🎉 BACKEND REGRESSION TEST AFTER WEB-CRAWLER AGENT STATUS CHANGE - ALL TESTS PASSED ✅
+      
+      Executed comprehensive backend API regression test suite after web-crawler-agent availability changed from 'unknown' to 'offline'.
+      Base URL: https://47384073-6ab4-4093-8498-5b5d604f2562.preview.emergentagent.com/api
+      Test Date: Current session
+      
+      SCOPE: Verify backend APIs still return correct data after agent status change
+      
+      TEST RESULTS (12/12 PASSED):
+      
+      ✅ Test 1: GET /api/mcp - Initial seed with 7 servers
+         - Returns 200 with mcpServers containing all 7 seeded servers
+         - Servers: Atlassian, GitLab, Postgres, MongoDB, Firecrawl, AWS Diagram, Terraform
+      
+      ✅ Test 2a: POST /api/mcp/validate - Reject raw secret
+         - Correctly rejects raw secrets with valid=false
+         - Error: "env.K must be a secret reference like ${env:NAME} or ${workspaceFolder}/.env (no raw secrets)."
+      
+      ✅ Test 2b: POST /api/mcp/validate - Accept secret reference
+         - Correctly accepts ${env:...} references with valid=true
+      
+      ✅ Test 2c: POST /api/mcp/validate - Reject no command, no url
+         - Correctly rejects config with neither command nor url
+         - Error: "command is required for stdio servers (or provide url for a remote server)."
+      
+      ✅ Test 2d: POST /api/mcp/validate - Accept url-only remote server
+         - Correctly accepts url-only remote servers with valid=true
+      
+      ✅ Test 3a: POST /api/mcp - Add valid server
+         - Successfully adds SmokeTestServer with 200 {ok:true, name, mcpServers}
+      
+      ✅ Test 4: PERSISTENCE - Add, verify, delete, verify absent
+         - SmokeTestServer present after add
+         - DELETE returns 200 {ok:true}
+         - SmokeTestServer absent after delete
+         - File persistence working correctly
+      
+      ✅ Test 3b: POST /api/mcp - Reject invalid server (raw secret)
+         - Correctly rejects invalid server with 400 and errors array
+         - BadServer NOT persisted to registry
+      
+      ✅ Test 5: DELETE /api/mcp/NonExistentXYZ - 404 for missing server
+         - Returns 404 with error: "Server 'NonExistentXYZ' not found"
+      
+      ✅ Test 6: GET /api/v1/projects - 7 projects, no environment field
+         - Returns 200 with exactly 7 projects
+         - Slugs: finops-web-app, meeting-assistant, rag-pdf-system, incident-triage-bot, demo-api, customer-feedback-hub, meeting-action-tracker
+         - NO "environment" field in any project (correctly omitted)
+      
+      ✅ Test 7: Health endpoints - service='sdlc-agentic-platform'
+         - GET /api/health → 200 {service:'sdlc-agentic-platform', status:'ok', mode:'mock', time:<ISO>}
+         - GET /api → 200 with identical structure
+      
+      ✅ Test 8: GET /api/does-not-exist - 404 for unknown route
+         - Returns 404 with {error:"Route /does-not-exist not found"}
+      
+      ✅ Cleanup: Test artifacts removed successfully
+      
+      AGENT STATUS VERIFICATION:
+      - Verified mock data in src/mocks/agents.ts shows 10 agents total
+      - 8 agents online: orchestrator, product, architect, database, developer, qa, gitlab, security
+      - 2 agents offline: web-crawler (line 53), devops (line 105)
+      - Agent count correctly reflects 8 online out of 10 total
+      - NOTE: No backend API endpoint exists for agents - agent data is consumed client-side from mock data
+      
+      SUMMARY: Zero critical issues found. All backend APIs remain fully functional after web-crawler-agent status change from 'unknown' to 'offline'. The agent status change did NOT impact backend API functionality. All endpoints working correctly: Health, MCP Registry CRUD with validation and persistence, Projects API. Backend is stable and production-ready.

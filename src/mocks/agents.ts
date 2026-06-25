@@ -50,7 +50,7 @@ export const mockAgents: Agent[] = [
     mcpTools: ['firecrawl.scrape', 'firecrawl.crawl'],
     mcpServers: ['Firecrawl'],
     port: 9103,
-    availability: 'unknown',
+    availability: 'offline',
     lastRunAt: minsAgo(140),
     phase: 'requirements',
   },
