@@ -13,6 +13,7 @@ _SCRIPT_PATH = _REPO_ROOT / "scripts" / "apply_sql_to_rds.py"
 
 
 def _load_module():
+    sys.modules.pop("apply_sql_to_rds", None)
     spec = importlib.util.spec_from_file_location("apply_sql_to_rds", _SCRIPT_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot load {_SCRIPT_PATH}")

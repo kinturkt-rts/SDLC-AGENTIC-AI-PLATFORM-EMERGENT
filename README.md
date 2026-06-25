@@ -1,9 +1,58 @@
 # SDLC Agentic AI Platform
 
-Agentic AI Platform that automates the full software development lifecycle (SDLC):
-requirements → architecture → code → tests → CI/CD → deployment → monitoring.
+Agentic AI Platform that automates the software development lifecycle (SDLC) from a plain-text brief through deployable application code, with quality and governance gates.
 
 Built with **Cursor** for IDE-assisted development and **AWS Strands Agents** for runtime agent orchestration.
+
+## SDLC pipeline (target flow)
+
+End-to-end delivery order:
+
+```text
+inputs/*.txt
+    → product-agent        (PRD + pipeline context [+ optional Jira])
+    → architect-agent      (design doc + architecture diagram)
+    → web-crawler-agent    (optional — external docs)
+    → database-agent       (SQL migrations + seed)
+    → apply_sql_to_rds     (shared RDS apply + SQL validation)
+    → developer-agent      (FastAPI [+ Streamlit UI when required])
+    → local verify         (import smoke + pytest)
+    → gitlab-agent         (publish branch sdlc/<app> on GitLab)
+    → qa-agent             (extended tests + coverage handoff)
+    → devops-agent         (CI/CD + infra — roadmap / manual)
+    → security-agent       (SAST, deps, compliance — roadmap / manual)
+```
+
+| Step | Agent / script | Status in `run-sdlc.ps1` | Primary outputs |
+|------|----------------|--------------------------|-----------------|
+| 1 | **product-agent** | Default (skip with `-SkipProduct`) | `docs/PRD/<app>.md`, `agents/pipeline/<app>.context.json` |
+| 2 | **architect-agent** | Default (skip with `-SkipArchitect`) | `docs/design/<app>.md`, `docs/diagrams/generated-diagrams/<app>.png` |
+| 2b | web-crawler-agent | Opt-in `-WithWebCrawler` | `docs/PRD/scraped/<app>/` |
+| 3 | **database-agent** | Default (skip with `-SkipDb`) | `target-apps/<app>/db/sql/` |
+| 3b | `apply_sql_to_rds.py` | Default when DB runs (skip with `-SkipPostgres`) | RDS schema + seed |
+| 4 | **developer-agent** | Default (skip with `-SkipDeveloper`) | `target-apps/<app>/` |
+| 5 | local verify | Default (skip with `-SkipVerify`) | pytest in app folder |
+| 6 | **gitlab-agent** | Default after verify when `GITLAB_*` in `.env` (skip with `-SkipGitlab`) | branch `sdlc/<app>`, `agents/pipeline/<app>.gitlab-handoff.json` |
+| 7 | **qa-agent** | Opt-in `-WithQa` (skip with `-SkipQa`) | `agents/pipeline/<app>.qa-handoff.json` |
+| 8 | **devops-agent** | Not chained yet — run manually | CI/CD, Terraform (planned) |
+| 9 | **security-agent** | Not chained yet — run manually | security review handoff (planned) |
+
+**Run the automated chain (repo root):**
+
+```powershell
+aws sso login --profile eks-admin-user
+.\scripts\run-sdlc.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt
+```
+
+With QA and without GitLab publish:
+
+```powershell
+.\scripts\run-sdlc.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt -WithQa -SkipGitlab
+```
+
+Full flag reference: `scripts/PIPELINE.md`. Flow diagram and handoff details: `docs/SDLC_PIPELINE_FLOW.md`.
+
+**Pipeline telemetry:** each agent run writes `agents/pipeline/<app>.<agent>-telemetry.json`; the script prints a token summary at the end via `agents/_shared/pipeline_telemetry.py`.
 
 ## Stack
 
@@ -38,10 +87,11 @@ AutonomousSDLC/
 │   ├── web-crawler/            # web_crawler_agent.py
 │   ├── database-agent/         # database_agent.py
 │   ├── developer-agent/        # developer_agent.py
+│   ├── gitlab-agent/           # gitlab_agent.py (MCP publish to sdlc/<app>)
 │   ├── qa-agent/               # qa_agent.py
 │   ├── devops-agent/           # devops_agent.py
 │   ├── security-agent/         # security_agent.py
-│   └── pipeline/               # per-feature *.context.json handoff files
+│   └── pipeline/               # per-feature *.context.json + *-handoff.json + telemetry
 │
 ├── orchestrator/               # Planned BullMQ router (README only today)
 ├── target-apps/                # FastAPI services built by the platform
@@ -62,17 +112,18 @@ AutonomousSDLC/
 
 ## Agent roster
 
-| Agent | Role |
-|---|---|
-| orchestrator-agent | Receives tasks, plans, delegates to specialist agents |
-| product-agent | Converts business requirements into PRDs, user stories, and Jira epics (Atlassian MCP) |
-| architect-agent | AWS architecture diagrams, `docs/design/<app>.md`, ADRs |
-| web-crawler-agent | Scrapes web/PRD sources via Firecrawl MCP |
-| database-agent | Designs SQL/NoSQL schemas, migrations, and DB script handoff |
-| developer-agent | Implements FastAPI under `target-apps/` |
-| qa-agent | Generates & runs tests, reports coverage |
-| devops-agent | Provisions infra via Terraform, manages CI/CD pipelines |
-| security-agent | Static analysis, dependency audit, compliance checks |
+| Agent | Role | Typical pipeline step |
+|---|---|---|
+| orchestrator-agent | Receives tasks, plans, delegates to specialist agents | — (planned BullMQ router) |
+| **product-agent** | Brief → PRD, pipeline context; optional Jira epic/stories (Atlassian MCP) | **1** |
+| **architect-agent** | AWS architecture diagram, `docs/design/<app>.md`, ADRs | **2** |
+| web-crawler-agent | Scrapes external docs via Firecrawl MCP | 2b (optional) |
+| **database-agent** | SQL migrations, seeds, `db/HANDOFF.md`; pre-apply SQL validation | **3** |
+| **developer-agent** | FastAPI (+ Streamlit when required) under `target-apps/` | **4** |
+| **gitlab-agent** | Publishes app + PRD/design/pipeline artifacts to GitLab branch `sdlc/<app>` | **6** |
+| **qa-agent** | Extended pytest, coverage gaps, QA handoff | **7** (`-WithQa`) |
+| devops-agent | Terraform, CI/CD pipelines (GitLab MCP) | **8** (manual / roadmap) |
+| security-agent | SAST, dependency audit, compliance checks | **9** (manual / roadmap) |
 
 **Jira:** handled by **product-agent** (`--create-minimal-jira`, Atlassian MCP). A separate `jira-agent` is not implemented.
 
@@ -119,7 +170,9 @@ Never commit secrets; use `.env` (git-ignored via `.gitignore`).
 
 - Python for Strands agents; TypeScript for the orchestrator (planned)
 - AWS credentials: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
-- Bedrock model IDs via `MODEL_ID` / `CODING_MODEL_ID` in `.env`
+- Bedrock model IDs via `MODEL_ID` (product/architect) and `CODING_MODEL_ID` (database/developer) in `.env`
 - Target apps scaffold from `target-apps/_template/`; each may add `target-apps/{service}/.cursor/rules/`
 - Requirement briefs live under `inputs/`; pipeline handoff under `agents/pipeline/<feature>.context.json`
+- GitLab publish: `GITLAB_PERSONAL_ACCESS_TOKEN`, `GITLAB_PROJECT_PATH` in `.env` — see `agents/gitlab-agent/`
+- RDS apply: `python scripts/apply_sql_to_rds.py --target-app <app>` (validates seed nullability before apply)
 - Terraform remote state per `config/mcp/servers.json` → terraform server section

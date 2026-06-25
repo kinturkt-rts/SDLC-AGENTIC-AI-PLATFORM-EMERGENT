@@ -64,8 +64,10 @@ def test_post_without_list_get_detected(tmp_path: Path) -> None:
 
 
 def test_facility_work_order_hub_fails_ui_parity() -> None:
-    """Stress-test app documents known gaps until agent regenerates with fixes."""
+    """Documents known UI gaps on the stress-test app (optional fixture)."""
     app = _REPO_ROOT / "target-apps" / "facility-work-order-hub"
+    if not app.is_dir():
+        pytest.skip("target-apps/facility-work-order-hub not present")
     errors = validate_ui_parity_blocking(app, _REPO_ROOT)
     assert errors  # sites list, streamlit gaps, etc.
 

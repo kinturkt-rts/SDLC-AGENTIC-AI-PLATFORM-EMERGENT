@@ -14,6 +14,7 @@ _AGENT_PATH = _REPO_ROOT / "agents" / "database-agent" / "database_agent.py"
 
 
 def _load_agent_module():
+    sys.modules.pop("database_agent", None)
     spec = importlib.util.spec_from_file_location("database_agent", _AGENT_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot load {_AGENT_PATH}")

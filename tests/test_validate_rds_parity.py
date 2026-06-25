@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
@@ -15,8 +17,10 @@ from _shared.validate_rds_parity import (  # noqa: E402
 )
 
 
-def test_support_knowledge_hub_passes_rds_parity() -> None:
-    app = _REPO_ROOT / "target-apps" / "support-knowledge-hub"
+def test_platform_desk_passes_rds_parity() -> None:
+    app = _REPO_ROOT / "target-apps" / "platform-desk"
+    if not app.is_dir():
+        pytest.skip("target-apps/platform-desk not present")
     assert validate_rds_parity(app) == []
 
 

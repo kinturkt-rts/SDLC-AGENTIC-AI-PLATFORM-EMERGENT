@@ -1,6 +1,6 @@
 # Flow Chart — SDLC Agentic AI Platform
 
-This document describes the **target** end-to-end delivery pipeline and what is **implemented today** in this repo. A plain-text requirements brief goes in; the long-term goal is a deployed application on AWS with governance and quality gates. Today, the **manual CLI chain** (and `scripts/run-sdlc.ps1`) reliably covers product → architecture → database → developer; QA, security, human approvals, and DevOps deploy are **roadmap**.
+This document describes the **target** end-to-end delivery pipeline and what is **implemented today** in this repo. A plain-text requirements brief goes in; the long-term goal is a deployed application on AWS with governance and quality gates. Today, `scripts/run-sdlc.ps1` chains **product → architect → database → RDS apply → developer → verify → GitLab publish**; **qa-agent** is opt-in (`-WithQa`); **devops-agent** and **security-agent** are run manually or via future orchestration.
 
 Each specialist agent is a **Strands Agent** on Amazon Bedrock with MCP tools. Agents do not share one monolithic prompt—they pass work through **canonical files** plus a small **pipeline context JSON** (`agents/pipeline/<target-app>.context.json`).
 
@@ -38,7 +38,7 @@ flowchart TB
     USER[User / PM]
   end
 
-  subgraph implemented [Implemented — CLI / run-sdlc.ps1]
+  subgraph implemented [Implemented — run-sdlc.ps1]
     PROD[product-agent]
     PRD[(docs/PRD/app.md)]
     CTX[(agents/pipeline/app.context.json)]
@@ -47,17 +47,20 @@ flowchart TB
     DES[(docs/design/app.md)]
     WC[web-crawler-agent optional]
     DB[database-agent]
+    RDS[apply_sql_to_rds]
     SQL[(target-apps/app/db/sql/)]
     DEV[developer-agent]
     APP[(target-apps/app/ FastAPI)]
+    VERIFY[local verify pytest]
+    GL[gitlab-agent]
+    QA[qa-agent optional WithQa]
   end
 
-  subgraph roadmap [Roadmap — not auto-chained yet]
+  subgraph roadmap [Roadmap — manual / not auto-chained]
     MR[Human MR review]
-    QA[qa-agent]
+    DOPS[devops-agent]
     SEC[security-agent]
     UAT[Human UAT sign-off]
-    DOPS[devops-agent]
     AWS[AWS deploy Dev + monitoring]
   end
 
@@ -75,12 +78,16 @@ flowchart TB
   DES --> DB
   CTX --> DB
   DB --> SQL
-  SQL --> DEV
+  SQL --> RDS
+  RDS --> DEV
   DES --> DEV
   PRD --> DEV
   CTX --> DEV
   DEV --> APP
-  APP --> MR
+  APP --> VERIFY
+  VERIFY --> GL
+  GL --> MR
+  GL --> QA
   MR -->|changes| DEV
   MR -->|approved| QA
   QA -->|fail| DEV
@@ -134,23 +141,38 @@ flowchart TB
 - **Purpose:** Data model and SQL handoff; optional apply/verify with `--with-postgres` or `--with-mongodb`
 - **Flags:** `--target-app`, `--context-file`, `--no-auto-context`, default task if `--task` omitted
 
-### 5. Developer-agent ✅ wired (validation ongoing)
+### 5. Developer-agent ✅
 
 - **Input:** `designDocPath` (§4, §5), PRD, SQL paths when present in context
-- **Output:** FastAPI service under `target-apps/<app>/` (scaffold from `_template` if needed); tests under `target-apps/<app>/tests/`
+- **Output:** FastAPI service under `target-apps/<app>/` (scaffold from `_template` if needed); tests under `target-apps/<app>/tests/`; optional `ui/streamlit_app.py`
 - **Purpose:** Implement application from approved design and schema
-- **Note:** GitLab MR creation is agent capability/roadmap—not guaranteed on every CLI run
 - **Flags:** `--target-app`, `--context-file`, `--jira-key`
 
-### 6–11. Roadmap (target operating model)
+### 5b. Local verify ✅
+
+- **When:** End of `run-sdlc.ps1` before GitLab (skip with `-SkipVerify`)
+- **Purpose:** Import smoke + `pytest` in the app folder
+
+### 6. GitLab-agent ✅
+
+- **When:** After verify by default when `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH` are set (`-SkipGitlab` to skip)
+- **Input:** `target-apps/<app>/`, PRD, design, diagram, pipeline context/handoffs
+- **Output:** Branch `sdlc/<app>` on GitLab; `agents/pipeline/<app>.gitlab-handoff.json`
+- **Purpose:** Publish artifacts for MR review without manual copy/paste
+
+### 7. QA-agent ✅ (opt-in)
+
+- **When:** `run-sdlc.ps1 -WithQa` after GitLab (`-SkipQa` to skip)
+- **Purpose:** Extended pytest, coverage gaps, `agents/pipeline/<app>.qa-handoff.json`
+
+### 8–10. Roadmap (target operating model)
 
 | Step | Status | Notes |
 |------|--------|--------|
 | Human MR review | Planned | Loop back to developer-agent on changes |
-| QA-agent | Planned | Tests + coverage on MR/repo |
-| Security-agent | Planned | SAST, dependencies, compliance |
+| Security-agent | Planned | SAST, dependencies, compliance — after QA |
 | Human UAT | Planned | Sign-off before release |
-| DevOps-agent | Planned | CI/CD + Terraform via GitLab MCP |
+| DevOps-agent | Planned | CI/CD + Terraform via GitLab MCP — after security/UAT |
 | AWS deploy | Planned | Dev environment, CloudWatch, RBAC/secrets/audit |
 
 **Orchestration:** BullMQ TypeScript orchestrator and per-agent `--serve-a2a` exist (`a2a/agent-registry.json`); they do **not** yet replace the manual CLI chain for showcase runs.
@@ -203,10 +225,12 @@ After product-agent, you may still add a short `productAgentOutput` string to th
 | Per-feature `docs/design/<app>.md` | ✅ |
 | product-agent → PRD + context JSON | ✅ |
 | architect-agent → PNG + design | ✅ |
-| database-agent → SQL generation; RDS/MCP apply | 🔄 in progress |
-| developer-agent → FastAPI in `target-apps/` | ✅ wired; end-to-end validation ongoing |
+| database-agent → SQL generation; RDS apply + SQL validation | ✅ |
+| developer-agent → FastAPI in `target-apps/` | ✅ |
+| gitlab-agent → publish `sdlc/<app>` branch | ✅ (default when GitLab env set) |
 | web-crawler-agent | ✅ optional branch |
-| qa-agent, security-agent, devops-agent, auto orchestration | 📋 roadmap |
+| qa-agent | ✅ opt-in (`-WithQa`) |
+| devops-agent, security-agent, auto orchestration | 📋 roadmap |
 | Human gates + AWS deploy | 📋 target model |
 
 **Current validation approach:** Run agents **one at a time** from the CLI with a FinOps or RAG brief; inspect PRD, `agents/pipeline/<app>.context.json`, design doc, diagram, and `db/sql/` before advancing.

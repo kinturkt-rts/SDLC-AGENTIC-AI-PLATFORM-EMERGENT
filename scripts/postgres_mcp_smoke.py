@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Manual smoke test: RDS via Postgres MCP only (no Bedrock / Strands agent).
 
-Run directly — not part of the default pytest suite (no test_* functions).
+Not collected by pytest — run directly when debugging MCP connectivity.
 
 Usage (from repo root):
   aws sso login --profile eks-admin-user
-  python tests/test_postgres_mcp_direct.py
+  python scripts/postgres_mcp_smoke.py
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ def main() -> int:
                     "If test_postgres_wire_direct.py already shows OK, this is usually:\n"
                     "  • Windows: async psycopg needs SelectorEventLoop (fixed in postgres_mcp_entry.py)\n"
                     "  • Or RDS network/SG (run check_rds_network.py)\n"
-                    "Re-run: python tests/test_postgres_mcp_direct.py",
+                    "Re-run: python scripts/postgres_mcp_smoke.py",
                     file=sys.stderr,
                 )
                 return 1

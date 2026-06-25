@@ -66,8 +66,13 @@ def test_enrich_developer_context_discovers_scraped_markdown(tmp_path: Path, mon
     scraped.mkdir(parents=True)
     (scraped / "competitor.md").write_text("# Competitor API\n", encoding="utf-8")
 
+    template = tmp_path / "target-apps" / "_template"
+    template.mkdir(parents=True)
+    (template / "README.md").write_text("template\n", encoding="utf-8")
+
     monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "_TARGET_APPS", tmp_path / "target-apps")
+    monkeypatch.setattr(mod, "_TEMPLATE_DIR", template)
 
     ctx: dict[str, Any] = {"targetApp": "demo-api"}
     mod._enrich_developer_context(ctx)

@@ -25,18 +25,18 @@ Equivalent test wrapper:
 
 ### What runs by default (no extra flags)
 
-| Step | Agent | What it does |
-|------|--------|----------------|
-| 1 | product-agent | Brief → `docs/PRD/<feature>.md` + context JSON |
+| Step | Agent / script | What it does |
+|------|----------------|--------------|
+| 1 | **product-agent** | Brief → `docs/PRD/<feature>.md` + `agents/pipeline/<feature>.context.json` |
 | 2 | architect-agent | `docs/design/<feature>.md` + diagram PNG |
 | 3 | database-agent | SQL under `target-apps/<feature>/db/sql/` |
 | 3b | apply_sql_to_rds.py | **Applies SQL to RDS Postgres** (when DB step runs) |
 | 4 | developer-agent | FastAPI app under `target-apps/<feature>/` |
 | 5 | local verify | Import smoke + `pytest` in app folder |
-| 6 | **gitlab-agent** | MCP push to `sdlc/<feature>` on GitLab origin (default when `GITLAB_*` in `.env`) |
-| 7 | **qa-agent** | Full pytest + edge tests (opt-in via `-WithQa`) |
+| 6 | **gitlab-agent** | MCP push to `sdlc/<feature>` on GitLab (when `GITLAB_*` in `.env`) |
+| 7 | qa-agent | Extended tests — **only with `-WithQa`** |
 
-GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip.
+GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. **devops-agent** and **security-agent** are not in `run-sdlc.ps1` yet — run manually after QA when needed.
 
 ---
 
@@ -58,7 +58,7 @@ GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSO
 | `-JiraStoryTitleStyle concise` | optional | `concise` (default) or `user-story` |
 | `-WithWebCrawler` | — | Optional scrape step (Firecrawl + Postgres) between architect and DB |
 | `-WithPostgres` | — | Legacy: force RDS apply (already default when DB runs) |
-| `-WithQa` | — | Legacy: force QA step (already default when developer runs) |
+| `-WithQa` | — | Run qa-agent after GitLab publish |
 
 **Jira example:**
 
