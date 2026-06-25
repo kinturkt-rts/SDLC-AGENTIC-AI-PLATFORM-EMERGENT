@@ -20,7 +20,8 @@ import {
 } from '@/components/ui/select';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { EmptyState } from '@/src/components/common/EmptyState';
-import { useArtifacts } from '@/src/lib/queries';
+import { useArtifacts, useProjects } from '@/src/lib/queries';
+import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
 import type { Artifact, ArtifactKind } from '@/src/types';
 
@@ -40,17 +41,23 @@ const KINDS: (ArtifactKind | 'all')[] = ['all', 'prd', 'architecture', 'migratio
 
 export default function ArtifactsPage() {
   const { data: artifacts, isLoading } = useArtifacts();
+  const { data: projects } = useProjects();
+  const currentProjectId = useUiStore((s) => s.currentProjectId);
   const [kind, setKind] = React.useState<ArtifactKind | 'all'>('all');
   const [preview, setPreview] = React.useState<Artifact | null>(null);
 
-  const rows = (artifacts ?? []).filter((a) => kind === 'all' || a.kind === kind);
+  const currentProjectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+
+  const rows = (artifacts ?? [])
+    .filter((a) => a.projectId === currentProjectId)
+    .filter((a) => kind === 'all' || a.kind === kind);
 
   return (
     <>
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description="Deliverables produced by agents \u2014 PRDs, design docs, migrations, code, tests, scans, and CI/CD."
+        description={`Deliverables produced by agents for ${currentProjectName} \u2014 PRDs, design docs, migrations, code, tests, scans, and CI/CD.`}
         actions={
           <Select value={kind} onValueChange={(v) => setKind(v as ArtifactKind | 'all')}>
             <SelectTrigger className="h-9 w-[150px] border-white/[0.08] bg-white/[0.02] capitalize"><SelectValue /></SelectTrigger>

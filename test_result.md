@@ -418,10 +418,25 @@ frontend:
         -agent: "testing"
         -comment: "✅ COMPREHENSIVE REGRESSION TEST PASSED. Tested all 15+ pages after premium styling changes. ALL functionality preserved: (1) Dashboard - Hero section 'Agentic SDLC Control Center', 4 stat cards (Active Runs: 2, Pending Approvals: 3, Agents Online: 8/10, MCP Healthy: 5/7), SDLC Pipeline with 5 steps (Product, Architecture, Database, Development, Publish) showing completion badges, 5 Active Agent cards (Product, Architect, Database, Developer, GitLab), 3 Coming Soon agents (Security, QA, DevOps), Live Activity timeline, Token Usage section, Active Pipeline Runs, Recent Artifacts, HITL Approvals, MCP Health. (2) Agents - 10 agents including GitLab, cards/table toggle working (10 rows in table view). (3) Agent Detail - /agents/product-agent loads correctly. (4) Runs - Table with 6 runs, filter dropdown working. (5) Run Detail - /runs/run-8f2a91 shows SDLC Phase Timeline (Requirements/Architecture/Data completed, Implementation running, Qa/Security/Deploy queued), Event Stream with 14 events, Pause button working (toast 'Run paused' shown), Artifacts section present. (6) Projects - All 7 project cards visible (FinOps, Meeting Assistant, RAG PDF, Incident Triage, Demo API, Customer Feedback, Meeting Action). (7) Project Detail - /projects/finops-web-app with 5 tabs (Overview, Pipelines, Runs, Artifacts, Context), tab switching working. (8) Checkpoints - 3 Approve + 3 Reject buttons, Approve button working (toast shown), Pending and Resolved sections present. (9) Pipelines - Standard SDLC card visible, /pipelines/standard-sdlc React Flow graph loads correctly. (10) Artifacts - Preview dialog opens for PRD.md and closes with Escape. (11) MCP Registry - Cards view, 'Add MCP Server' button, 7 enable/disable switches. (12) Orchestrator - Stat cards (Specialists, Online), React Flow hub-spoke graph loads, delegation timeline present. (13) Logs - Level filter dropdown, text search input. (14) Settings - Platform API, Appearance, Authentication cards, dark mode toggle. (15) Navigation - Sidebar branding 'SDLC Agentic AI' and 'Control Plane', all 12 navigation links present, theme toggle working (dark ↔ light). (16) Console Errors - ZERO errors detected. All interactive features working: theme toggle, cards/table toggle, tab switching, approve/reject buttons, pause button, preview dialog, all navigation. Premium styling successfully applied with NO functionality regressions."
 
+  - task: "Artifacts page project filtering bug fix"
+    implemented: true
+    working: true
+    file: "src/app/(app)/artifacts/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "BUG FIX: Artifacts page now filters by the selected project from the topbar project switcher. Previously showed ALL artifacts regardless of project selection. Now uses currentProjectId from UI store to filter artifacts by projectId. Page description also updates to show current project name."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ BUG FIX VERIFIED - ALL TESTS PASSED (7/7). Comprehensive automated Playwright testing confirms artifacts page now correctly filters by selected project: (1) DEFAULT PROJECT FILTERING: /artifacts loads with default project 'FinOps Web App', page description shows 'FinOps Web App', displays exactly 5 FinOps artifacts (PRD.md, architecture.md, system-diagram.png, 0001_init_schema.sql, budgets_router.py), NO artifacts from other projects visible. (2) PROJECT SWITCHING: Topbar project switcher changed to 'RAG PDF System', page description updated to 'RAG PDF System', displays exactly 4 RAG artifacts (test_budgets.py, security-scan.sarif, .gitlab-ci.yml, main.tf), NO FinOps artifacts visible. (3) KIND FILTER WITH PROJECT: Selected 'cicd' kind filter while RAG project active, displays only 2 CICD artifacts from RAG (.gitlab-ci.yml, main.tf), other artifact types correctly filtered out. (4) ARTIFACT PREVIEW DIALOG: Clicked PRD.md artifact, preview dialog opened with correct content ('FinOps Web App — Product Requirements'), dialog closed successfully with Escape key. (5) EMPTY STATE: Selected 'test' kind for FinOps project (which has no test artifacts), empty state message 'No artifacts' and description 'No artifacts of this kind.' displayed correctly. (6) REGRESSION TESTS: /dashboard loads successfully, /agents shows all 8 agents correctly (Product, Architect, Database, Developer, QA, DevOps, GitLab, Security), /runs shows runs table. (7) NO CONSOLE ERRORS: Zero error messages found on artifacts page. Screenshots captured: artifacts-finops-default.png, artifacts-rag-switched.png, artifacts-rag-cicd-filter.png, artifacts-preview-dialog.png, artifacts-empty-state.png, agents-regression-check.png. Bug fix working perfectly - artifacts now correctly scoped to selected project."
+
 metadata:
   created_by: "main_agent"
-  version: "1.9"
-  test_sequence: 10
+  version: "1.10"
+  test_sequence: 11
   run_ui: false
 
 test_plan:
@@ -1314,3 +1329,109 @@ agent_communication:
       - All regression tests passed ✓
       
       The SDLC Agentic AI Platform is production-ready with full clickability and correct agent counts.
+
+    -agent: "testing"
+    -message: |
+      🎉 ARTIFACTS PAGE PROJECT FILTERING BUG FIX VERIFICATION COMPLETE - ALL TESTS PASSED ✅
+      
+      Executed comprehensive automated Playwright tests to verify the artifacts page now correctly filters by the selected project from the topbar project switcher.
+      Base URL: https://47384073-6ab4-4093-8498-5b5d604f2562.preview.emergentagent.com
+      Test Date: Current session
+      
+      BUG FIX VERIFICATION RESULTS (ALL 7 TEST GROUPS PASSED):
+      
+      ✅ TEST 1: ARTIFACTS FILTERED BY DEFAULT PROJECT (/artifacts)
+         - Default project is "FinOps Web App" (id: finops-web-app) ✓
+         - Page description shows "Deliverables produced by agents for FinOps Web App" ✓
+         - Displays exactly 5 FinOps artifacts:
+           * PRD.md (prd) ✓
+           * architecture.md (architecture) ✓
+           * system-diagram.png (diagram) ✓
+           * 0001_init_schema.sql (migration) ✓
+           * budgets_router.py (code) ✓
+         - NO artifacts from RAG PDF System visible ✓
+         - NO artifacts from Meeting Assistant visible ✓
+         - Screenshot: artifacts-finops-default.png
+      
+      ✅ TEST 2: SWITCHING PROJECT CHANGES ARTIFACTS (/artifacts)
+         - Clicked topbar project switcher (button with "FinOps Web App" text) ✓
+         - Selected "RAG PDF System" from dropdown ✓
+         - Page description updated to "Deliverables produced by agents for RAG PDF System" ✓
+         - Displays exactly 4 RAG PDF System artifacts:
+           * test_budgets.py (test) ✓
+           * security-scan.sarif (scan) ✓
+           * .gitlab-ci.yml (cicd) ✓
+           * main.tf (cicd) ✓
+         - NO FinOps artifacts visible ✓
+         - Screenshot: artifacts-rag-switched.png
+      
+      ✅ TEST 3: KIND FILTER STILL WORKS WITH PROJECT FILTER
+         - With RAG PDF System selected, clicked Kind dropdown ✓
+         - Selected "cicd" kind filter ✓
+         - Displays exactly 2 CICD artifacts from RAG PDF System:
+           * .gitlab-ci.yml ✓
+           * main.tf ✓
+         - Other artifact types correctly filtered out (test_budgets.py, security-scan.sarif not visible) ✓
+         - Reset kind filter to "All kinds" successfully ✓
+         - Screenshot: artifacts-rag-cicd-filter.png
+      
+      ✅ TEST 4: ARTIFACT PREVIEW DIALOG STILL WORKS
+         - Switched back to FinOps Web App project ✓
+         - Clicked PRD.md artifact card ✓
+         - Preview dialog opened with title "PRD.md" ✓
+         - Preview content contains "FinOps Web App — Product Requirements" ✓
+         - Dialog closed successfully with Escape key ✓
+         - Screenshot: artifacts-preview-dialog.png
+      
+      ✅ TEST 5: EMPTY STATE WHEN PROJECT HAS NO ARTIFACTS OF A KIND
+         - Selected "test" kind filter for FinOps Web App (which has no test artifacts) ✓
+         - Empty state message "No artifacts" displayed ✓
+         - Empty state description "No artifacts of this kind." displayed ✓
+         - Reset kind filter to "All kinds" successfully ✓
+         - Screenshot: artifacts-empty-state.png
+      
+      ✅ TEST 6: QUICK REGRESSION TESTS
+         - /dashboard loads successfully (content > 1000 chars) ✓
+         - /agents shows all 8 agents correctly:
+           * Product Agent (Online) ✓
+           * Architect Agent (Online) ✓
+           * Database Agent (Online) ✓
+           * Developer Agent (Online) ✓
+           * GitLab Agent (Online) ✓
+           * QA Agent (Offline) ✓
+           * DevOps Agent (Offline) ✓
+           * Security Agent (Offline) ✓
+         - /runs shows runs table ✓
+         - Screenshot: agents-regression-check.png
+      
+      ✅ TEST 7: CONSOLE ERRORS CHECK
+         - NO error messages found on artifacts page ✓
+         - NO critical console errors detected ✓
+      
+      ARTIFACTS DATA SUMMARY (from mock data):
+      - FinOps Web App (finops-web-app): 5 artifacts
+        * PRD.md, architecture.md, system-diagram.png, 0001_init_schema.sql, budgets_router.py
+      - RAG PDF System (rag-pdf-system): 4 artifacts
+        * test_budgets.py, security-scan.sarif, .gitlab-ci.yml, main.tf
+      - Meeting Assistant (meeting-assistant): 3 artifacts
+        * PRD.md, adr-0003-event-bus.md, 0002_add_actions.sql
+      
+      CODE IMPLEMENTATION VERIFIED:
+      - Artifacts page uses currentProjectId from UI store (useUiStore) ✓
+      - Filters artifacts by: .filter((a) => a.projectId === currentProjectId) ✓
+      - Page description dynamically shows current project name ✓
+      - Kind filter works in combination with project filter ✓
+      - Default project is 'finops-web-app' (from ui-store.ts) ✓
+      
+      SUMMARY: Zero critical issues found. Bug fix working perfectly:
+      - Artifacts page now correctly filters by selected project from topbar ✓
+      - Default project (FinOps Web App) shows only FinOps artifacts ✓
+      - Switching projects updates artifacts display correctly ✓
+      - Kind filter works correctly with project filter ✓
+      - Artifact preview dialog still functional ✓
+      - Empty state displays correctly when no artifacts of a kind ✓
+      - All regression tests passed (dashboard, agents, runs) ✓
+      - NO console errors ✓
+      
+      The artifacts page project filtering bug fix is production-ready and fully verified.
+
