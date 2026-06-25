@@ -234,8 +234,10 @@ Rules — apply to every FR regardless of domain:
     `target-apps/`). Every `cd` must use the full path from repo root (e.g.
     `cd target-apps/<app>`) — never bare `cd ui` without that prefix. Split **Terminal 1 (API)**
     and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
-    `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). Windows AND bash: venv,
-    pip install, copy .env.example → .env (Windows: `copy`; bash: `cp`), edit DATABASE_URL +
+    `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). README MUST use **separate**
+    **PowerShell (Windows)** and **Bash** code blocks (not bash-only with a comment). Windows venv:
+    `.\\.venv\\Scripts\\Activate.ps1` — never `source` as the only activate instruction. Copy .env:
+    Windows `Copy-Item .env.example .env`; bash `cp .env.example .env`. Edit DATABASE_URL +
     POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
     **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or
     run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
@@ -448,7 +450,8 @@ startup check. NEVER import from `app/` — Streamlit calls the API over HTTP on
 **UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
 list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
 inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
-README: **Terminal 2** from repo root — `cd target-apps/<app>`, activate venv, `cd ui`, then
+README: **Terminal 2** — separate **PowerShell (Windows)** and **Bash** blocks: `cd target-apps/<app>`,
+`.\\.venv\\Scripts\\Activate.ps1` (Windows) or `source .venv/bin/activate` (bash), `cd ui`, then
 `streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
 """,
 }

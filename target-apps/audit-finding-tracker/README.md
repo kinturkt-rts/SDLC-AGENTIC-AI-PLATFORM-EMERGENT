@@ -15,8 +15,9 @@ Internal audit system for managing SOC findings with centralized workflow, immut
 ## API Documentation
 
 After starting the application, visit:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+
+- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
 ## Local Development
 
@@ -32,13 +33,14 @@ Open Command Prompt or PowerShell at the **repo root** (folder containing `targe
 
 ```cmd
 cd target-apps\audit-finding-tracker
+cp .env.example .env
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
 ```
 
-### Setup (bash/Linux/Mac)  
+### Setup (bash/Linux/Mac)
 
 Open terminal at the **repo root** (folder containing `target-apps/`):
 
@@ -67,6 +69,7 @@ LOCAL_UPLOAD_DIR=./data/evidence
 ```
 
 **Important**: 
+
 - Every line needs the variable name — paste `DATABASE_URL=postgresql+psycopg://...`, not a bare URL
 - URL-encode special characters in passwords (# → %23, @ → %40)
 - For local development, you can use SQLite: `DATABASE_URL=sqlite:///./dev.db`
@@ -84,13 +87,14 @@ Or use SQLite for local testing (tests run on SQLite automatically).
 ### Run Application
 
 **Terminal 1 (API Server)**:
+
 ```bash
 cd target-apps/audit-finding-tracker
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 uvicorn app.main:app --reload --port 8000 --reload-exclude '.venv'
 ```
 
-API will be available at http://localhost:8000
+API will be available at [http://localhost:8000](http://localhost:8000)
 
 ### Run Tests
 
@@ -108,13 +112,14 @@ The API uses JWT Bearer tokens. Get a token via the login endpoint:
 
 ### Swagger UI Authentication
 
-1. Go to http://localhost:8000/docs
+1. Go to [http://localhost:8000/docs](http://localhost:8000/docs)
 2. Click "Authorize" button
 3. Use format: `Bearer <your-jwt-token>`
 
 ### Manual API Testing
 
 **Get JWT Token** (curl):
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/auth/login" \
   -H "Content-Type: application/json" \
@@ -125,6 +130,7 @@ curl -X POST "http://localhost:8000/api/v1/auth/login" \
 ```
 
 **Get JWT Token** (PowerShell):
+
 ```powershell
 Invoke-RestMethod -Uri "http://localhost:8000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{
   "email": "priya.sharma@company.com", 
@@ -133,40 +139,46 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/auth/login" -Method POST -C
 ```
 
 **Use Token in Requests** (curl):
+
 ```bash
 curl -X GET "http://localhost:8000/api/v1/findings/" \
   -H "Authorization: Bearer <your-jwt-token>"
 ```
 
 **Use Token in Requests** (PowerShell):
-```powershell  
+
+```powershell
 $headers = @{ "Authorization" = "Bearer <your-jwt-token>" }
 Invoke-RestMethod -Uri "http://localhost:8000/api/v1/findings/" -Method GET -Headers $headers
 ```
 
 ## API Endpoints
 
-| Method | Endpoint | Description | Role Required |
-|--------|----------|-------------|---------------|
-| POST | `/api/v1/auth/login` | Authenticate and get JWT token | None |
-| GET | `/api/v1/audits/` | List audits (paginated) | Auditor/Executive |
-| POST | `/api/v1/audits/` | Create new audit | Auditor/Executive |
-| GET | `/api/v1/findings/` | List findings (role-scoped) | Any authenticated |
-| POST | `/api/v1/findings/` | Create new finding | Auditor |
-| PUT | `/api/v1/findings/{id}/status` | Update finding status | Auditor/Assignee |
-| GET | `/api/v1/findings/{id}/history` | Get status history | Any authenticated |
-| POST | `/api/v1/findings/{id}/evidence` | Upload evidence file | Auditor/Assignee |
-| POST | `/api/v1/findings/{id}/comments` | Create comment | Any authenticated |
-| GET | `/api/v1/reports/executive` | Executive dashboard | Executive |
-| GET | `/health` | Health check | None |
+
+| Method | Endpoint                         | Description                    | Role Required     |
+| ------ | -------------------------------- | ------------------------------ | ----------------- |
+| POST   | `/api/v1/auth/login`             | Authenticate and get JWT token | None              |
+| GET    | `/api/v1/audits/`                | List audits (paginated)        | Auditor/Executive |
+| POST   | `/api/v1/audits/`                | Create new audit               | Auditor/Executive |
+| GET    | `/api/v1/findings/`              | List findings (role-scoped)    | Any authenticated |
+| POST   | `/api/v1/findings/`              | Create new finding             | Auditor           |
+| PUT    | `/api/v1/findings/{id}/status`   | Update finding status          | Auditor/Assignee  |
+| GET    | `/api/v1/findings/{id}/history`  | Get status history             | Any authenticated |
+| POST   | `/api/v1/findings/{id}/evidence` | Upload evidence file           | Auditor/Assignee  |
+| POST   | `/api/v1/findings/{id}/comments` | Create comment                 | Any authenticated |
+| GET    | `/api/v1/reports/executive`      | Executive dashboard            | Executive         |
+| GET    | `/health`                        | Health check                   | None              |
+
 
 ## Test Users (from seed data)
 
-| Email | Password | Role | Use Case |
-|-------|----------|------|----------|
-| priya.sharma@company.com | password | auditor | Create audits/findings, manage workflow |
-| mike.chen@company.com | password | assignee | Work on assigned findings, upload evidence |
-| sarah.johnson@company.com | password | executive | View reports and dashboards |
+
+| Email                                                         | Password | Role      | Use Case                                   |
+| ------------------------------------------------------------- | -------- | --------- | ------------------------------------------ |
+| [priya.sharma@company.com](mailto:priya.sharma@company.com)   | password | auditor   | Create audits/findings, manage workflow    |
+| [mike.chen@company.com](mailto:mike.chen@company.com)         | password | assignee  | Work on assigned findings, upload evidence |
+| [sarah.johnson@company.com](mailto:sarah.johnson@company.com) | password | executive | View reports and dashboards                |
+
 
 ## Seed Finding IDs
 
@@ -186,6 +198,7 @@ FINDING_ID=770e8400-e29b-41d4-a716-446655440003
 ## Status Workflow
 
 Valid finding status transitions:
+
 - `draft` → `assigned`
 - `assigned` → `in_progress`
 - `in_progress` → `pending_verification` (requires evidence files)
@@ -228,6 +241,7 @@ After configuring `.env` with PostgreSQL connection:
 3. **Database Query**: Verify direct connection returns expected seed data
 
 If health check fails, verify:
+
 - Database is running and accessible
 - `DATABASE_URL` format is correct
 - Schema `audit_finding_tracker` exists  
@@ -249,3 +263,4 @@ If health check fails, verify:
 - **Authentication**: JWT Bearer tokens with role-based authorization
 - **File Storage**: Local filesystem (MVP) / S3 (production)
 - **Testing**: pytest with SQLite in-memory database
+

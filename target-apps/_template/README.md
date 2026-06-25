@@ -27,37 +27,63 @@ requirements.txt
 
 Run from **repository root** (the folder that contains `target-apps/`):
 
+**PowerShell (Windows):**
+```powershell
+cd target-apps\<your-service>
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# edit .env — set DATABASE_URL, JWT_SECRET_KEY, etc.
+```
+
+**Bash (Linux/macOS):**
 ```bash
 cd target-apps/<your-service>
 python -m venv .venv
-# Windows (PowerShell)
-.\.venv\Scripts\Activate.ps1
-# macOS / Linux
 source .venv/bin/activate
-
 pip install -r requirements.txt
-cp .env.example .env   # Windows: copy .env.example .env
+cp .env.example .env
 # edit .env — set DATABASE_URL, JWT_SECRET_KEY, etc.
 ```
 
 ## Run
 
-**Terminal 1 — API** (from repo root):
+**Terminal 1 — API:**
 
+**PowerShell (Windows):**
+```powershell
+cd target-apps\<your-service>
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas
+```
+
+**Bash:**
 ```bash
 cd target-apps/<your-service>
-# activate venv (see above)
+source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas
 ```
 
 Use `--reload-dir` so pytest/package installs under `.venv` do not trigger reload storms (Streamlit health checks time out).
 
-If the app includes Streamlit (`ui/streamlit_app.py`), add **Terminal 2** from repo root:
+If the app includes Streamlit (`ui/streamlit_app.py`), add **Terminal 2**:
 
+**PowerShell (Windows):**
+```powershell
+cd target-apps\<your-service>
+.\.venv\Scripts\Activate.ps1
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
+
+**Bash:**
 ```bash
 cd target-apps/<your-service>
-# activate venv
+source .venv/bin/activate
 cd ui
+pip install -r requirements.txt
 streamlit run streamlit_app.py --server.port 8501
 ```
 

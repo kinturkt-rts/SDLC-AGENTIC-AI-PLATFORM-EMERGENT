@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.startup_checks import validate_runtime_config
@@ -44,21 +45,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global exception handler for development
+# Unhandled errors only — do not catch HTTPException (401/404 etc. from routes).
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Return detailed errors in development, generic in production."""
+    if isinstance(exc, HTTPException):
+        raise exc
     settings = get_settings()
     if settings.app_env == "development":
-        return HTTPException(
+        return JSONResponse(
             status_code=500,
-            detail={
-                "detail": str(exc),
-                "type": exc.__class__.__name__
-            }
+            content={"detail": str(exc), "type": exc.__class__.__name__},
         )
-    # Production - generic error
-    raise HTTPException(status_code=500, detail="Internal server error")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # Register routers
 app.include_router(health.router)

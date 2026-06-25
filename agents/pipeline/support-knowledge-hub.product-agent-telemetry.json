@@ -1,0 +1,15 @@
+{
+  "agent": "product-agent",
+  "targetApp": "support-knowledge-hub",
+  "modelId": "us.anthropic.claude-sonnet-4-6",
+  "modelLabel": "sonnet-4-6",
+  "toolCount": 0,
+  "toolNames": [],
+  "inputTokens": 3,
+  "outputTokens": 7220,
+  "cacheReadInputTokens": 0,
+  "cacheWriteInputTokens": 2180,
+  "totalTokens": 7223,
+  "cacheHitRatio": 0.0,
+  "elapsedSec": 161.68
+}

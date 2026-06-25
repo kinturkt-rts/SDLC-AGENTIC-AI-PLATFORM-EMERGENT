@@ -1,0 +1,18 @@
+{
+  "agent": "architect-agent",
+  "targetApp": "support-knowledge-hub",
+  "modelId": "us.anthropic.claude-sonnet-4-6",
+  "modelLabel": "sonnet-4-6",
+  "toolCount": 2,
+  "toolNames": [
+    "awsdiagram_get_diagram_examples",
+    "awsdiagram_generate_diagram"
+  ],
+  "inputTokens": 8,
+  "outputTokens": 3296,
+  "cacheReadInputTokens": 9081,
+  "cacheWriteInputTokens": 14919,
+  "totalTokens": 3304,
+  "cacheHitRatio": 0.9991,
+  "elapsedSec": 83.24
+}

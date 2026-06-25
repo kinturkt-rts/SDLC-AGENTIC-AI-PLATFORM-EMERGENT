@@ -208,6 +208,20 @@ function Invoke-DeliveryVerify {
     }
 }
 
+function Get-DeveloperStepLabel {
+    param([string]$ContextPath = $ctxPath)
+    $stack = @("FastAPI")
+    if (Test-Path $ContextPath) {
+        try {
+            $dp = (Get-Content $ContextPath -Raw | ConvertFrom-Json).deliveryProfile
+            if ($dp.requiresStreamlit) { $stack += "Streamlit" }
+            if ($dp.requiresReact) { $stack += "React" }
+        }
+        catch { }
+    }
+    return "4/6 developer-agent ($($stack -join ' + '))"
+}
+
 function Invoke-RdsApply {
     if (-not (Test-Path $sqlDir)) {
         Write-Warning "No db/sql/ under target-apps/$Feature  - skip RDS apply."
@@ -472,7 +486,7 @@ if (-not $SkipDb) {
 
 # 4) Developer -> target-apps/<feature>/
 if (-not $SkipDeveloper) {
-    Write-Host "`n=== 4/6 developer-agent (FastAPI) ===" -ForegroundColor Green
+    Write-Host "`n=== $(Get-DeveloperStepLabel) ===" -ForegroundColor Green
     $task = if ($SkipDb) { $devTaskNoDb } else { $devTaskDb }
     if ((Invoke-PipelinePython -ArgumentList @(
         "agents/developer-agent/developer_agent.py",
