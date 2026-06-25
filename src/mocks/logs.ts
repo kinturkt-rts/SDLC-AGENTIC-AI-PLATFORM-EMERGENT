@@ -12,7 +12,7 @@ const lines: Array<Omit<LogEntry, 'id' | 'ts'> & { age: number }> = [
   { level: 'info', agent: 'orchestrator-agent', runId: 'run-9b51cc', message: 'Run aborted by human (m.chen)', age: 210 },
   { level: 'error', agent: 'devops-agent', runId: 'run-9b51cc', message: 'MCP Terraform unreachable: connection refused :8817', age: 240 },
   { level: 'info', agent: 'devops-agent', runId: 'run-1a40be', message: 'terraform apply complete; promoted to prod', age: 11000 },
-  { level: 'debug', agent: 'web-crawler-agent', runId: 'run-2d09af', message: 'firecrawl.crawl depth=2 pages=14', age: 320 },
+  { level: 'info', agent: 'gitlab-agent', runId: 'run-2d09af', message: 'Published sdlc/incident-triage branch; MR #52 opened', age: 320 },
   { level: 'info', agent: 'architect-agent', runId: 'run-8f2a91', message: 'Rendered AWS diagram system.png via MCP aws-diagram', age: 31 * 60 },
 ];
 

@@ -487,7 +487,7 @@ export default function DashboardPage() {
                 Autonomous AI Agents for<br className="hidden sm:block" /> End-to-End Software Delivery
               </h1>
               <p className="mt-2 max-w-lg text-sm text-muted-foreground">
-                Orchestrating {ACTIVE_AGENTS.length} specialist agents across your software delivery lifecycle. Real-time pipeline control, human-in-the-loop checkpoints, and full artifact traceability.
+                Orchestrating {ACTIVE_AGENTS.length} specialist agents across your software delivery lifecycle, with {FUTURE_AGENTS.length} more on the roadmap. Real-time pipeline control, human-in-the-loop checkpoints, and full artifact traceability.
               </p>
             </div>
           </div>

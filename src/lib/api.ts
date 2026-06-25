@@ -142,13 +142,15 @@ export const api = {
   async getDashboardSummary(): Promise<DashboardSummary> {
     const activeRuns = mockRuns.filter((r) => r.status === 'running').length;
     const pendingApprovals = mockCheckpoints.filter((c) => c.status === 'pending').length;
-    const agentsOnline = mockAgents.filter((a) => a.availability === 'online').length;
+    // Exclude orchestrator-agent from agent counts — it is a system component, not a specialist
+    const specialists = mockAgents.filter((a) => a.id !== 'orchestrator-agent');
+    const agentsOnline = specialists.filter((a) => a.availability === 'online').length;
     const mcpHealthy = mockMcpServers.filter((m) => m.status === 'healthy').length;
     return delay({
       activeRuns,
       pendingApprovals,
       agentsOnline,
-      agentsTotal: mockAgents.length,
+      agentsTotal: specialists.length,
       mcpHealthy,
       mcpTotal: mockMcpServers.length,
     });

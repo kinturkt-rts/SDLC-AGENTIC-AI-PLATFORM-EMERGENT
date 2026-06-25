@@ -4,7 +4,6 @@ export type AgentName =
   | 'orchestrator-agent'
   | 'product-agent'
   | 'architect-agent'
-  | 'web-crawler-agent'
   | 'database-agent'
   | 'developer-agent'
   | 'gitlab-agent'

@@ -116,7 +116,6 @@ export const mockPipelines: PipelineDefinition[] = [
     name: 'Research Spike',
     description: 'Discovery pipeline that crawls references and produces a PRD + architecture draft.',
     phases: [
-      { phase: 'requirements', agent: 'web-crawler-agent', hitl: false },
       { phase: 'requirements', agent: 'product-agent', hitl: true },
       { phase: 'architecture', agent: 'architect-agent', hitl: false },
     ],

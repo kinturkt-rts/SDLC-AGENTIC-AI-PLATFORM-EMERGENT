@@ -49,7 +49,7 @@ export const mockMcpServers: McpServer[] = [
     endpoint: 'mcp://firecrawl.internal:8815',
     tools: ['scrape', 'crawl', 'extract'],
     latencyMs: 220,
-    usedByAgents: ['web-crawler-agent'],
+    usedByAgents: ['product-agent'],
   },
   {
     id: 'mcp-aws-diagram',

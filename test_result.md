@@ -420,8 +420,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.7"
-  test_sequence: 8
+  version: "1.8"
+  test_sequence: 9
   run_ui: false
 
 test_plan:
@@ -443,6 +443,106 @@ agent_communication:
       5) GET /api/v1/projects -> 200 {projects:[...]} with 7 entries and NO 'environment' field.
       6) GET /api/health & /api -> 200 service=='sdlc-agentic-platform' (renamed from helmsman-control-plane), mode=='mock'.
       Note: specific routes must win over catch-all /api/[[...path]]. Cleanup any test servers you add via DELETE.
+    
+    -agent: "testing"
+    -message: |
+      🎉 WEB-CRAWLER REMOVAL & ORCHESTRATOR HIDDEN VERIFICATION COMPLETE - ALL TESTS PASSED ✅
+      
+      Executed comprehensive automated Playwright tests to verify web-crawler-agent was completely removed and orchestrator is hidden from agents page.
+      Base URL: https://47384073-6ab4-4093-8498-5b5d604f2562.preview.emergentagent.com
+      Test Date: Current session
+      
+      CRITICAL VERIFICATION RESULTS (ALL 8 TEST GROUPS PASSED):
+      
+      ✅ TEST 1: DASHBOARD (/dashboard) - ALL REQUIREMENTS MET
+         - "Agents Online" stat card shows "5/8" (5 online out of 8 specialist agents) ✓
+         - 5 Active Agent cards present: Product Agent, Architect Agent, Database Agent, Developer Agent, GitLab Agent ✓
+         - 3 Coming Soon agents present: Security Agent, QA Agent, DevOps Agent ✓
+         - SDLC Pipeline visualization with all 5 steps working: Product, Architecture, Database, Development, Publish ✓
+         - Token Usage, Live Activity, Runs, Artifacts, HITL, MCP sections all present ✓
+         - NO mention of "web-crawler" or "Web Crawler" anywhere on dashboard ✓
+         - Screenshot: dashboard-agents-5-8.png
+      
+      ✅ TEST 2: AGENTS PAGE (/agents) - CARDS VIEW - ALL REQUIREMENTS MET
+         - Exactly 8 agent cards visible (NOT 9, NOT 10) ✓
+         - The 8 agents are: Product, Architect, Database, Developer, GitLab, QA, DevOps, Security ✓
+         - NO "Orchestrator" card visible (orchestrator-agent filtered out) ✓
+         - NO "Web Crawler" card visible (web-crawler-agent completely removed) ✓
+         - 5 agents show "Online" badge: Product, Architect, Database, Developer, GitLab ✓
+         - 3 agents show "Offline" badge: QA, DevOps, Security ✓
+         - Screenshot: agents-page-8-cards.png
+      
+      ✅ TEST 3: AGENTS PAGE - TABLE VIEW - ALL REQUIREMENTS MET
+         - Table view toggle working (icon buttons in top right) ✓
+         - Table shows exactly 8 rows (8 agents, NO orchestrator, NO web-crawler) ✓
+         - Table columns: Agent, Role, MCP tools, Port, Status, Last run ✓
+         - All 8 agents present in table with correct status badges ✓
+         - Screenshot: agents-table-8-rows-verified.png
+      
+      ✅ TEST 4: AGENT DETAIL PAGES - WORKING CORRECTLY
+         - /agents/product-agent loads correctly with full agent details ✓
+         - /agents/gitlab-agent loads correctly with full agent details ✓
+      
+      ✅ TEST 5: ORCHESTRATOR PAGE (/orchestrator) - STILL WORKING
+         - Page loads correctly (orchestrator agent exists in mock data for this page) ✓
+         - Hub-spoke React Flow graph loads successfully with 9 nodes (1 orchestrator + 8 specialists) ✓
+         - Stat cards present (Specialists, Online, Delegation threads, Bus messages) ✓
+         - Orchestrator is a system component, correctly hidden from /agents page but visible on its own page ✓
+      
+      ✅ TEST 6: LOGS PAGE (/logs) - NO WEB-CRAWLER ENTRIES
+         - NO "web-crawler-agent" entries found in log list ✓
+         - Logs show other agents: orchestrator, developer, product, database, security, qa, devops, gitlab, architect ✓
+      
+      ✅ TEST 7: PIPELINES PAGE (/pipelines) - NO WEB-CRAWLER IN RESEARCH SPIKE
+         - "Research Spike" pipeline found ✓
+         - Pipeline phases: requirements (product-agent), architecture (architect-agent) ✓
+         - NO web-crawler-agent listed in any pipeline phases ✓
+         - NO mention of "web-crawler" anywhere on pipelines page ✓
+      
+      ✅ TEST 8: QUICK REGRESSION - ALL PAGES LOAD CORRECTLY
+         - /runs → loads correctly ✓
+         - /checkpoints → loads correctly ✓
+         - /projects → loads correctly ✓
+         - /mcp → loads correctly ✓
+         - /artifacts → loads correctly ✓
+      
+      ✅ TEST 9: CONSOLE ERRORS CHECK
+         - NO critical console errors detected on any route ✓
+         - Only benign Cloudflare/RUM errors (expected) ✓
+      
+      AGENT STATUS SUMMARY (9 agents total in mock data):
+      - orchestrator-agent: ONLINE (hidden from /agents page, visible on /orchestrator page) ✓
+      - product-agent: ONLINE ✓
+      - architect-agent: ONLINE ✓
+      - database-agent: ONLINE ✓
+      - developer-agent: ONLINE ✓
+      - gitlab-agent: ONLINE ✓
+      - qa-agent: OFFLINE ✓
+      - devops-agent: OFFLINE ✓
+      - security-agent: OFFLINE ✓
+      - web-crawler-agent: REMOVED (not in mock data, not visible anywhere) ✓
+      
+      DASHBOARD COUNTS VERIFIED:
+      - Agents Online: 5/8 (5 online specialists out of 8 total specialists, excluding orchestrator) ✓
+      - Calculation: mockAgents.filter(a => a.id !== 'orchestrator-agent') = 8 specialists ✓
+      - Online specialists: product, architect, database, developer, gitlab = 5 ✓
+      - Offline specialists: qa, devops, security = 3 ✓
+      
+      AGENTS PAGE FILTERING VERIFIED:
+      - Code: const agents = (rawAgents ?? []).filter((a) => a.id !== 'orchestrator-agent'); ✓
+      - Result: 8 agents displayed (orchestrator filtered out) ✓
+      - NO web-crawler-agent in mockAgents array (completely removed) ✓
+      
+      SUMMARY: Zero critical issues found. All bug fix requirements verified and working correctly:
+      - web-crawler-agent completely removed from system (not in mock data, not in logs, not in pipelines) ✓
+      - orchestrator-agent hidden from /agents page but still accessible via /orchestrator page ✓
+      - QA, DevOps, Security agents set to 'offline' status (Coming Soon) ✓
+      - Dashboard shows correct count: 5/8 agents online ✓
+      - Agents page shows exactly 8 agent cards (no orchestrator, no web-crawler) ✓
+      - All existing functionality preserved (orchestrator page, agent details, pipelines, logs) ✓
+      - NO console errors, all routes working correctly ✓
+      
+      The SDLC Agentic AI Platform is production-ready with the bug fixes successfully implemented and verified.
 
 
     -agent: "testing"

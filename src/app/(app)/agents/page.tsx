@@ -14,9 +14,12 @@ import { useRouter } from 'next/navigation';
 import type { Agent } from '@/src/types';
 
 export default function AgentsPage() {
-  const { data: agents, isLoading } = useAgents();
+  const { data: rawAgents, isLoading } = useAgents();
   const [view, setView] = React.useState<'cards' | 'table'>('cards');
   const router = useRouter();
+
+  // Orchestrator is a system component — show only the 8 specialist agents
+  const agents = (rawAgents ?? []).filter((a) => a.id !== 'orchestrator-agent');
 
   const columns: Column<Agent>[] = [
     {
@@ -76,10 +79,10 @@ export default function AgentsPage() {
         </div>
       ) : view === 'cards' ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {(agents ?? []).map((a) => <AgentCard key={a.id} agent={a} />)}
+          {agents.map((a) => <AgentCard key={a.id} agent={a} />)}
         </div>
       ) : (
-        <DataTable columns={columns} rows={agents ?? []} getRowId={(a) => a.id} onRowClick={(a) => router.push(`/agents/${a.id}`)} />
+        <DataTable columns={columns} rows={agents} getRowId={(a) => a.id} onRowClick={(a) => router.push(`/agents/${a.id}`)} />
       )}
     </>
   );
