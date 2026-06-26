@@ -1,0 +1,70 @@
+import type { HITLCheckpoint } from '@/src/types';
+import { minsAgo } from './time';
+
+export const mockCheckpoints: HITLCheckpoint[] = [
+  {
+    id: 'hitl-001',
+    runId: 'run-3c77d0',
+    projectId: 'meeting-assistant',
+    projectName: 'Meeting Assistant',
+    phase: 'security',
+    agent: 'security-agent',
+    title: 'Approve security scan with 2 medium findings',
+    description:
+      'SAST flagged 2 medium-severity issues (insecure deserialization, weak JWT expiry). Review before deploy gate.',
+    requestedAt: minsAgo(18),
+    status: 'pending',
+  },
+  {
+    id: 'hitl-002',
+    runId: 'run-8f2a91',
+    projectId: 'finops-web-app',
+    projectName: 'FinOps Web App',
+    phase: 'requirements',
+    agent: 'product-agent',
+    title: 'Sign off on PRD scope for v1',
+    description:
+      'Product agent proposes deferring multi-currency normalization to v2. Confirm scope before architecture.',
+    requestedAt: minsAgo(35),
+    status: 'pending',
+  },
+  {
+    id: 'hitl-003',
+    runId: 'run-2d09af',
+    projectId: 'finops-web-app',
+    projectName: 'FinOps Web App',
+    phase: 'requirements',
+    agent: 'product-agent',
+    title: 'Clarify anomaly-detection sensitivity',
+    description:
+      'Requires a human decision on default z-score threshold for spend anomaly alerts (2.5 vs 3.0).',
+    requestedAt: minsAgo(1),
+    status: 'pending',
+  },
+  {
+    id: 'hitl-004',
+    runId: 'run-1a40be',
+    projectId: 'rag-pdf-system',
+    projectName: 'RAG PDF System',
+    phase: 'security',
+    agent: 'security-agent',
+    title: 'Approve production deploy',
+    description: 'All gates green. Approve promotion of RAG PDF System to prod.',
+    requestedAt: minsAgo(184),
+    status: 'approved',
+    approver: 's.patel',
+  },
+  {
+    id: 'hitl-005',
+    runId: 'run-9b51cc',
+    projectId: 'incident-triage-bot',
+    projectName: 'Incident Triage Bot',
+    phase: 'qa',
+    agent: 'qa-agent',
+    title: 'Re-run after flaky test failure',
+    description: 'QA suite failed on a flaky integration test. Human chose to abort the run.',
+    requestedAt: minsAgo(96),
+    status: 'rejected',
+    approver: 'm.chen',
+  },
+];

@@ -1,8 +1,0 @@
-{
-  "targetApp": "healthcare-clinic-bot",
-  "prdPath": "docs/PRD/healthcare-clinic-bot.md",
-  "designDocPath": "docs/design/healthcare-clinic-bot.md",
-  "diagramPaths": [
-    "docs/diagrams/generated-diagrams/healthcare-clinic-bot.png"
-  ]
-}

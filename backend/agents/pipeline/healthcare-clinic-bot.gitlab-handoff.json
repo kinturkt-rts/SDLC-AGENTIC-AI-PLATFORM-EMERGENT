@@ -1,0 +1,6 @@
+{
+  "targetApp": "healthcare-clinic-bot",
+  "branch": "sdlc/healthcare-clinic-bot",
+  "repoUrl": "https://code.example.com/sdlc/healthcare-clinic-bot",
+  "dryRun": true
+}

@@ -37,22 +37,24 @@ inputs/*.txt
 | 8 | **devops-agent** | Not chained yet — run manually | CI/CD, Terraform (planned) |
 | 9 | **security-agent** | Not chained yet — run manually | security review handoff (planned) |
 
-**Run the automated chain (repo root):**
+**Run the automated chain (`backend/`):**
 
 ```powershell
 aws sso login --profile eks-admin-user
+cd backend
 .\scripts\run-sdlc.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt
 ```
 
 With QA and without GitLab publish:
 
 ```powershell
+cd backend
 .\scripts\run-sdlc.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt -WithQa -SkipGitlab
 ```
 
-Full flag reference: `scripts/PIPELINE.md`. Flow diagram and handoff details: `docs/SDLC_PIPELINE_FLOW.md`.
+Full flag reference: `backend/scripts/PIPELINE.md`. Flow diagram and handoff details: `backend/docs/SDLC_PIPELINE_FLOW.md`.
 
-**Pipeline telemetry:** each agent run writes `agents/pipeline/<app>.<agent>-telemetry.json`; the script prints a token summary at the end via `agents/_shared/pipeline_telemetry.py`.
+**Pipeline telemetry:** each agent run writes `backend/agents/pipeline/<app>.<agent>-telemetry.json`; the script prints a token summary at the end via `backend/agents/_shared/pipeline_telemetry.py`.
 
 ## Stack
 
@@ -62,52 +64,34 @@ Full flag reference: `scripts/PIPELINE.md`. Flow diagram and handoff details: `d
 | Agent runtime | [AWS Strands Agents SDK](https://strandsagents.com/) (Python 3.12+) |
 | LLM | Amazon Bedrock via Strands model providers |
 | Message bus | BullMQ on Redis (orchestrator in TypeScript — **planned**, not scaffolded yet) |
-| MCP tools | Open-source servers (Atlassian, GitLab, Terraform) — see `config/mcp/servers.json` |
-| Target services | Python / FastAPI (scaffolded from `target-apps/_template/`) |
-| Infra | Terraform — dev / staging / prod (**planned**, see `infrastructure/README.md`) |
+| MCP tools | Open-source servers (Atlassian, GitLab, Terraform) — see `backend/config/mcp/servers.json` |
+| Target services | Python / FastAPI (scaffolded from `backend/target-apps/_template/`) |
+| Infra | Terraform — dev / staging / prod (**planned**, see `backend/infrastructure/README.md`) |
 
 ## Folder map
 
 ```
-AutonomousSDLC/
+sdlc-agentic-ai-mvp/
 ├── README.md                   # Master context (this file)
-├── .cursor/
-│   ├── mcp.json                # Cursor MCP server config
-│   ├── rules/                  # Persistent Cursor rules (.mdc)
-│   └── skills/                 # Project-scoped agent skills (SKILL.md)
-├── .env                        # Secrets — git-ignored
-├── requirements.txt            # Python deps (Strands + shared)
-├── scripts/                    # setup.sh, run-sdlc.ps1, RDS/MCP helpers
+├── .cursor/                    # Cursor rules, skills, MCP config
+├── .env                        # Secrets — git-ignored (monorepo root; also backend/.env supported)
 │
-├── agents/                     # Strands specialist agents (Python)
-│   ├── _shared/                # runner, schemas, MCP helpers, pipeline context
-│   ├── orchestrator-agent/     # orchestrator_agent.py
-│   ├── product-agent/          # product_agent.py (+ Jira via Atlassian MCP)
-│   ├── architect-agent/        # architect_agent.py
-│   ├── web-crawler/            # web_crawler_agent.py
-│   ├── database-agent/         # database_agent.py
-│   ├── developer-agent/        # developer_agent.py
-│   ├── gitlab-agent/           # gitlab_agent.py (MCP publish to sdlc/<app>)
-│   ├── qa-agent/               # qa_agent.py
-│   ├── devops-agent/           # devops_agent.py
-│   ├── security-agent/         # security_agent.py
-│   └── pipeline/               # per-feature *.context.json + *-handoff.json + telemetry
+├── frontend/                   # Next.js control-plane UI (dashboard, runs, artifacts)
 │
-├── orchestrator/               # Planned BullMQ router (README only today)
-├── target-apps/                # FastAPI services built by the platform
-│   ├── _template/              # canonical scaffold
-│   ├── demo-api/               # minimal working example
-│   └── <feature>/              # e.g. finops-web-app (db/sql + HANDOFF during pipeline)
-│
-├── inputs/                     # plain-text requirement briefs for product-agent
-├── a2a/                        # Agent-to-Agent registry + agent cards
-├── config/
-│   ├── guardrails/
-│   └── mcp/                    # Open-source MCP catalog + env reference
-├── infrastructure/             # Terraform (README only today)
-├── tests/                      # pytest at repo root
-├── docs/                       # PRD, design/<app>.md, diagrams, SDLC_PIPELINE_FLOW.md
-└── monitoring/                 # Planned Grafana dashboards (README only today)
+└── backend/                    # SDLC platform (agents, orchestrator, target apps, docs)
+    ├── requirements.txt        # Python deps (Strands + shared)
+    ├── scripts/                # run-sdlc.ps1, RDS/MCP helpers
+    ├── agents/                 # Strands specialist agents + pipeline handoffs
+    ├── orchestrator/           # Python pipeline driver (cli | a2a-http | dry-run)
+    ├── target-apps/            # FastAPI services built by developer-agent
+    ├── inputs/                 # Plain-text requirement briefs
+    ├── docs/                   # PRD, design, diagrams
+    ├── a2a/                    # Agent-to-agent registry
+    ├── config/                 # MCP catalog, orchestrator transport config
+    ├── deploy/                 # Bedrock AgentCore packaging
+    ├── infrastructure/         # Terraform (planned)
+    ├── tests/                  # Platform pytest suite
+    └── monitoring/             # Planned Grafana dashboards
 ```
 
 ## Agent roster
@@ -129,23 +113,72 @@ AutonomousSDLC/
 
 ## Communication pattern
 
-Inter-agent messages are JSON envelopes on BullMQ queues (when the TypeScript orchestrator is added). See `agents/_shared/schemas.py` for `AgentMessage`, `TaskPayload`, and `ResultPayload`. Today agents run via CLI and **A2A** HTTP (`a2a/agent-registry.json`).
+Inter-agent messages are JSON envelopes on BullMQ queues (when the TypeScript orchestrator is added). See `backend/agents/_shared/schemas.py` for `AgentMessage`, `TaskPayload`, and `ResultPayload`. Today agents run via CLI and **A2A** HTTP (`backend/a2a/agent-registry.json`).
 
 ## Strands agents
 
-Each agent is a **Strands `Agent`** on **Bedrock** in `agents/<name>/*_agent.py` with:
+Each agent is a **Strands `Agent`** on **Bedrock** in `backend/agents/<name>/*_agent.py` with:
 
 - System prompt as `{NAME}_SYS_PROMPT` in the same file (runner-based agents pass it to `_shared/runner.py`)
-- MCP tools via `agents/_shared/mcp_clients.py` (Atlassian SSE, GitLab stdio, AWS Postgres MCP, MongoDB MCP)
-- **A2A** peer tools + optional `--serve-a2a` HTTP server (`a2a/agent-registry.json`)
+- MCP tools via `backend/agents/_shared/mcp_clients.py` (Atlassian SSE, GitLab stdio, AWS Postgres MCP, MongoDB MCP)
+- **A2A** peer tools + optional `--serve-a2a` HTTP server (`backend/a2a/agent-registry.json`)
 
 ```bash
+cd backend
 pip install -r requirements.txt
 python agents/product-agent/product_agent.py --task "Your requirement" --project PAY
 python agents/product-agent/product_agent.py --serve-a2a   # A2A on :9101
 ```
 
-See `agents/README.md`, `docs/SDLC_PIPELINE_FLOW.md`, and `a2a/README.md`.
+See `backend/agents/README.md`, `backend/docs/SDLC_PIPELINE_FLOW.md`, and `backend/a2a/README.md`.
+
+## Control plane (frontend)
+
+`frontend/` holds a **Next.js 14 (App Router) + TypeScript** control-plane UI for visualizing agents, runs, artifacts, MCP servers, and HITL checkpoints. It is **read-only** and **never executes agents** — every page reads through a single typed service layer (`frontend/src/lib/api.ts`).
+
+Today the service layer reads **live backend data** via Next.js routes at `/api/v1/*` (projects from `backend/target-apps/` + `backend/agents/pipeline/*.context.json`, artifacts from `backend/docs/` and SQL, agents from `backend/a2a/agent-registry.json`). Set `NEXT_PUBLIC_API_BASE_URL` only when pointing at a remote platform API.
+
+Run locally:
+
+```powershell
+cd frontend
+copy .env.example .env.local   # leave NEXT_PUBLIC_API_BASE_URL empty for mock mode
+npm install                    # or: yarn install
+npm run dev                    # http://localhost:3000  (root redirects to /dashboard)
+```
+
+The UI also persists MCP server entries to `frontend/data/mcp.json` (git-ignored) via its own Next API routes under `frontend/src/app/api/mcp/*`. Secrets must be stored as `${env:NAME}` references — raw values are rejected by `frontend/src/lib/mcp-store.ts`.
+
+### Run a pipeline from the dashboard
+
+`/dashboard` has an **Input Requirements** card that drives the full SDLC pipeline:
+
+1. Type a feature slug (e.g. `inventory-app`) and paste/upload the brief.
+2. **Save Input** → `POST /api/v1/inputs` writes `backend/inputs/<feature>.txt`.
+3. **Start SDLC Pipeline** → `POST /api/v1/runs/start` spawns the Python driver (cwd `backend/`):
+
+   ```
+   python -m orchestrator.sdlc_pipeline --feature <feature> --input-file inputs/<feature>.txt
+   ```
+
+   That driver invokes the five agents sequentially (product → architect → database → developer → gitlab), writing live progress to `backend/agents/pipeline/<feature>.run.json`. The dashboard polls every 4 s while a run is active.
+
+Each agent's transport is configured in `backend/config/orchestrator/agents.json`:
+
+| Mode | When |
+|------|------|
+| `cli` (default) | Local dev — orchestrator spawns the agent's Python CLI as a subprocess |
+| `a2a-http` | After the agent is deployed to Bedrock AgentCore — orchestrator POSTs A2A JSON-RPC to its runtime URL |
+| `dry-run` | Wiring smoke test — writes placeholder artifacts so the next step can proceed without Bedrock |
+
+Per-agent overrides via env (`<NAME>` = uppercase, dashes → underscores):
+
+```bash
+AGENT_MODE_PRODUCT_AGENT=a2a-http
+AGENT_URL_PRODUCT_AGENT=https://<runtime>.bedrock-agentcore.us-east-2.amazonaws.com/
+```
+
+When deploying agents to AWS one-by-one, flip these env vars (no code changes). See `backend/orchestrator/README.md` for the rollout checklist and the shared-storage caveat that applies when all five agents are on AgentCore.
 
 ## MCP (open source)
 
@@ -154,12 +187,12 @@ See `agents/README.md`, `docs/SDLC_PIPELINE_FLOW.md`, and `a2a/README.md`.
 | Project | `.cursor/mcp.json` | Atlassian, GitLab, MySQL |
 | User | `~/.cursor/mcp.json` | ServiceNow, AWS (CloudWatch, DocumentDB), Sentry |
 
-Catalog and env reference: `config/mcp/servers.json`.
+Catalog and env reference: `backend/config/mcp/servers.json`.
 
-**GitLab (Juno):** use jmrplens MCP via `scripts/gitlab_mcp_server.py` (install: `.\scripts\install-jmrplens-gitlab-mcp.ps1`). Set `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_URL` in `.env`. Native `https://code.junodev.net/api/v4/mcp` needs GitLab Duo Premium (404 until enabled).
+**GitLab (Juno):** use jmrplens MCP via `backend/scripts/gitlab_mcp_server.py` (install: `.\backend\scripts\install-jmrplens-gitlab-mcp.ps1`). Set `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_URL` in `.env`. Native `https://code.junodev.net/api/v4/mcp` needs GitLab Duo Premium (404 until enabled).
 
 ```bash
-cp .env.example .env   # set GITLAB_PERSONAL_ACCESS_TOKEN, ATLASSIAN_MCP_TOKEN, AWS_*
+cp backend/.env.example backend/.env   # or use monorepo-root .env
 ```
 
 Reload MCP in **Cursor Settings → Tools & MCP** after editing config.
@@ -171,8 +204,8 @@ Never commit secrets; use `.env` (git-ignored via `.gitignore`).
 - Python for Strands agents; TypeScript for the orchestrator (planned)
 - AWS credentials: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
 - Bedrock model IDs via `MODEL_ID` (product/architect) and `CODING_MODEL_ID` (database/developer) in `.env`
-- Target apps scaffold from `target-apps/_template/`; each may add `target-apps/{service}/.cursor/rules/`
-- Requirement briefs live under `inputs/`; pipeline handoff under `agents/pipeline/<feature>.context.json`
-- GitLab publish: `GITLAB_PERSONAL_ACCESS_TOKEN`, `GITLAB_PROJECT_PATH` in `.env` — see `agents/gitlab-agent/`
-- RDS apply: `python scripts/apply_sql_to_rds.py --target-app <app>` (validates seed nullability before apply)
-- Terraform remote state per `config/mcp/servers.json` → terraform server section
+- Target apps scaffold from `backend/target-apps/_template/`; each may add `backend/target-apps/{service}/.cursor/rules/`
+- Requirement briefs live under `backend/inputs/`; pipeline handoff under `backend/agents/pipeline/<feature>.context.json`
+- GitLab publish: `GITLAB_PERSONAL_ACCESS_TOKEN`, `GITLAB_PROJECT_PATH` in `.env` — see `backend/agents/gitlab-agent/`
+- RDS apply: `python backend/scripts/apply_sql_to_rds.py --target-app <app>` (validates seed nullability before apply)
+- Terraform remote state per `backend/config/mcp/servers.json` → terraform server section

@@ -1,15 +1,22 @@
 .env
 .env.local
 .env.*.local
-# .env.example is committed (placeholders only); never commit .env with real secrets
+# .env.example is committed under backend/ (placeholders only)
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+backend/.venv/
+backend/venv/
 bin/gitlab-mcp-server.exe
 bin/gitlab-mcp-server
 node_modules/
 dist/
+# Next.js frontend build/runtime artifacts (control plane UI)
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+frontend/data/
 .mypy_cache/
 .pytest_cache/
 .coverage
@@ -22,52 +29,55 @@ Thumbs.db
 *.log
 .mcp-auth/
 
+# Orchestrator subprocess logs (per-feature stdout/stderr from /api/v1/runs/start)
+backend/agents/pipeline/.logs/
+
 # Local-only target apps (not pushed to GitLab)
-target-apps/standup-tracker/
-target-apps/release-notes-bot/
-target-apps/finops-web-app/
-target-apps/incident-triage-bot/
-target-apps/lunch-learn-app/
-target-apps/meeting-assistant/
-target-apps/rag-app-streamlit/
-target-apps/rag-pdf-system/
-target-apps/template/
-target-apps/test-dev/
-target-apps/test-medium-app/
+backend/target-apps/standup-tracker/
+backend/target-apps/release-notes-bot/
+backend/target-apps/finops-web-app/
+backend/target-apps/incident-triage-bot/
+backend/target-apps/lunch-learn-app/
+backend/target-apps/meeting-assistant/
+backend/target-apps/rag-app-streamlit/
+backend/target-apps/rag-pdf-system/
+backend/target-apps/template/
+backend/target-apps/test-dev/
+backend/target-apps/test-medium-app/
 
 # Pipeline handoffs for excluded apps
-agents/pipeline/standup-tracker.*
-agents/pipeline/release-notes-bot.*
-agents/pipeline/finops-web-app.*
-agents/pipeline/incident-triage-bot.*
-agents/pipeline/lunch-learn-app.*
-agents/pipeline/meeting-assistant.*
-agents/pipeline/rag-app-streamlit.*
-agents/pipeline/rag-pdf-system.*
-agents/pipeline/test-dev.*
-agents/pipeline/test-medium-app.*
+backend/agents/pipeline/standup-tracker.*
+backend/agents/pipeline/release-notes-bot.*
+backend/agents/pipeline/finops-web-app.*
+backend/agents/pipeline/incident-triage-bot.*
+backend/agents/pipeline/lunch-learn-app.*
+backend/agents/pipeline/meeting-assistant.*
+backend/agents/pipeline/rag-app-streamlit.*
+backend/agents/pipeline/rag-pdf-system.*
+backend/agents/pipeline/test-dev.*
+backend/agents/pipeline/test-medium-app.*
 
 # PRD/design docs for excluded apps
-docs/PRD/standup-tracker.md
-docs/PRD/release-notes-bot.md
-docs/PRD/finops-web-app.md
-docs/PRD/incident-triage-bot.md
-docs/PRD/lunch-learn-app.md
-docs/PRD/meeting-assistant.md
-docs/PRD/rag-app-streamlit.md
-docs/PRD/rag-pdf-system.md
-docs/PRD/test-dev.md
-docs/PRD/test-medium-app.md
-docs/PRD/store-checkout.md
-docs/PRD/aws-bedrock-agent-ops-assistant.md
-docs/design/standup-tracker.md
-docs/design/release-notes-bot.md
-docs/design/bedrock-lambda-app.md
-docs/design/finops-web-app.md
-docs/design/incident-triage-bot.md
-docs/design/lunch-learn-app.md
-docs/design/meeting-assistant.md
-docs/design/rag-app-streamlit.md
-docs/design/rag-pdf-system.md
-docs/design/test-dev.md
-docs/design/test-medium-app.md
+backend/docs/PRD/standup-tracker.md
+backend/docs/PRD/release-notes-bot.md
+backend/docs/PRD/finops-web-app.md
+backend/docs/PRD/incident-triage-bot.md
+backend/docs/PRD/lunch-learn-app.md
+backend/docs/PRD/meeting-assistant.md
+backend/docs/PRD/rag-app-streamlit.md
+backend/docs/PRD/rag-pdf-system.md
+backend/docs/PRD/test-dev.md
+backend/docs/PRD/test-medium-app.md
+backend/docs/PRD/store-checkout.md
+backend/docs/PRD/aws-bedrock-agent-ops-assistant.md
+backend/docs/design/standup-tracker.md
+backend/docs/design/release-notes-bot.md
+backend/docs/design/bedrock-lambda-app.md
+backend/docs/design/finops-web-app.md
+backend/docs/design/incident-triage-bot.md
+backend/docs/design/lunch-learn-app.md
+backend/docs/design/meeting-assistant.md
+backend/docs/design/rag-app-streamlit.md
+backend/docs/design/rag-pdf-system.md
+backend/docs/design/test-dev.md
+backend/docs/design/test-medium-app.md

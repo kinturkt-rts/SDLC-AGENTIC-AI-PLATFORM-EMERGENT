@@ -1,0 +1,6 @@
+{
+  "targetApp": "change-request-hub",
+  "branch": "sdlc/change-request-hub",
+  "repoUrl": "https://code.example.com/sdlc/change-request-hub",
+  "dryRun": true
+}

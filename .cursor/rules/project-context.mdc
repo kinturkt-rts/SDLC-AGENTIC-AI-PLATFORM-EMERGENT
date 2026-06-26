@@ -8,10 +8,10 @@ alwaysApply: true
 Read `README.md` for the full folder map and agent roster.
 
 - **IDE**: Cursor — rules in `.cursor/rules/`, skills in `.cursor/skills/`, MCP in `.cursor/mcp.json`
-- **Agents**: AWS Strands Agents SDK (Python), inline `{NAME}_SYS_PROMPT` per `agents/*/*_agent.py`, shared types in `agents/_shared/schemas.py`
-- **MCP**: Open-source servers only — catalog in `config/mcp/servers.json`
-- **Target apps**: FastAPI under `target-apps/`; scaffold from `_template/`
-- **Secrets**: `.env` only — never commit credentials
+- **Agents**: AWS Strands Agents SDK (Python), inline `{NAME}_SYS_PROMPT` per `backend/agents/*/*_agent.py`, shared types in `backend/agents/_shared/schemas.py`
+- **MCP**: Open-source servers only — catalog in `backend/config/mcp/servers.json`
+- **Target apps**: FastAPI under `backend/target-apps/`; scaffold from `_template/`
+- **Secrets**: `.env` at monorepo root or `backend/.env` — never commit credentials
 
 When implementing an agent, use Strands `Agent` + Bedrock model provider and load MCP tools per `config/mcp/servers.json`. Prefer project skills under `.cursor/skills/{agent-name}/` for agent-specific workflows.
 
@@ -19,7 +19,7 @@ When implementing an agent, use Strands `Agent` + Bedrock model provider and loa
 
 - Never modify infrastructure without approval
 - Never create AWS resources automatically
-- Only write application code under target-apps/
+- Only write application code under `backend/target-apps/` (or `frontend/` for the control plane UI)
 - Prefer local execution over cloud execution
 - Minimize token and model usage where possible
 - Follow FastAPI + Pydantic v2 standards

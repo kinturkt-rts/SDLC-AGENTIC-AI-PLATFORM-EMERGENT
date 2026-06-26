@@ -1,0 +1,10 @@
+{
+  "targetApp": "healthcare-clinic-bot",
+  "prdPath": "docs/PRD/healthcare-clinic-bot.md",
+  "designDocPath": "docs/design/healthcare-clinic-bot.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/healthcare-clinic-bot.png"
+  ],
+  "productAgentOutput": "See prdPath for healthcare-clinic-bot MVP requirements.",
+  "inputPath": "inputs/healthcare-clinic-bot.txt"
+}
