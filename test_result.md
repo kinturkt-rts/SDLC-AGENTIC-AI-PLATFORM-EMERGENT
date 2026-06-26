@@ -448,10 +448,25 @@ frontend:
         -agent: "testing"
         -comment: "✅ PNG ARTIFACT PREVIEW FEATURE FULLY VERIFIED - ALL 6 TESTS PASSED. Comprehensive automated Playwright testing confirms PNG artifacts now display image previews correctly: (1) FINOPS DIAGRAM PREVIEW: /artifacts with default project 'FinOps Web App', found system-diagram.png card, clicked card, dialog opened with role='dialog', <img> tag visible with correct src='/diagrams/finops-web-app.png', dialog closed with Escape. (2) RAG PDF DIAGRAM PREVIEW: Switched to 'RAG PDF System' project, found system-diagram.png card, clicked card, dialog opened with <img> tag and correct src='/diagrams/rag-pdf-system.png', dialog closed with Escape. (3) MEETING ASSISTANT DIAGRAM PREVIEW: Switched to 'Meeting Assistant' project, found system-diagram.png card, clicked card, dialog opened with <img> tag and correct src='/diagrams/meeting-assistant.png', dialog closed with Escape. (4) TEXT PREVIEW REGRESSION: Switched back to FinOps, clicked PRD.md card, dialog opened with <pre> tag (NOT <img>), preview text contains 'FinOps Web App — Product Requirements' (992 chars), NO image tag in text preview dialog - text preview still works correctly. (5) KIND FILTER WITH DIAGRAMS: Selected 'diagram' from kind filter dropdown, only system-diagram.png visible, other artifact types (PRD.md) correctly filtered out, reset filter to 'All kinds' successfully. (6) QUICK REGRESSION: /dashboard loads correctly (120257 chars), /runs shows runs correctly. NO critical console errors detected. Screenshots captured: finops-diagram-preview.png (FinOps architecture with user, services, and database icons), rag-diagram-preview.png (RAG PDF architecture with vector DB and S3), meeting-diagram-preview.png (Meeting Assistant architecture with event bus), text-preview-regression.png (PRD.md text preview), diagram-filter.png (filtered view showing only diagram artifacts with 'Click to preview' text visible). All three architecture diagrams display correctly in image preview dialogs. Text preview functionality preserved. Kind filter works with diagram artifacts. Feature is production-ready and fully functional."
 
+  - task: "Dashboard v3 restructure - Input Requirements + Token Model Update"
+    implemented: true
+    working: true
+    file: "src/app/(app)/dashboard/page.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "DASHBOARD V3 RESTRUCTURE IMPLEMENTED. Changes: (1) Removed large repeated Active Agents grid from main dashboard. (2) Removed Roadmap Coming Soon section from main dashboard. (3) Added new 'Input Requirements' card with upload/paste UI for requirements_input.txt, Save Input button, and Start SDLC Pipeline button (disabled when no input). (4) Updated Token Usage card to show Product Agent = Claude Sonnet 4.6, Architect Agent = Claude Sonnet 4.6, Database Agent = Claude Opus 4.6, Developer Agent = Claude Opus 4.6, GitLab Agent = No LLM/integration-only with 0 tokens. (5) Active Models count = 2. (6) Dashboard order: Hero Summary → Input Requirements → Current SDLC Pipeline → Active Pipeline Runs/Live Activity → Recent Artifacts/Pending HITL Approvals → Token Usage/MCP Health. Code written and visually verified via screenshots. TESTING PENDING."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ COMPREHENSIVE DASHBOARD V3 TESTING COMPLETE - ALL 8 VALIDATION TARGETS PASSED. Automated Playwright testing confirms: (1) DASHBOARD STRUCTURE: Large repeated Active Agents grid REMOVED ✓, Roadmap Coming Soon section REMOVED ✓, Dashboard sections in correct order: Hero Summary → Input Requirements → Current SDLC Pipeline → Active Pipeline Runs/Live Activity → Recent Artifacts/Pending HITL Approvals → Token Usage/MCP Health → Agent Status ✓. (2) INPUT REQUIREMENTS CARD: All elements present (requirements_input.txt filename, Upload File button, paste/edit textarea, Save Input button, Start SDLC Pipeline button) ✓, Start button disabled when no input ✓, Status badges work correctly (Missing → Ready → Saved) ✓, Paste content updates UI ✓, Save and Start buttons work with success toasts ✓, Full interactivity tested and working ✓. (3) TOKEN USAGE CARD: Product Agent = Claude Sonnet 4.6 ✓, Architect Agent = Claude Sonnet 4.6 ✓, Database Agent = Claude Opus 4.6 ✓, Developer Agent = Claude Opus 4.6 ✓, GitLab Agent = No LLM with integration-only note visible ✓, Active Models = 2 (Sonnet 4.6 and Opus 4.6) ✓, Exactly 4 agents in token breakdown (GitLab excluded) ✓, GitLab does NOT count toward token usage or cost ✓. (4) PIPELINE AND MOCK DATA: All 5 SDLC Pipeline steps present (Product, Architecture, Database, Development, Publish) ✓, Status badges present (Done, Active) ✓, Dashboard reflects 5 active specialist agents ✓, NO Web Crawler agent anywhere (count: 0) ✓, GitLab Agent shown as pipeline-integrated ✓, Agents Online stat: 5/8 ✓. (5) ROUTING AND INTERACTIVITY: All View All links present ✓, Artifact/Runs/Checkpoints/MCP/Agents links working ✓, Theme toggle working (dark ↔ light tested) ✓, Project selector present and functional ✓. (6) VISUAL QA: Desktop layout renders correctly (1920x1080) ✓, Cards not overlapping ✓, Spacing cleaner than before ✓, Dark theme styling consistent ✓, No text truncation or overflow ✓, Buttons and badges have consistent styling ✓. (7) CONSOLE AND RUNTIME CHECKS: NO critical console errors ✓, NO Next.js hydration errors ✓, NO missing key warnings ✓, NO broken asset imports ✓, Mock data mapping consistent ✓. (8) REGRESSION CHECKS: Artifacts page loads correctly ✓, Project filtering still works ✓, PNG artifact preview still works (system-diagram.png opens in dialog, closes with Escape) ✓, Agent Registry page loads correctly with 8 agent cards (Product, Architect, Database, Developer, QA, DevOps, GitLab, Security) ✓, GitLab Agent present on /agents page ✓, Coming Soon agents (Security, QA, DevOps) NOT deleted from app and visible on /agents page ✓, Coming Soon agents correctly NOT on dashboard ✓, App title 'SDLC Agentic AI Platform' ✓, Sidebar 'Control Plane' branding ✓. Screenshots captured: dashboard-v3-full.png, input-requirements-card.png, input-requirements-saved.png, token-usage-section.png, sdlc-pipeline-visualization.png, dashboard-v3-visual-qa.png, artifacts-page-regression-v3.png, agents-page-verification.png, dashboard-v3-final-pass.png. FINAL VERDICT: ✅ PASS. Dashboard v3 restructure is production-ready and fully functional with NO critical issues."
+
 metadata:
   created_by: "main_agent"
-  version: "1.11"
-  test_sequence: 12
+  version: "1.13"
+  test_sequence: 14
   run_ui: false
 
 test_plan:
@@ -461,6 +476,104 @@ test_plan:
   test_priority: "high_first"
 
 agent_communication:
+    -agent: "main"
+    -message: |
+      🎯 DASHBOARD V3 RESTRUCTURE - COMPREHENSIVE FRONTEND TESTING REQUIRED
+      
+      CHANGES IMPLEMENTED:
+      - Dashboard v3 restructure completed and visually verified
+      - Removed repetitive agent grids from main dashboard
+      - Added new "Input Requirements" card with upload/paste UI
+      - Updated Token Usage metrics (Claude Sonnet 4.6, Claude Opus 4.6, GitLab = No LLM)
+      - Correct dashboard section ordering implemented
+      
+      TESTING SCOPE (8 PRIMARY VALIDATION TARGETS):
+      
+      1. DASHBOARD STRUCTURE:
+         - Confirm large repeated Active Agents grid is REMOVED from main Dashboard
+         - Confirm Roadmap Coming Soon is REMOVED from main Dashboard
+         - Verify dashboard order: Hero Summary → Input Requirements → Current SDLC Pipeline → Active Pipeline Runs/Live Activity → Recent Artifacts/Pending HITL Approvals → Token Usage/MCP Health
+      
+      2. INPUT REQUIREMENTS CARD:
+         - Card exists and visible
+         - Shows required filename: requirements_input.txt
+         - Upload flow present
+         - Paste/edit text area present
+         - Save Input button present
+         - Start SDLC Pipeline button present
+         - Start SDLC Pipeline disabled when no requirements input exists
+         - Pasted content can be entered without UI errors
+         - Uploaded/pasted input updates UI state correctly
+         - File status badge works: Missing / Ready / Saved or equivalent
+      
+      3. TOKEN USAGE CARD:
+         - Product Agent model = Claude Sonnet 4.6
+         - Architect Agent model = Claude Sonnet 4.6
+         - Database Agent model = Claude Opus 4.6
+         - Developer Agent model = Claude Opus 4.6
+         - GitLab Agent = No LLM or integration-only
+         - GitLab Agent does NOT count toward token usage or estimated LLM cost
+         - Active Models displays: 2
+         - Totals exclude GitLab Agent token usage
+      
+      4. PIPELINE AND MOCK DATA:
+         - SDLC Pipeline shows: Product, Architecture, Database, Development, Publish
+         - Correct statuses: Done, Active, Waiting, Failed where applicable
+         - Dashboard reflects 5 active specialist agents
+         - NO Web Crawler agent appears anywhere
+         - GitLab Agent shown as pipeline-integrated where appropriate
+      
+      5. ROUTING AND INTERACTIVITY:
+         - All visible Dashboard links and buttons work
+         - View All links route correctly
+         - Artifact links route correctly
+         - Pipeline/run links route correctly
+         - HITL approval links route correctly
+         - MCP Health links route correctly
+         - Top navigation still works
+         - Project selector doesn't break page
+         - Search input doesn't cause console errors
+         - Theme toggle still works
+      
+      6. VISUAL QA:
+         - Desktop layout correct
+         - Cards not overlapping
+         - Spacing cleaner and less crowded than before
+         - Dark theme styling consistent
+         - No obvious text truncation, overflow, or unreadable labels
+         - Buttons and badges have consistent styling
+      
+      7. CONSOLE AND RUNTIME CHECKS:
+         - Check browser console for errors
+         - Check network/runtime errors
+         - Check Next.js hydration warnings
+         - Check missing key warnings
+         - Check broken asset imports
+         - Check broken image rendering for PNG artifacts
+         - Check mock data mapping consistency
+      
+      8. REGRESSION CHECKS:
+         - Artifacts page project filtering still works
+         - PNG artifact preview still works
+         - App title still says "SDLC Agentic AI Platform"
+         - Agent Registry contains detailed agent cards (if removed from Dashboard, verify they're elsewhere)
+         - GitLab Agent still appears correctly as integration/publish agent
+         - Coming Soon agents not accidentally deleted from app
+      
+      CONSTRAINTS:
+      - Do NOT add new product features
+      - Do NOT change backend behavior
+      - Do NOT reintroduce removed Dashboard sections
+      - Do NOT hardcode fake behavior beyond existing mock UI data
+      
+      AFTER TESTING:
+      - Fix any issues discovered
+      - Re-run frontend testing agent after fixes
+      - Provide concise final report with passed/failed checks, fixes applied, remaining issues
+      - Final handoff status
+      
+      Base URL: Check NEXT_PUBLIC_BASE_URL from .env
+      Test all 8 validation targets comprehensively using automated Playwright tests.
     -agent: "main"
     -message: |
       REBRAND + UX PHASE. Backend changes to test now (BACKEND ONLY this round):
@@ -573,6 +686,137 @@ agent_communication:
       - NO console errors, all routes working correctly ✓
       
       The SDLC Agentic AI Platform is production-ready with the bug fixes successfully implemented and verified.
+
+    -agent: "testing"
+    -message: |
+      🎉 DASHBOARD V3 RESTRUCTURE - COMPREHENSIVE TESTING COMPLETE - ALL 8 VALIDATION TARGETS PASSED ✅
+      
+      Executed comprehensive automated Playwright tests covering all 8 primary validation targets for Dashboard v3 restructure.
+      Base URL: https://dynamic-repo-load.preview.emergentagent.com
+      Test Date: Current session
+      
+      ✅ VALIDATION TARGET 1: DASHBOARD STRUCTURE - PASSED
+         - Large repeated Active Agents grid REMOVED from main Dashboard ✓
+         - Roadmap Coming Soon section REMOVED from main Dashboard ✓
+         - Dashboard sections in correct order verified:
+           1. Hero Summary (Agentic SDLC Control Center)
+           2. Input Requirements
+           3. Current SDLC Pipeline
+           4. Active Pipeline Runs + Live Activity
+           5. Recent Artifacts + Pending HITL Approvals
+           6. Token Usage + MCP Health
+           7. Agent Status
+      
+      ✅ VALIDATION TARGET 2: INPUT REQUIREMENTS CARD - PASSED
+         - Card exists and visible ✓
+         - Shows 'requirements_input.txt' filename ✓
+         - Upload File button present ✓
+         - Paste/edit textarea present ✓
+         - Save Input button present ✓
+         - Start SDLC Pipeline button present ✓
+         - Start button disabled when no input (tested and verified) ✓
+         - Status badges work correctly: Missing → Ready → Saved (tested) ✓
+         - Pasted content updates UI correctly (tested with multi-line requirements) ✓
+         - Save button works with success toast "Requirements saved" ✓
+         - Start button enabled after save and works with toast "SDLC Pipeline started" ✓
+         - Full interactivity flow tested and working perfectly ✓
+      
+      ✅ VALIDATION TARGET 3: TOKEN USAGE CARD - PASSED
+         - Product Agent = Claude Sonnet 4.6 ✓
+         - Architect Agent = Claude Sonnet 4.6 ✓
+         - Database Agent = Claude Opus 4.6 ✓
+         - Developer Agent = Claude Opus 4.6 ✓
+         - GitLab Agent = No LLM (integration-only note visible: "GitLab Agent is integration-only (deterministic CLI via MCP) and does not use LLM tokens.") ✓
+         - Active Models displays: 2 (Sonnet 4.6 and Opus 4.6) ✓
+         - Exactly 4 agents in token breakdown (GitLab excluded) ✓
+         - GitLab Agent does NOT count toward token usage or estimated LLM cost ✓
+         - Total Tokens: 999K, Est. Cost: $16.26 displayed correctly ✓
+      
+      ✅ VALIDATION TARGET 4: PIPELINE AND MOCK DATA - PASSED
+         - SDLC Pipeline shows all 5 steps:
+           * Product (Product Agent) ✓
+           * Architecture (Architect Agent) ✓
+           * Database (Database Agent) ✓
+           * Development (Developer Agent) ✓
+           * Publish (GitLab Agent) ✓
+         - Status badges present: Done (3 steps), Active (1 step) ✓
+         - Dashboard reflects 5 active specialist agents ✓
+         - NO Web Crawler agent anywhere on dashboard (count: 0) ✓
+         - GitLab Agent shown as pipeline-integrated (Publish step) ✓
+         - Agents Online stat: 5/8 (5 online specialists out of 8 total) ✓
+      
+      ✅ VALIDATION TARGET 5: ROUTING AND INTERACTIVITY - PASSED
+         - All View All links present and working ✓
+         - Artifact links route correctly (/artifacts) ✓
+         - Runs links route correctly (/runs) ✓
+         - Checkpoints links route correctly (/checkpoints) ✓
+         - MCP Health links route correctly (/mcp) ✓
+         - Agents links route correctly (/agents) ✓
+         - Top navigation working (sidebar links functional) ✓
+         - Project selector present and functional (FinOps Web App) ✓
+         - Theme toggle working (tested dark ↔ light switch) ✓
+         - NO console errors during navigation ✓
+      
+      ✅ VALIDATION TARGET 6: VISUAL QA - PASSED
+         - Desktop layout renders correctly (1920x1080 viewport) ✓
+         - Cards not overlapping ✓
+         - Spacing cleaner and less crowded than before (removed large sections) ✓
+         - Dark theme styling consistent across all sections ✓
+         - No text truncation or overflow issues ✓
+         - Buttons and badges have consistent styling ✓
+         - Glassmorphism effects and gradient borders working ✓
+      
+      ✅ VALIDATION TARGET 7: CONSOLE AND RUNTIME CHECKS - PASSED
+         - NO critical console errors detected ✓
+         - NO Next.js hydration errors ✓
+         - NO missing key warnings ✓
+         - NO broken asset imports ✓
+         - NO broken image rendering for PNG artifacts ✓
+         - Mock data mapping consistent (TanStack Query ~250ms delay working) ✓
+      
+      ✅ VALIDATION TARGET 8: REGRESSION CHECKS - PASSED
+         - Artifacts page loads correctly ✓
+         - Project filtering still works (tested with FinOps Web App) ✓
+         - PNG artifact preview still works (system-diagram.png opens in dialog, closes with Escape) ✓
+         - App title 'SDLC Agentic AI Platform' present ✓
+         - Sidebar 'Control Plane' branding present ✓
+         - Agent Registry page loads correctly with 8 agent cards:
+           * Product (product-agent) - Online ✓
+           * Architect (architect-agent) - Online ✓
+           * Database (database-agent) - Online ✓
+           * Developer (developer-agent) - Online ✓
+           * QA (qa-agent) - Offline ✓
+           * DevOps (devops-agent) - Offline ✓
+           * GitLab (gitlab-agent) - Online ✓
+           * Security (security-agent) - Offline ✓
+         - GitLab Agent present on /agents page ✓
+         - Coming Soon agents (Security, QA, DevOps) NOT deleted from app ✓
+         - Coming Soon agents correctly NOT on dashboard (removed as intended) ✓
+      
+      SCREENSHOTS CAPTURED:
+      - dashboard-v3-full.png (initial dashboard load)
+      - input-requirements-card.png (Input Requirements card detail)
+      - input-requirements-saved.png (after saving requirements)
+      - token-usage-section.png (Token Usage with model assignments)
+      - sdlc-pipeline-visualization.png (5-step pipeline)
+      - dashboard-v3-visual-qa.png (full visual QA)
+      - artifacts-page-regression-v3.png (artifacts page regression test)
+      - agents-page-verification.png (8 agent cards on /agents page)
+      - dashboard-v3-final-pass.png (final passing state)
+      
+      📊 FINAL VERDICT: ✅ PASS - ALL 8 VALIDATION TARGETS PASSED
+      
+      Dashboard v3 restructure is production-ready and fully functional:
+      • Removed sections: Large Active Agents grid, Roadmap Coming Soon section
+      • New feature: Input Requirements card (fully interactive with upload/paste/save/start flow)
+      • Updated: Token Usage card with correct Claude model assignments (Sonnet 4.6, Opus 4.6)
+      • Verified: All 5 SDLC pipeline steps (Product, Architecture, Database, Development, Publish)
+      • Tested: All routing, interactivity, theme toggle, project selector
+      • Confirmed: NO console errors, NO broken features, NO regressions
+      • Regression tests: Artifacts filtering, PNG preview, Agent Registry all working
+      
+      ZERO CRITICAL ISSUES FOUND. Dashboard v3 is ready for production use.
+
 
 
     -agent: "testing"
