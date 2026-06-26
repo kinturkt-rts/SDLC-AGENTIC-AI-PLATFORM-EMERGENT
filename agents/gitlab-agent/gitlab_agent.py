@@ -64,7 +64,13 @@ def _write_gitlab_handoff(app: str, handoff: dict[str, Any]) -> str:
     return path.relative_to(_REPO_ROOT).as_posix()
 
 
-def _enrich_gitlab_context(ctx: dict[str, Any], *, layout: str = "monorepo") -> None:
+def _enrich_gitlab_context(
+    ctx: dict[str, Any],
+    *,
+    layout: str = "monorepo",
+    root: Path | None = None,
+) -> None:
+    publish_root = root or _REPO_ROOT
     app = slugify_feature(str(ctx["targetApp"]))
     if layout == "apps":
         ctx.setdefault("gitlabProject", gitlab_apps_project_path())
@@ -75,7 +81,7 @@ def _enrich_gitlab_context(ctx: dict[str, Any], *, layout: str = "monorepo") -> 
         )
         ctx.setdefault("gitlabProject", cfg["project"])
     ctx.setdefault("gitlabBaseBranch", gitlab_base_branch())
-    ctx.setdefault("publishPaths", collect_feature_artifact_paths(app, root=_REPO_ROOT))
+    ctx.setdefault("publishPaths", collect_feature_artifact_paths(app, root=publish_root))
 
 
 def run_publish(
@@ -86,15 +92,17 @@ def run_publish(
     open_mr: bool = False,
     branch: str | None = None,
     apps_repo: bool = False,
+    root: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Deterministic publish via jmrplens GitLab MCP (no LLM)."""
     ctx = dict(context or {})
+    publish_root = root or _REPO_ROOT
     app = resolve_target_app(target_app, ctx, env_var="GITLAB_TARGET_APP")
     ctx.setdefault("targetApp", app)
     enrich_handoff_context(ctx, include_db_paths=False)
 
     layout = "apps" if apps_repo or ctx.get("gitlabPublishLayout") == "apps" else "monorepo"
-    _enrich_gitlab_context(ctx, layout=layout)
+    _enrich_gitlab_context(ctx, layout=layout, root=publish_root)
 
     result = publish_feature(
         app,
@@ -103,7 +111,7 @@ def run_publish(
         branch=branch or (str(ctx["featureBranch"]) if ctx.get("featureBranch") else None),
         draft_mr=draft_mr or bool(ctx.get("gitlabDraftMr")),
         open_mr=open_mr or bool(ctx.get("gitlabOpenMr")),
-        root=_REPO_ROOT,
+        root=publish_root,
         layout=layout,
     )
 

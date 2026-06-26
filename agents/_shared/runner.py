@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
 
 
 AGENT_DESCRIPTIONS: dict[str, str] = {
-    "orchestrator-agent": "Routes SDLC tasks across specialist agents via BullMQ and A2A.",
+    "orchestrator-agent": "Master SDLC coordinator — runs full pipeline or delegates to specialists via A2A.",
     "product-agent": "Converts business requirements into Jira epics and user stories.",
     "architect-agent": "Produces architecture decisions, ADRs, and API contracts.",
     "developer-agent": "Implements features in target-apps/ (local files; use gitlab-agent for GitLab publish).",

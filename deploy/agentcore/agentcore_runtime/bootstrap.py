@@ -23,6 +23,7 @@ AGENT_MODULE_MAP: dict[str, tuple[str, str]] = {
     "security-agent": ("security-agent", "security_agent"),
     "database-agent": ("database-agent", "database_agent"),
     "web-crawler-agent": ("web-crawler", "web_crawler_agent"),
+    "gitlab-agent": ("gitlab-agent", "gitlab_agent"),
 }
 
 

@@ -42,10 +42,12 @@ def test_a2a_server_resolves_agent_name(repo_root: Path, monkeypatch: pytest.Mon
     monkeypatch.delenv("AGENTCORE_AGENT", raising=False)
     try:
         from a2a_server import _resolve_agent_name
+        from agentcore_runtime.bundles import BUNDLE_FACTORIES
 
         assert _resolve_agent_name("architect-agent") == "architect-agent"
         monkeypatch.setenv("AGENTCORE_AGENT", "qa-agent")
         assert _resolve_agent_name(None) == "qa-agent"
+        assert "gitlab-agent" in BUNDLE_FACTORIES
     finally:
         if str(deploy_dir) in sys.path:
             sys.path.remove(str(deploy_dir))

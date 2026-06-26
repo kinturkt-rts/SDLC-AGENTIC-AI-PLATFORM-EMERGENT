@@ -1,0 +1,56 @@
+{
+  "description": "Deployed AgentCore runtime URLs (no secrets). Update after agentcore deploy.",
+  "region": "us-east-2",
+  "agents": {
+    "orchestrator-agent": {
+      "runtimeArn": "",
+      "invokeUrl": "",
+      "notes": "Set AGENTCORE_A2A_PEER_URLS to specialist invokeUrl values"
+    },
+    "product-agent": {
+      "runtimeArn": "",
+      "invokeUrl": "",
+      "env": {
+        "AGENTCORE_PRODUCT_SKIP_JIRA": "true"
+      }
+    },
+    "architect-agent": {
+      "runtimeArn": "",
+      "invokeUrl": ""
+    },
+    "developer-agent": {
+      "runtimeArn": "",
+      "invokeUrl": ""
+    },
+    "database-agent": {
+      "runtimeArn": "",
+      "invokeUrl": "",
+      "env": {
+        "AGENTCORE_DATABASE_USE_POSTGRES": "true"
+      }
+    },
+    "web-crawler-agent": {
+      "runtimeArn": "",
+      "invokeUrl": "",
+      "env": {
+        "INSTALL_NODE": "true"
+      }
+    },
+    "qa-agent": {
+      "runtimeArn": "",
+      "invokeUrl": ""
+    },
+    "devops-agent": {
+      "runtimeArn": "",
+      "invokeUrl": ""
+    },
+    "security-agent": {
+      "runtimeArn": "",
+      "invokeUrl": ""
+    },
+    "gitlab-agent": {
+      "runtimeArn": "",
+      "invokeUrl": ""
+    }
+  }
+}
