@@ -1,19 +1,25 @@
+# AgentCore CodeBuild entry (context = repository root).
+# Canonical copy: deploy/agentcore/Dockerfile — keep both in sync.
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
 ARG AGENTCORE_AGENT=orchestrator-agent
+ARG INSTALL_NODE=false
 ARG GITLAB_MCP_VERSION=v2.2.1
 
 WORKDIR /app
 
-# Node.js is required by npx-based MCP servers (Firecrawl, MongoDB, Supabase, mcp-remote/Atlassian)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         graphviz \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+RUN if [ "$INSTALL_NODE" = "true" ]; then \
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+      && apt-get install -y --no-install-recommends nodejs \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 ENV REPO_ROOT=/app
 ENV PYTHONUNBUFFERED=1

@@ -70,7 +70,7 @@ _READ_PREFIXES = (
 _written_files: list[str] = []
 
 DATABASE_SYS_PROMPT = """\
-You are the **database developer** for the Autonomous SDLC platform. You run after architect-agent
+You are the **database developer** for the SDLC Agentic AI Platform. You run after architect-agent
 and before developer-agent. You author migrations and dev seeds; the host applies sql/ to RDS when requested.
 
 ## Handoff (read files — not prior agent chat)

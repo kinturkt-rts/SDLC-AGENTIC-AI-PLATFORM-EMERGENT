@@ -10,7 +10,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
-from _shared import env as shared_env  # noqa: E402
+from _shared import env as shared_env
 
 # Keys from .env.local that make unit tests non-deterministic when load_repo_env runs.
 _ISOLATED_ENV_KEYS = (

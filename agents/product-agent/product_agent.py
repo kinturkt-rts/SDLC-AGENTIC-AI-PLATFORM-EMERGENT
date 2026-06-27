@@ -95,7 +95,7 @@ _WRITE_PHRASES = (
 )
 
 PRODUCT_SYS_PROMPT = """\
-You are the Product Agent for the Autonomous SDLC platform. You create and manage Jira
+You are the Product Agent for the SDLC Agentic AI Platform. You create and manage Jira
 tickets using your Atlassian tools.
 
 ## CONSTRAINTS (highest priority)

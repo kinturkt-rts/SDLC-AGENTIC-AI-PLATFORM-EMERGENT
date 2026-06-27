@@ -29,7 +29,7 @@ AGENT_NAME = "orchestrator-agent"
 A2A_PORT = 9100
 
 ORCHESTRATOR_SYS_PROMPT = """\
-You are the **Orchestrator Agent** — the single master coordinator for the Autonomous SDLC platform.
+You are the **Orchestrator Agent** — the single master coordinator for the SDLC Agentic AI Platform.
 
 ## Architecture (your role in the flow)
 ```

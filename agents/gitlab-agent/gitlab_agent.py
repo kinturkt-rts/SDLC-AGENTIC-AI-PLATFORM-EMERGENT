@@ -41,21 +41,7 @@ from _shared.pipeline_context import (
 load_repo_env()
 os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
 
-from a2a.types import AgentSkill
-from strands.multiagent.a2a import A2AServer
-
 AGENT_NAME = "gitlab-agent"
-A2A_PORT = 9110
-
-DEFAULT_PIPELINE_TASK = """\
-Publish SDLC outputs for targetApp to the platform GitLab repository.
-
-Use gitlab_publish_feature(targetApp) — pushes to branch sdlc/<app> (reused per app).
-Republishs update existing files on that branch; a different targetApp uses its own branch.
-Merge requests to main are opt-in (--open-mr); default is branch-only publish.
-Report status, branch URL, paths published, and optional MR URL.
-"""
-
 
 def _write_gitlab_handoff(app: str, handoff: dict[str, Any]) -> str:
     path = _REPO_ROOT / "agents" / "pipeline" / f"{slugify_feature(app)}.gitlab-handoff.json"
@@ -184,32 +170,6 @@ def run_mr_comment(*, mr_iid: int, body: str, project: str | None = None) -> int
     return 0 if result.get("ok") else 1
 
 
-def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
-    from strands import Agent
-    from strands.models import BedrockModel
-
-    agent = Agent(
-        agent_id=AGENT_NAME,
-        name=AGENT_NAME,
-        description="Publishes SDLC feature artifacts to GitLab via MCP.",
-        model=BedrockModel(
-            model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
-            region_name=os.getenv("AWS_REGION", "us-east-2"),
-        ),
-        system_prompt="You publish SDLC apps to GitLab. Direct users to gitlab-agent CLI.",
-        tools=[],
-    )
-    skills = [
-        AgentSkill(
-            id="publish_feature",
-            name="publish_feature",
-            description="Publish SDLC artifacts to GitLab via self-hosted MCP.",
-            tags=["gitlab", "publish", "mcp"],
-        )
-    ]
-    A2AServer(agent, host=host, port=port, skills=skills).serve()
-
-
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -260,14 +220,7 @@ def main() -> None:
         action="store_true",
         help="Skip auto-load of agents/pipeline/<app>.context.json",
     )
-    parser.add_argument("--serve-a2a", action="store_true")
-    parser.add_argument("--port", type=int, default=A2A_PORT)
-    parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
-
-    if args.serve_a2a:
-        serve_a2a(host=args.host, port=args.port)
-        return
 
     project_override = args.gitlab_project or None
 

@@ -532,7 +532,7 @@ def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
 
 
 _DEVELOPER_SYS_PROMPT_TEMPLATE = """\
-You are the Developer Agent for the Autonomous SDLC platform. You are the fifth agent in a
+You are the Developer Agent for the SDLC Agentic AI Platform. You are the fifth agent in a
 sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU.
 
 Your job is to produce working, tested code under `target-apps/<service>/` by faithfully

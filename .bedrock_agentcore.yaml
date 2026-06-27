@@ -1,0 +1,326 @@
+default_agent: orchestrator_agent
+agents:
+  product_agent:
+    name: product_agent
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous
+      SDLC Agentic AI Platform/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\Autonomous
+      SDLC Agentic AI Platform
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-6038b56524
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-product_agent
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: product_agent-az4pY1Blv1
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/product_agent-az4pY1Blv1
+      agent_session_id: bf290e4a-d8b2-47b8-9b5e-52dfde6b15ab
+    codebuild:
+      project_name: bedrock-agentcore-product_agent-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-6038b56524
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  architect_agent:
+    name: architect_agent
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous
+      SDLC Agentic AI Platform/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\Autonomous
+      SDLC Agentic AI Platform
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-aea3281e1c
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-architect_agent
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: architect_agent-MSC7JE4JIK
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/architect_agent-MSC7JE4JIK
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-architect_agent-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-aea3281e1c
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  database_agent:
+    name: database_agent
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous
+      SDLC Agentic AI Platform/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\Autonomous
+      SDLC Agentic AI Platform
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-1b7ecf8909
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-database_agent
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: database_agent-B28RDG3CX2
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/database_agent-B28RDG3CX2
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-database_agent-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-1b7ecf8909
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  developer_agent:
+    name: developer_agent
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous
+      SDLC Agentic AI Platform/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\Autonomous
+      SDLC Agentic AI Platform
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-b1d19a976d
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-developer_agent
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: developer_agent-s6E4Vd82AM
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/developer_agent-s6E4Vd82AM
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-developer_agent-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-b1d19a976d
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  gitlab_agent:
+    name: gitlab_agent
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous
+      SDLC Agentic AI Platform/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\Autonomous
+      SDLC Agentic AI Platform
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-8a38e8c335
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: gitlab_agent-qgx3u2CWtC
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/gitlab_agent-qgx3u2CWtC
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-gitlab_agent-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-8a38e8c335
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  orchestrator_agent:
+    name: orchestrator_agent
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous
+      SDLC Agentic AI Platform/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\Autonomous
+      SDLC Agentic AI Platform
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-00cafffea8
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-orchestrator_agent
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: orchestrator_agent-O0WIlYDDeX
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent-O0WIlYDDeX
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-orchestrator_agent-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-00cafffea8
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
