@@ -18,7 +18,6 @@ if str(_DEPLOY) not in sys.path:
 
 from agentcore_runtime.bootstrap import bootstrap
 
-# agents/ must be on sys.path before agentcore_runtime imports _shared.*
 bootstrap()
 
 from agentcore_runtime.bundles import BUNDLE_FACTORIES

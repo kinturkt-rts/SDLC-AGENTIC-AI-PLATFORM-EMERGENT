@@ -5,21 +5,36 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
+from _shared.artifact_store import (
+    get_context,
+    is_s3_store,
+    put_context,
+    read_repo_artifact,
+    resolve_run_id,
+    write_repo_artifact,
+)
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.mcp_clients import aws_diagram_mcp_client
 from _shared.pipeline_context import (
     TargetAppRequiredError,
+    design_doc_rel_for_app,
+    diagram_path_for_app,
     enrich_handoff_context,
+    infer_target_app_from_context,
+    pipeline_context_rel_for_app,
     repo_rel,
     resolve_cli_context,
     resolve_design_doc_path,
+    slugify as pipeline_slugify,
 )
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
@@ -215,8 +230,11 @@ def _design_output_path(*, design_rel: str | None = None) -> Path:
     return path
 
 
-def _read_repo_text(relative_or_abs: str) -> str:
-    p = Path(relative_or_abs.strip())
+def _read_repo_text(relative_or_abs: str, *, context: dict[str, Any] | None = None) -> str:
+    rel = relative_or_abs.strip().replace("\\", "/").lstrip("/")
+    if resolve_run_id(context):
+        return read_repo_artifact(rel, context=context).decode("utf-8")
+    p = Path(rel)
     if not p.is_absolute():
         p = (_REPO_ROOT / p).resolve()
     if not p.is_file():
@@ -267,7 +285,7 @@ def _generate_design_markdown(
     prd_path = context.get("prdPath") or context.get("prd_path")
     if prd_path:
         try:
-            prd_text = _read_repo_text(str(prd_path))
+            prd_text = _read_repo_text(str(prd_path), context=context)
         except OSError:
             prd_text = f"(PRD file not readable: {prd_path})"
     product_out = context.get("productAgentOutput") or context.get("product_agent_output") or ""
@@ -322,9 +340,17 @@ def _generate_design_markdown(
     return _normalize_design_markdown(str(design_agent(user_message)))
 
 
-def _write_design_doc(markdown: str, *, design_rel: str) -> Path:
+def _write_design_doc(
+    markdown: str,
+    *,
+    design_rel: str,
+    context: dict[str, Any] | None = None,
+) -> Path:
+    if resolve_run_id(context):
+        write_repo_artifact(design_rel, markdown, context=context)
     path = _design_output_path(design_rel=design_rel)
-    path.write_text(markdown, encoding="utf-8", newline="\n")
+    if not resolve_run_id(context):
+        path.write_text(markdown, encoding="utf-8", newline="\n")
     return path
 
 
@@ -338,6 +364,14 @@ def _diagram_output_dir(override: str | None = None) -> Path:
     path = Path(raw) if raw else DEFAULT_DIAGRAM_DIR
     if not path.is_absolute():
         path = _REPO_ROOT / path
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _diagram_work_dir() -> Path:
+    """Ephemeral workspace for Diagram MCP (PNG synced to S3 after generation)."""
+    raw = os.getenv("ARCHITECT_DIAGRAM_WORK_DIR", "").strip()
+    path = Path(raw) if raw else Path(tempfile.gettempdir()) / "architect-diagrams"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -495,7 +529,7 @@ def run_task(
                 telemetry=telemetry,
             )
             design_rel = str(context["designDocPath"])
-            design_path = _write_design_doc(design_md, design_rel=design_rel)
+            design_path = _write_design_doc(design_md, design_rel=design_rel, context=context)
             context["architectSummary"] = _architect_summary_from_design(design_md)
         telemetry.extra = {
             "diagramsSaved": len(saved),
@@ -509,6 +543,239 @@ def run_task(
             "Ensure `uv` is installed and on PATH.\n"
             f"Details: {exc}"
         ) from exc
+
+
+def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:
+    """Split orchestrator/A2A messages into task text and context JSON."""
+    marker = "\n\nContext:\n"
+    if marker in message:
+        task, rest = message.rsplit(marker, 1)
+        try:
+            parsed = json.loads(rest)
+            if isinstance(parsed, dict):
+                return task.strip(), parsed
+        except json.JSONDecodeError:
+            pass
+    return message.strip(), {}
+
+
+def _prompt_to_text(prompt: Any) -> str:
+    if prompt is None:
+        return ""
+    if isinstance(prompt, str):
+        return prompt
+    if isinstance(prompt, list):
+        parts: list[str] = []
+        for block in prompt:
+            if isinstance(block, dict):
+                if "text" in block:
+                    parts.append(str(block["text"]))
+                    continue
+                for item in block.get("content") or []:
+                    if isinstance(item, dict) and "text" in item:
+                        parts.append(str(item["text"]))
+            elif hasattr(block, "text"):
+                parts.append(str(block.text))
+        if parts:
+            return "\n".join(parts)
+    return str(prompt)
+
+
+def _infer_target_app_from_task(task: str) -> str | None:
+    patterns = (
+        r"for\s+([a-z][a-z0-9-]{1,58})\b",
+        r"targetApp[\"']?\s*[:=]\s*[\"']?([a-z0-9-]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, task, re.I)
+        if match:
+            try:
+                return pipeline_slugify(match.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def enrich_architect_context(context: dict[str, Any], *, task: str = "") -> dict[str, Any]:
+    """Merge S3 run context, infer targetApp, and fill standard handoff paths."""
+    ctx = dict(context)
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        stored = get_context(run_id)
+        if stored:
+            merged = dict(stored)
+            merged.update({k: v for k, v in ctx.items() if v is not None and v != ""})
+            ctx = merged
+        ctx.setdefault("runId", run_id)
+
+    if not infer_target_app_from_context(ctx):
+        inferred = _infer_target_app_from_task(task)
+        if inferred:
+            ctx["targetApp"] = inferred
+
+    enrich_handoff_context(ctx)
+    ctx["designDocPath"] = resolve_design_doc_path(ctx)
+    slug = infer_target_app_from_context(ctx)
+    if slug:
+        ctx.setdefault("diagramPaths", [diagram_path_for_app(slug)])
+    return ctx
+
+
+def _persist_diagram_pngs(saved: list[Path], context: dict[str, Any]) -> list[str]:
+    """Upload generated PNGs to the run artifact store."""
+    if not saved:
+        return []
+    slug = infer_target_app_from_context(context)
+    default_rel = diagram_path_for_app(slug) if slug else ""
+    desired = [str(p) for p in (context.get("diagramPaths") or []) if p]
+    if not desired and default_rel:
+        desired = [default_rel]
+
+    rel_paths: list[str] = []
+    for idx, src in enumerate(saved):
+        rel = desired[idx] if idx < len(desired) else default_rel
+        if not rel:
+            continue
+        write_repo_artifact(rel, src.read_bytes(), context=context)
+        rel_paths.append(rel)
+    if rel_paths:
+        context["diagramPaths"] = rel_paths
+    return rel_paths
+
+
+def run_architect_from_context(
+    task: str,
+    context: dict[str, Any] | None = None,
+    *,
+    skip_design: bool | None = None,
+) -> str:
+    """Generate diagram + design doc, persist to S3/local, return short status."""
+    ctx = enrich_architect_context(dict(context or {}), task=task)
+    slug = infer_target_app_from_context(ctx)
+    if not slug:
+        raise TargetAppRequiredError(
+            "targetApp is required. Pass it in Context JSON or mention it in the task."
+        )
+
+    prd_path = ctx.get("prdPath") or ctx.get("prd_path")
+    run_id = resolve_run_id(ctx)
+    if prd_path and run_id:
+        try:
+            read_repo_artifact(str(prd_path), context=ctx)
+        except FileNotFoundError as exc:
+            raise ValueError(
+                f"PRD not found for run {run_id} at {prd_path}. "
+                "Run product-agent first or upload the PRD to the run prefix."
+            ) from exc
+
+    work_dir = _diagram_work_dir()
+    design_rel = str(ctx["designDocPath"])
+    diagram_default = diagram_path_for_app(slug)
+
+    print(f"[architect-agent] Diagram workspace: {work_dir}", file=sys.stderr)
+    print(f"[architect-agent] Diagram artifact: {diagram_default}", file=sys.stderr)
+    print(f"[architect-agent] Design doc: {design_rel}", file=sys.stderr)
+
+    summary, saved, design_path = run_task(
+        task,
+        ctx,
+        output_dir=work_dir,
+        skip_design=skip_design,
+    )
+    diagram_rels = _persist_diagram_pngs(saved, ctx)
+
+    if design_path is not None and run_id and design_path.is_file():
+        write_repo_artifact(design_rel, design_path.read_text(encoding="utf-8"), context=ctx)
+
+    ctx_path_rel = pipeline_context_rel_for_app(slug)
+    if run_id:
+        put_context(run_id, ctx)
+        write_repo_artifact(
+            ctx_path_rel,
+            json.dumps(ctx, indent=2) + "\n",
+            context=ctx,
+        )
+
+    lines = [
+        f"Architecture artifacts created for {slug}.",
+        f"- designDocPath: {design_rel}",
+        f"- diagramPaths: {', '.join(diagram_rels) if diagram_rels else '(none)'}",
+        f"- pipelineContext: {ctx_path_rel}",
+    ]
+    if run_id:
+        lines.append(f"- runId: {run_id}")
+        if is_s3_store():
+            lines.append(f"- s3Prefix: runs/{run_id}/")
+    if design_path is None and not (skip_design if skip_design is not None else _skip_design_generation()):
+        lines.append("- warning: design document was not written")
+    if not diagram_rels:
+        lines.append(f"- diagramNotes: {summary[:500]}")
+    return "\n".join(lines)
+
+
+def _architect_pipeline_error_message(exc: Exception, ctx: dict[str, Any]) -> str:
+    slug = infer_target_app_from_context(ctx) or "bug-deduper"
+    example = {
+        "targetApp": slug,
+        "runId": ctx.get("runId") or "smoke-002",
+        "prdPath": ctx.get("prdPath") or f"docs/PRD/{slug}.md",
+        "designDocPath": ctx.get("designDocPath") or design_doc_rel_for_app(slug),
+        "diagramPaths": ctx.get("diagramPaths") or [diagram_path_for_app(slug)],
+    }
+    return (
+        "Architecture pipeline could not start.\n\n"
+        f"Reason: {exc}\n\n"
+        "Ensure product-agent ran first and Context includes runId + prdPath:\n\n"
+        f"Context:\n{json.dumps(example, indent=2)}\n"
+    )
+
+
+def _execute_architect_pipeline_message(message: Any) -> str:
+    text = _prompt_to_text(message)
+    task, ctx = parse_task_and_context(text)
+    if not task.strip():
+        task = DEFAULT_PIPELINE_TASK
+    ctx = enrich_architect_context(ctx, task=task)
+    try:
+        return run_architect_from_context(task, ctx)
+    except (ValueError, TargetAppRequiredError) as exc:
+        return _architect_pipeline_error_message(exc, ctx)
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
+def build_architect_pipeline_agent(tools: list[Any]) -> Agent:
+    """AgentCore mode: deterministic architect pipeline on each A2A message."""
+    agent = _build_agent(tools)
+
+    def architect_invoke(message: Any, **kwargs: Any) -> str:
+        return _execute_architect_pipeline_message(message)
+
+    async def architect_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        from strands.types._events import AgentResultEvent
+
+        del invocation_state, kwargs
+        summary = _execute_architect_pipeline_message(prompt)
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
+
+    agent.__call__ = architect_invoke  # type: ignore[method-assign]
+    agent.stream_async = architect_stream_async  # type: ignore[method-assign]
+    return agent
 
 
 def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:

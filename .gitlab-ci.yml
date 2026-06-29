@@ -5,10 +5,17 @@
 # Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
+
+variables:
+  AWS_REGION: us-east-2
+  AGENTCORE_ENTRYPOINT: deploy/agentcore/a2a_server.py
+  AGENTCORE_REQUIREMENTS: deploy/agentcore/requirements.txt
+
 stages:
 - build
 - test
 - deploy
+- agentcore
 - review
 - dast
 - staging
@@ -22,5 +29,36 @@ stages:
 - cleanup
 sast:
   stage: test
+
+agentcore:deploy:
+  stage: agentcore
+  image: python:3.12-slim
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - pip install --no-cache-dir bedrock-agentcore-starter-toolkit
+    - pip install --no-cache-dir -r deploy/agentcore/requirements.txt
+  script:
+    - |
+      agentcore configure \
+        --entrypoint "$AGENTCORE_ENTRYPOINT" \
+        --requirements-file "$AGENTCORE_REQUIREMENTS" \
+        --protocol A2A \
+        --deployment-type container \
+        --name "${AGENTCORE_AGENT_NAME}" \
+        --region "$AWS_REGION" \
+        --disable-memory \
+        --non-interactive
+    - |
+      agentcore deploy --agent "${AGENTCORE_AGENT_NAME}" \
+        --env "AGENTCORE_AGENT=${AGENTCORE_AGENT_NAME}" \
+        --env "AWS_REGION=${AWS_REGION}" \
+        --env "ARTIFACT_STORE=s3" \
+        --env "ARTIFACT_S3_BUCKET=${ARTIFACT_S3_BUCKET}" \
+        --env "ARTIFACT_DYNAMODB_TABLE=${ARTIFACT_DYNAMODB_TABLE}"
+  variables:
+    AGENTCORE_AGENT_NAME: architect-agent
+
 include:
 - template: Auto-DevOps.gitlab-ci.yml

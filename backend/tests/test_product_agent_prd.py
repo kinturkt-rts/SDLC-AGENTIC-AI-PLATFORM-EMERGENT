@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -32,7 +33,9 @@ def local_artifact_store(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_prd_rel_path_defaults_to_target_app() -> None:
     from _shared.pipeline_context import prd_rel_path_for_app
 
-    assert prd_rel_path_for_app("inventory-app") == "target-apps/inventory-app/prd/inventory-app.md"
+    assert prd_rel_path_for_app("inventory-app") == (
+        "target-apps/inventory-app/docs/PRD/inventory-app.md"
+    )
 
 
 def test_resolve_input_text_from_inline(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,18 +75,24 @@ def test_run_prd_from_context_writes_target_app_layout(
             },
         )
 
-    prd_path = repo_root / "target-apps/demo-api/prd/demo-api.md"
-    ctx_path = repo_root / "agents/pipeline/demo-api.context.json"
+    prd_path = (
+        repo_root
+        / "agents/pipeline/runs/run-001/target-apps/demo-api/docs/PRD/demo-api.md"
+    )
+    ctx_path = (
+        repo_root
+        / "agents/pipeline/runs/run-001/target-apps/demo-api/agents/pipeline/demo-api.context.json"
+    )
     run_ctx_path = repo_root / "agents/pipeline/runs/run-001/context.json"
 
     assert prd_path.is_file()
     assert ctx_path.is_file()
     assert run_ctx_path.is_file()
-    assert "prdPath: target-apps/demo-api/prd/demo-api.md" in summary
+    assert "prdPath: target-apps/demo-api/docs/PRD/demo-api.md" in summary
 
     ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
     assert ctx["targetApp"] == "demo-api"
-    assert ctx["prdPath"] == "target-apps/demo-api/prd/demo-api.md"
+    assert ctx["prdPath"] == "target-apps/demo-api/docs/PRD/demo-api.md"
 
 
 def test_enrich_prd_context_infers_target_and_input(
@@ -116,6 +125,47 @@ def test_parse_task_and_context() -> None:
     )
     assert task == "Create PRD"
     assert ctx["targetApp"] == "inventory-app"
+
+
+def test_build_prd_pipeline_agent_stream_async_writes_artifacts(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AgentCore A2A uses stream_async; it must run the PRD pipeline and persist artifacts."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    mod = _load_agent_module()
+
+    fake_prd = "# Demo App\n\n## 1. Overview\nShort.\n"
+    message = (
+        "Create PRD\n\nContext:\n"
+        + json.dumps(
+            {
+                "targetApp": "demo-api",
+                "inputText": "A tiny API for demos.",
+                "runId": "run-a2a",
+            }
+        )
+    )
+
+    with patch.object(mod, "_generate_prd_from_text", return_value=fake_prd):
+        agent = mod.build_prd_pipeline_agent()
+
+        async def collect_events() -> list[dict]:
+            events: list[dict] = []
+            async for event in agent.stream_async([{"text": message}]):
+                events.append(event)
+            return events
+
+        events = asyncio.run(collect_events())
+
+    assert any("result" in event for event in events)
+    result_text = str(events[-1]["result"])
+    assert "PRD created for demo-api" in result_text
+    assert (
+        repo_root
+        / "agents/pipeline/runs/run-a2a/target-apps/demo-api/docs/PRD/demo-api.md"
+    ).is_file()
+    assert (repo_root / "agents/pipeline/runs/run-a2a/context.json").is_file()
 
 
 @pytest.fixture()

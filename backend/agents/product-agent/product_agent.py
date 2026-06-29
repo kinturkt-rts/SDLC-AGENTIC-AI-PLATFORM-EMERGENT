@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -659,32 +660,90 @@ def run_prd_from_context(
     return "\n".join(lines)
 
 
+def _prompt_to_text(prompt: Any) -> str:
+    """Normalize Strands/A2A prompt shapes to plain text for the PRD pipeline."""
+    if prompt is None:
+        return ""
+    if isinstance(prompt, str):
+        return prompt
+    if isinstance(prompt, list):
+        parts: list[str] = []
+        for block in prompt:
+            if isinstance(block, dict):
+                if "text" in block:
+                    parts.append(str(block["text"]))
+                    continue
+                for item in block.get("content") or []:
+                    if isinstance(item, dict) and "text" in item:
+                        parts.append(str(item["text"]))
+            elif hasattr(block, "text"):
+                parts.append(str(block.text))
+        if parts:
+            return "\n".join(parts)
+    return str(prompt)
+
+
+def _prd_pipeline_error_message(exc: ValueError, ctx: dict[str, Any]) -> str:
+    example = {
+        "targetApp": ctx.get("targetApp") or "inventory-app",
+        "runId": ctx.get("runId") or "smoke-001",
+        "inputFile": ctx.get("inputFile") or "inputs/inventory-app.txt",
+    }
+    return (
+        "PRD pipeline could not start.\n\n"
+        f"Reason: {exc}\n\n"
+        "Append this block to your message (or set PIPELINE_RUN_ID on the runtime):\n\n"
+        f"Context:\n{json.dumps(example, indent=2)}\n\n"
+        "Upload the brief first:\n"
+        "  s3://<bucket>/runs/<runId>/<inputFile>"
+    )
+
+
+def _execute_prd_pipeline_message(message: Any) -> str:
+    """Run PRD generation + artifact persistence from an A2A/CLI message."""
+    text = _prompt_to_text(message)
+    task, ctx = parse_task_and_context(text)
+    ctx = enrich_prd_context(ctx, task=task)
+    try:
+        return run_prd_from_context(task, ctx)
+    except ValueError as exc:
+        return _prd_pipeline_error_message(exc, ctx)
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
 def build_prd_pipeline_agent() -> Agent:
     """AgentCore PRD-only mode: deterministic PRD pipeline on each A2A message."""
     agent = _build_prd_agent()
 
     def prd_invoke(message: Any, **kwargs: Any) -> str:
-        text = str(message)
-        task, ctx = parse_task_and_context(text)
-        ctx = enrich_prd_context(ctx, task=task)
-        try:
-            return run_prd_from_context(task, ctx)
-        except ValueError as exc:
-            example = {
-                "targetApp": ctx.get("targetApp") or "inventory-app",
-                "runId": ctx.get("runId") or "smoke-001",
-                "inputFile": ctx.get("inputFile") or "inputs/inventory-app.txt",
-            }
-            return (
-                "PRD pipeline could not start.\n\n"
-                f"Reason: {exc}\n\n"
-                "Append this block to your message (or set PIPELINE_RUN_ID on the runtime):\n\n"
-                f"Context:\n{json.dumps(example, indent=2)}\n\n"
-                "Upload the brief first:\n"
-                "  s3://<bucket>/runs/<runId>/<inputFile>"
-            )
+        return _execute_prd_pipeline_message(message)
+
+    async def prd_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """A2A entrypoint — StrandsA2AExecutor calls stream_async, not __call__."""
+        from strands.types._events import AgentResultEvent
+
+        del invocation_state, kwargs
+        summary = _execute_prd_pipeline_message(prompt)
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
 
     agent.__call__ = prd_invoke  # type: ignore[method-assign]
+    agent.stream_async = prd_stream_async  # type: ignore[method-assign]
     return agent
 
 

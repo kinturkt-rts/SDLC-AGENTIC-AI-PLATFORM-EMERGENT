@@ -11,39 +11,82 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
 LEGACY_DESIGN_REL = "docs/design/design.md"
-DEFAULT_DIAGRAM_REL_DIR = "docs/diagrams/generated-diagrams"
+LEGACY_DIAGRAM_REL_DIR = "docs/diagrams/generated-diagrams"
 
 
 class TargetAppRequiredError(ValueError):
     """Raised when no target app can be resolved from CLI, context, or env."""
 
 
-def diagram_path_for_app(target_app: str) -> str:
-    """Default PNG path for architect-agent output (AWS Diagram MCP workspace)."""
-    return f"{DEFAULT_DIAGRAM_REL_DIR}/{slugify(target_app)}.png"
+def artifact_layout() -> str:
+    """Artifact path layout: target-app-root (default), target-app, or docs (legacy)."""
+    raw = os.getenv("PRODUCT_ARTIFACT_LAYOUT", "target-app-root").strip().lower()
+    legacy_prd = os.getenv("PRODUCT_PRD_LAYOUT", "").strip().lower()
+    if not raw and legacy_prd:
+        raw = legacy_prd
+    return raw or "target-app-root"
+
+
+def target_app_root_rel(target_app: str) -> str:
+    return f"target-apps/{slugify(target_app)}"
+
+
+def prd_rel_path_for_app(target_app: str) -> str:
+    """PRD markdown path for a target app."""
+    slug = slugify(target_app)
+    layout = artifact_layout()
+    if layout == "docs":
+        return f"docs/PRD/{slug}.md"
+    if layout == "target-app":
+        return f"target-apps/{slug}/prd/{slug}.md"
+    return f"{target_app_root_rel(slug)}/docs/PRD/{slug}.md"
 
 
 def design_doc_rel_for_app(target_app: str) -> str:
     """Per-feature design doc so parallel SDLC runs do not overwrite each other."""
-    layout = os.getenv("PRODUCT_ARTIFACT_LAYOUT", "target-app").strip().lower()
     slug = slugify(target_app)
+    layout = artifact_layout()
     if layout == "docs":
         return f"docs/design/{slug}.md"
-    return f"target-apps/{slug}/design/{slug}.md"
+    if layout == "target-app":
+        return f"target-apps/{slug}/design/{slug}.md"
+    return f"{target_app_root_rel(slug)}/docs/design/{slug}.md"
 
 
-def prd_rel_path_for_app(target_app: str) -> str:
-    """PRD markdown path for a target app (default: under target-apps/<app>/prd/)."""
-    layout = os.getenv("PRODUCT_PRD_LAYOUT", "target-app").strip().lower()
+def diagram_path_for_app(target_app: str) -> str:
+    """Default PNG path for architect-agent output (AWS Diagram MCP workspace)."""
     slug = slugify(target_app)
-    if layout == "docs":
-        return f"docs/PRD/{slug}.md"
-    return f"target-apps/{slug}/prd/{slug}.md"
+    layout = artifact_layout()
+    if layout in {"docs", "target-app"}:
+        return f"{LEGACY_DIAGRAM_REL_DIR}/{slug}.png"
+    return f"{target_app_root_rel(slug)}/docs/diagrams/generated-diagrams/{slug}.png"
+
+
+def diagram_dir_rel_for_app(target_app: str) -> str:
+    """Directory for architecture PNG exports."""
+    return str(Path(diagram_path_for_app(target_app)).parent)
 
 
 def pipeline_context_rel_for_app(target_app: str) -> str:
     """Handoff JSON path shared across the SDLC chain."""
-    return f"agents/pipeline/{slugify(target_app)}.context.json"
+    slug = slugify(target_app)
+    if artifact_layout() == "target-app-root":
+        return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.context.json"
+    return f"agents/pipeline/{slug}.context.json"
+
+
+def gitlab_handoff_rel_for_app(target_app: str) -> str:
+    slug = slugify(target_app)
+    if artifact_layout() == "target-app-root":
+        return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.gitlab-handoff.json"
+    return f"agents/pipeline/{slug}.gitlab-handoff.json"
+
+
+def qa_handoff_rel_for_app(target_app: str) -> str:
+    slug = slugify(target_app)
+    if artifact_layout() == "target-app-root":
+        return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.qa-handoff.json"
+    return f"agents/pipeline/{slug}.qa-handoff.json"
 
 
 def slugify(text: str) -> str:
@@ -135,7 +178,12 @@ def pipeline_context_candidates(target_app: str) -> list[Path]:
     paths: list[Path] = []
     if env_path:
         paths.append(Path(env_path))
-    paths.extend([PIPELINE_DIR / f"{slug}.context.json"])
+    paths.extend(
+        [
+            _REPO_ROOT / pipeline_context_rel_for_app(slug),
+            PIPELINE_DIR / f"{slug}.context.json",
+        ]
+    )
     seen: set[str] = set()
     unique: list[Path] = []
     for item in paths:
@@ -183,10 +231,20 @@ def architect_summary_from_design(design_rel: str) -> str:
 
 def discover_diagram_paths(target_app: str) -> list[str]:
     slug = slugify(target_app)
-    path = _REPO_ROOT / DEFAULT_DIAGRAM_REL_DIR / f"{slug}.png"
-    if path.is_file():
-        return [repo_rel(path)]
-    return []
+    candidates = [
+        diagram_path_for_app(slug),
+        f"{LEGACY_DIAGRAM_REL_DIR}/{slug}.png",
+    ]
+    seen: set[str] = set()
+    found: list[str] = []
+    for rel in candidates:
+        if rel in seen:
+            continue
+        seen.add(rel)
+        path = _REPO_ROOT / rel
+        if path.is_file():
+            found.append(repo_rel(path))
+    return found
 
 
 def enrich_handoff_context(ctx: dict[str, Any], *, include_db_paths: bool = False) -> dict[str, Any]:
@@ -207,9 +265,15 @@ def enrich_handoff_context(ctx: dict[str, Any], *, include_db_paths: bool = Fals
         ctx.setdefault("designDocPath", desired_design)
 
     if not ctx.get("prdPath") and not ctx.get("prd_path"):
-        prd = _REPO_ROOT / "docs" / "PRD" / f"{slug}.md"
-        if prd.is_file():
-            ctx["prdPath"] = repo_rel(prd)
+        for rel in (
+            prd_rel_path_for_app(slug),
+            f"docs/PRD/{slug}.md",
+            f"target-apps/{slug}/prd/{slug}.md",
+        ):
+            prd = _REPO_ROOT / rel
+            if prd.is_file():
+                ctx["prdPath"] = repo_rel(prd)
+                break
 
     if not ctx.get("diagramPaths"):
         discovered = discover_diagram_paths(slug)

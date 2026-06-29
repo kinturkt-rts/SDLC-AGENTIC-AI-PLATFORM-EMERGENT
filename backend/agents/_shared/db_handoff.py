@@ -73,12 +73,14 @@ def build_handoff_markdown(
     ctx: dict[str, Any],
     agent_result: str = "",
     rds_applied: bool = False,
+    repo_root: Path | None = None,
 ) -> str:
     """Assemble HANDOFF.md for developer-agent."""
+    root = repo_root or _REPO_ROOT
     slug = target_app.strip()
     schema = (ctx.get("postgresAppSchema") or slug.replace("-", "_")).strip()
     sql_rel = ctx.get("preferredSqlPath") or f"target-apps/{slug}/db/sql"
-    sql_dir = (_REPO_ROOT / sql_rel).resolve()
+    sql_dir = (root / sql_rel).resolve()
     artifacts = sorted_sql_artifacts(sql_dir)
 
     params = ctx.get("postgresMcpParams") or {}
@@ -174,21 +176,30 @@ def write_db_handoff(
     *,
     agent_result: str = "",
     rds_applied: bool = False,
+    repo_root: Path | None = None,
 ) -> str:
     """Write HANDOFF.md under db/; return repo-relative path."""
+    from _shared.artifact_store import resolve_run_id, write_repo_artifact
+
+    root = repo_root or _REPO_ROOT
     slug = target_app.strip()
     db_rel = ctx.get("dbOutputDir") or f"target-apps/{slug}/db"
-    db_dir = (_REPO_ROOT / db_rel).resolve()
+    db_dir = (root / db_rel).resolve()
     db_dir.mkdir(parents=True, exist_ok=True)
     content = build_handoff_markdown(
         target_app=slug,
         ctx=ctx,
         agent_result=agent_result,
         rds_applied=rds_applied,
+        repo_root=root,
     )
+    handoff_rel = f"{db_rel.rstrip('/')}/HANDOFF.md"
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        write_repo_artifact(handoff_rel, content, context=ctx)
     handoff_path = db_dir / "HANDOFF.md"
     handoff_path.write_text(content, encoding="utf-8", newline="\n")
     try:
-        return handoff_path.relative_to(_REPO_ROOT).as_posix()
+        return handoff_path.relative_to(root).as_posix()
     except ValueError:
-        return handoff_path.as_posix()
+        return handoff_rel

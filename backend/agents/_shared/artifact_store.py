@@ -10,7 +10,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from _shared.pipeline_context import pipeline_context_rel_for_app, prd_rel_path_for_app
+from _shared.pipeline_context import (
+    gitlab_handoff_rel_for_app,
+    pipeline_context_rel_for_app,
+    prd_rel_path_for_app,
+    qa_handoff_rel_for_app,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,6 +44,12 @@ def s3_bucket() -> str:
 
 def dynamodb_table_name() -> str:
     return os.getenv("ARTIFACT_DYNAMODB_TABLE", "sdlc-pipeline-runs").strip()
+
+
+def dynamodb_enabled() -> bool:
+    """Run index + artifact pointers in DynamoDB (orchestrator). Off by default for S3-only v1."""
+    raw = os.getenv("ARTIFACT_DYNAMODB_ENABLED", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def run_s3_prefix(run_id: str) -> str:
@@ -141,7 +152,7 @@ def put_context(run_id: str, context: dict[str, Any]) -> None:
 
 def register_pipeline_run(run_id: str, target_app: str, *, status: str = "running") -> None:
     """Orchestrator-only: create DynamoDB run index row (META)."""
-    if not is_s3_store():
+    if not is_s3_store() or not dynamodb_enabled():
         return
     now = datetime.now(UTC).isoformat()
     _dynamodb_table().put_item(
@@ -164,7 +175,7 @@ def update_pipeline_run(
     last_agent: str | None = None,
 ) -> None:
     """Orchestrator-only: update DynamoDB run index after a pipeline step."""
-    if not is_s3_store():
+    if not is_s3_store() or not dynamodb_enabled():
         return
     now = datetime.now(UTC).isoformat()
     expr_names: dict[str, str] = {"#u": "updatedAt"}
@@ -225,17 +236,19 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
         if input_path:
             paths.append(str(input_path).replace("\\", "/"))
     elif agent_name == "architect-agent":
-        paths.append(str(context.get("designDocPath") or f"docs/design/{slug}.md"))
-        for diagram in context.get("diagramPaths") or [f"docs/diagrams/generated-diagrams/{slug}.png"]:
+        from _shared.pipeline_context import design_doc_rel_for_app, diagram_path_for_app
+
+        paths.append(str(context.get("designDocPath") or design_doc_rel_for_app(slug)))
+        for diagram in context.get("diagramPaths") or [diagram_path_for_app(slug)]:
             paths.append(str(diagram))
     elif agent_name == "database-agent":
         paths.append(f"target-apps/{slug}/db")
     elif agent_name == "developer-agent":
         paths.append(f"target-apps/{slug}")
     elif agent_name == "gitlab-agent":
-        paths.append(f"agents/pipeline/{slug}.gitlab-handoff.json")
+        paths.append(gitlab_handoff_rel_for_app(slug))
     elif agent_name == "qa-agent":
-        paths.append(f"agents/pipeline/{slug}.qa-handoff.json")
+        paths.append(qa_handoff_rel_for_app(slug))
     return paths
 
 
@@ -257,6 +270,16 @@ def get_context(run_id: str) -> dict[str, Any] | None:
         parsed.setdefault("runId", run_id)
         return parsed
     return None
+
+
+def run_sql_artifact_keys(run_id: str, feature: str) -> list[str]:
+    """List `.sql` migration paths for a feature under runs/<runId>/target-apps/<feature>/db/sql/."""
+    prefix = f"target-apps/{feature.strip()}/db/sql/"
+    return [
+        key
+        for key in list_run_artifact_keys(run_id)
+        if key.startswith(prefix) and key.lower().endswith(".sql")
+    ]
 
 
 def list_run_artifact_keys(run_id: str) -> list[str]:
@@ -291,7 +314,7 @@ def list_run_artifact_keys(run_id: str) -> list[str]:
 
 
 def materialize_run(run_id: str, dest: Path | None = None) -> Path:
-    """Download run artifacts into a workspace directory (repo layout)."""
+    """Download run artifacts into a workspace directory."""
     workspace = dest or Path(tempfile.mkdtemp(prefix=f"sdlc-run-{run_id[:8]}-"))
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -310,7 +333,7 @@ def write_repo_artifact(
     *,
     context: dict[str, Any] | None = None,
 ) -> str:
-    """Write under runs/<runId>/ when runId is set; else repo-relative path."""
+    """Write to local repo path or run artifact store when runId is present."""
     run_id = resolve_run_id(context)
     if run_id:
         return put_artifact(run_id, rel_path, content)
@@ -324,7 +347,7 @@ def write_repo_artifact(
 
 
 def read_repo_artifact(rel_path: str, *, context: dict[str, Any] | None = None) -> bytes:
-    """Read from runs/<runId>/ when runId is set; else repo-relative path."""
+    """Read from local repo or run artifact store when runId is present."""
     run_id = resolve_run_id(context)
     if run_id:
         return get_artifact(run_id, rel_path)
@@ -342,7 +365,7 @@ def _put_dynamodb_pointer(
     target_app: str | None = None,
     context_s3_key: str | None = None,
 ) -> None:
-    if not is_s3_store():
+    if not is_s3_store() or not dynamodb_enabled():
         return
     now = datetime.now(UTC).isoformat()
     item: dict[str, Any] = {

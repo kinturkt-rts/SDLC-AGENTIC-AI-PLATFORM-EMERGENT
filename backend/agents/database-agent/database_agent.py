@@ -16,7 +16,12 @@ _TARGET_APPS = _REPO_ROOT / "target-apps"
 _DEFAULT_DB_SUBDIR = "db"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
-from _shared.context_cli import load_context_extra, parse_context_args
+from _shared.artifact_store import (
+    list_run_artifact_keys,
+    read_repo_artifact,
+    resolve_run_id,
+    write_repo_artifact,
+)
 from _shared.db_handoff import write_db_handoff
 from _shared.env import load_repo_env
 from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_client, postgres_mcp_tool_params
@@ -68,6 +73,7 @@ _READ_PREFIXES = (
 )
 
 _written_files: list[str] = []
+_run_context: dict[str, Any] | None = None
 
 DATABASE_SYS_PROMPT = """\
 You are the **database developer** for the SDLC Agentic AI Platform. You run after architect-agent
@@ -232,6 +238,19 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
 @tool
 def db_list_tree(service: str, subpath: str = "") -> str:
     """List files under target-apps/<service>/ (optionally under subpath)."""
+    prefix = f"target-apps/{slugify(service)}/"
+    if subpath.strip():
+        prefix = f"{prefix}{subpath.strip().strip('/')}/"
+    ctx = _run_context
+    run_id = resolve_run_id(ctx) if ctx else None
+    if run_id:
+        paths = [
+            key
+            for key in list_run_artifact_keys(run_id)
+            if key.startswith(prefix) and not key.endswith("/")
+        ]
+        return "\n".join(paths) if paths else "(no files)"
+
     root = _ensure_service_exists(service)
     base = (root / subpath).resolve()
     if not str(base).startswith(str(root.resolve())):
@@ -248,6 +267,16 @@ def db_list_tree(service: str, subpath: str = "") -> str:
 @tool
 def db_read_file(path: str) -> str:
     """Read a file inside allowed repo paths."""
+    raw = path.strip().replace("\\", "/")
+    ctx = _run_context
+    run_id = resolve_run_id(ctx) if ctx else None
+    if run_id:
+        try:
+            return read_repo_artifact(raw, context=ctx).decode("utf-8")
+        except FileNotFoundError:
+            pass
+        except UnicodeDecodeError:
+            return f"Error: binary or non-utf8 file: {path}"
     try:
         file_path = _resolve_repo_path(path, write=False)
     except ValueError as exc:
@@ -271,6 +300,8 @@ def db_write_file(path: str, content: str) -> str:
     file_path.write_text(content, encoding="utf-8", newline="\n")
     rel = file_path.relative_to(_REPO_ROOT).as_posix()
     _written_files.append(rel)
+    if _run_context is not None:
+        write_repo_artifact(rel, content, context=_run_context)
     return f"Wrote {rel} ({len(content)} bytes)"
 
 
@@ -463,8 +494,9 @@ def run_task(
     use_postgres: bool = False,
     use_mongodb: bool = False,
 ) -> tuple[str, list[str]]:
-    global _written_files
+    global _written_files, _run_context
     _written_files = []
+    _run_context = None
 
     app = resolve_target_app(target_app, context, env_var="DATABASE_TARGET_APP")
     ctx = context if context is not None else _build_context(target_app=app, db_subdir=db_subdir)
@@ -478,6 +510,7 @@ def run_task(
     ctx.setdefault("preferredNoSqlPath", (db_dir / "nosql").relative_to(_REPO_ROOT).as_posix())
     enrich_handoff_context(ctx)
     _enrich_postgres_mcp_context(ctx, use_postgres=use_postgres)
+    _run_context = ctx
 
     try:
         with ExitStack() as stack:
@@ -497,6 +530,8 @@ def run_task(
             "Check POSTGRES_MCP_* / MDB_MCP_* env and MCP server install.\n"
             f"Details: {exc}"
         ) from exc
+    finally:
+        _run_context = None
 
     if not _written_files:
         summary += (
