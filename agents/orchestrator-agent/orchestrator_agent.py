@@ -49,7 +49,8 @@ orchestrator writes run index -> DynamoDB
 ## Canonical pipeline
 1. **product-agent** — requirements -> PRD + context
 2. **architect-agent** — PRD -> diagram PNG + design doc
-3. **database-agent** — design §3/§6 -> SQL migrations
+3. **database-agent** — design §3/§6 -> SQL migrations (S3 when runId set)
+3b. **RDS apply** (orchestrator) — materialize sql/ from S3, `apply_sql_to_rds.py`, seed passwords, HANDOFF.md
 4. **developer-agent** — design §4/§5 -> FastAPI app (local verify gate before gitlab)
 5. **gitlab-agent** — publish branch `sdlc/<app>`
 6. **qa-agent** (optional, after gitlab) — extended pytest + coverage

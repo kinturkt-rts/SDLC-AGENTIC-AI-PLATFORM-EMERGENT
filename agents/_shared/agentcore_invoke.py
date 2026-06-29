@@ -113,7 +113,7 @@ def invoke_agent_runtime_a2a(
         region_name=region,
         config=Config(read_timeout=timeout, connect_timeout=60, retries={"max_attempts": 2}),
     )
-    session_id = uuid4().hex
+    session_id = uuid4().hex + "0"  # AgentCore requires runtimeSessionId length >= 33
     try:
         response = client.invoke_agent_runtime(
             agentRuntimeArn=arn,

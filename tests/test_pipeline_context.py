@@ -58,6 +58,32 @@ def test_resolve_target_app_requires_explicit_source(monkeypatch: pytest.MonkeyP
         resolve_target_app(None, None)
 
 
+def test_consolidated_artifact_paths() -> None:
+    from _shared.pipeline_context import (
+        design_doc_rel_for_app,
+        diagram_path_for_app,
+        gitlab_handoff_rel_for_app,
+        pipeline_context_rel_for_app,
+        prd_rel_path_for_app,
+        qa_handoff_rel_for_app,
+    )
+
+    slug = "inventory-app"
+    base = f"target-apps/{slug}"
+    assert prd_rel_path_for_app(slug) == f"{base}/docs/PRD/{slug}.md"
+    assert design_doc_rel_for_app(slug) == f"{base}/docs/design/{slug}.md"
+    assert diagram_path_for_app(slug) == (
+        f"{base}/docs/diagrams/generated-diagrams/{slug}.png"
+    )
+    assert pipeline_context_rel_for_app(slug) == (
+        f"{base}/agents/pipeline/{slug}.context.json"
+    )
+    assert gitlab_handoff_rel_for_app(slug) == (
+        f"{base}/agents/pipeline/{slug}.gitlab-handoff.json"
+    )
+    assert qa_handoff_rel_for_app(slug) == f"{base}/agents/pipeline/{slug}.qa-handoff.json"
+
+
 def test_resolve_cli_context_loads_pipeline_json() -> None:
     extra, app = resolve_cli_context(
         "inventory-app",
@@ -66,4 +92,15 @@ def test_resolve_cli_context_loads_pipeline_json() -> None:
     )
     assert app == "inventory-app"
     assert extra.get("targetApp") == "inventory-app"
+    assert extra.get("prdPath")
+
+
+def test_resolve_cli_context_loads_legacy_pipeline_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRODUCT_ARTIFACT_LAYOUT", "docs")
+    extra, app = resolve_cli_context(
+        "inventory-app",
+        None,
+        no_auto_context=False,
+    )
+    assert app == "inventory-app"
     assert extra.get("prdPath")

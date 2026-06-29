@@ -12,8 +12,8 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
 $AllAgents = @(
-    @{ name = "architect-agent"; node = $false; extra = @() },
-    @{ name = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true") },
+    @{ name = "architect-agent"; node = $false; extra = @("PRODUCT_ARTIFACT_LAYOUT=docs") },
+    @{ name = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true", "PRODUCT_ARTIFACT_LAYOUT=docs") },
     @{ name = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
     @{ name = "developer-agent"; node = $false; extra = @() },
     @{ name = "gitlab-agent"; node = $false; extra = @() },
@@ -39,6 +39,20 @@ $CommonEnv = @(
 if ($env:ARTIFACT_S3_BUCKET) { $CommonEnv += "ARTIFACT_S3_BUCKET=$($env:ARTIFACT_S3_BUCKET)" }
 if ($env:ARTIFACT_DYNAMODB_TABLE) { $CommonEnv += "ARTIFACT_DYNAMODB_TABLE=$($env:ARTIFACT_DYNAMODB_TABLE)" }
 
+# Orchestrator runs apply_sql_to_rds after database-agent — pass RDS creds on orchestrator runtime only.
+$OrchestratorExtra = @()
+foreach ($name in @(
+    "POSTGRES_MCP_DB_ENDPOINT",
+    "POSTGRES_MCP_DATABASE",
+    "POSTGRES_MCP_DB_USER",
+    "POSTGRES_MCP_DB_PASSWORD",
+    "POSTGRES_MCP_PORT",
+    "POSTGRES_MCP_REGION",
+    "POSTGRES_MCP_SSLMODE"
+)) {
+    if ($env:$name) { $OrchestratorExtra += "$name=$($env:$name)" }
+}
+
 foreach ($agent in $TargetAgents) {
     $name = $agent.name
     Write-Host "`n=== $name ===" -ForegroundColor Cyan
@@ -58,7 +72,11 @@ foreach ($agent in $TargetAgents) {
     if ($ConfigureOnly) { continue }
 
     $deployArgs = @("deploy", "--agent", $name, "--env", "AGENTCORE_AGENT=$name")
-    foreach ($item in ($CommonEnv + $agent.extra)) {
+    $envBlock = $CommonEnv + $agent.extra
+    if ($name -eq "orchestrator-agent") {
+        $envBlock += $OrchestratorExtra
+    }
+    foreach ($item in $envBlock) {
         $deployArgs += @("--env", $item)
     }
     & agentcore @deployArgs

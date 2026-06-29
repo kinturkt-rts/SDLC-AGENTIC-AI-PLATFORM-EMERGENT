@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -45,11 +46,33 @@ def test_artifact_paths_for_developer(repo_root: Path) -> None:
 
 def test_write_repo_artifact_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
-    from _shared.artifact_store import read_repo_artifact, write_repo_artifact
+    from _shared.artifact_store import get_artifact_text, read_repo_artifact, write_repo_artifact
 
     rel = "docs/PRD/local-only.md"
     write_repo_artifact(rel, "hello")
     assert read_repo_artifact(rel).decode("utf-8") == "hello"
+
+    run_id = "run-write-001"
+    run_rel = "target-apps/demo/db/sql/001.sql"
+    write_repo_artifact(run_rel, "SELECT 1;", context={"runId": run_id})
+    assert get_artifact_text(run_id, run_rel) == "SELECT 1;"
+
+
+def test_dynamodb_enabled_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ARTIFACT_DYNAMODB_ENABLED", raising=False)
+    from _shared.artifact_store import dynamodb_enabled
+
+    assert dynamodb_enabled() is False
+
+
+def test_put_dynamodb_pointer_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_DYNAMODB_ENABLED", "false")
+    from _shared.artifact_store import _put_dynamodb_pointer
+
+    with patch("_shared.artifact_store._dynamodb_table") as mock_table:
+        _put_dynamodb_pointer("run-1", "docs/PRD/demo.md", s3_uri="s3://bucket/runs/run-1/docs/PRD/demo.md")
+        mock_table.assert_not_called()
 
 
 def test_materialize_run_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

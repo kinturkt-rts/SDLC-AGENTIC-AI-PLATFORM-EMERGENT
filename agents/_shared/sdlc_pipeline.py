@@ -18,18 +18,34 @@ from .a2a_invoke import invoke_agent, response_text
 from .artifact_store import (
     artifact_paths_for_agent,
     is_s3_store,
+    materialize_run,
     new_run_id,
     put_context,
     register_pipeline_run,
     repo_root,
     resolve_run_id,
+    run_sql_artifact_keys,
     sync_repo_paths_to_run,
     update_pipeline_run,
 )
+from .db_handoff import write_db_handoff
+from .mcp_clients import postgres_mcp_tool_params
 from .env import load_repo_env
-from .pipeline_context import enrich_handoff_context, prd_rel_path_for_app, slugify
+from .pipeline_context import (
+    design_doc_rel_for_app,
+    diagram_path_for_app,
+    enrich_handoff_context,
+    gitlab_handoff_rel_for_app,
+    pipeline_context_rel_for_app,
+    prd_rel_path_for_app,
+    qa_handoff_rel_for_app,
+    slugify,
+)
 
 logger = logging.getLogger(__name__)
+
+# Specialists that write artifacts directly to S3 (runId in context) — no local sync.
+_S3_DIRECT_WRITE_AGENTS = frozenset({"product-agent", "database-agent"})
 
 TransportMode = Literal["local", "a2a", "auto"]
 
@@ -187,7 +203,7 @@ class SdlcPipelineRunner:
         self.run_id = options.run_id or resolve_run_id() or (
             new_run_id() if is_s3_store() else None
         )
-        self.context_file = options.context_file or f"agents/pipeline/{self.feature}.context.json"
+        self.context_file = options.context_file or pipeline_context_rel_for_app(self.feature)
         self.ctx_path = self.root / self.context_file.replace("/", os.sep)
         self.context: dict[str, Any] = {}
         self.agents_run: list[str] = []
@@ -272,9 +288,12 @@ class SdlcPipelineRunner:
             return
         put_context(self.run_id, self.context)
         if is_s3_store():
-            paths = artifact_paths_for_agent(agent_name, self.feature, self.context)
-            sync_repo_paths_to_run(self.run_id, paths)
-            update_pipeline_run(self.run_id, last_agent=agent_name)
+            if self.transport == "a2a" and agent_name in _S3_DIRECT_WRITE_AGENTS:
+                update_pipeline_run(self.run_id, last_agent=agent_name)
+            else:
+                paths = artifact_paths_for_agent(agent_name, self.feature, self.context)
+                sync_repo_paths_to_run(self.run_id, paths)
+                update_pipeline_run(self.run_id, last_agent=agent_name)
 
     def _load_context(self) -> None:
         if self.ctx_path.is_file():
@@ -291,7 +310,7 @@ class SdlcPipelineRunner:
         self.context.update(fields)
         self.context.setdefault("targetApp", self.feature)
         if not self.context.get("designDocPath"):
-            self.context["designDocPath"] = f"docs/design/{self.feature}.md"
+            self.context["designDocPath"] = design_doc_rel_for_app(self.feature)
         self._save_context()
 
     def _context_for_agent(self) -> dict[str, Any]:
@@ -412,8 +431,8 @@ class SdlcPipelineRunner:
                 step="architect-agent",
             )
 
-        design_rel = f"docs/design/{self.feature}.md"
-        png_rel = f"docs/diagrams/generated-diagrams/{self.feature}.png"
+        design_rel = design_doc_rel_for_app(self.feature)
+        png_rel = diagram_path_for_app(self.feature)
         self._update_context({"diagramPaths": [png_rel], "designDocPath": design_rel})
         self._delivery_check("design")
         self.agents_run.append("architect-agent")
@@ -469,13 +488,48 @@ class SdlcPipelineRunner:
         self.artifacts["DB"] = f"target-apps/{self.feature}/db/"
         self._after_agent_step("database-agent")
 
+    def _resolve_rds_workspace(self) -> tuple[Path, Path]:
+        """Return (repo_root for seed scripts, sql_dir) for RDS apply."""
+        local_sql_dir = self.root / "target-apps" / self.feature / "db" / "sql"
+        if self.transport == "a2a" and self.run_id:
+            sql_keys = run_sql_artifact_keys(self.run_id, self.feature)
+            if not sql_keys:
+                raise PipelineStepError(
+                    f"No SQL artifacts in S3 for run {self.run_id} "
+                    f"(expected runs/{self.run_id}/target-apps/{self.feature}/db/sql/*.sql). "
+                    "Ensure database-agent received runId in Context and ARTIFACT_STORE=s3 on its runtime."
+                )
+            workspace = materialize_run(self.run_id)
+            sql_dir = workspace / "target-apps" / self.feature / "db" / "sql"
+            if not sql_dir.is_dir():
+                raise PipelineStepError(f"Materialized workspace missing sql dir: {sql_dir}")
+            return workspace, sql_dir
+
+        if not local_sql_dir.is_dir() or not any(local_sql_dir.glob("*.sql")):
+            raise PipelineStepError(
+                f"No db/sql/*.sql under target-apps/{self.feature}/ for RDS apply"
+            )
+        return self.root, local_sql_dir
+
+    def _handoff_context_for_rds(self) -> dict[str, Any]:
+        ctx = enrich_handoff_context(dict(self.context))
+        if self.run_id:
+            ctx["runId"] = self.run_id
+        ctx.setdefault("postgresAppSchema", self.feature.replace("-", "_"))
+        if not ctx.get("postgresMcpParams"):
+            ctx["postgresMcpParams"] = postgres_mcp_tool_params()
+        return ctx
+
     def _step_rds_apply(self) -> None:
-        sql_dir = self.root / "target-apps" / self.feature / "db" / "sql"
-        if not sql_dir.is_dir():
-            logger.warning("No db/sql/ — skip RDS apply")
-            return
+        workspace_root, sql_dir = self._resolve_rds_workspace()
         self._run_python(
-            ["scripts/apply_sql_to_rds.py", "--target-app", self.feature],
+            [
+                "scripts/apply_sql_to_rds.py",
+                "--sql-dir",
+                str(sql_dir),
+                "--target-app",
+                self.feature,
+            ],
             step="rds-apply",
         )
         self._run_python(
@@ -484,7 +538,7 @@ class SdlcPipelineRunner:
                 "--target-app",
                 self.feature,
                 "--repo-root",
-                str(self.root),
+                str(workspace_root),
             ],
             step="seed-materialize",
         )
@@ -494,12 +548,25 @@ class SdlcPipelineRunner:
                 "--target-app",
                 self.feature,
                 "--repo-root",
-                str(self.root),
+                str(workspace_root),
                 "--quiet",
             ]
             if flag:
                 args.append(flag)
             self._run_python(args, step="verify-seed-bcrypt")
+
+        handoff_ctx = self._handoff_context_for_rds()
+        handoff_rel = write_db_handoff(
+            self.feature,
+            handoff_ctx,
+            rds_applied=True,
+            repo_root=workspace_root,
+        )
+        self.context["databaseHandoffPath"] = handoff_rel
+        self._save_context()
+        if self.run_id and is_s3_store():
+            put_context(self.run_id, self.context)
+        logger.info("[rds-apply] HANDOFF.md -> %s", handoff_rel)
 
     def _step_developer(self) -> None:
         task = DEV_TASK_NO_DB if self.options.skip_db else DEV_TASK_DB
@@ -572,7 +639,7 @@ class SdlcPipelineRunner:
                 step="gitlab-agent",
             )
 
-        handoff_path = self.root / "agents" / "pipeline" / f"{self.feature}.gitlab-handoff.json"
+        handoff_path = self.root / gitlab_handoff_rel_for_app(self.feature).replace("/", os.sep)
         if handoff_path.is_file():
             handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
             self._update_context(
@@ -583,7 +650,7 @@ class SdlcPipelineRunner:
                     "featureBranch": handoff.get("branch"),
                 }
             )
-            self.artifacts["GitLab"] = f"agents/pipeline/{self.feature}.gitlab-handoff.json"
+            self.artifacts["GitLab"] = gitlab_handoff_rel_for_app(self.feature)
         self.agents_run.append("gitlab-agent")
         self._after_agent_step("gitlab-agent")
 
@@ -606,7 +673,7 @@ class SdlcPipelineRunner:
                 step="qa-agent",
             )
         self.agents_run.append("qa-agent")
-        self.artifacts["QA"] = f"agents/pipeline/{self.feature}.qa-handoff.json"
+        self.artifacts["QA"] = qa_handoff_rel_for_app(self.feature)
         self._after_agent_step("qa-agent")
 
     def _sync_delivery_profile(self, input_file: str = "") -> None:

@@ -153,7 +153,7 @@ def architect_agent_bundle() -> BundleFactory:
         from _shared.mcp_clients import aws_diagram_mcp_client
 
         with aws_diagram_mcp_client(cwd=root) as mcp:
-            agent = mod._build_agent(mcp.list_tools_sync())  # noqa: SLF001
+            agent = mod.build_architect_pipeline_agent(mcp.list_tools_sync())  # noqa: SLF001
             yield agent, skills
 
     return factory
