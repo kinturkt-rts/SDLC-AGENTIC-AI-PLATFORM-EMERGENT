@@ -85,18 +85,40 @@ def invoke_agent(
     context: dict[str, Any] | None = None,
     timeout: int = DEFAULT_A2A_TIMEOUT,
 ) -> dict[str, Any]:
-    """Invoke a specialist agent by registry name over A2A (sync wrapper)."""
-    url = agent_base_url(agent_name).rstrip("/")
+    """Invoke a specialist agent by registry name (AgentCore ARN or A2A HTTP)."""
     body = format_agent_task(task, context)
+
+    if should_use_agentcore_arn_invoke():
+        from .agentcore_invoke import invoke_agent_runtime_a2a
+
+        result = invoke_agent_runtime_a2a(agent_name, body, timeout=timeout)
+        if result.get("status") == "success":
+            return result
+        logger.warning(
+            "AgentCore ARN invoke failed for %s: %s",
+            agent_name,
+            result.get("error"),
+        )
+
+    url = agent_base_url(agent_name).rstrip("/")
     try:
-        return asyncio.run(_send_message_async(url, body, timeout=timeout))
+        http_result = asyncio.run(_send_message_async(url, body, timeout=timeout))
+        return http_result
     except Exception as exc:
-        logger.exception("A2A invoke failed for %s", agent_name)
+        logger.exception("A2A HTTP invoke failed for %s", agent_name)
         return {"status": "error", "error": str(exc), "target_agent_url": url}
+
+
+def should_use_agentcore_arn_invoke() -> bool:
+    from .agentcore_invoke import should_use_agentcore_arn_invoke as _should
+
+    return _should()
 
 
 def response_text(result: dict[str, Any]) -> str:
     """Extract human-readable text from an A2A invoke result."""
+    if result.get("text"):
+        return str(result["text"])
     if result.get("status") != "success":
         return str(result.get("error") or result)
     payload = result.get("response") or {}

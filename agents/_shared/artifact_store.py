@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from _shared.pipeline_context import pipeline_context_rel_for_app, prd_rel_path_for_app
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -216,8 +218,12 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
     slug = feature
     paths: list[str] = []
     if agent_name == "product-agent":
-        prd = context.get("prdPath") or f"docs/PRD/{slug}.md"
+        prd = context.get("prdPath") or prd_rel_path_for_app(slug)
         paths.append(str(prd))
+        paths.append(pipeline_context_rel_for_app(slug))
+        input_path = context.get("inputPath") or context.get("inputFile")
+        if input_path:
+            paths.append(str(input_path).replace("\\", "/"))
     elif agent_name == "architect-agent":
         paths.append(str(context.get("designDocPath") or f"docs/design/{slug}.md"))
         for diagram in context.get("diagramPaths") or [f"docs/diagrams/generated-diagrams/{slug}.png"]:

@@ -1,54 +1,103 @@
 {
-  "description": "Deployed AgentCore runtime URLs (no secrets). Update after agentcore deploy.",
+  "description": "Deployed AgentCore runtimes (no secrets). Sync from .bedrock_agentcore.yaml after each launch.",
   "region": "us-east-2",
+  "accountId": "061836593297",
+  "mvpPipeline": [
+    "orchestrator-agent",
+    "product-agent",
+    "architect-agent",
+    "database-agent",
+    "developer-agent",
+    "gitlab-agent"
+  ],
+  "artifactStore": {
+    "ARTIFACT_STORE": "s3",
+    "ARTIFACT_S3_BUCKET": "sdlc-agentic-ai-app-artifacts",
+    "ARTIFACT_DYNAMODB_TABLE": "sdlc-pipeline-runs",
+    "notes": "Set on orchestrator AND all mvpPipeline specialists"
+  },
   "agents": {
     "orchestrator-agent": {
-      "runtimeArn": "",
-      "invokeUrl": "",
-      "notes": "Set AGENTCORE_A2A_PEER_URLS to specialist invokeUrl values"
+      "deployed": true,
+      "awsName": "orchestrator_agent",
+      "runtimeId": "orchestrator_agent-O0WIlYDDeX",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent-O0WIlYDDeX",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Forchestrator_agent-O0WIlYDDeX/invocations",
+      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_A2A_PEER_URLS or future ARN transport."
     },
     "product-agent": {
-      "runtimeArn": "",
-      "invokeUrl": "",
+      "deployed": true,
+      "awsName": "product_agent",
+      "runtimeId": "product_agent-az4pY1Blv1",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/product_agent-az4pY1Blv1",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fproduct_agent-az4pY1Blv1/invocations",
       "env": {
-        "AGENTCORE_PRODUCT_SKIP_JIRA": "true"
+        "AGENTCORE_PRODUCT_SKIP_JIRA": "true",
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
       }
     },
     "architect-agent": {
-      "runtimeArn": "",
-      "invokeUrl": ""
-    },
-    "developer-agent": {
-      "runtimeArn": "",
-      "invokeUrl": ""
-    },
-    "database-agent": {
-      "runtimeArn": "",
-      "invokeUrl": "",
+      "deployed": true,
+      "awsName": "architect_agent",
+      "runtimeId": "architect_agent-MSC7JE4JIK",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/architect_agent-MSC7JE4JIK",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Farchitect_agent-MSC7JE4JIK/invocations",
       "env": {
-        "AGENTCORE_DATABASE_USE_POSTGRES": "true"
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
       }
     },
+    "database-agent": {
+      "deployed": true,
+      "awsName": "database_agent",
+      "runtimeId": "database_agent-B28RDG3CX2",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/database_agent-B28RDG3CX2",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fdatabase_agent-B28RDG3CX2/invocations",
+      "env": {
+        "AGENTCORE_DATABASE_USE_POSTGRES": "true",
+        "CODING_MODEL_ID": "us.anthropic.claude-opus-4-6-v1"
+      }
+    },
+    "developer-agent": {
+      "deployed": true,
+      "awsName": "developer_agent",
+      "runtimeId": "developer_agent-s6E4Vd82AM",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/developer_agent-s6E4Vd82AM",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fdeveloper_agent-s6E4Vd82AM/invocations",
+      "env": {
+        "CODING_MODEL_ID": "us.anthropic.claude-opus-4-6-v1"
+      }
+    },
+    "gitlab-agent": {
+      "deployed": true,
+      "awsName": "gitlab_agent",
+      "runtimeId": "gitlab_agent-qgx3u2CWtC",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/gitlab_agent-qgx3u2CWtC",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fgitlab_agent-qgx3u2CWtC/invocations",
+      "env": {
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
+      },
+      "notes": "Requires GITLAB_PERSONAL_ACCESS_TOKEN, GITLAB_API_URL, GITLAB_PROJECT_PATH on runtime"
+    },
+    "qa-agent": {
+      "deployed": false,
+      "runtimeArn": "",
+      "invokeUrl": ""
+    },
     "web-crawler-agent": {
+      "deployed": false,
       "runtimeArn": "",
       "invokeUrl": "",
       "env": {
         "INSTALL_NODE": "true"
       }
     },
-    "qa-agent": {
-      "runtimeArn": "",
-      "invokeUrl": ""
-    },
     "devops-agent": {
+      "deployed": false,
       "runtimeArn": "",
       "invokeUrl": ""
     },
     "security-agent": {
-      "runtimeArn": "",
-      "invokeUrl": ""
-    },
-    "gitlab-agent": {
+      "deployed": false,
       "runtimeArn": "",
       "invokeUrl": ""
     }

@@ -124,7 +124,7 @@ def product_agent_bundle() -> BundleFactory:
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
         if skip_jira:
-            agent = mod._build_agent([])  # noqa: SLF001 — PRD-only cloud mode
+            agent = mod.build_prd_pipeline_agent()  # noqa: SLF001 — PRD pipeline + S3 persist
             yield agent, skills
         else:
             with mod._atlassian_mcp() as mcp:  # noqa: SLF001

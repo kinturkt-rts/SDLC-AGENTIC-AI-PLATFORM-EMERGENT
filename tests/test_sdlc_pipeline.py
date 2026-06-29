@@ -75,13 +75,22 @@ def test_artifact_paths_for_product_agent() -> None:
     paths = artifact_paths_for_agent(
         "product-agent",
         "demo-api",
-        {"prdPath": "docs/PRD/demo-api.md"},
+        {"prdPath": "target-apps/demo-api/prd/demo-api.md"},
     )
-    assert paths == ["docs/PRD/demo-api.md"]
+    assert paths == [
+        "target-apps/demo-api/prd/demo-api.md",
+        "agents/pipeline/demo-api.context.json",
+    ]
 
 
 def test_resolve_transport_explicit_local() -> None:
     assert resolve_transport("local") == "local"
+
+
+def test_resolve_transport_from_s3_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.delenv("AGENTCORE_A2A_PEER_URLS", raising=False)
+    assert resolve_transport("auto") == "a2a"
 
 
 def test_resolve_transport_from_peer_env(monkeypatch: pytest.MonkeyPatch) -> None:

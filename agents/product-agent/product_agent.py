@@ -11,7 +11,22 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.env import load_repo_env
-from _shared.pipeline_context import diagram_path_for_app, repo_rel
+from _shared.pipeline_context import (
+    design_doc_rel_for_app,
+    diagram_path_for_app,
+    pipeline_context_rel_for_app,
+    prd_rel_path_for_app,
+    repo_rel,
+    slugify as pipeline_slugify,
+)
+from _shared.artifact_store import (
+    get_artifact_text,
+    is_s3_store,
+    put_context,
+    read_repo_artifact,
+    resolve_run_id,
+    write_repo_artifact,
+)
 from _shared.delivery_profile import build_delivery_profile_from_paths
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
@@ -361,6 +376,23 @@ def _model_id() -> str:
     return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0").strip()
 
 
+def _build_prd_agent(*, telemetry: RunTelemetry | None = None) -> Agent:
+    callback = (
+        StrandsTelemetryCallback(f"{AGENT_NAME}-prd-writer", telemetry, log_tools=False)
+        if telemetry is not None
+        else None
+    )
+    return Agent(
+        agent_id=f"{AGENT_NAME}-prd-writer",
+        name=f"{AGENT_NAME}-prd-writer",
+        description="Writes Product Requirements Documents (PRD) in Markdown",
+        model=_bedrock_model(),
+        system_prompt=PRD_SYS_PROMPT,
+        tools=[],
+        callback_handler=callback,
+    )
+
+
 def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:
     callback = (
         StrandsTelemetryCallback(AGENT_NAME, telemetry)
@@ -382,6 +414,278 @@ def _user_message(task: str, context: dict[str, Any] | None) -> str:
     if not context:
         return task
     return f"{task}\n\nContext:\n{json.dumps(context, indent=2)}"
+
+
+def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:
+    """Split orchestrator/A2A messages into task text and context JSON."""
+    marker = "\n\nContext:\n"
+    if marker in message:
+        task, rest = message.rsplit(marker, 1)
+        try:
+            parsed = json.loads(rest)
+            if isinstance(parsed, dict):
+                return task.strip(), parsed
+        except json.JSONDecodeError:
+            pass
+    return message.strip(), {}
+
+
+def _extract_brief_from_task(task: str) -> str | None:
+    for marker in ("## Product brief\n", "## Product brief\r\n"):
+        if marker in task:
+            body = task.split(marker, 1)[1]
+            body = body.split("\n\nContext:", 1)[0].strip()
+            if body:
+                return body
+    return None
+
+
+def _infer_target_app_from_text(text: str) -> str | None:
+    """Best-effort slug from orchestrator task text"""
+    patterns = (
+        r"targetApp[\"']?\s*[:=]\s*[\"']?([a-z0-9-]+)",
+        r"\bstaged input for\s+([a-z][a-z0-9-]{1,58})\b",
+        r"\bfor\s+([a-z][a-z0-9-]{1,58})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if not match:
+            continue
+        try:
+            return pipeline_slugify(match.group(1))
+        except ValueError:
+            continue
+    return None
+
+
+def _default_staged_input_rel(slug: str) -> str:
+    return f"inputs/{slug}.txt"
+
+
+def enrich_prd_context(context: dict[str, Any], *, task: str = "") -> dict[str, Any]:
+    """Fill targetApp, runId, and inputFile when orchestrator sends a minimal task."""
+    ctx = dict(context)
+    if not (ctx.get("targetApp") or ctx.get("target_app")):
+        inferred = _infer_target_app_from_text(task)
+        if inferred:
+            ctx["targetApp"] = inferred
+
+    if not resolve_run_id(ctx):
+        for env_key in ("PIPELINE_RUN_ID", "DEFAULT_PIPELINE_RUN_ID"):
+            env_run = os.getenv(env_key, "").strip()
+            if env_run:
+                ctx["runId"] = env_run
+                break
+    elif not ctx.get("runId") and resolve_run_id(ctx):
+        ctx["runId"] = resolve_run_id(ctx)
+
+    slug = ctx.get("targetApp") or ctx.get("target_app")
+    has_input = ctx.get("inputFile") or ctx.get("inputPath") or ctx.get("input_file")
+    if slug and not has_input:
+        ctx.setdefault("inputFile", _default_staged_input_rel(pipeline_slugify(str(slug))))
+    return ctx
+
+
+def _staged_input_candidates(context: dict[str, Any], *, slug: str) -> list[str]:
+    """S3/local input paths to try for a staged brief."""
+    explicit = (
+        context.get("inputFile")
+        or context.get("inputPath")
+        or context.get("input_file")
+    )
+    candidates: list[str] = []
+    if explicit:
+        candidates.append(str(explicit).replace("\\", "/").lstrip("/"))
+    for rel in (
+        _default_staged_input_rel(slug),
+        f"inputs/{slug.replace('-', '_')}.txt",
+    ):
+        if rel not in candidates:
+            candidates.append(rel)
+    return candidates
+
+
+def resolve_input_text(context: dict[str, Any], *, task: str = "") -> str:
+    """Load requirements from inline context, S3 run prefix, or local repo path."""
+    for key in ("inputText", "requirementsText", "requirements"):
+        value = context.get(key)
+        if value and str(value).strip():
+            return str(value).strip()
+
+    input_file = (
+        context.get("inputFile")
+        or context.get("inputPath")
+        or context.get("input_file")
+    )
+    run_id = resolve_run_id(context)
+    slug = context.get("targetApp") or context.get("target_app")
+    slug_norm = pipeline_slugify(str(slug)) if slug else None
+
+    if run_id:
+        from botocore.exceptions import ClientError
+
+        if slug_norm:
+            rel_candidates = _staged_input_candidates(context, slug=slug_norm)
+        elif input_file:
+            rel_candidates = [str(input_file).replace("\\", "/").lstrip("/")]
+        else:
+            rel_candidates = []
+
+        last_error: Exception | None = None
+        for rel in rel_candidates:
+            try:
+                return get_artifact_text(run_id, rel)
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] == "NoSuchKey":
+                    last_error = exc
+                    continue
+                raise
+            except FileNotFoundError as exc:
+                last_error = exc
+                continue
+        if rel_candidates and is_s3_store():
+            raise ValueError(
+                f"Input not found in S3 for run {run_id}. Tried: {', '.join(rel_candidates)}. "
+                "Upload to runs/<runId>/inputs/ before invoking product-agent."
+            ) from last_error
+        if rel_candidates and last_error is not None:
+            raise ValueError(
+                f"Input not found for run {run_id}. Tried: {', '.join(rel_candidates)}."
+            ) from last_error
+
+    if input_file:
+        return _read_text_file(str(input_file))
+
+    brief = _extract_brief_from_task(task)
+    if brief:
+        return brief
+
+    if len(task.strip()) > 200:
+        return task.strip()
+
+    raise ValueError(
+        "No requirements text. Provide inputText, inputFile + runId (S3), "
+        "a local input file, or embed the brief in the task."
+    )
+
+
+def _build_pipeline_context_dict(
+    *,
+    slug: str,
+    prd_rel: str,
+    input_rel: str | None = None,
+) -> dict[str, Any]:
+    delivery_profile = build_delivery_profile_from_paths(
+        _REPO_ROOT,
+        prd_path=prd_rel,
+        input_path=input_rel,
+    )
+    ctx: dict[str, Any] = {
+        "targetApp": slug,
+        "prdPath": prd_rel,
+        "designDocPath": design_doc_rel_for_app(slug),
+        "diagramPaths": [diagram_path_for_app(slug)],
+        "deliveryProfile": delivery_profile,
+    }
+    if input_rel:
+        ctx["inputPath"] = input_rel
+    return ctx
+
+
+def run_prd_from_context(
+    task: str,
+    context: dict[str, Any] | None = None,
+    *,
+    telemetry: RunTelemetry | None = None,
+) -> str:
+    """Generate PRD, persist repo/S3 artifacts, and return a short status message."""
+    ctx = enrich_prd_context(dict(context or {}), task=task)
+    target = ctx.get("targetApp") or ctx.get("target_app")
+    if not target:
+        raise ValueError(
+            "targetApp is required. Pass it in Context JSON or mention it in the task "
+            "(e.g. 'Create PRD for inventory-app')."
+        )
+
+    slug = pipeline_slugify(str(target))
+    prd_rel = prd_rel_path_for_app(slug)
+    ctx_path_rel = pipeline_context_rel_for_app(slug)
+    input_text = resolve_input_text(ctx, task=task)
+
+    tel = telemetry or RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+    print(f"[product-agent] Generating PRD -> {prd_rel}", file=sys.stderr)
+
+    prd_markdown = _generate_prd_from_text(
+        input_text=input_text,
+        task_hint=task,
+        telemetry=tel,
+    )
+    write_repo_artifact(prd_rel, prd_markdown, context=ctx)
+
+    input_rel = None
+    input_file = ctx.get("inputFile") or ctx.get("inputPath") or ctx.get("input_file")
+    if input_file:
+        input_rel = str(input_file).replace("\\", "/").lstrip("/")
+
+    pipeline_ctx = _build_pipeline_context_dict(
+        slug=slug,
+        prd_rel=prd_rel,
+        input_rel=input_rel,
+    )
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        pipeline_ctx["runId"] = run_id
+    write_repo_artifact(ctx_path_rel, json.dumps(pipeline_ctx, indent=2) + "\n", context=ctx)
+    if run_id:
+        put_context(run_id, {**ctx, **pipeline_ctx})
+
+    tel.extra = {"prdSaved": True, "prdPath": prd_rel, "pipelineContext": ctx_path_rel}
+    if run_id:
+        tel.extra["runId"] = run_id
+    tel.finalize()
+
+    print(f"[product-agent] PRD: {prd_rel}", file=sys.stderr)
+    print(f"[product-agent] Pipeline context: {ctx_path_rel}", file=sys.stderr)
+
+    lines = [
+        f"PRD created for {slug}.",
+        f"- prdPath: {prd_rel}",
+        f"- pipelineContext: {ctx_path_rel}",
+    ]
+    if run_id:
+        lines.append(f"- runId: {run_id}")
+        if is_s3_store():
+            lines.append(f"- s3Prefix: runs/{run_id}/")
+    return "\n".join(lines)
+
+
+def build_prd_pipeline_agent() -> Agent:
+    """AgentCore PRD-only mode: deterministic PRD pipeline on each A2A message."""
+    agent = _build_prd_agent()
+
+    def prd_invoke(message: Any, **kwargs: Any) -> str:
+        text = str(message)
+        task, ctx = parse_task_and_context(text)
+        ctx = enrich_prd_context(ctx, task=task)
+        try:
+            return run_prd_from_context(task, ctx)
+        except ValueError as exc:
+            example = {
+                "targetApp": ctx.get("targetApp") or "inventory-app",
+                "runId": ctx.get("runId") or "smoke-001",
+                "inputFile": ctx.get("inputFile") or "inputs/inventory-app.txt",
+            }
+            return (
+                "PRD pipeline could not start.\n\n"
+                f"Reason: {exc}\n\n"
+                "Append this block to your message (or set PIPELINE_RUN_ID on the runtime):\n\n"
+                f"Context:\n{json.dumps(example, indent=2)}\n\n"
+                "Upload the brief first:\n"
+                "  s3://<bucket>/runs/<runId>/<inputFile>"
+            )
+
+    agent.__call__ = prd_invoke  # type: ignore[method-assign]
+    return agent
 
 
 def _slugify(text: str, *, max_len: int = 80) -> str:
@@ -434,20 +738,7 @@ def _generate_prd_from_text(
     task_hint: str | None = None,
     telemetry: RunTelemetry | None = None,
 ) -> str:
-    prd_callback = (
-        StrandsTelemetryCallback(f"{AGENT_NAME}-prd-writer", telemetry, log_tools=False)
-        if telemetry is not None
-        else None
-    )
-    prd_agent = Agent(
-        agent_id=f"{AGENT_NAME}-prd-writer",
-        name=f"{AGENT_NAME}-prd-writer",
-        description="Writes Product Requirements Documents (PRD) in Markdown",
-        model=_bedrock_model(),
-        system_prompt=PRD_SYS_PROMPT,
-        tools=[],
-        callback_handler=prd_callback,
-    )
+    prd_agent = _build_prd_agent(telemetry=telemetry)
     task_part = f"\n\nAdditional instructions: {task_hint.strip()}" if task_hint and task_hint.strip() else ""
     user_message = (
         "The following text is the ONLY source of truth. It may be informal and incomplete.\n"
@@ -519,33 +810,27 @@ def _write_pipeline_context(
     prd_base: str,
     prd_path: Path,
     input_path: Path | None = None,
+    context: dict[str, Any] | None = None,
 ) -> None:
     """Write agents/pipeline/<slug>.context.json so downstream agents auto-discover this product."""
-    pipeline_dir = _REPO_ROOT / "agents" / "pipeline"
-    pipeline_dir.mkdir(parents=True, exist_ok=True)
     slug = _slugify(prd_base)
     prd_rel = str(prd_path.relative_to(_REPO_ROOT).as_posix())
     input_rel = (
         str(input_path.relative_to(_REPO_ROOT).as_posix()) if input_path else None
     )
-    delivery_profile = build_delivery_profile_from_paths(
-        _REPO_ROOT,
-        prd_path=prd_rel,
-        input_path=input_rel,
+    pipeline_ctx = _build_pipeline_context_dict(
+        slug=slug,
+        prd_rel=prd_rel,
+        input_rel=input_rel,
     )
-    ctx = {
-        "targetApp": slug,
-        "prdPath": prd_rel,
-        "designDocPath": f"docs/design/{slug}.md",
-        "diagramPaths": [diagram_path_for_app(slug)],
-        "deliveryProfile": delivery_profile,
-    }
-    if input_rel:
-        ctx["inputPath"] = input_rel
-    ctx_path = pipeline_dir / f"{slug}.context.json"
-    ctx_path.write_text(json.dumps(ctx, indent=2) + "\n", encoding="utf-8")
-    print(f"[product-agent] Pipeline context: {ctx_path.relative_to(_REPO_ROOT)}", file=sys.stderr)
-    if delivery_profile.get("requiresStreamlit"):
+    ctx_path_rel = pipeline_context_rel_for_app(slug)
+    write_repo_artifact(
+        ctx_path_rel,
+        json.dumps(pipeline_ctx, indent=2) + "\n",
+        context=context,
+    )
+    print(f"[product-agent] Pipeline context: {ctx_path_rel}", file=sys.stderr)
+    if pipeline_ctx.get("deliveryProfile", {}).get("requiresStreamlit"):
         print(
             "[product-agent] deliveryProfile: requiresStreamlit=true (architect + developer must deliver ui/)",
             file=sys.stderr,
@@ -609,28 +894,29 @@ def main() -> None:
     if args.input_file:
         input_path = Path(args.input_file)
         if not input_path.is_absolute():
-            input_path = _REPO_ROOT / input_path
-        input_path = input_path.resolve()
+            input_path = (_REPO_ROOT / input_path).resolve()
         if not input_path.is_file():
             raise SystemExit(f"Input file not found: {args.input_file}")
 
-        input_text = input_path.read_text(encoding="utf-8")
-        prd_dir = _prd_output_dir()
         prd_base = args.prd_name or input_path.stem
-        prd_path = (prd_dir / f"{_slugify(prd_base)}.md").resolve()
-        slug = _slugify(prd_base)
-        telemetry = RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+        slug = pipeline_slugify(prd_base)
+        input_rel = str(input_path.relative_to(_REPO_ROOT).as_posix())
+        run_ctx: dict[str, Any] = {
+            "targetApp": slug,
+            "inputFile": input_rel,
+            **context,
+        }
+        run_id = resolve_run_id(run_ctx)
+        if run_id:
+            run_ctx["runId"] = run_id
 
-        print(f"[product-agent] Generating PRD -> {repo_rel(prd_path)}", file=sys.stderr)
-        prd_markdown = _generate_prd_from_text(
-            input_text=input_text,
-            task_hint=args.task,
+        telemetry = RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+        summary = run_prd_from_context(
+            task=args.task or f"Create PRD from {input_rel}",
+            context=run_ctx,
             telemetry=telemetry,
         )
-        prd_path.write_text(prd_markdown, encoding="utf-8", newline="\n")
-
-        _write_pipeline_context(prd_base=prd_base, prd_path=prd_path, input_path=input_path)
-        print(f"[product-agent] PRD: {repo_rel(prd_path)}", file=sys.stderr)
+        print(summary)
 
         if args.create_jira_tickets:
             if not args.allow_writes:
@@ -639,28 +925,27 @@ def main() -> None:
                     "PRD saved only (no Jira writes).",
                     file=sys.stderr,
                 )
-                telemetry.extra = {"prdSaved": True, "jiraSkipped": True}
-                telemetry.finalize()
                 return
             if "projectKey" not in context:
                 raise SystemExit("Jira project key required: pass --project <PROJECT_KEY>.")
 
-            jira_context = dict(context)
+            prd_rel = prd_rel_path_for_app(slug)
+            prd_markdown = read_repo_artifact(prd_rel, context=run_ctx).decode("utf-8")
+            jira_context = dict(run_ctx)
             jira_context["prdMarkdown"] = prd_markdown
-            jira_context["prdPath"] = str(prd_path)
+            jira_context["prdPath"] = prd_rel
 
             jira_task = _minimal_jira_task_from_prd(story_title_style=story_title_style)
             print(
                 f"[product-agent] Creating Jira backlog (Epic + 5 Stories, title style: {story_title_style})...",
                 file=sys.stderr,
             )
-            print(run_task(jira_task, jira_context, write_allowed=True, telemetry=telemetry))
-            telemetry.extra = {"prdSaved": True, "jiraBacklog": True}
-            telemetry.finalize()
+            jira_telemetry = RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+            print(run_task(jira_task, jira_context, write_allowed=True, telemetry=jira_telemetry))
+            jira_telemetry.extra = {"prdSaved": True, "jiraBacklog": True}
+            jira_telemetry.finalize()
             return
 
-        telemetry.extra = {"prdSaved": True}
-        telemetry.finalize()
         print(
             "[product-agent] PRD mode complete. "
             "Rerun with --create-jira-tickets --allow-writes --project <PROJECT_KEY> to create Jira tickets.",

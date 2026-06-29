@@ -27,7 +27,7 @@ from .artifact_store import (
     update_pipeline_run,
 )
 from .env import load_repo_env
-from .pipeline_context import enrich_handoff_context, slugify
+from .pipeline_context import enrich_handoff_context, prd_rel_path_for_app, slugify
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class PipelineResult:
 
 
 def resolve_transport(mode: TransportMode) -> Literal["local", "a2a"]:
-    """Pick subprocess (local) vs A2A HTTP based on env and option."""
+    """Pick subprocess (local) vs A2A/AgentCore ARN based on env and option."""
     if mode in ("local", "a2a"):
         return mode
     if os.getenv("AGENTCORE_A2A_PEER_URLS", "").strip():
@@ -137,6 +137,8 @@ def resolve_transport(mode: TransportMode) -> Literal["local", "a2a"]:
     env_mode = os.getenv("SDLC_PIPELINE_TRANSPORT", "").strip().lower()
     if env_mode in ("local", "a2a"):
         return env_mode  # type: ignore[return-value]
+    if os.getenv("AGENTCORE_AGENT", "").strip() or is_s3_store():
+        return "a2a"
     return "local"
 
 
@@ -200,7 +202,7 @@ class SdlcPipelineRunner:
             if not self.options.skip_product:
                 self._step_product()
             else:
-                self._update_context({"prdPath": f"docs/PRD/{self.feature}.md"})
+                self._update_context({"prdPath": prd_rel_path_for_app(self.feature)})
 
             if self.options.input_file:
                 self._sync_delivery_profile(self.options.input_file)
@@ -325,7 +327,13 @@ class SdlcPipelineRunner:
     def _step_product(self) -> None:
         if not self.options.input_file:
             raise PipelineStepError("input_file is required when product-agent runs")
-        input_rel = self.options.input_file.replace("\\", "/")
+        input_rel = self.options.input_file.replace("\\", "/").lstrip("/")
+        self._update_context(
+            {
+                "inputFile": input_rel,
+                "inputPath": input_rel,
+            }
+        )
         if self.transport == "local":
             args = [
                 "agents/product-agent/product_agent.py",
@@ -351,17 +359,28 @@ class SdlcPipelineRunner:
                     args.extend(["--story-title-style", self.options.jira_story_title_style])
             self._run_python(args, step="product-agent")
         else:
-            task = f"Create PRD from input file {input_rel} with prd-name {self.feature}."
+            task = f"Create PRD from staged input for {self.feature}."
             if self.options.with_jira:
                 task += f" Create Jira epic and stories in project {self.options.jira_project}."
             self._invoke_a2a("product-agent", task, step="product-agent")
 
-        prd_path = self.root / "docs" / "PRD" / f"{self.feature}.md"
-        if not prd_path.is_file() and self.transport == "local":
-            raise PipelineStepError(f"PRD not found: docs/PRD/{self.feature}.md")
+        prd_rel = prd_rel_path_for_app(self.feature)
+        if self.transport == "a2a" and self.run_id and is_s3_store():
+            from .artifact_store import get_artifact
+
+            try:
+                get_artifact(self.run_id, prd_rel)
+            except Exception as exc:
+                raise PipelineStepError(
+                    f"PRD not found in S3 after product-agent: runs/{self.run_id}/{prd_rel} ({exc})"
+                ) from exc
+        else:
+            prd_path = self.root / prd_rel.replace("/", os.sep)
+            if not prd_path.is_file() and self.transport == "local":
+                raise PipelineStepError(f"PRD not found: {prd_rel}")
 
         fields: dict[str, Any] = {
-            "prdPath": f"docs/PRD/{self.feature}.md",
+            "prdPath": prd_rel,
             "productAgentOutput": f"See prdPath for {self.feature} MVP requirements.",
         }
         if self.options.with_jira:
@@ -369,7 +388,7 @@ class SdlcPipelineRunner:
             fields["jiraBacklogCreated"] = True
         self._update_context(fields)
         self.agents_run.append("product-agent")
-        self.artifacts["PRD"] = f"docs/PRD/{self.feature}.md"
+        self.artifacts["PRD"] = prd_rel
         self._after_agent_step("product-agent")
 
     def _step_architect(self) -> None:
