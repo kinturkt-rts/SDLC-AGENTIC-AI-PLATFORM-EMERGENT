@@ -310,9 +310,9 @@ def write_repo_artifact(
     *,
     context: dict[str, Any] | None = None,
 ) -> str:
-    """Write to local repo path or S3 when runId is present in context/env."""
+    """Write under runs/<runId>/ when runId is set; else repo-relative path."""
     run_id = resolve_run_id(context)
-    if run_id and is_s3_store():
+    if run_id:
         return put_artifact(run_id, rel_path, content)
     dest = repo_root() / rel_path.lstrip("/")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -324,9 +324,9 @@ def write_repo_artifact(
 
 
 def read_repo_artifact(rel_path: str, *, context: dict[str, Any] | None = None) -> bytes:
-    """Read from local repo or S3 when runId is present."""
+    """Read from runs/<runId>/ when runId is set; else repo-relative path."""
     run_id = resolve_run_id(context)
-    if run_id and is_s3_store():
+    if run_id:
         return get_artifact(run_id, rel_path)
     path = repo_root() / rel_path.lstrip("/")
     if not path.is_file():

@@ -230,7 +230,9 @@ function InputRequirementsCard() {
   const [status, setStatus] = React.useState<InputStatus>('missing');
   const [lastSaved, setLastSaved] = React.useState<string | null>(null);
   const [savedPath, setSavedPath] = React.useState<string | null>(null);
+  const [savedRunId, setSavedRunId] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -275,9 +277,11 @@ function InputRequirementsCard() {
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setStatus('saved');
       setLastSaved(new Date().toLocaleTimeString());
-      setSavedPath(data.inputPath);
+      setSavedPath(data.inputPath ?? data.inputFile);
+      setSavedRunId(data.runId ?? null);
       setStartedRunId(null);
-      toast.success('Requirements saved', { description: `${data.inputPath} (${data.bytes} bytes)` });
+      const loc = data.inputS3Uri ? `S3 ${data.inputS3Uri}` : `${data.inputPath} (run ${data.runId})`;
+      toast.success('Requirements saved', { description: loc });
     } catch (err) {
       toast.error('Save failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -285,14 +289,53 @@ function InputRequirementsCard() {
     }
   };
 
+  const handleSubmit = async () => {
+    if (!content.trim()) {
+      toast.error('Cannot submit empty requirements');
+      return;
+    }
+    if (!feature || !featureValid) {
+      toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/v1/runs/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetApp: feature, content }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setStatus('saved');
+      setSavedRunId(data.runId);
+      setSavedPath(data.inputFile);
+      setStartedRunId(data.runId);
+      setLastSaved(new Date().toLocaleTimeString());
+      toast.success('Pipeline submitted', {
+        description: `run ${data.runId} → ${data.runPrefix ?? `runs/${data.runId}/`}`,
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    } catch (err) {
+      toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleStart = async () => {
-    if (status !== 'saved' || !feature) return;
+    if (status !== 'saved' || !feature || !savedRunId) return;
     setStarting(true);
     try {
       const res = await fetch('/api/v1/runs/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feature }),
+        body: JSON.stringify({
+          targetApp: feature,
+          runId: savedRunId,
+          inputFile: savedPath ?? `inputs/${feature}.txt`,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -311,14 +354,20 @@ function InputRequirementsCard() {
 
   const handleContentChange = (val: string) => {
     setContent(val);
-    if (status === 'saved') setStatus('ready');
+    if (status === 'saved') {
+      setStatus('ready');
+      setSavedRunId(null);
+    }
     if (!val.trim()) setStatus('missing');
     else if (status === 'missing') setStatus('ready');
   };
 
   const handleFeatureChange = (val: string) => {
     setFeature(val.toLowerCase());
-    if (status === 'saved') setStatus('ready');
+    if (status === 'saved') {
+      setStatus('ready');
+      setSavedRunId(null);
+    }
   };
 
   const statusConfig: Record<InputStatus, { label: string; color: string; icon: typeof AlertCircle }> = {
@@ -339,9 +388,10 @@ function InputRequirementsCard() {
           </span>
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Paste or upload requirements, name the feature, then start the SDLC pipeline. Saved to{' '}
-          <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">inputs/&lt;feature&gt;.txt</code> and dispatched to
-          {' '}<code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">orchestrator-agent --run-pipeline</code>.
+          Each <strong className="font-medium text-foreground">Submit</strong> creates a new{' '}
+          <span className="font-mono">runId</span>, uploads to{' '}
+          <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">runs/&lt;runId&gt;/inputs/&lt;feature&gt;.txt</code>, starts the orchestrator, and isolates outputs under{' '}
+          <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">runs/&lt;runId&gt;/target-apps/…</code>.
         </p>
       </div>
 
@@ -375,6 +425,7 @@ function InputRequirementsCard() {
             <Upload className="h-4 w-4" /> Upload File
           </Button>
           <div className="space-y-1 text-[11px] text-muted-foreground">
+            {savedRunId && <p className="font-mono text-teal-400/90">runId: {savedRunId}</p>}
             {savedPath && <p className="font-mono">{savedPath}</p>}
             {lastSaved && <p>Saved {lastSaved}</p>}
             {content && <p>{content.split('\n').length} lines · {(content.length / 1024).toFixed(1)} KB</p>}
@@ -397,27 +448,33 @@ function InputRequirementsCard() {
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              size="sm"
+              className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700"
+              onClick={handleSubmit}
+              disabled={!content.trim() || !feature || !featureValid || submitting}
+            >
+              <PlayCircle className="h-3.5 w-3.5" /> {submitting ? 'Submitting…' : 'Submit Brief & Run'}
+            </Button>
+            <Button
               variant="outline"
               size="sm"
               className="gap-1.5 border-white/[0.08]"
               onClick={handleSave}
               disabled={!content.trim() || !feature || !featureValid || saving}
             >
-              <Save className="h-3.5 w-3.5" /> {saving ? 'Saving…' : 'Save Input'}
+              <Save className="h-3.5 w-3.5" /> {saving ? 'Saving…' : 'Save draft only'}
             </Button>
             <Button
+              variant="outline"
               size="sm"
-              className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700"
+              className="gap-1.5 border-white/[0.08]"
               onClick={handleStart}
-              disabled={status !== 'saved' || starting}
+              disabled={status !== 'saved' || !savedRunId || starting}
             >
-              <PlayCircle className="h-3.5 w-3.5" /> {starting ? 'Starting…' : 'Start SDLC Pipeline'}
+              <PlayCircle className="h-3.5 w-3.5" /> {starting ? 'Starting…' : 'Start saved run'}
             </Button>
             {status === 'missing' && (
-              <p className="text-[11px] text-red-400/80">Add requirements before starting the pipeline.</p>
-            )}
-            {status === 'ready' && (
-              <p className="text-[11px] text-amber-400/80">Save your requirements first.</p>
+              <p className="text-[11px] text-red-400/80">Add requirements before submitting.</p>
             )}
           </div>
         </div>

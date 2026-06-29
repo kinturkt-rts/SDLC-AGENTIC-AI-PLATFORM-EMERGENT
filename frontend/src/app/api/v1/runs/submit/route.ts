@@ -1,28 +1,31 @@
 import { NextResponse } from 'next/server';
-import { uploadBrief, validateTargetApp } from '@/src/lib/pipeline-run';
+import { submitBrief, validateTargetApp } from '@/src/lib/pipeline-run';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const MAX_BYTES = 256 * 1024;
 
-interface SaveInputBody {
-  feature?: unknown;
+interface SubmitBody {
   targetApp?: unknown;
+  feature?: unknown;
   content?: unknown;
-  runId?: unknown;
 }
 
 function bad(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
+/**
+ * Single submission: always allocates a new runId, uploads
+ * runs/<runId>/inputs/<targetApp>.txt, then starts the orchestrator.
+ */
 export async function POST(request: Request) {
-  let body: SaveInputBody;
+  let body: SubmitBody;
   try {
-    body = (await request.json()) as SaveInputBody;
+    body = (await request.json()) as SubmitBody;
   } catch {
-    return bad('Body must be JSON: { targetApp|feature, content, runId? }');
+    return bad('Body must be JSON: { targetApp, content }');
   }
 
   const featureRaw =
@@ -32,7 +35,6 @@ export async function POST(request: Request) {
         ? body.feature
         : '';
   const content = typeof body.content === 'string' ? body.content : '';
-  const runId = typeof body.runId === 'string' ? body.runId.trim() : undefined;
 
   const slugError = validateTargetApp(featureRaw);
   if (slugError) return bad(slugError);
@@ -42,16 +44,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await uploadBrief(featureRaw, content, runId);
+    const result = await submitBrief(featureRaw, content);
     return NextResponse.json({
       ...result,
       feature: result.targetApp,
       inputPath: result.inputFile,
-      savedAt: new Date().toISOString(),
+      submittedAt: new Date().toISOString(),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes('S3') ? 500 : 400;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

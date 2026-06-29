@@ -174,6 +174,7 @@ def _add_pipeline_args(parser: argparse.ArgumentParser) -> None:
         help="Run the full SDLC chain deterministically (master coordinator mode)",
     )
     parser.add_argument("--target-app", "--feature", dest="target_app", help="Feature slug")
+    parser.add_argument("--run-id", default="", help="Pipeline run UUID (frontend stages inputs under runs/<runId>/)")
     parser.add_argument("--input-file", help="Requirements brief for product-agent")
     parser.add_argument("--context-file", default="", help="Pipeline context JSON path")
     parser.add_argument(
@@ -242,6 +243,7 @@ def main() -> None:
             target_app=args.target_app,
             input_file=args.input_file or "",
             context_file=args.context_file,
+            run_id=args.run_id.strip() or None,
             transport=args.transport,
             skip_product=args.skip_product,
             skip_architect=args.skip_architect,

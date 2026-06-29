@@ -25,8 +25,21 @@ import { mockPipelines } from '@/src/mocks/projects';
 
 const SKIP_APPS = new Set(['_template']);
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const PIPELINE_AGENT_ORDER = [
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+  'qa-agent',
+] as const;
+
 interface PipelineContextFile {
   targetApp?: string;
+  runId?: string;
   prdPath?: string;
   designDocPath?: string;
   diagramPaths?: string[];
@@ -102,6 +115,7 @@ interface LiveStepState {
 interface LiveRunState {
   runId: string;
   feature: string;
+  targetApp?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   triggeredBy?: string;
   startedAt?: string | null;
@@ -251,6 +265,187 @@ async function readRunState(slug: string): Promise<LiveRunState | null> {
   return readJson<LiveRunState>(repoPath('agents', 'pipeline', `${slug}.run.json`));
 }
 
+function featureSlugFromLive(live: LiveRunState): string {
+  return (live.feature || live.targetApp || '').trim().toLowerCase();
+}
+
+async function listUuidRunIds(): Promise<string[]> {
+  const runsDir = repoPath('agents', 'pipeline', 'runs');
+  try {
+    const entries = await fs.readdir(runsDir, { withFileTypes: true });
+    return entries
+      .filter((e) => e.isDirectory() && UUID_RE.test(e.name))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
+  return readJson<LiveRunState>(repoPath('agents', 'pipeline', 'runs', runId, 'run.json'));
+}
+
+async function readPipelineLog(runId: string): Promise<string | null> {
+  const logPath = repoPath('agents', 'pipeline', '.logs', `${runId}.log`);
+  try {
+    return await fs.readFile(logPath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+async function latestUuidRunMtime(runId: string): Promise<string> {
+  const candidates = [
+    repoPath('agents', 'pipeline', 'runs', runId, 'run.json'),
+    repoPath('agents', 'pipeline', '.logs', `${runId}.log`),
+  ];
+  let max = 0;
+  for (const p of candidates) {
+    try {
+      const stat = await fs.stat(p);
+      max = Math.max(max, stat.mtimeMs);
+    } catch {
+      // skip
+    }
+  }
+  return max ? new Date(max).toISOString() : new Date().toISOString();
+}
+
+function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
+  const next: LiveRunState = { ...live, steps: live.steps ? [...live.steps] : live.steps };
+
+  if (log.includes('SDLC pipeline completed')) {
+    next.status = 'completed';
+    next.currentStep = null;
+    if (next.steps) {
+      for (const step of next.steps) {
+        if (step.status !== 'skipped') step.status = 'completed';
+      }
+    }
+  } else if (log.includes('SDLC pipeline failed')) {
+    next.status = 'failed';
+    const errLine = log
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.startsWith('error:'));
+    if (errLine) next.error = errLine.replace(/^error:\s*/i, '');
+  } else if (next.status === 'queued' && PIPELINE_AGENT_ORDER.some((a) => log.includes(`[${a}]`))) {
+    next.status = 'running';
+  }
+
+  let lastAgent: string | null = null;
+  for (const agent of PIPELINE_AGENT_ORDER) {
+    if (log.includes(`[${agent}]`)) lastAgent = agent;
+  }
+  if (lastAgent && (next.status === 'running' || next.status === 'queued')) {
+    next.status = 'running';
+    next.currentStep = lastAgent;
+    if (next.steps) {
+      const lastIdx = PIPELINE_AGENT_ORDER.indexOf(lastAgent as (typeof PIPELINE_AGENT_ORDER)[number]);
+      next.steps = next.steps.map((step, idx) => {
+        const agentIdx = PIPELINE_AGENT_ORDER.indexOf(
+          step.name as (typeof PIPELINE_AGENT_ORDER)[number],
+        );
+        if (agentIdx >= 0 && agentIdx < lastIdx) return { ...step, status: 'completed' };
+        if (step.name === lastAgent) return { ...step, status: 'running' };
+        return step;
+      });
+    }
+  }
+
+  return next;
+}
+
+function mergeStepProgressFromPhases(
+  live: LiveRunState,
+  completed: Record<SdlcPhase, boolean>,
+  status: RunStatus,
+): LiveStepState[] | undefined {
+  if (!live.steps?.length) return live.steps;
+  let firstOpen: number | null = null;
+  return live.steps.map((step, idx) => {
+    const phase = agentPhase[step.name];
+    if (!phase) return step;
+    const done = completed[phase];
+    if (done) return { ...step, status: 'completed' };
+    if (step.status === 'running' || step.status === 'completed' || step.status === 'failed') {
+      return step;
+    }
+    if (firstOpen === null) {
+      firstOpen = idx;
+      if (status === 'failed') return { ...step, status: 'failed' };
+      if (status === 'completed') return { ...step, status: 'completed' };
+      if (status === 'running') return { ...step, status: 'running' };
+    }
+    return step;
+  });
+}
+
+async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promise<PipelineRun> {
+  const runId = live.runId;
+  const log = await readPipelineLog(runId);
+  let enriched = log ? enrichLiveRunFromLog(live, log) : live;
+
+  const ctx = await readContextFile(slug);
+  const phaseDone = await phaseCompletion(slug, ctx);
+  if (enriched.steps?.length) {
+    enriched = {
+      ...enriched,
+      steps: mergeStepProgressFromPhases(enriched, phaseDone, enriched.status as RunStatus),
+    };
+  }
+
+  const startedAt =
+    enriched.startedAt ?? (UUID_RE.test(runId) ? await latestUuidRunMtime(runId) : await latestPipelineMtime(slug));
+  const finishedAt = enriched.finishedAt ?? null;
+  const elapsedSec = finishedAt
+    ? Math.max(1, Math.floor((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000))
+    : Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+
+  const currentAgentName = enriched.currentStep ?? null;
+  const currentPhase =
+    currentAgentName && currentAgentName in agentPhase ? agentPhase[currentAgentName] : null;
+
+  const steps = enriched.steps?.length
+    ? buildStepsFromLive(runId, enriched)
+    : buildSteps(runId, phaseDone, enriched.status as RunStatus);
+
+  return {
+    id: runId,
+    projectId: slug,
+    projectName: slugToTitle(slug),
+    pipeline: 'Standard SDLC',
+    status: enriched.status as RunStatus,
+    currentPhase:
+      enriched.status === 'completed' || enriched.status === 'failed' ? null : currentPhase,
+    currentAgent:
+      enriched.status === 'completed' || enriched.status === 'failed' || !currentAgentName
+        ? null
+        : (currentAgentName as AgentName),
+    startedAt,
+    finishedAt,
+    elapsedSec,
+    triggeredBy: enriched.triggeredBy ?? 'frontend',
+    steps,
+  };
+}
+
+async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
+  const runIds = await listUuidRunIds();
+  const runs: PipelineRun[] = [];
+
+  for (const runId of runIds) {
+    const live = await readUuidRunState(runId);
+    if (!live) continue;
+    const slug = featureSlugFromLive(live);
+    if (!slug) continue;
+    runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
+  }
+
+  return runs;
+}
+
 async function handoffExists(slug: string, suffix: string): Promise<boolean> {
   return fileExists(repoPath('agents', 'pipeline', `${slug}.${suffix}`));
 }
@@ -392,7 +587,7 @@ export async function listArtifacts(): Promise<Artifact[]> {
   for (const slug of slugs) {
     const ctx = await readContextFile(slug);
     const name = slugToTitle(slug);
-    const runId = `run-${slug}`;
+    const runId = ctx?.runId ?? `run-${slug}`;
     const candidates: { path: string; kind?: ArtifactKind }[] = [];
 
     const prd = asRepoPath(ctx?.prdPath);
@@ -528,41 +723,20 @@ function buildStepsFromLive(runId: string, live: LiveRunState): PipelineStep[] {
 }
 
 export async function listRuns(): Promise<PipelineRun[]> {
-  const slugs = await listPipelineSlugs();
-  const runs: PipelineRun[] = [];
+  const [uuidRuns, slugs] = await Promise.all([listUuidPipelineRuns(), listPipelineSlugs()]);
+  const coveredSlugs = new Set(uuidRuns.map((r) => r.projectId));
+  const coveredRunIds = new Set(uuidRuns.map((r) => r.id));
+  const runs: PipelineRun[] = [...uuidRuns];
 
   for (const slug of slugs) {
+    if (coveredSlugs.has(slug)) continue;
+
     const live = await readRunState(slug);
     const runId = live?.runId ?? `run-${slug}`;
+    if (coveredRunIds.has(runId)) continue;
 
     if (live) {
-      const startedAt = live.startedAt ?? (await latestPipelineMtime(slug));
-      const finishedAt = live.finishedAt ?? null;
-      const elapsedSec = finishedAt
-        ? Math.max(1, Math.floor((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000))
-        : Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
-
-      const currentAgentName = live.currentStep ?? null;
-      const currentPhase =
-        currentAgentName && currentAgentName in agentPhase ? agentPhase[currentAgentName] : null;
-
-      runs.push({
-        id: runId,
-        projectId: slug,
-        projectName: slugToTitle(slug),
-        pipeline: 'Standard SDLC',
-        status: live.status as RunStatus,
-        currentPhase: live.status === 'completed' || live.status === 'failed' ? null : currentPhase,
-        currentAgent:
-          live.status === 'completed' || live.status === 'failed' || !currentAgentName
-            ? null
-            : (currentAgentName as AgentName),
-        startedAt,
-        finishedAt,
-        elapsedSec,
-        triggeredBy: (live.triggeredBy as AgentName) ?? 'orchestrator-agent',
-        steps: buildStepsFromLive(runId, live),
-      });
+      runs.push(await buildPipelineRunFromLive(slug, live));
       continue;
     }
 
@@ -602,8 +776,16 @@ export async function listRuns(): Promise<PipelineRun[]> {
 }
 
 export async function getRun(id: string): Promise<PipelineRun | undefined> {
+  if (UUID_RE.test(id)) {
+    const live = await readUuidRunState(id);
+    if (live) {
+      const slug = featureSlugFromLive(live);
+      if (slug) return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || id });
+    }
+  }
+
   const runs = await listRuns();
-  return runs.find((r) => r.id === id);
+  return runs.find((r) => r.id === id || r.projectId === id);
 }
 
 export async function listContextItems(projectSlug?: string): Promise<ContextItem[]> {
@@ -787,6 +969,36 @@ export async function listRunEvents(runId: string): Promise<RunEvent[]> {
 
   const events: RunEvent[] = [];
   let i = 0;
+
+  const log = await readPipelineLog(runId);
+  if (log) {
+    const lines = log.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      const agentMatch = line.match(/^\[([a-z-]+-agent)\]\s*(.*)$/);
+      if (agentMatch) {
+        events.push({
+          id: `ev-log-${runId}-${i++}`,
+          runId,
+          kind: 'log',
+          ts: run.startedAt,
+          level: line.toLowerCase().includes('failed') ? 'error' : 'info',
+          agent: agentMatch[1] as AgentName,
+          message: agentMatch[2] || line,
+        });
+      } else if (line.startsWith('error:')) {
+        events.push({
+          id: `ev-log-${runId}-${i++}`,
+          runId,
+          kind: 'log',
+          ts: run.startedAt,
+          level: 'error',
+          agent: 'orchestrator-agent',
+          message: line,
+        });
+      }
+    }
+  }
+
   for (const step of run.steps) {
     if (step.status === 'completed' || step.status === 'running') {
       events.push({

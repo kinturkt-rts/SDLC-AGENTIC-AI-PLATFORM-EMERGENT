@@ -267,13 +267,13 @@ class SdlcPipelineRunner:
                 register_pipeline_run(self.run_id, self.feature)
 
     def _after_agent_step(self, agent_name: str) -> None:
-        """Specialists -> S3; orchestrator -> DynamoDB run index."""
+        """Specialists -> runs/<runId>/ prefix; orchestrator -> DynamoDB when on S3."""
         if not self.run_id:
             return
         put_context(self.run_id, self.context)
+        paths = artifact_paths_for_agent(agent_name, self.feature, self.context)
+        sync_repo_paths_to_run(self.run_id, paths)
         if is_s3_store():
-            paths = artifact_paths_for_agent(agent_name, self.feature, self.context)
-            sync_repo_paths_to_run(self.run_id, paths)
             update_pipeline_run(self.run_id, last_agent=agent_name)
 
     def _load_context(self) -> None:
@@ -669,4 +669,6 @@ def options_from_dict(data: dict[str, Any]) -> PipelineOptions:
         filtered["target_app"] = data["targetApp"]
     if "input_file" not in filtered and "inputFile" in data:
         filtered["input_file"] = data["inputFile"]
+    if "run_id" not in filtered and "runId" in data:
+        filtered["run_id"] = data["runId"]
     return PipelineOptions(**filtered)
