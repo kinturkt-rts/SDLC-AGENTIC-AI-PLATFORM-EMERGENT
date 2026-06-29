@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-# deploy/agentcore/agentcore_runtime/bootstrap.py -> backend root is parents[3]
+# deploy/agentcore/agentcore_runtime/bootstrap.py -> repo root is parents[3]
 _DEPLOY_AGENTCORE = Path(__file__).resolve().parents[1]
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -23,11 +23,12 @@ AGENT_MODULE_MAP: dict[str, tuple[str, str]] = {
     "security-agent": ("security-agent", "security_agent"),
     "database-agent": ("database-agent", "database_agent"),
     "web-crawler-agent": ("web-crawler", "web_crawler_agent"),
+    "gitlab-agent": ("gitlab-agent", "gitlab_agent"),
 }
 
 
 def repo_root() -> Path:
-    """Return backend root (overridable via REPO_ROOT env in containers)."""
+    """Return repository root (overridable via REPO_ROOT env in containers)."""
     env_root = os.getenv("REPO_ROOT", "").strip()
     if env_root:
         return Path(env_root).resolve()

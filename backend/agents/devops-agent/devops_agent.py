@@ -37,7 +37,7 @@ AGENT_NAME = "devops-agent"
 A2A_PORT = 9105
 
 DEVOPS_SYS_PROMPT = """\
-You are the DevOps Agent for the Autonomous SDLC platform (Phase 2).
+You are the DevOps Agent for the SDLC Agentic AI Platform.
 
 ## Phase 1 (implemented elsewhere)
 - **gitlab-agent** publishes generated apps to GitLab via MCP after developer-agent.

@@ -1,51 +1,53 @@
 # Audit Finding Tracker — Solution Design
 
 ## 1. Summary
-Internal audit system replacing Excel-based finding management with centralized workflow, immutable audit trails, and executive reporting. PostgreSQL for structured data, S3 for evidence files, FastAPI REST API. TBD: File size limits, retention policies.
+Internal FastAPI + Streamlit tool for auditors to create, track, and remediate audit findings with immutable status history and file evidence. Postgres (SQLAlchemy/Alembic) is the primary DB; REST API with JWT auth. TBD: max evidence file size, data retention period, compliance framework specifics.
 
 ## 2. Stack
-| Layer | Technology |
-|-------|------------|
-| API Gateway | AWS API Gateway + WAF |
-| Application | FastAPI on ECS Fargate |
-| Authentication | AWS Cognito + JWT |
-| Database | PostgreSQL RDS |
-| File Storage | S3 bucket |
-| Infrastructure | VPC, ALB, CloudWatch |
+| Layer | Technology | Path / Notes |
+|-------|-----------|--------------|
+| UI | Streamlit | `ui/streamlit_app.py` — calls FastAPI over HTTP (port 8501) |
+| API | FastAPI + Uvicorn | `target-apps/audit-finding-tracker/app/main.py` |
+| Auth | JWT (PyJWT) | Bearer token; roles: auditor / assignee / executive |
+| Database | PostgreSQL + SQLAlchemy + Alembic | Docker locally; RDS-compatible |
+| Evidence | Local filesystem `data/evidence/<finding_id>/` | Path recorded in DB |
+| Config | python-dotenv `.env` | `DATABASE_URL`, `JWT_SECRET`, `EVIDENCE_DIR` |
 
 ## 3. Data model
-| Table / collection | Columns (name type PK/FK UNIQUE) | Indexes / constraints |
-|--------------------|----------------------------------|------------------------|
-| users | id UUID PK, cognito_sub VARCHAR UNIQUE, email VARCHAR, role ENUM, created_at TIMESTAMP | idx_users_email, idx_users_role |
-| audits | id UUID PK, title VARCHAR, description TEXT, status ENUM, created_by UUID FK, created_at TIMESTAMP, version INTEGER | idx_audits_status, idx_audits_created_by |
-| findings | id UUID PK, audit_id UUID FK, title VARCHAR, description TEXT, severity ENUM, status ENUM, assigned_to UUID FK, due_date DATE, created_by UUID FK, created_at TIMESTAMP, version INTEGER | idx_findings_status_severity_due, idx_findings_assigned_to |
-| evidence_files | id UUID PK, finding_id UUID FK, filename VARCHAR, s3_key VARCHAR, file_size BIGINT, mime_type VARCHAR, uploaded_by UUID FK, uploaded_at TIMESTAMP | idx_evidence_finding_id |
-| status_history | id UUID PK, finding_id UUID FK, from_status ENUM, to_status ENUM, changed_by UUID FK, changed_at TIMESTAMP, comment TEXT | idx_status_history_finding_date |
-| finding_comments | id UUID PK, finding_id UUID FK, author_id UUID FK, content TEXT, created_at TIMESTAMP, parent_id UUID FK | idx_comments_finding_created |
+| Table | Columns | Indexes / Constraints |
+|-------|---------|-----------------------|
+| `users` | `id UUID PK`, `email VARCHAR(255) UNIQUE`, `hashed_password TEXT`, `role ENUM(auditor,assignee,executive)`, `created_at TIMESTAMPTZ` | idx on `email`, `role` |
+| `audits` | `id UUID PK`, `title VARCHAR(255)`, `description TEXT`, `owner_id UUID FK→users.id`, `created_at TIMESTAMPTZ`, `updated_at TIMESTAMPTZ` | idx on `owner_id` |
+| `findings` | `id UUID PK`, `audit_id UUID FK→audits.id`, `title VARCHAR(255)`, `description TEXT`, `severity ENUM(low,medium,high,critical)`, `status ENUM(open,in_progress,pending_verification,remediated,closed)`, `assignee_id UUID FK→users.id`, `due_date DATE`, `version INT DEFAULT 1`, `created_at TIMESTAMPTZ`, `updated_at TIMESTAMPTZ` | idx on `(status,severity,due_date)`, `assignee_id` |
+| `status_history` | `id UUID PK`, `finding_id UUID FK→findings.id`, `actor_id UUID FK→users.id`, `from_status ENUM`, `to_status ENUM`, `comment TEXT`, `created_at TIMESTAMPTZ` | idx on `finding_id`; NO DELETE constraint |
+| `evidence_files` | `id UUID PK`, `finding_id UUID FK→findings.id CASCADE DELETE`, `uploader_id UUID FK→users.id`, `filename VARCHAR(255)`, `file_path TEXT`, `uploaded_at TIMESTAMPTZ` | idx on `finding_id` |
+| `comments` | `id UUID PK`, `finding_id UUID FK→findings.id`, `author_id UUID FK→users.id`, `body TEXT`, `created_at TIMESTAMPTZ` | idx on `finding_id` |
 
 ## 4. API surface
 | Method | Path | Request | Response | Notes |
 |--------|------|---------|----------|-------|
-| POST | /api/v1/auth/login | LoginRequest(email, password) | TokenResponse(access_token, user) | Cognito integration |
-| GET | /api/v1/audits | AuditListParams(status, limit, offset) | AuditListResponse(audits, total) | Paginated list |
-| POST | /api/v1/audits | CreateAuditRequest(title, description) | AuditResponse(audit) | Creates audit |
-| GET | /api/v1/findings | FindingListParams(audit_id, status, assigned_to) | FindingListResponse(findings, total) | Role-scoped data |
-| POST | /api/v1/findings | CreateFindingRequest(audit_id, title, severity, assigned_to, due_date) | FindingResponse(finding) | Version = 1 |
-| PUT | /api/v1/findings/{id}/status | UpdateStatusRequest(status, comment) | FindingResponse(finding) | If-Match header required |
-| POST | /api/v1/findings/{id}/evidence | MultipartFile(file) | EvidenceResponse(evidence) | S3 upload |
-| GET | /api/v1/findings/{id}/history | - | StatusHistoryResponse(history) | Immutable audit trail |
-| POST | /api/v1/findings/{id}/comments | CreateCommentRequest(content, parent_id) | CommentResponse(comment) | Threaded discussions |
-| GET | /api/v1/reports/executive | ReportParams(date_range, department) | ExecutiveReportResponse(overdue, severity_dist, dept_summary) | Executives only |
+| POST | `/api/v1/auth/login` | `{email, password}` | `{access_token, role}` | Returns JWT |
+| GET | `/api/v1/audits` | — | `[{id, title, owner_id, created_at}]` | Auditor/executive only |
+| POST | `/api/v1/audits` | `{title, description}` | `{id, title}` | Auditor only |
+| GET | `/api/v1/findings` | `?status=&severity=&audit_id=` | `[Finding]` | Assignee sees own; auditor/exec sees all (FR-7) |
+| POST | `/api/v1/findings` | `{audit_id, title, description, severity, assignee_id, due_date}` | `Finding` | Auditor only |
+| PATCH | `/api/v1/findings/{id}` | `{status?, owner?, due_date?}` + `If-Match: version` | `Finding` | 409 on stale version (FR-5); 422 on invalid transition (FR-2) |
+| GET | `/api/v1/findings/{id}/history` | — | `[StatusHistory]` | All roles |
+| POST | `/api/v1/findings/{id}/evidence` | multipart `file` | `{id, filename}` | Required before `pending_verification` (FR-4) |
+| GET | `/api/v1/reports/executive` | `?dept=&severity=` | `{overdue, by_severity, by_dept}` | Executive/auditor only (FR-6) |
+| GET | `/api/v1/health` | — | `{status}` | No auth (NFR-3) |
 
 ## 5. Rules
-- Auth / RBAC: auditor (all findings CRUD), assignee (own findings read/update), executive (all read + reports), anonymous (/health only)
-- Audit: All status transitions logged to status_history with actor, timestamp, comment; append-only table
-- Idempotency: Finding status enum (draft, assigned, in_progress, pending_verification, verified, closed); evidence required for pending_verification
-- Optimistic locking: version field incremented on updates, If-Match header validation returns 409 on stale data
-- File uploads: S3 storage with metadata in evidence_files table, file size limits enforced
-- Status workflow: draft→assigned→in_progress→pending_verification→verified→closed (invalid transitions return 422)
+- **Auth/RBAC (NFR-1, FR-7):** JWT Bearer on all routes except `/health`; `Depends(get_current_user)` + `Depends(require_role(...))` on protected routes; Streamlit: `st.session_state.token` gates all pages; tabs scoped: assignee=findings+evidence, auditor=+audits+reports, executive=reports only
+- **Status transitions (FR-2):** Allowed: `open→in_progress→pending_verification→remediated→closed`, `open→closed`, any→`open` (reopen); API: transition guard in `finding_service.py` raises HTTP 422 on invalid move
+- **Evidence gate (FR-4):** `pending_verification` transition blocked if `evidence_files` count = 0 for `finding_id`; enforced in `finding_service.validate_transition()`
+- **Optimistic locking (FR-5):** PATCH reads `If-Match` header as int version; returns 409 if DB version ≠ header; increments version on save; Streamlit passes version from last GET
+- **Immutable audit trail (FR-3, NFR-4, NFR-6):** Every status change appends to `status_history`; no UPDATE/DELETE permitted on that table; enforced via DB trigger `BEFORE UPDATE OR DELETE ON status_history → RAISE EXCEPTION`
+- **Data scoping (FR-7):** `GET /findings` query filtered by `assignee_id = current_user.id` when role=assignee; auditor/executive get unfiltered; enforced in `findings.py` router
+- **Executive reports (FR-6, NFR-2):** Aggregation queries on `findings` with indexes on `(status, severity, due_date)`; target <500 ms p95
+- **Streamlit UI gates (NFR-1):** `login_form()` shown when token absent; sidebar hides auditor/executive tabs for assignees; finding status dropdown restricted to valid next-states client-side
 
 ## 6. DB delivery
-1. Migration order: `001_users.sql`, `002_audits.sql`, `003_findings.sql`, `004_evidence_files.sql`, `005_status_history.sql`, `006_finding_comments.sql`, `007_indexes.sql`
-2. Seed data: 3 users (auditor, assignee, executive), 2 audits, 12 findings across all statuses with evidence files and status history
-3. Athena or NoSQL: S3 bucket for evidence file storage with lifecycle policies
+1. Migration order: `001_create_users.sql`, `002_create_audits.sql`, `003_create_findings.sql`, `004_create_status_history.sql`, `005_create_evidence_files.sql`, `006_create_comments.sql`, `007_add_indexes.sql`, `008_status_history_immutability_trigger.sql`
+2. Seed data: 3 users (1 auditor, 1 assignee, 1 executive), 2 audits, 12 findings spread across severities/statuses, sample status_history rows per finding (NFR-7)
+3. Athena / NoSQL: not used

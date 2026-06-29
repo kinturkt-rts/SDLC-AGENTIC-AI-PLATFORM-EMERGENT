@@ -1,0 +1,21 @@
+# AgentCore CodeBuild zip filter (repository root context).
+.git
+.cursor
+.bedrock_agentcore
+.orchestrator
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/node_modules
+target-apps
+infrastructure
+inputs
+docs
+analysis_results.md
+agentcore-configure-help.txt
+*.md
+!deploy/agentcore/README.md
+.env
+.env.*

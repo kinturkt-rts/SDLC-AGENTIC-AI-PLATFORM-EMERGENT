@@ -133,7 +133,7 @@ Respect robots/terms; do not scrape authenticated pages unless credentials are i
 """
 
 WEB_CRAWLER_SYS_PROMPT = f"""\
-You are the Web Crawler Agent for the Autonomous SDLC platform. You run **after architect-agent**
+You are the Web Crawler Agent for the SDLC Agentic AI Platform. You run **after architect-agent**
 when requirements mention web scraping, URL ingestion, or external documentation extraction.
 
 ## Handoff inputs (context JSON)

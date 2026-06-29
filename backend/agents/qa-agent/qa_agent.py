@@ -106,7 +106,7 @@ _written_files: list[str] = []
 _last_pytest_result: dict[str, Any] | None = None
 
 QA_SYS_PROMPT = """\
-You are the QA Agent for the Autonomous SDLC platform. You run **after developer-agent**
+You are the QA Agent for the SDLC Agentic AI Platform. You run **after developer-agent**
 as the sixth pipeline step: product → architect → web-crawler → database → developer → **YOU**.
 
 Your job is to **verify** working backend APIs under `target-apps/<service>/` by running pytest,

@@ -1,6 +1,0 @@
-{
-  "targetApp": "contacts-api",
-  "branch": "sdlc/contacts-api",
-  "repoUrl": "https://code.example.com/sdlc/contacts-api",
-  "dryRun": true
-}

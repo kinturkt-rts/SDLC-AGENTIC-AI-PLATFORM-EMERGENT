@@ -12,6 +12,7 @@ AgentName = Literal[
     "web-crawler-agent",
     "database-agent",
     "developer-agent",
+    "gitlab-agent",
     "qa-agent",
     "devops-agent",
     "security-agent",

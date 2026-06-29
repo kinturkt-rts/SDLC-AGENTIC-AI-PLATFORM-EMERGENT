@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "messageId": "m1",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Create PRD from staged input for inventory-app.\n\nContext:\n{\n  \"targetApp\": \"inventory-app\",\n  \"runId\": \"smoke-001\",\n  \"inputFile\": \"inputs/inventory-app.txt\"\n}"
+        }
+      ]
+    }
+  }
+}

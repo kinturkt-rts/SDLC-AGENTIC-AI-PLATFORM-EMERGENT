@@ -89,11 +89,12 @@ export async function POST(request: Request) {
         inputPath: inputRel,
         error: null,
         steps: [
-          { name: 'product-agent', label: '1/5 Product (PRD)', status: 'queued' },
-          { name: 'architect-agent', label: '2/5 Architect (design + diagram)', status: 'queued' },
-          { name: 'database-agent', label: '3/5 Database (SQL migrations)', status: 'queued' },
-          { name: 'developer-agent', label: '4/5 Developer (FastAPI)', status: 'queued' },
-          { name: 'gitlab-agent', label: '5/5 GitLab publish', status: 'queued' },
+          { name: 'product-agent', label: '1/6 Product (PRD)', status: 'queued' },
+          { name: 'architect-agent', label: '2/6 Architect (design + diagram)', status: 'queued' },
+          { name: 'database-agent', label: '3/6 Database (SQL migrations)', status: 'queued' },
+          { name: 'developer-agent', label: '4/6 Developer (FastAPI)', status: 'queued' },
+          { name: 'gitlab-agent', label: '5/6 GitLab publish', status: 'queued' },
+          { name: 'qa-agent', label: '6/6 QA (optional)', status: 'skipped' },
         ],
       },
       null,
@@ -103,15 +104,19 @@ export async function POST(request: Request) {
   );
 
   const python = await resolvePythonExecutable(repoRoot);
+  const orchestratorScript = path.join(
+    repoRoot,
+    'agents',
+    'orchestrator-agent',
+    'orchestrator_agent.py',
+  );
   const args = [
-    '-m',
-    'orchestrator.sdlc_pipeline',
-    '--feature',
+    orchestratorScript,
+    '--run-pipeline',
+    '--target-app',
     feature,
     '--input-file',
     inputRel,
-    '--run-id',
-    runId,
   ];
 
   const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');

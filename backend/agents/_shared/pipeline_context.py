@@ -25,7 +25,25 @@ def diagram_path_for_app(target_app: str) -> str:
 
 def design_doc_rel_for_app(target_app: str) -> str:
     """Per-feature design doc so parallel SDLC runs do not overwrite each other."""
-    return f"docs/design/{slugify(target_app)}.md"
+    layout = os.getenv("PRODUCT_ARTIFACT_LAYOUT", "target-app").strip().lower()
+    slug = slugify(target_app)
+    if layout == "docs":
+        return f"docs/design/{slug}.md"
+    return f"target-apps/{slug}/design/{slug}.md"
+
+
+def prd_rel_path_for_app(target_app: str) -> str:
+    """PRD markdown path for a target app (default: under target-apps/<app>/prd/)."""
+    layout = os.getenv("PRODUCT_PRD_LAYOUT", "target-app").strip().lower()
+    slug = slugify(target_app)
+    if layout == "docs":
+        return f"docs/PRD/{slug}.md"
+    return f"target-apps/{slug}/prd/{slug}.md"
+
+
+def pipeline_context_rel_for_app(target_app: str) -> str:
+    """Handoff JSON path shared across the SDLC chain."""
+    return f"agents/pipeline/{slugify(target_app)}.context.json"
 
 
 def slugify(text: str) -> str:

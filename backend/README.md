@@ -5,7 +5,7 @@ Python agents, orchestrator, target apps, pipeline artifacts, and shared config.
 | Path | Purpose |
 |------|---------|
 | `agents/` | Strands specialist agents + `pipeline/*.context.json` handoffs |
-| `orchestrator/` | Sequential pipeline driver (`python -m orchestrator.sdlc_pipeline`) |
+| `orchestrator/` | Placeholder for future TypeScript BullMQ worker (pipeline runs via `orchestrator-agent`) |
 | `target-apps/` | FastAPI services built by developer-agent |
 | `inputs/` | Plain-text requirement briefs |
 | `docs/` | PRDs, design docs, diagrams |
@@ -33,6 +33,6 @@ cd backend
 .\scripts\run-sdlc.ps1 -Feature my-app -InputFile inputs\my-app.txt
 ```
 
-Or via the dashboard: `frontend/` → Save Input → Start SDLC Pipeline (spawns `orchestrator.sdlc_pipeline` with `cwd=backend/`).
+Or via the dashboard: `frontend/` → Save Input → Start SDLC Pipeline (spawns `orchestrator_agent.py --run-pipeline` with `cwd=backend/`).
 
-See `orchestrator/README.md` and root `README.md` for AWS transport (`a2a-http`) rollout.
+See `agents/orchestrator-agent/orchestrator_agent.py`, `agents/_shared/sdlc_pipeline.py`, and `scripts/PIPELINE.md`.

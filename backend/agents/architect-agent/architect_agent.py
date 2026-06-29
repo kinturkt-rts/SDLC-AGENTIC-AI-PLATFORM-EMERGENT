@@ -47,7 +47,7 @@ Use handoff in Context (prdPath, productAgentOutput, targetApp).
 """
 
 ARCHITECT_SYS_PROMPT = """\
-You are the Architect Agent for the Autonomous SDLC platform. You produce a **single**
+You are the Architect Agent for the SDLC Agentic AI Platform. You produce a **single**
 AWS architecture PNG using the AWS Diagram MCP tools.
 
 ## Tool budget (minimize latency)

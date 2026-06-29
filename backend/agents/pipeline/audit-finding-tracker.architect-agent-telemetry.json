@@ -1,0 +1,18 @@
+{
+  "agent": "architect-agent",
+  "targetApp": "audit-finding-tracker",
+  "modelId": "us.anthropic.claude-sonnet-4-6",
+  "modelLabel": "sonnet-4-6",
+  "toolCount": 2,
+  "toolNames": [
+    "awsdiagram_get_diagram_examples",
+    "awsdiagram_generate_diagram"
+  ],
+  "inputTokens": 8,
+  "outputTokens": 4105,
+  "cacheReadInputTokens": 9390,
+  "cacheWriteInputTokens": 11199,
+  "totalTokens": 4113,
+  "cacheHitRatio": 0.9991,
+  "elapsedSec": 77.64
+}

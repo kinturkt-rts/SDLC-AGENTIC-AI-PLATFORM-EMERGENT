@@ -341,7 +341,7 @@ function InputRequirementsCard() {
         <p className="mt-0.5 text-[11px] text-muted-foreground">
           Paste or upload requirements, name the feature, then start the SDLC pipeline. Saved to{' '}
           <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">inputs/&lt;feature&gt;.txt</code> and dispatched to
-          {' '}<code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">orchestrator.sdlc_pipeline</code>.
+          {' '}<code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">orchestrator-agent --run-pipeline</code>.
         </p>
       </div>
 

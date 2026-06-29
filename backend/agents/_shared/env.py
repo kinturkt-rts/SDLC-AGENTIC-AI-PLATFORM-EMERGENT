@@ -1,11 +1,12 @@
-"""
-Load .env then .env.local from monorepo root and backend/.
+"""Load repo .env then .env.local.
 
 Priority:
-  1. Merge files in order: monorepo .env, monorepo .env.local, backend .env, backend .env.local
-  2. Later files override earlier for keys they define
+  1. Merge .env then .env.local into defaults for keys not already in the shell
+  2. .env.local always wins for every key it defines (overrides stale shell exports
+     from placeholder .env, e.g. AWS_PROFILE=your-profile, POSTGRES_MCP_* placeholders)
   3. If AWS_PROFILE is set (shell or file), do NOT load static AWS_ACCESS_KEY_ID /
-     AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN from files
+     AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN from files — those expired ASIA* values
+     would override SSO and break Bedrock.
 """
 
 from __future__ import annotations
@@ -29,13 +30,12 @@ _AWS_STATIC_KEYS = frozenset(
 
 def load_repo_env() -> None:
     merged: dict[str, str | None] = {}
-    env_paths = [
+    for path in (
         _MONOREPO_ROOT / ".env",
         _MONOREPO_ROOT / ".env.local",
         _BACKEND_ROOT / ".env",
         _BACKEND_ROOT / ".env.local",
-    ]
-    for path in env_paths:
+    ):
         if path.is_file():
             merged.update(dotenv_values(path))
 
@@ -49,10 +49,10 @@ def load_repo_env() -> None:
         if key not in os.environ:
             os.environ[key] = str(value).strip()
 
-    # .env.local wins over .env for every key it defines (monorepo then backend).
-    for local_path in (_MONOREPO_ROOT / ".env.local", _BACKEND_ROOT / ".env.local"):
-        if not local_path.is_file():
-            continue
+    local_path = _BACKEND_ROOT / ".env.local"
+    if not local_path.is_file():
+        local_path = _MONOREPO_ROOT / ".env.local"
+    if local_path.is_file():
         local_vals = dotenv_values(local_path)
         use_profile = bool(
             os.environ.get("AWS_PROFILE")

@@ -71,6 +71,14 @@ pip install bedrock-agentcore-starter-toolkit
 
 **Recommended for this project:** `--deployment-type container` (not `direct_code_deploy`), because agents import from `agents/` and spawn MCP subprocesses (`uv`, `npx`).
 
+### CodeBuild source context (important)
+
+The Dockerfile copies `agents/`, `a2a/`, `scripts/`, and `config/` from the **repository root**. In `.bedrock_agentcore.yaml`, `source_path` must be the **repo root**, not `deploy/agentcore` alone — otherwise CodeBuild fails with `"/agents": not found`.
+
+CodeBuild uses the repo-root `Dockerfile` (kept in sync with `deploy/agentcore/Dockerfile`). Base image: `public.ecr.aws/docker/library/python:...` (avoids Docker Hub rate limits).
+
+AWS runtime `--name` uses underscores (`product_agent`); container env `AGENTCORE_AGENT` uses hyphens (`product-agent`).
+
 ### Prerequisites (once)
 
 1. AWS CLI credentials with permission to create AgentCore runtimes, ECR, IAM roles.

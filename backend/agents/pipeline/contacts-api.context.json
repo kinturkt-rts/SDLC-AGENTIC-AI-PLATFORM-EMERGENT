@@ -4,7 +4,5 @@
   "designDocPath": "docs/design/contacts-api.md",
   "diagramPaths": [
     "docs/diagrams/generated-diagrams/contacts-api.png"
-  ],
-  "productAgentOutput": "See prdPath for contacts-api MVP requirements.",
-  "inputPath": "inputs/contacts-api.txt"
+  ]
 }

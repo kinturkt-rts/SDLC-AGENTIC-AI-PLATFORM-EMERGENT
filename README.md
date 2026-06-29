@@ -155,27 +155,24 @@ The UI also persists MCP server entries to `frontend/data/mcp.json` (git-ignored
 
 1. Type a feature slug (e.g. `inventory-app`) and paste/upload the brief.
 2. **Save Input** → `POST /api/v1/inputs` writes `backend/inputs/<feature>.txt`.
-3. **Start SDLC Pipeline** → `POST /api/v1/runs/start` spawns the Python driver (cwd `backend/`):
+3. **Start SDLC Pipeline** → `POST /api/v1/runs/start` spawns the orchestrator (cwd `backend/`):
 
    ```
-   python -m orchestrator.sdlc_pipeline --feature <feature> --input-file inputs/<feature>.txt
+   python agents/orchestrator-agent/orchestrator_agent.py --run-pipeline --target-app <feature> --input-file inputs/<feature>.txt
    ```
 
-   That driver invokes the five agents sequentially (product → architect → database → developer → gitlab), writing live progress to `backend/agents/pipeline/<feature>.run.json`. The dashboard polls every 4 s while a run is active.
+   That runs the SDLC chain via `agents/_shared/sdlc_pipeline.py` (product → architect → database → developer → gitlab; qa optional). Progress is tracked in `backend/agents/pipeline/<feature>.context.json` and handoff JSON files. The dashboard also writes `*.run.json` for live step polling.
 
-Each agent's transport is configured in `backend/config/orchestrator/agents.json`:
+Pipeline transport is controlled by env (subprocess **local** vs AgentCore **a2a**):
 
 | Mode | When |
 |------|------|
-| `cli` (default) | Local dev — orchestrator spawns the agent's Python CLI as a subprocess |
-| `a2a-http` | After the agent is deployed to Bedrock AgentCore — orchestrator POSTs A2A JSON-RPC to its runtime URL |
-| `dry-run` | Wiring smoke test — writes placeholder artifacts so the next step can proceed without Bedrock |
-
-Per-agent overrides via env (`<NAME>` = uppercase, dashes → underscores):
+| `local` (default) | Local dev — orchestrator spawns each agent CLI as a subprocess |
+| `a2a` | AgentCore runtimes wired via `AGENTCORE_A2A_PEER_URLS` / `ARTIFACT_STORE=s3` |
+| `auto` | Picks `a2a` when AgentCore/S3 env is set, else `local` |
 
 ```bash
-AGENT_MODE_PRODUCT_AGENT=a2a-http
-AGENT_URL_PRODUCT_AGENT=https://<runtime>.bedrock-agentcore.us-east-2.amazonaws.com/
+SDLC_PIPELINE_TRANSPORT=local   # force local subprocess chain
 ```
 
 When deploying agents to AWS one-by-one, flip these env vars (no code changes). See `backend/orchestrator/README.md` for the rollout checklist and the shared-storage caveat that applies when all five agents are on AgentCore.

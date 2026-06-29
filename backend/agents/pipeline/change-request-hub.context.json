@@ -1,18 +1,18 @@
-{
-  "productAgentOutput": "See prdPath for change-request-hub MVP requirements.",
-  "targetApp": "change-request-hub",
-  "prdPath": "docs/PRD/change-request-hub.md",
-  "designDocPath": "docs/design/change-request-hub.md",
-  "inputPath": "inputs/change-request-hub.txt",
-  "deliveryProfile": {
-    "streamlitRequirementsPath": "ui/requirements.txt",
-    "streamlitPath": "ui/streamlit_app.py",
-    "uiPattern": "streamlit",
-    "uiRequired": true,
-    "requiresReact": true,
-    "requiresStreamlit": true
-  },
-  "diagramPaths": [
-    "docs/diagrams/generated-diagrams/change-request-hub.png"
-  ]
+﻿{
+    "productAgentOutput":  "See prdPath for change-request-hub MVP requirements.",
+    "targetApp":  "change-request-hub",
+    "prdPath":  "docs/PRD/change-request-hub.md",
+    "designDocPath":  "docs/design/change-request-hub.md",
+    "inputPath":  "inputs/change-request-hub.txt",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  "streamlit",
+                            "uiRequired":  true,
+                            "requiresReact":  true,
+                            "requiresStreamlit":  true
+                        },
+    "diagramPaths":  [
+                         "docs/diagrams/generated-diagrams/change-request-hub.png"
+                     ]
 }
