@@ -1,9 +1,17 @@
-﻿{
-    "productAgentOutput":  "See prdPath for inventory-app MVP requirements.",
-    "targetApp":  "inventory-app",
-    "prdPath":  "docs/PRD/inventory-app.md",
-    "designDocPath":  "docs/design/inventory-app.md",
-    "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/inventory-app.png"
-                     ]
+{
+  "targetApp": "inventory-app",
+  "prdPath": "docs/PRD/inventory-app.md",
+  "designDocPath": "docs/design/inventory-app.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/inventory-app.png"
+  ],
+  "deliveryProfile": {
+    "uiRequired": false,
+    "requiresStreamlit": false,
+    "requiresReact": false,
+    "uiPattern": null,
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "inputPath": "inputs/inventory-app.txt"
 }
