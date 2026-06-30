@@ -51,9 +51,13 @@ def materialize(
     *,
     strict: bool = True,
 ) -> list[str]:
+    from _shared.pipeline_context import target_app_root_rel
+
     root = repo_root or _REPO_ROOT
     load_target_app_env(target_app, root)
-    app_dir = root / "target-apps" / target_app
+    app_dir = root / target_app_root_rel(target_app)
+    if not (app_dir / "db").is_dir():
+        app_dir = root / "target-apps" / target_app
 
     creds = collect_credentials(app_dir)
     if not creds:

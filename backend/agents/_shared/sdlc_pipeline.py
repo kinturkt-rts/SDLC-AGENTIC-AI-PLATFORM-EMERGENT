@@ -39,6 +39,7 @@ from .pipeline_context import (
     prd_rel_path_for_app,
     qa_handoff_rel_for_app,
     slugify,
+    target_app_root_rel,
 )
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ class SdlcPipelineRunner:
                 self._step_architect()
             else:
                 self._update_context(
-                    {"diagramPaths": [f"docs/diagrams/generated-diagrams/{self.feature}.png"]}
+                    {"diagramPaths": [diagram_path_for_app(self.feature)]}
                 )
 
             if self.options.with_web_crawler and not self.options.skip_web_crawler:
@@ -352,7 +353,7 @@ class SdlcPipelineRunner:
             return
         from .artifact_store import get_context
 
-        remote = get_context(self.run_id)
+        remote = get_context(self.run_id, target_app=self.feature)
         if remote:
             self.context.update(remote)
 
@@ -430,20 +431,21 @@ class SdlcPipelineRunner:
         if self.transport == "a2a" and self.run_id:
             self._merge_run_context_from_s3()
 
-        prd_rel = str(self.context.get("prdPath") or prd_rel_path_for_app(self.feature))
         if self.transport == "a2a" and self.run_id:
-            from .artifact_store import get_artifact
+            from .artifact_store import resolve_prd_artifact_rel
 
             try:
-                get_artifact(self.run_id, prd_rel)
-            except Exception as exc:
+                prd_rel = resolve_prd_artifact_rel(self.run_id, self.feature, self.context)
+            except FileNotFoundError as exc:
                 raise PipelineStepError(
-                    f"PRD not found in S3 after product-agent: runs/{self.run_id}/{prd_rel} ({exc})"
+                    f"PRD not found in S3 after product-agent: runs/{self.run_id}/ ({exc})"
                 ) from exc
-        elif self.transport == "local":
-            prd_path = self.root / prd_rel.replace("/", os.sep)
-            if not prd_path.is_file() and self.transport == "local":
-                raise PipelineStepError(f"PRD not found: {prd_rel}")
+        else:
+            prd_rel = str(self.context.get("prdPath") or prd_rel_path_for_app(self.feature))
+            if self.transport == "local":
+                prd_path = self.root / prd_rel.replace("/", os.sep)
+                if not prd_path.is_file():
+                    raise PipelineStepError(f"PRD not found: {prd_rel}")
 
         fields: dict[str, Any] = {
             "prdPath": prd_rel,
@@ -554,15 +556,21 @@ class SdlcPipelineRunner:
         if self.transport == "a2a" and self.run_id:
             sql_keys = run_sql_artifact_keys(self.run_id, self.feature)
             if not sql_keys:
+                app_root = target_app_root_rel(self.feature)
                 raise PipelineStepError(
                     f"No SQL artifacts in S3 for run {self.run_id} "
-                    f"(expected runs/{self.run_id}/target-apps/{self.feature}/db/sql/*.sql). "
+                    f"(expected runs/{self.run_id}/{app_root}/db/sql/*.sql). "
                     "Ensure database-agent received runId in Context and ARTIFACT_STORE=s3 on its runtime."
                 )
             workspace = materialize_run(self.run_id)
-            sql_dir = workspace / "target-apps" / self.feature / "db" / "sql"
+            app_root = target_app_root_rel(self.feature)
+            sql_dir = workspace / app_root.replace("/", os.sep) / "db" / "sql"
             if not sql_dir.is_dir():
-                raise PipelineStepError(f"Materialized workspace missing sql dir: {sql_dir}")
+                legacy = workspace / "target-apps" / self.feature / "db" / "sql"
+                if legacy.is_dir():
+                    sql_dir = legacy
+                else:
+                    raise PipelineStepError(f"Materialized workspace missing sql dir: {sql_dir}")
             return workspace, sql_dir
 
         if not local_sql_dir.is_dir() or not any(local_sql_dir.glob("*.sql")):

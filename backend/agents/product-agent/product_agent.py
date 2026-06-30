@@ -499,6 +499,7 @@ def _staged_input_candidates(context: dict[str, Any], *, slug: str) -> list[str]
         candidates.append(str(explicit).replace("\\", "/").lstrip("/"))
     for rel in (
         _default_staged_input_rel(slug),
+        f"{slug}/inputs/{slug}.txt",
         f"inputs/{slug.replace('-', '_')}.txt",
     ):
         if rel not in candidates:

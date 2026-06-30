@@ -27,14 +27,38 @@ $env:PYTHONIOENCODING = "utf-8"
 $DotenvForwardedKeys = @(
     "ARTIFACT_S3_BUCKET",
     "ARTIFACT_DYNAMODB_TABLE",
+    "CODING_MODEL_ID",
+    "MODEL_ID",
+    "ATLASSIAN_MCP_TOKEN",
+    "ATLASSIAN_MCP_URL",
+    "GITLAB_PERSONAL_ACCESS_TOKEN",
+    "GITLAB_TOKEN",
+    "GITLAB_URL",
+    "GITLAB_API_URL",
+    "GITLAB_PROJECT_PATH",
+    "POSTGRES_MCP_DEPLOYMENT",
+    "POSTGRES_MCP_CONNECTION_METHOD",
+    "POSTGRES_MCP_INSTANCE_IDENTIFIER",
     "POSTGRES_MCP_DB_ENDPOINT",
     "POSTGRES_MCP_DATABASE",
+    "POSTGRES_MCP_REGION",
+    "POSTGRES_MCP_PORT",
+    "POSTGRES_MCP_ALLOW_WRITE",
     "POSTGRES_MCP_DB_USER",
     "POSTGRES_MCP_DB_PASSWORD",
-    "POSTGRES_MCP_PORT",
-    "POSTGRES_MCP_REGION",
-    "POSTGRES_MCP_SSLMODE"
+    "POSTGRES_MCP_SSLMODE",
+    "FIRECRAWL_API_KEY"
 )
+
+function Get-EnvPairsForKeys {
+    param([string[]] $Keys)
+    $pairs = @()
+    foreach ($name in $Keys) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($value) { $pairs += "$name=$value" }
+    }
+    return $pairs
+}
 
 function Import-ArtifactEnvFromDotenv {
     foreach ($path in @(
@@ -61,9 +85,9 @@ function Import-ArtifactEnvFromDotenv {
 Import-ArtifactEnvFromDotenv
 
 $AllAgents = @(
-    @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @("PRODUCT_ARTIFACT_LAYOUT=docs") },
-    @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true", "PRODUCT_ARTIFACT_LAYOUT=docs") },
-    @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
+    @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
+    @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true") },
+    @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @() },
     @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @() },
     @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = @() },
     @{ awsName = "qa_agent"; bundle = "qa-agent"; node = $false; extra = @() },
@@ -90,9 +114,11 @@ $TargetAgents = if ($Agents.Count -gt 0) {
 
 $CommonEnv = @(
     "AWS_REGION=$Region",
-    "MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0",
     "ARTIFACT_STORE=s3"
 )
+
+if ($env:MODEL_ID) { $CommonEnv += "MODEL_ID=$($env:MODEL_ID)" }
+else { $CommonEnv += "MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0" }
 
 if ($env:ARTIFACT_S3_BUCKET) { $CommonEnv += "ARTIFACT_S3_BUCKET=$($env:ARTIFACT_S3_BUCKET)" }
 if ($env:ARTIFACT_DYNAMODB_TABLE) { $CommonEnv += "ARTIFACT_DYNAMODB_TABLE=$($env:ARTIFACT_DYNAMODB_TABLE)" }
@@ -103,20 +129,35 @@ if (-not $env:ARTIFACT_S3_BUCKET) {
 
 if ($env:CODING_MODEL_ID) { $CommonEnv += "CODING_MODEL_ID=$($env:CODING_MODEL_ID)" }
 
+# Per-agent secrets forwarded from .env.local (never commit these values).
+$AgentSecretKeys = @{
+    product_agent          = @("ATLASSIAN_MCP_TOKEN", "ATLASSIAN_MCP_URL")
+    architect_agent        = @()
+    database_agent         = @()
+    developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
+    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
+    orchestrator_agent     = @()
+    orchestrator_agent_vpc = @()
+    web_crawler_agent      = @("FIRECRAWL_API_KEY")
+    security_agent         = @()
+    devops_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL")
+    qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL")
+}
+
 # Orchestrator runs apply_sql_to_rds after database-agent — pass RDS creds on orchestrator runtime only.
-$OrchestratorExtra = @()
-foreach ($name in @(
+$OrchestratorRdsKeys = @(
+    "POSTGRES_MCP_DEPLOYMENT",
+    "POSTGRES_MCP_CONNECTION_METHOD",
+    "POSTGRES_MCP_INSTANCE_IDENTIFIER",
     "POSTGRES_MCP_DB_ENDPOINT",
     "POSTGRES_MCP_DATABASE",
     "POSTGRES_MCP_DB_USER",
     "POSTGRES_MCP_DB_PASSWORD",
     "POSTGRES_MCP_PORT",
     "POSTGRES_MCP_REGION",
+    "POSTGRES_MCP_ALLOW_WRITE",
     "POSTGRES_MCP_SSLMODE"
-)) {
-    $value = [Environment]::GetEnvironmentVariable($name)
-    if ($value) { $OrchestratorExtra += "$name=$value" }
-}
+)
 
 # Default: skip configure on redeploy (configure shrinks source_path to deploy/agentcore only).
 $RunConfigure = ($Configure -or $ConfigureOnly) -and -not $SkipConfigure
@@ -153,8 +194,11 @@ foreach ($agent in $TargetAgents) {
 
     $deployArgs = @("deploy", "--agent", $awsName, "--env", "AGENTCORE_AGENT=$bundle")
     $envBlock = $CommonEnv + $agent.extra
+    if ($AgentSecretKeys.ContainsKey($awsName)) {
+        $envBlock += Get-EnvPairsForKeys -Keys $AgentSecretKeys[$awsName]
+    }
     if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc") {
-        $envBlock += $OrchestratorExtra
+        $envBlock += Get-EnvPairsForKeys -Keys $OrchestratorRdsKeys
     }
     foreach ($item in $envBlock) {
         $deployArgs += @("--env", $item)

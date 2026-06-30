@@ -177,6 +177,24 @@ def repo_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_resolve_prd_artifact_rel_prefers_cloud_layout(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import put_artifact, resolve_prd_artifact_rel
+
+    run_id = "smoke-007"
+    cloud_rel = "agent-ops-assistant/docs/PRD/agent-ops-assistant.md"
+    put_artifact(run_id, cloud_rel, "# PRD\n")
+    resolved = resolve_prd_artifact_rel(
+        run_id,
+        "agent-ops-assistant",
+        {"prdPath": "target-apps/agent-ops-assistant/docs/PRD/agent-ops-assistant.md"},
+    )
+    assert resolved == cloud_rel
+
+
 def test_get_artifact_s3_missing_key_raises_file_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARTIFACT_STORE", "s3")
     monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")

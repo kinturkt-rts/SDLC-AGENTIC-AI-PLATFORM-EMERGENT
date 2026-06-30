@@ -23,8 +23,9 @@ export function runS3Prefix(runId: string): string {
   return `runs/${runId.trim()}/`;
 }
 
-/** Relative path under runs/<runId>/ for a feature brief. */
+/** Relative path under runs/<runId>/ for a feature brief (cloud: <slug>/inputs/<slug>.txt). */
 export function runInputRelPath(feature: string): string {
+  if (isS3Store()) return `${feature}/inputs/${feature}.txt`;
   return `inputs/${feature}.txt`;
 }
 
@@ -100,15 +101,10 @@ export async function listS3RunIds(): Promise<string[]> {
     .filter((id): id is string => Boolean(id));
 }
 
-export async function getS3RunContext(runId: string): Promise<Record<string, unknown> | null> {
-  if (!isS3Store()) return null;
-
+async function _tryGetS3Json(key: string): Promise<Record<string, unknown> | null> {
   try {
     const response = await s3Client().send(
-      new GetObjectCommand({
-        Bucket: s3Bucket(),
-        Key: `${runS3Prefix(runId)}context.json`,
-      }),
+      new GetObjectCommand({ Bucket: s3Bucket(), Key: key }),
     );
     const raw = await response.Body?.transformToString('utf-8');
     if (!raw) return null;
@@ -117,6 +113,30 @@ export async function getS3RunContext(runId: string): Promise<Record<string, unk
   } catch {
     return null;
   }
+}
+
+export async function getS3RunContext(runId: string): Promise<Record<string, unknown> | null> {
+  if (!isS3Store()) return null;
+  const prefix = runS3Prefix(runId);
+
+  // List top-level folders to find <slug>/context.json (new cloud layout)
+  const listing = await s3Client().send(
+    new ListObjectsV2Command({
+      Bucket: s3Bucket(),
+      Prefix: prefix,
+      Delimiter: '/',
+    }),
+  );
+  for (const cp of listing.CommonPrefixes ?? []) {
+    const folder = cp.Prefix?.replace(prefix, '').replace(/\/$/, '');
+    if (folder && !['agents', 'docs', 'inputs', 'target-apps', 'handoffs'].includes(folder)) {
+      const ctx = await _tryGetS3Json(`${prefix}${folder}/context.json`);
+      if (ctx) return ctx;
+    }
+  }
+
+  // Fallback: root context.json (legacy layout)
+  return _tryGetS3Json(`${prefix}context.json`);
 }
 
 function slugifyApp(value: string): string {

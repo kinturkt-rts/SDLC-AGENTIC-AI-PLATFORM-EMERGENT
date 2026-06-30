@@ -18,8 +18,21 @@ class TargetAppRequiredError(ValueError):
     """Raised when no target app can be resolved from CLI, context, or env."""
 
 
+def _is_cloud_store() -> bool:
+    """True when S3 artifact store is configured (cloud pipeline runs)."""
+    store = os.getenv("ARTIFACT_STORE", "").strip().lower()
+    if store == "s3":
+        return True
+    return bool(
+        os.getenv("ARTIFACT_S3_BUCKET", "").strip()
+        or os.getenv("ARTIFACT_STORE_S3_BUCKET", "").strip()
+    )
+
+
 def artifact_layout() -> str:
-    """Artifact path layout: target-app-root (default), target-app, or docs (legacy)."""
+    """Artifact path layout: always target-app-root for cloud; configurable for local."""
+    if _is_cloud_store():
+        return "target-app-root"
     explicit = os.getenv("PRODUCT_ARTIFACT_LAYOUT", "").strip().lower()
     legacy_prd = os.getenv("PRODUCT_PRD_LAYOUT", "").strip().lower()
     if explicit:
@@ -30,7 +43,11 @@ def artifact_layout() -> str:
 
 
 def target_app_root_rel(target_app: str) -> str:
-    return f"target-apps/{slugify(target_app)}"
+    """Root dir for app artifacts: ``<slug>/`` in cloud, ``target-apps/<slug>/`` locally."""
+    slug = slugify(target_app)
+    if _is_cloud_store():
+        return slug
+    return f"target-apps/{slug}"
 
 
 def prd_rel_path_for_app(target_app: str) -> str:
@@ -56,17 +73,27 @@ def design_doc_rel_for_app(target_app: str) -> str:
 
 
 def diagram_path_for_app(target_app: str) -> str:
-    """Default PNG path for architect-agent output (AWS Diagram MCP workspace)."""
+    """Default PNG path for architect-agent output."""
     slug = slugify(target_app)
     layout = artifact_layout()
     if layout in {"docs", "target-app"}:
         return f"{LEGACY_DIAGRAM_REL_DIR}/{slug}.png"
+    if _is_cloud_store():
+        return f"{target_app_root_rel(slug)}/docs/diagrams/{slug}.png"
     return f"{target_app_root_rel(slug)}/docs/diagrams/generated-diagrams/{slug}.png"
 
 
 def diagram_dir_rel_for_app(target_app: str) -> str:
     """Directory for architecture PNG exports."""
     return str(Path(diagram_path_for_app(target_app)).parent)
+
+
+def input_rel_for_app(target_app: str) -> str:
+    """Input brief path for a target app."""
+    slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/inputs/{slug}.txt"
+    return f"inputs/{slug}.txt"
 
 
 # Essential keys accumulated in runs/<runId>/context.json across the SDLC cycle.
@@ -97,14 +124,21 @@ CANONICAL_RUN_CONTEXT_REL = "context.json"
 
 
 def is_pipeline_context_rel(rel_path: str) -> bool:
-    """True for per-app handoff JSON (local repo or legacy run copy)."""
+    """True for per-app handoff JSON (local repo, legacy run copy, or cloud <slug>/context.json)."""
     rel = rel_path.replace("\\", "/").lstrip("/")
-    return rel.endswith(".context.json") and "agents/pipeline/" in rel
+    if rel.endswith(".context.json") and "agents/pipeline/" in rel:
+        return True
+    parts = rel.split("/")
+    if len(parts) == 2 and parts[1] == "context.json":
+        return True
+    return False
 
 
 def pipeline_context_rel_for_app(target_app: str) -> str:
     """Handoff JSON path shared across the SDLC chain."""
     slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/context.json"
     if artifact_layout() == "target-app-root":
         return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.context.json"
     return f"agents/pipeline/{slug}.context.json"
@@ -112,6 +146,8 @@ def pipeline_context_rel_for_app(target_app: str) -> str:
 
 def gitlab_handoff_rel_for_app(target_app: str) -> str:
     slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/handoffs/gitlab-handoff.json"
     if artifact_layout() == "target-app-root":
         return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.gitlab-handoff.json"
     return f"agents/pipeline/{slug}.gitlab-handoff.json"
@@ -119,6 +155,8 @@ def gitlab_handoff_rel_for_app(target_app: str) -> str:
 
 def qa_handoff_rel_for_app(target_app: str) -> str:
     slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/handoffs/qa-handoff.json"
     if artifact_layout() == "target-app-root":
         return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.qa-handoff.json"
     return f"agents/pipeline/{slug}.qa-handoff.json"
@@ -285,6 +323,8 @@ def discover_diagram_paths(target_app: str) -> list[str]:
     candidates = [
         diagram_path_for_app(slug),
         f"{LEGACY_DIAGRAM_REL_DIR}/{slug}.png",
+        f"target-apps/{slug}/docs/diagrams/generated-diagrams/{slug}.png",
+        f"target-apps/{slug}/docs/diagrams/{slug}.png",
     ]
     seen: set[str] = set()
     found: list[str] = []

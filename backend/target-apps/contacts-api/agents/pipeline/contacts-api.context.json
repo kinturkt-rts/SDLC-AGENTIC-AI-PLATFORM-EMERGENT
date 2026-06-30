@@ -1,0 +1,24 @@
+{
+  "targetApp": "contacts-api",
+  "runId": "06b6c3a8-47a9-4dce-9b58-c0c0fee0cc29",
+  "prdPath": "docs/PRD/contacts-api.md",
+  "inputFile": "inputs/contacts-api.txt",
+  "inputPath": "inputs/contacts-api.txt",
+  "designDocPath": "docs/design/contacts-api.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/contacts-api.png"
+  ],
+  "deliveryProfile": {
+    "uiRequired": false,
+    "requiresStreamlit": false,
+    "requiresReact": false,
+    "uiPattern": null,
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "productAgentOutput": "See prdPath for contacts-api MVP requirements.",
+  "architectSummary": "Internal REST API for a company contact directory; FastAPI + Postgres (schema `contacts_api`); CRUD via JSON endpoints secured by a single shared `X-API-Key`. No UI \u2014 Swagger `/docs` is the sole interactive surface.\nDiagram: `/tmp/generated-diagrams/contacts-api.png`\nTBD: max `limit` cap (assumption: 100); `contact_count` includes active+inactive contacts.",
+  "diagramOutputDir": "/tmp/generated-diagrams",
+  "diagramBaseName": "contacts-api",
+  "diagramOutputFile": "/tmp/generated-diagrams/contacts-api"
+}

@@ -1,4 +1,4 @@
-"""Write target-apps/<app>/db/HANDOFF.md after database-agent runs."""
+"""Write <app-root>/db/HANDOFF.md after database-agent runs."""
 
 from __future__ import annotations
 
@@ -180,10 +180,11 @@ def write_db_handoff(
 ) -> str:
     """Write HANDOFF.md under db/; return repo-relative path."""
     from _shared.artifact_store import resolve_run_id, write_repo_artifact
+    from _shared.pipeline_context import target_app_root_rel
 
     root = repo_root or _REPO_ROOT
     slug = target_app.strip()
-    db_rel = ctx.get("dbOutputDir") or f"target-apps/{slug}/db"
+    db_rel = ctx.get("dbOutputDir") or f"{target_app_root_rel(slug)}/db"
     db_dir = (root / db_rel).resolve()
     db_dir.mkdir(parents=True, exist_ok=True)
     content = build_handoff_markdown(

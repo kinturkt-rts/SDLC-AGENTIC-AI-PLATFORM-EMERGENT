@@ -43,11 +43,13 @@ from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     PIPELINE_DIR,
     TargetAppRequiredError,
+    _is_cloud_store,
     merge_run_handoff_context,
     resolve_cli_context,
     resolve_design_doc_path,
     resolve_target_app,
     slugify,
+    target_app_root_rel,
 )
 from _shared.telemetry import RunTelemetry, usage_from_event
 
@@ -1183,7 +1185,9 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     if not str(candidate).startswith(str(_REPO_ROOT.resolve())):
         raise ValueError(f"path must stay inside repo: {relative_path}")
     if write:
-        if not str(candidate).startswith(str(_TARGET_APPS.resolve())):
+        under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
+        under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
+        if not (under_target_apps or under_repo_root):
             raise ValueError("writes only allowed under target-apps/")
         return candidate
     allowed = (
@@ -1266,8 +1270,8 @@ def _deployment_handoff(app: str, written_files: list[str]) -> dict[str, Any]:
 
 @tool
 def dev_list_tree(service: str, subpath: str = "") -> str:
-    """List files under target-apps/<service>/ (optionally under subpath)."""
-    prefix = f"target-apps/{slugify(service)}/"
+    """List files under the service app root (optionally under subpath)."""
+    prefix = f"{target_app_root_rel(slugify(service))}/"
     if subpath.strip():
         prefix = f"{prefix}{subpath.strip().strip('/')}/"
     ctx = _run_context

@@ -1,0 +1,45 @@
+{
+  "runId": "21026091-6b5f-453a-be67-ea72636da287",
+  "feature": "agent-ops-assistant",
+  "targetApp": "agent-ops-assistant",
+  "status": "running",
+  "triggeredBy": "frontend",
+  "startedAt": "2026-06-30T15:54:51.205Z",
+  "finishedAt": null,
+  "currentStep": "product-agent",
+  "inputPath": "inputs/agent-ops-assistant.txt",
+  "inputFile": "inputs/agent-ops-assistant.txt",
+  "error": null,
+  "steps": [
+    {
+      "name": "product-agent",
+      "label": "1/6 Product (PRD)",
+      "status": "running"
+    },
+    {
+      "name": "architect-agent",
+      "label": "2/6 Architect (design + diagram)",
+      "status": "queued"
+    },
+    {
+      "name": "database-agent",
+      "label": "3/6 Database (SQL migrations)",
+      "status": "queued"
+    },
+    {
+      "name": "developer-agent",
+      "label": "4/6 Developer (FastAPI)",
+      "status": "queued"
+    },
+    {
+      "name": "gitlab-agent",
+      "label": "5/6 GitLab publish",
+      "status": "queued"
+    },
+    {
+      "name": "qa-agent",
+      "label": "6/6 QA (optional)",
+      "status": "skipped"
+    }
+  ]
+}

@@ -127,8 +127,12 @@ def verify_rds_seed_password(
     repo_root: Path | None = None,
 ) -> list[str]:
     """Check one seed user on RDS: hash present, starts with $2, matches documented password."""
+    from _shared.pipeline_context import target_app_root_rel
+
     root = repo_root or _REPO_ROOT
-    app_dir = root / "target-apps" / target_app
+    app_dir = root / target_app_root_rel(target_app)
+    if not (app_dir / "db").is_dir():
+        app_dir = root / "target-apps" / target_app
 
     from _shared.rds_env import connection_url, load_target_app_env, schema_for_app
     from _shared.seed_credentials import collect_credentials
@@ -200,8 +204,12 @@ def verify_target_app(
     *,
     check_rds: bool = False,
 ) -> list[str]:
+    from _shared.pipeline_context import target_app_root_rel
+
     root = repo_root or _REPO_ROOT
-    sql_dir = root / "target-apps" / target_app / "db" / "sql"
+    sql_dir = root / target_app_root_rel(target_app) / "db" / "sql"
+    if not sql_dir.is_dir():
+        sql_dir = root / "target-apps" / target_app / "db" / "sql"
     errors: list[str] = []
 
     if sql_dir.is_dir():

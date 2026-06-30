@@ -12,12 +12,14 @@ from typing import Any
 
 from _shared.pipeline_context import (
     CANONICAL_RUN_CONTEXT_REL,
+    _is_cloud_store,
     gitlab_handoff_rel_for_app,
     infer_target_app_from_context,
     is_pipeline_context_rel,
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
     qa_handoff_rel_for_app,
+    target_app_root_rel,
     slugify,
 )
 
@@ -165,18 +167,33 @@ def _merge_context_updates(
     return merged
 
 
-def put_context(run_id: str, context: dict[str, Any]) -> dict[str, Any]:
-    """Persist run-scoped pipeline handoff at runs/<runId>/context.json.
+def _context_rel_for_run(context: dict[str, Any] | None = None) -> str:
+    """Resolve the canonical context.json path for a run.
 
-    Merges with any existing context.json so specialist and orchestrator writes
+    Cloud: ``<slug>/context.json``  (scoped under the target-app folder).
+    Local / fallback: ``context.json`` at the run root.
+    """
+    if _is_cloud_store() and context:
+        app = infer_target_app_from_context(context)
+        if app:
+            return f"{slugify(app)}/context.json"
+    return CANONICAL_RUN_CONTEXT_REL
+
+
+def put_context(run_id: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Persist run-scoped pipeline handoff at runs/<runId>/<slug>/context.json (cloud)
+    or runs/<runId>/context.json (local).
+
+    Merges with any existing context so specialist and orchestrator writes
     accumulate rather than overwrite. Returns the merged payload written.
     """
-    existing = _load_context_artifact(run_id, CANONICAL_RUN_CONTEXT_REL) or {}
+    rel = _context_rel_for_run(context)
+    existing = _load_context_artifact(run_id, rel) or {}
     payload = _merge_context_updates(existing, context)
     payload["runId"] = run_id
     put_artifact(
         run_id,
-        CANONICAL_RUN_CONTEXT_REL,
+        rel,
         json.dumps(payload, indent=2) + "\n",
         content_type="application/json",
     )
@@ -201,7 +218,8 @@ def enrich_db_paths_from_run(ctx: dict[str, Any]) -> dict[str, Any]:
         return ctx
 
     slug = slugify(app)
-    db_dir = f"target-apps/{slug}/db"
+    root = target_app_root_rel(slug)
+    db_dir = f"{root}/db"
     sql_dir = f"{db_dir}/sql"
     ctx.setdefault("dbOutputDir", db_dir)
     ctx.setdefault("preferredSqlPath", sql_dir)
@@ -237,8 +255,54 @@ def _load_context_artifact(run_id: str, rel_path: str) -> dict[str, Any] | None:
     return None
 
 
+def resolve_prd_artifact_rel(
+    run_id: str,
+    feature: str,
+    context: dict[str, Any] | None = None,
+) -> str:
+    """Return repo-relative PRD path that exists under runs/<runId>/ (cloud + legacy)."""
+    slug = slugify(feature)
+    candidates: list[str] = []
+    if context:
+        for key in ("prdPath", "prd_path"):
+            value = context.get(key)
+            if value and str(value).strip():
+                candidates.append(str(value).replace("\\", "/").lstrip("/"))
+    candidates.extend(
+        [
+            prd_rel_path_for_app(slug),
+            f"{slug}/docs/PRD/{slug}.md",
+            f"target-apps/{slug}/docs/PRD/{slug}.md",
+            f"docs/PRD/{slug}.md",
+        ]
+    )
+    seen: set[str] = set()
+    for rel in candidates:
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        if run_artifact_exists(run_id, rel):
+            return rel
+    tried = ", ".join(sorted(seen))
+    raise FileNotFoundError(
+        f"No PRD artifact under runs/{run_id}/. Tried: {tried}"
+    )
+
+
 def get_context(run_id: str, *, target_app: str | None = None) -> dict[str, Any] | None:
-    """Load pipeline context for a run (canonical context.json, legacy per-app fallback)."""
+    """Load pipeline context for a run.
+
+    Search order:
+    1. ``<slug>/context.json``  (new cloud layout)
+    2. ``context.json``  (legacy root canonical)
+    3. per-app legacy path  (``agents/pipeline/<slug>.context.json``)
+    """
+    if target_app and _is_cloud_store():
+        slug = slugify(target_app)
+        loaded = _load_context_artifact(run_id, f"{slug}/context.json")
+        if loaded:
+            return loaded
+
     loaded = _load_context_artifact(run_id, CANONICAL_RUN_CONTEXT_REL)
     if loaded:
         return loaded
@@ -255,6 +319,8 @@ def register_pipeline_run(run_id: str, target_app: str, *, status: str = "runnin
     if not is_s3_store() or not dynamodb_enabled():
         return
     now = datetime.now(UTC).isoformat()
+    slug = slugify(target_app)
+    ctx_rel = f"{slug}/context.json" if _is_cloud_store() else "context.json"
     _dynamodb_table().put_item(
         Item={
             "runId": run_id,
@@ -263,7 +329,7 @@ def register_pipeline_run(run_id: str, target_app: str, *, status: str = "runnin
             "status": status,
             "createdAt": now,
             "updatedAt": now,
-            "contextS3Key": f"{run_s3_prefix(run_id)}context.json",
+            "contextS3Key": f"{run_s3_prefix(run_id)}{ctx_rel}",
         }
     )
 
@@ -327,6 +393,7 @@ def sync_repo_paths_to_run(run_id: str, rel_paths: list[str]) -> list[str]:
 def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, Any]) -> list[str]:
     """Repo paths each specialist agent produces (diagram: agents -> S3)."""
     slug = feature
+    root = target_app_root_rel(slug)
     paths: list[str] = []
     if agent_name == "product-agent":
         prd = context.get("prdPath") or prd_rel_path_for_app(slug)
@@ -342,9 +409,9 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
         for diagram in context.get("diagramPaths") or [diagram_path_for_app(slug)]:
             paths.append(str(diagram))
     elif agent_name == "database-agent":
-        paths.append(f"target-apps/{slug}/db")
+        paths.append(f"{root}/db")
     elif agent_name == "developer-agent":
-        paths.append(f"target-apps/{slug}")
+        paths.append(root)
     elif agent_name == "gitlab-agent":
         paths.append(gitlab_handoff_rel_for_app(slug))
     elif agent_name == "qa-agent":
@@ -353,13 +420,19 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
 
 
 def run_sql_artifact_keys(run_id: str, feature: str) -> list[str]:
-    """List `.sql` migration paths for a feature under runs/<runId>/target-apps/<feature>/db/sql/."""
-    prefix = f"target-apps/{feature.strip()}/db/sql/"
-    return [
-        key
-        for key in list_run_artifact_keys(run_id)
-        if key.startswith(prefix) and key.lower().endswith(".sql")
-    ]
+    """List ``.sql`` migration paths for a feature under a run.
+
+    Checks both new cloud layout (``<slug>/db/sql/``) and legacy
+    layout (``target-apps/<slug>/db/sql/``) for backward compatibility.
+    """
+    slug = feature.strip()
+    primary = f"{target_app_root_rel(slug)}/db/sql/"
+    legacy = f"target-apps/{slug}/db/sql/"
+    all_keys = list_run_artifact_keys(run_id)
+    found = [k for k in all_keys if k.startswith(primary) and k.lower().endswith(".sql")]
+    if not found and primary != legacy:
+        found = [k for k in all_keys if k.startswith(legacy) and k.lower().endswith(".sql")]
+    return found
 
 
 def list_run_artifact_keys(run_id: str) -> list[str]:

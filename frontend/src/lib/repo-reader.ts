@@ -614,20 +614,25 @@ export async function listArtifacts(): Promise<Artifact[]> {
       const prefix = runS3Prefix(runId);
       
       for (const s3File of s3Files) {
-        // Strip the runs/<runId>/ prefix to get the relative path
         const relPath = s3File.key.replace(prefix, '');
-        if (!relPath || relPath === 'run.json' || relPath === 'context.json') continue;
+        if (!relPath || relPath === 'run.json') continue;
+        // Skip context files, input files, and legacy pipeline metadata
+        if (relPath === 'context.json') continue;
+        if (relPath.endsWith('/context.json')) continue;
         if (relPath.startsWith('agents/pipeline/') && relPath.endsWith('.context.json')) continue;
+        if (relPath.includes('/inputs/')) continue;
         if (relPath.startsWith('inputs/')) continue;
+        if (relPath.includes('/handoffs/') && relPath.endsWith('.json')) continue;
         
-        // Categorize based on file path
+        // Categorize based on file path — supports both new (<slug>/docs/...) and legacy (docs/...) layouts
         let kind: ArtifactKind | undefined;
-        if (relPath.startsWith('docs/PRD/')) kind = 'prd';
-        else if (relPath.startsWith('docs/design/')) kind = 'architecture';
-        else if (relPath.startsWith('docs/diagrams/')) kind = 'diagram';
-        else if (relPath.startsWith(`target-apps/${slug}/db/sql/`) && relPath.endsWith('.sql')) kind = 'migration';
-        else if (relPath.toLowerCase().endsWith('handoff.md')) kind = 'doc';
-        else if (relPath.startsWith('target-apps/')) kind = 'code';
+        const lower = relPath.toLowerCase();
+        if (lower.includes('/docs/prd/') || lower.startsWith('docs/prd/')) kind = 'prd';
+        else if (lower.includes('/docs/design/') || lower.startsWith('docs/design/')) kind = 'architecture';
+        else if (lower.includes('/docs/diagrams/') || lower.startsWith('docs/diagrams/')) kind = 'diagram';
+        else if (lower.includes('/db/sql/') && lower.endsWith('.sql')) kind = 'migration';
+        else if (lower.endsWith('handoff.md')) kind = 'doc';
+        else if (lower.startsWith('target-apps/')) kind = 'code';
         else kind = artifactKindForPath(relPath);
 
         const base = path.basename(relPath);

@@ -1,0 +1,24 @@
+{
+  "targetApp": "checkout",
+  "runId": "849be1f1-ff34-47ec-b3f0-df13cf5d4f6d",
+  "prdPath": "docs/PRD/checkout.md",
+  "inputFile": "inputs/checkout.txt",
+  "inputPath": "inputs/checkout.txt",
+  "designDocPath": "docs/design/checkout.md",
+  "diagramPaths": [
+    "docs/diagrams/generated-diagrams/checkout.png"
+  ],
+  "deliveryProfile": {
+    "uiRequired": false,
+    "requiresStreamlit": false,
+    "requiresReact": false,
+    "uiPattern": null,
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "productAgentOutput": "See prdPath for checkout MVP requirements.",
+  "diagramOutputDir": "/tmp/generated-diagrams",
+  "diagramBaseName": "checkout",
+  "diagramOutputFile": "/tmp/generated-diagrams/checkout",
+  "architectSummary": "FastAPI checkout service under `target-apps/checkout/` providing cart-to-order flow, async payment processing via SQS, and webhook-driven status updates; Postgres (RDS) is the system of record; Redis caches hot cart reads. Diagram: `docs/diagrams/generated-diagrams/checkout.png`. TBD: payment provider (Stripe placeholder), peak TPS, guest-checkout policy, waiting_on_payment timeout (assumed 30 min)."
+}

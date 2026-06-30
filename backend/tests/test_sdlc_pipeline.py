@@ -83,7 +83,10 @@ def test_planned_steps_skip_db_and_gitlab() -> None:
     assert steps == ["developer-agent"]
 
 
-def test_artifact_paths_for_product_agent() -> None:
+def test_artifact_paths_for_product_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.delenv("ARTIFACT_S3_BUCKET", raising=False)
+    monkeypatch.delenv("ARTIFACT_STORE_S3_BUCKET", raising=False)
     paths = artifact_paths_for_agent(
         "product-agent",
         "demo-api",

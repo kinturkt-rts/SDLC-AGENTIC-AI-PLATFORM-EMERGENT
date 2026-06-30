@@ -462,7 +462,13 @@ def _materialize_seed_passwords(target_app: str) -> int:
         print(f"[apply-sql] WARN: could not import materialize ({exc})", file=sys.stderr)
         return 0
 
-    app_dir = _REPO_ROOT / "target-apps" / target_app
+    try:
+        from _shared.pipeline_context import target_app_root_rel
+        app_dir = _REPO_ROOT / target_app_root_rel(target_app)
+    except ImportError:
+        app_dir = _REPO_ROOT / "target-apps" / target_app
+    if not (app_dir / "db").is_dir():
+        app_dir = _REPO_ROOT / "target-apps" / target_app
     if not seed_sql_has_placeholders(app_dir):
         return 0
 
@@ -518,7 +524,13 @@ def main() -> int:
     if args.sql_dir:
         sql_dir = args.sql_dir if args.sql_dir.is_absolute() else _REPO_ROOT / args.sql_dir
     elif args.target_app:
-        sql_dir = _REPO_ROOT / "target-apps" / args.target_app / "db" / "sql"
+        try:
+            from _shared.pipeline_context import target_app_root_rel
+            sql_dir = _REPO_ROOT / target_app_root_rel(args.target_app) / "db" / "sql"
+        except ImportError:
+            sql_dir = _REPO_ROOT / "target-apps" / args.target_app / "db" / "sql"
+        if not sql_dir.is_dir():
+            sql_dir = _REPO_ROOT / "target-apps" / args.target_app / "db" / "sql"
     else:
         parser.error("Provide --target-app or --sql-dir")
         return 2

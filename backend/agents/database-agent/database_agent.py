@@ -32,11 +32,13 @@ from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_tool_params
 from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
+    _is_cloud_store,
     enrich_handoff_context,
     merge_run_handoff_context,
     resolve_cli_context,
     resolve_target_app,
     slugify,
+    target_app_root_rel,
 )
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
@@ -107,7 +109,7 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 5. Do not invent tables, columns, or migrations absent from design §3/§6.
 
 ## Artifacts
-Under `dbOutputDir` (default `target-apps/<service>/db/`):
+Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `target-apps/<service>/db/` locally):
 - `HANDOFF.md` — host-written after each CLI run (developer-agent reads `databaseHandoffPath`)
 - `sql/001_*.sql` … numbered, idempotent DDL (`IF NOT EXISTS` where possible)
 - **Postgres extensions before indexes:** `CREATE EXTENSION IF NOT EXISTS pg_trgm` (and any other extension) must run in an early migration **before** any index using `gin_trgm_ops` or extension-specific operator classes — never only in seed files.
@@ -184,7 +186,7 @@ When you need more than 15 distinct seed IDs (a-f + 0-9 exhausted), use zero-pad
 Alternatively, use `gen_random_uuid()` as DEFAULT and omit the `id` column from INSERT.
 
 ## Guardrails
-- Never write outside `target-apps/`.
+- Never write outside `dbOutputDir`.
 - Do not modify `docs/design/*.md`, PRD, or secrets.
 - No password literals in SQL files.
 
@@ -254,7 +256,9 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     if not str(candidate).startswith(str(_REPO_ROOT.resolve())):
         raise ValueError(f"path must stay inside repo: {relative_path}")
     if write:
-        if not str(candidate).startswith(str(_TARGET_APPS.resolve())):
+        under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
+        under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
+        if not (under_target_apps or under_repo_root):
             raise ValueError("writes only allowed under target-apps/")
         return candidate
     allowed = any(str(candidate).startswith(str(prefix.resolve())) for prefix in _READ_PREFIXES)
@@ -265,8 +269,8 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
 
 @tool
 def db_list_tree(service: str, subpath: str = "") -> str:
-    """List files under target-apps/<service>/ (optionally under subpath)."""
-    prefix = f"target-apps/{slugify(service)}/"
+    """List files under the service app root (optionally under subpath)."""
+    prefix = f"{target_app_root_rel(slugify(service))}/"
     if subpath.strip():
         prefix = f"{prefix}{subpath.strip().strip('/')}/"
     ctx = _run_context
@@ -621,13 +625,14 @@ def _execute_database_pipeline_message(
 def _database_pipeline_error_message(exc: BaseException, ctx: dict[str, Any]) -> str:
     run_id = resolve_run_id(ctx) or "smoke-001"
     app = (ctx or {}).get("targetApp") or "inventory-app"
+    root = target_app_root_rel(app)
     example = {
         "targetApp": app,
         "runId": run_id,
-        "designDocPath": f"docs/design/{app}.md",
-        "prdPath": f"docs/PRD/{app}.md",
-        "dbOutputDir": f"target-apps/{app}/db",
-        "preferredSqlPath": f"target-apps/{app}/db/sql",
+        "designDocPath": f"{root}/docs/design/{app}.md",
+        "prdPath": f"{root}/docs/PRD/{app}.md",
+        "dbOutputDir": f"{root}/db",
+        "preferredSqlPath": f"{root}/db/sql",
     }
     hint = ""
     msg = str(exc)

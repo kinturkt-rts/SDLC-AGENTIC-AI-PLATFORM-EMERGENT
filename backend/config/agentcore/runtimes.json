@@ -19,16 +19,16 @@
   "agents": {
     "orchestrator-agent": {
       "deployed": true,
-      "awsName": "orchestrator_agent_vpc",
-      "runtimeId": "orchestrator_agent_vpc-OjsXSo2v9h",
-      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent_vpc-OjsXSo2v9h",
-      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Forchestrator_agent_vpc-OjsXSo2v9h/invocations",
-      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_A2A_PEER_URLS or future ARN transport. VPC mode (vpc-036155f359e2e940c) so apply_sql_to_rds.py can reach RDS sg-077b416683295dd42; AgentCore network mode is immutable, so this replaced orchestrator_agent (PUBLIC) rather than reconfiguring it.",
-      "previousPublicRuntime": {
-        "awsName": "orchestrator_agent",
-        "runtimeId": "orchestrator_agent-O0WIlYDDeX",
-        "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent-O0WIlYDDeX",
-        "notes": "Kept as rollback fallback until orchestrator_agent_vpc is verified end-to-end (RDS apply smoke test), then delete via `agentcore destroy --agent orchestrator_agent` or AWS console."
+      "awsName": "orchestrator_agent",
+      "runtimeId": "orchestrator_agent-O0WIlYDDeX",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent-O0WIlYDDeX",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Forchestrator_agent-O0WIlYDDeX/invocations",
+      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_A2A_PEER_URLS or future ARN transport. PUBLIC mode — can run product/architect/database/developer/gitlab steps but apply_sql_to_rds.py cannot reach RDS (sg-077b416683295dd42 only allows specific static IPs, not AgentCore's PUBLIC-mode egress).",
+      "vpcCandidateRuntime": {
+        "awsName": "orchestrator_agent_vpc",
+        "runtimeId": "orchestrator_agent_vpc-OjsXSo2v9h",
+        "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent_vpc-OjsXSo2v9h",
+        "notes": "PARKED, NOT WORKING: deployed in vpc-036155f359e2e940c so it could reach RDS, but every InvokeAgentRuntime call fails with HTTP 424 (empty error, no logs, no ENIs created). Root cause confirmed via AWS docs: VPC-mode AgentCore ENIs get a private IP only — no internet access even in public/IGW-routed subnets — so it cannot reach ECR/S3/DynamoDB/CloudWatch/Bedrock control plane without a NAT Gateway or ~5-6 VPC interface/gateway endpoints (~$32+/mo). Needs that infra (or a cheaper alternative) before it's usable. Do not point orchestrator-agent at this runtime until fixed and smoke-tested. See https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-vpc.html"
       }
     },
     "product-agent": {
