@@ -133,3 +133,64 @@ def response_text(result: dict[str, Any]) -> str:
         if texts:
             return "\n".join(texts)
     return json.dumps(payload, indent=2)
+
+
+def _task_status_state(task: dict[str, Any]) -> str:
+    status = task.get("status")
+    if isinstance(status, dict):
+        return str(status.get("state") or "").lower()
+    return ""
+
+
+def _message_text_from_parts(message: Any) -> str:
+    if not isinstance(message, dict):
+        return ""
+    parts: list[str] = []
+    for part in message.get("parts") or []:
+        if isinstance(part, dict) and part.get("text"):
+            parts.append(str(part["text"]))
+    return "\n".join(parts)
+
+
+def a2a_invoke_error(result: dict[str, Any]) -> str | None:
+    """Return an error message when an A2A/AgentCore response indicates task failure."""
+    if result.get("status") == "error":
+        return str(result.get("error") or "A2A invoke error")
+
+    payload = result.get("response") or {}
+    if isinstance(payload, dict) and payload.get("error"):
+        err = payload["error"]
+        if isinstance(err, dict):
+            return f"A2A error {err.get('code')}: {err.get('message')}"
+        return str(err)
+
+    candidates: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        inner = payload.get("result")
+        if isinstance(inner, dict):
+            candidates.append(inner)
+        candidates.append(payload)
+        task = payload.get("task")
+        if isinstance(task, dict):
+            candidates.append(task)
+
+    for task in candidates:
+        if not isinstance(task, dict):
+            continue
+        state = _task_status_state(task)
+        if state in {"failed", "canceled", "cancelled"}:
+            status = task.get("status")
+            if isinstance(status, dict):
+                text = _message_text_from_parts(status.get("message"))
+                if text:
+                    return text
+            return f"A2A task {state}"
+
+    text = str(result.get("text") or "")
+    if "Agent execution failed" in text:
+        return "Agent execution failed"
+    if "Architecture pipeline could not start" in text:
+        return text[:500]
+    if "PRD not found for run" in text:
+        return text[:500]
+    return None

@@ -1,8 +1,16 @@
 # Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
 # Prereqs: pip install bedrock-agentcore-starter-toolkit, AWS credentials, Bedrock model access.
+#
+# AgentCore registry names use underscores (database_agent). AGENTCORE_AGENT uses hyphenated
+# bundle keys (database-agent) matching agents/<name>/ and BUNDLE_FACTORIES in a2a_server.py.
+#
+# IMPORTANT: agentcore configure --entrypoint deploy/agentcore/a2a_server.py narrows source_path
+# to deploy/agentcore (~11 KB zip) and CodeBuild fails (COPY agents/ not found). Redeploys should
+# use -SkipConfigure (default for existing agents in .bedrock_agentcore.yaml). First-time setup: -Configure.
 param(
     [string] $Region = "us-east-2",
     [string[]] $Agents = @(),
+    [switch] $Configure,
     [switch] $ConfigureOnly,
     [switch] $SkipConfigure
 )
@@ -12,20 +20,22 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
 $AllAgents = @(
-    @{ name = "architect-agent"; node = $false; extra = @("PRODUCT_ARTIFACT_LAYOUT=docs") },
-    @{ name = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true", "PRODUCT_ARTIFACT_LAYOUT=docs") },
-    @{ name = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
-    @{ name = "developer-agent"; node = $false; extra = @() },
-    @{ name = "gitlab-agent"; node = $false; extra = @() },
-    @{ name = "qa-agent"; node = $false; extra = @() },
-    @{ name = "orchestrator-agent"; node = $false; extra = @() },
-    @{ name = "web-crawler-agent"; node = $true; extra = @() },
-    @{ name = "security-agent"; node = $false; extra = @() },
-    @{ name = "devops-agent"; node = $false; extra = @() }
+    @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @("PRODUCT_ARTIFACT_LAYOUT=docs") },
+    @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true", "PRODUCT_ARTIFACT_LAYOUT=docs") },
+    @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
+    @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @() },
+    @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = @() },
+    @{ awsName = "qa_agent"; bundle = "qa-agent"; node = $false; extra = @() },
+    @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() },
+    @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @() },
+    @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
+    @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $false; extra = @() }
 )
 
 $TargetAgents = if ($Agents.Count -gt 0) {
-    $AllAgents | Where-Object { $Agents -contains $_.name }
+    $AllAgents | Where-Object {
+        ($Agents -contains $_.awsName) -or ($Agents -contains $_.bundle)
+    }
 } else {
     $AllAgents
 }
@@ -50,30 +60,36 @@ foreach ($name in @(
     "POSTGRES_MCP_REGION",
     "POSTGRES_MCP_SSLMODE"
 )) {
-    if ($env:$name) { $OrchestratorExtra += "$name=$($env:$name)" }
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ($value) { $OrchestratorExtra += "$name=$value" }
 }
 
-foreach ($agent in $TargetAgents) {
-    $name = $agent.name
-    Write-Host "`n=== $name ===" -ForegroundColor Cyan
+# Default: skip configure on redeploy (configure shrinks source_path to deploy/agentcore only).
+$RunConfigure = ($Configure -or $ConfigureOnly) -and -not $SkipConfigure
 
-    if (-not $SkipConfigure) {
+foreach ($agent in $TargetAgents) {
+    $awsName = $agent.awsName
+    $bundle = $agent.bundle
+    Write-Host "`n=== $awsName (bundle=$bundle) ===" -ForegroundColor Cyan
+
+    if ($RunConfigure) {
         agentcore configure `
-            --entrypoint deploy/agentcore/a2a_server.py `
+            --entrypoint deploy/agentcore `
             --requirements-file deploy/agentcore/requirements.txt `
             --protocol A2A `
             --deployment-type container `
-            --name $name `
+            --name $awsName `
             --region $Region `
             --disable-memory `
             --non-interactive
+        Write-Warning "After configure, verify source_path is 'backend' (not deploy/agentcore) in .bedrock_agentcore.yaml"
     }
 
     if ($ConfigureOnly) { continue }
 
-    $deployArgs = @("deploy", "--agent", $name, "--env", "AGENTCORE_AGENT=$name")
+    $deployArgs = @("deploy", "--agent", $awsName, "--env", "AGENTCORE_AGENT=$bundle")
     $envBlock = $CommonEnv + $agent.extra
-    if ($name -eq "orchestrator-agent") {
+    if ($awsName -eq "orchestrator_agent") {
         $envBlock += $OrchestratorExtra
     }
     foreach ($item in $envBlock) {

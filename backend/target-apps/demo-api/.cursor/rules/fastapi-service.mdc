@@ -1,5 +1,5 @@
 ---
-description: FastAPI target service conventions for AutonomousSDLC
+description: FastAPI target service conventions for SDLC Agentic AI Platform
 globs: target-apps/_template/**/*
 alwaysApply: false
 ---

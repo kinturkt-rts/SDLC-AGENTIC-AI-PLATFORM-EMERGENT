@@ -9,6 +9,7 @@ import re
 import sys
 from contextlib import ExitStack
 from pathlib import Path
+from collections.abc import AsyncIterator
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +18,9 @@ _DEFAULT_DB_SUBDIR = "db"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.artifact_store import (
+    is_s3_store,
     list_run_artifact_keys,
+    put_context,
     read_repo_artifact,
     resolve_run_id,
     write_repo_artifact,
@@ -28,7 +31,7 @@ from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_client, postgre
 from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
-    enrich_handoff_context,
+    merge_run_handoff_context,
     resolve_cli_context,
     resolve_target_app,
     slugify,
@@ -499,8 +502,9 @@ def run_task(
     _run_context = None
 
     app = resolve_target_app(target_app, context, env_var="DATABASE_TARGET_APP")
-    ctx = context if context is not None else _build_context(target_app=app, db_subdir=db_subdir)
-    ctx.setdefault("targetApp", app)
+    base_ctx = dict(context) if context is not None else {}
+    base_ctx.setdefault("targetApp", app)
+    ctx = merge_run_handoff_context(base_ctx, include_db_paths=False)
     service_dir = _ensure_service_exists(app)
     ctx.setdefault("targetAppDir", service_dir.relative_to(_REPO_ROOT).as_posix())
     db_dir = service_dir / db_subdir
@@ -508,7 +512,6 @@ def run_task(
     ctx.setdefault("dbOutputDir", db_dir.relative_to(_REPO_ROOT).as_posix())
     ctx.setdefault("preferredSqlPath", (db_dir / "sql").relative_to(_REPO_ROOT).as_posix())
     ctx.setdefault("preferredNoSqlPath", (db_dir / "nosql").relative_to(_REPO_ROOT).as_posix())
-    enrich_handoff_context(ctx)
     _enrich_postgres_mcp_context(ctx, use_postgres=use_postgres)
     _run_context = ctx
 
@@ -540,7 +543,140 @@ def run_task(
         )
     telemetry.extra = {"filesWritten": len(_written_files)}
     telemetry.finalize()
+
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        ctx.setdefault("runId", run_id)
+        put_context(run_id, ctx)
+
     return summary, list(_written_files)
+
+
+def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:
+    """Split orchestrator/A2A messages into task text and context JSON."""
+    marker = "\n\nContext:\n"
+    if marker in message:
+        task, rest = message.rsplit(marker, 1)
+        try:
+            parsed = json.loads(rest)
+            if isinstance(parsed, dict):
+                return task.strip(), parsed
+        except json.JSONDecodeError:
+            pass
+    return message.strip(), {}
+
+
+def _prompt_to_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        parts: list[str] = []
+        for item in message:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return str(message)
+
+
+def _execute_database_pipeline_message(
+    message: Any,
+    *,
+    use_postgres: bool = False,
+    use_mongodb: bool = False,
+) -> str:
+    """AgentCore A2A: parse Context, run_task (sets _run_context for S3 writes)."""
+    text = _prompt_to_text(message)
+    task, ctx = parse_task_and_context(text)
+    if not task.strip():
+        task = DEFAULT_PIPELINE_TASK
+    try:
+        summary, written = run_task(
+            task,
+            ctx or None,
+            use_postgres=use_postgres,
+            use_mongodb=use_mongodb,
+        )
+    except (ValueError, TargetAppRequiredError, SystemExit) as exc:
+        run_id = resolve_run_id(ctx) or "smoke-001"
+        app = ctx.get("targetApp") or "inventory-app"
+        example = {
+            "targetApp": app,
+            "runId": run_id,
+            "designDocPath": f"docs/design/{app}.md",
+            "prdPath": f"docs/PRD/{app}.md",
+            "dbOutputDir": f"target-apps/{app}/db",
+            "preferredSqlPath": f"target-apps/{app}/db/sql",
+        }
+        return (
+            "Database pipeline could not start.\n\n"
+            f"Reason: {exc}\n\n"
+            "Ensure architect ran first and Context includes runId + designDocPath:\n\n"
+            f"Context:\n{json.dumps(example, indent=2)}\n"
+        )
+
+    lines = [summary]
+    if written:
+        lines.append(f"\nPersisted {len(written)} file(s) to artifact store:")
+        for path in written:
+            lines.append(f"  - {path}")
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        lines.append(f"- runId: {run_id}")
+        if is_s3_store():
+            lines.append(f"- s3Prefix: runs/{run_id}/")
+    return "\n".join(lines)
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
+def build_database_pipeline_agent(
+    tools: list[Any],
+    *,
+    use_postgres: bool = False,
+    use_mongodb: bool = False,
+) -> Agent:
+    """AgentCore mode: run_task on each A2A message so db_write_file uploads to S3."""
+    agent = _build_agent(tools)
+
+    def database_invoke(message: Any, **kwargs: Any) -> str:
+        del kwargs
+        return _execute_database_pipeline_message(
+            message,
+            use_postgres=use_postgres,
+            use_mongodb=use_mongodb,
+        )
+
+    async def database_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        from strands.types._events import AgentResultEvent
+
+        del invocation_state, kwargs
+        summary = _execute_database_pipeline_message(
+            prompt,
+            use_postgres=use_postgres,
+            use_mongodb=use_mongodb,
+        )
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
+
+    agent.__call__ = database_invoke  # type: ignore[method-assign]
+    agent.stream_async = database_stream_async  # type: ignore[method-assign]
+    return agent
 
 
 def run_task_files_only(

@@ -388,10 +388,7 @@ function InputRequirementsCard() {
           </span>
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Each <strong className="font-medium text-foreground">Submit</strong> creates a new{' '}
-          <span className="font-mono">runId</span>, uploads to{' '}
-          <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">runs/&lt;runId&gt;/inputs/&lt;feature&gt;.txt</code>, starts the orchestrator, and isolates outputs under{' '}
-          <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">runs/&lt;runId&gt;/target-apps/…</code>.
+          Each <strong className="font-medium text-foreground">Submit</strong> starts the orchestrator agent.
         </p>
       </div>
 

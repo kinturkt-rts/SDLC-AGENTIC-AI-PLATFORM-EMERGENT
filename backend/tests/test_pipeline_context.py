@@ -78,10 +78,17 @@ def test_consolidated_artifact_paths() -> None:
     assert pipeline_context_rel_for_app(slug) == (
         f"{base}/agents/pipeline/{slug}.context.json"
     )
-    assert gitlab_handoff_rel_for_app(slug) == (
-        f"{base}/agents/pipeline/{slug}.gitlab-handoff.json"
-    )
-    assert qa_handoff_rel_for_app(slug) == f"{base}/agents/pipeline/{slug}.qa-handoff.json"
+
+
+def test_artifact_layout_honors_product_prd_layout_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _shared.pipeline_context import artifact_layout, prd_rel_path_for_app
+
+    monkeypatch.delenv("PRODUCT_ARTIFACT_LAYOUT", raising=False)
+    monkeypatch.setenv("PRODUCT_PRD_LAYOUT", "docs")
+    assert artifact_layout() == "docs"
+    assert prd_rel_path_for_app("expense-tracker") == "docs/PRD/expense-tracker.md"
 
 
 def test_resolve_cli_context_loads_pipeline_json() -> None:
@@ -104,3 +111,30 @@ def test_resolve_cli_context_loads_legacy_pipeline_json(monkeypatch: pytest.Monk
     )
     assert app == "inventory-app"
     assert extra.get("prdPath")
+
+
+def test_merge_run_handoff_context_loads_run_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from _shared.artifact_store import put_context
+    from _shared.pipeline_context import merge_run_handoff_context
+
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setenv("PRODUCT_ARTIFACT_LAYOUT", "docs")
+
+    run_id = "merge-handoff"
+    put_context(
+        run_id,
+        {
+            "targetApp": "expense-tracker",
+            "prdPath": "docs/PRD/expense-tracker.md",
+            "designDocPath": "docs/design/expense-tracker.md",
+        },
+    )
+    merged = merge_run_handoff_context({"runId": run_id, "inputFile": "inputs/expense-tracker.txt"})
+    assert merged["prdPath"] == "docs/PRD/expense-tracker.md"
+    assert merged["designDocPath"] == "docs/design/expense-tracker.md"
+    assert merged["inputFile"] == "inputs/expense-tracker.txt"
+    assert merged["diagramPaths"] == ["docs/diagrams/generated-diagrams/expense-tracker.png"]

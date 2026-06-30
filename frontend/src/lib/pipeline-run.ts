@@ -8,7 +8,16 @@ import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './art
 const SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Human-friendly run ids (e.g. smoke-004) or UUIDs — matches agent pipeline runId usage. */
+const RUN_ID_RE = /^(?:[a-z][a-z0-9-]{0,62}[a-z0-9]|[0-9a-f-]{36})$/i;
 const MAX_BYTES = 256 * 1024;
+
+export function validateRunId(runId: string): string | null {
+  const id = runId.trim();
+  if (!id) return 'runId is required';
+  if (UUID_RE.test(id) || RUN_ID_RE.test(id)) return null;
+  return 'runId must be a UUID or slug like smoke-004';
+}
 
 export function validateTargetApp(targetApp: string): string | null {
   const slug = targetApp.trim().toLowerCase();
@@ -67,8 +76,12 @@ export async function uploadBrief(
   }
 
   let id = runId?.trim() ?? '';
-  if (id && !UUID_RE.test(id)) throw new Error('runId must be a UUID');
-  if (!id) id = randomUUID();
+  if (id) {
+    const runErr = validateRunId(id);
+    if (runErr) throw new Error(runErr);
+  } else {
+    id = randomUUID();
+  }
 
   const inputFile = runInputRelPath(slug);
   if (isS3Store()) {
@@ -107,7 +120,8 @@ export async function startPipeline(options: {
 }): Promise<StartPipelineResult> {
   const slugError = validateTargetApp(options.targetApp);
   if (slugError) throw new Error(slugError);
-  if (!UUID_RE.test(options.runId)) throw new Error('runId must be a UUID');
+  const runErr = validateRunId(options.runId);
+  if (runErr) throw new Error(runErr);
 
   const feature = options.targetApp.trim().toLowerCase();
   const runId = options.runId.trim();
@@ -164,6 +178,10 @@ export async function startPipeline(options: {
 
   const python = await resolvePythonExecutable(repoRoot);
   const orchestratorScript = path.join(repoRoot, 'agents', 'orchestrator-agent', 'orchestrator_agent.py');
+  const transport = (process.env.SDLC_PIPELINE_TRANSPORT?.trim().toLowerCase() || 'auto') as
+    | 'auto'
+    | 'local'
+    | 'a2a';
   const args = [
     orchestratorScript,
     '--run-pipeline',
@@ -173,6 +191,8 @@ export async function startPipeline(options: {
     runId,
     '--input-file',
     inputRel,
+    '--transport',
+    transport,
   ];
 
   const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');
@@ -185,6 +205,7 @@ export async function startPipeline(options: {
       ...process.env,
       PYTHONUNBUFFERED: '1',
       PIPELINE_RUN_ID: runId,
+      ARTIFACT_STORE: process.env.ARTIFACT_STORE ?? 's3',
     },
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],

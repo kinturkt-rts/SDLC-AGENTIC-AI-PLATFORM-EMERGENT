@@ -11,10 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from _shared.pipeline_context import (
+    CANONICAL_RUN_CONTEXT_REL,
     gitlab_handoff_rel_for_app,
+    infer_target_app_from_context,
+    is_pipeline_context_rel,
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
     qa_handoff_rel_for_app,
+    slugify,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -138,16 +142,104 @@ def get_artifact_text(run_id: str, rel_path: str) -> str:
     return get_artifact(run_id, rel_path).decode("utf-8")
 
 
-def put_context(run_id: str, context: dict[str, Any]) -> None:
-    """Persist pipeline context JSON to S3/local artifact store (not DynamoDB)."""
-    payload = dict(context)
+def _merge_context_updates(
+    existing: dict[str, Any],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    """Shallow-merge context updates; incoming non-empty values win."""
+    merged = dict(existing)
+    for key, value in updates.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        merged[key] = value
+    return merged
+
+
+def put_context(run_id: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Persist run-scoped pipeline handoff at runs/<runId>/context.json.
+
+    Merges with any existing context.json so specialist and orchestrator writes
+    accumulate rather than overwrite. Returns the merged payload written.
+    """
+    existing = _load_context_artifact(run_id, CANONICAL_RUN_CONTEXT_REL) or {}
+    payload = _merge_context_updates(existing, context)
     payload["runId"] = run_id
     put_artifact(
         run_id,
-        "context.json",
+        CANONICAL_RUN_CONTEXT_REL,
         json.dumps(payload, indent=2) + "\n",
         content_type="application/json",
     )
+    return payload
+
+
+def run_artifact_exists(run_id: str, rel_path: str) -> bool:
+    """True when runs/<runId>/<rel_path> exists in the artifact store."""
+    rel = rel_path.lstrip("/").replace("\\", "/")
+    try:
+        get_artifact(run_id, rel)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def enrich_db_paths_from_run(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Fill db/sql handoff paths from run store when local disk is unavailable (cloud)."""
+    run_id = resolve_run_id(ctx)
+    app = infer_target_app_from_context(ctx)
+    if not run_id or not app:
+        return ctx
+
+    slug = slugify(app)
+    db_dir = f"target-apps/{slug}/db"
+    sql_dir = f"{db_dir}/sql"
+    ctx.setdefault("dbOutputDir", db_dir)
+    ctx.setdefault("preferredSqlPath", sql_dir)
+    ctx.setdefault("preferredNoSqlPath", f"{db_dir}/nosql")
+
+    if run_sql_artifact_keys(run_id, slug):
+        ctx["dbOutputDir"] = db_dir
+        ctx["preferredSqlPath"] = sql_dir
+
+    handoff_rel = f"{db_dir}/HANDOFF.md"
+    if run_artifact_exists(run_id, handoff_rel):
+        ctx["databaseHandoffPath"] = handoff_rel
+
+    return ctx
+
+
+def _load_context_artifact(run_id: str, rel_path: str) -> dict[str, Any] | None:
+    try:
+        raw = get_artifact_text(run_id, rel_path)
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        if is_s3_store():
+            from botocore.exceptions import ClientError
+
+            if isinstance(exc, ClientError) and exc.response["Error"]["Code"] == "NoSuchKey":
+                return None
+        raise
+    parsed = json.loads(raw)
+    if isinstance(parsed, dict):
+        parsed.setdefault("runId", run_id)
+        return parsed
+    return None
+
+
+def get_context(run_id: str, *, target_app: str | None = None) -> dict[str, Any] | None:
+    """Load pipeline context for a run (canonical context.json, legacy per-app fallback)."""
+    loaded = _load_context_artifact(run_id, CANONICAL_RUN_CONTEXT_REL)
+    if loaded:
+        return loaded
+
+    if target_app:
+        legacy = pipeline_context_rel_for_app(target_app)
+        return _load_context_artifact(run_id, legacy)
+
+    return None
 
 
 def register_pipeline_run(run_id: str, target_app: str, *, status: str = "running") -> None:
@@ -252,26 +344,6 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
     return paths
 
 
-def get_context(run_id: str) -> dict[str, Any] | None:
-    """Load pipeline context for a run."""
-    try:
-        raw = get_artifact_text(run_id, "context.json")
-    except FileNotFoundError:
-        return None
-    except Exception as exc:
-        if is_s3_store():
-            from botocore.exceptions import ClientError
-
-            if isinstance(exc, ClientError) and exc.response["Error"]["Code"] == "NoSuchKey":
-                return None
-        raise
-    parsed = json.loads(raw)
-    if isinstance(parsed, dict):
-        parsed.setdefault("runId", run_id)
-        return parsed
-    return None
-
-
 def run_sql_artifact_keys(run_id: str, feature: str) -> list[str]:
     """List `.sql` migration paths for a feature under runs/<runId>/target-apps/<feature>/db/sql/."""
     prefix = f"target-apps/{feature.strip()}/db/sql/"
@@ -335,9 +407,13 @@ def write_repo_artifact(
 ) -> str:
     """Write to local repo path or run artifact store when runId is present."""
     run_id = resolve_run_id(context)
+    rel = rel_path.lstrip("/").replace("\\", "/")
+    if run_id and is_pipeline_context_rel(rel):
+        # Canonical run handoff is context.json (put_context); skip duplicate per-app copy.
+        return rel_path
     if run_id:
         return put_artifact(run_id, rel_path, content)
-    dest = repo_root() / rel_path.lstrip("/")
+    dest = repo_root() / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(content, str):
         dest.write_text(content, encoding="utf-8")
@@ -349,9 +425,12 @@ def write_repo_artifact(
 def read_repo_artifact(rel_path: str, *, context: dict[str, Any] | None = None) -> bytes:
     """Read from local repo or run artifact store when runId is present."""
     run_id = resolve_run_id(context)
+    rel = rel_path.lstrip("/").replace("\\", "/")
+    if run_id and is_pipeline_context_rel(rel):
+        return get_artifact(run_id, CANONICAL_RUN_CONTEXT_REL)
     if run_id:
-        return get_artifact(run_id, rel_path)
-    path = repo_root() / rel_path.lstrip("/")
+        return get_artifact(run_id, rel)
+    path = repo_root() / rel
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {path}")
     return path.read_bytes()

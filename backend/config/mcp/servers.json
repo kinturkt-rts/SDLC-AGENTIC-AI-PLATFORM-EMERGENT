@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Open-source MCP servers for AutonomousSDLC. Cursor uses .cursor/mcp.json; Strands agents load the same servers programmatically.",
+  "description": "Open-source MCP servers for SDLC Agentic AI Platform. Cursor uses .cursor/mcp.json; Strands agents load the same servers programmatically.",
   "servers": {
     "atlassian": {
       "name": "Atlassian (Jira / Confluence)",

@@ -86,11 +86,11 @@ def test_run_prd_from_context_writes_target_app_layout(
     run_ctx_path = repo_root / "agents/pipeline/runs/run-001/context.json"
 
     assert prd_path.is_file()
-    assert ctx_path.is_file()
     assert run_ctx_path.is_file()
+    assert not ctx_path.is_file()
     assert "prdPath: target-apps/demo-api/docs/PRD/demo-api.md" in summary
 
-    ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+    ctx = json.loads(run_ctx_path.read_text(encoding="utf-8"))
     assert ctx["targetApp"] == "demo-api"
     assert ctx["prdPath"] == "target-apps/demo-api/docs/PRD/demo-api.md"
 

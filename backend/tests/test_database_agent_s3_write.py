@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -47,6 +48,51 @@ def test_db_write_file_persists_to_s3_when_run_id_set(
     stored = get_artifact_text(run_id, "target-apps/demo-api/db/sql/001_users.sql")
     assert "CREATE TABLE users" in stored
     mod._run_context = None
+
+
+def test_build_database_pipeline_agent_calls_run_task(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import json
+
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    mod = _load_agent_module()
+
+    message = (
+        "Design database schema\n\nContext:\n"
+        + json.dumps(
+            {
+                "targetApp": "demo-api",
+                "runId": "run-db-a2a",
+                "designDocPath": "docs/design/demo-api.md",
+            }
+        )
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_task(task, context=None, **kwargs):
+        captured["task"] = task
+        captured["context"] = context
+        captured["kwargs"] = kwargs
+        return ("schema ok", ["target-apps/demo-api/db/sql/001.sql"])
+
+    with patch.object(mod, "run_task", side_effect=fake_run_task):
+        agent = mod.build_database_pipeline_agent([])
+
+        async def collect_events() -> list[dict]:
+            events: list[dict] = []
+            async for event in agent.stream_async([{"text": message}]):
+                events.append(event)
+            return events
+
+        events = asyncio.run(collect_events())
+
+    assert captured["context"]["runId"] == "run-db-a2a"  # type: ignore[index]
+    assert any("result" in event for event in events)
+    assert "schema ok" in str(events[-1]["result"])
+    assert "001.sql" in str(events[-1]["result"])
 
 
 @pytest.fixture()

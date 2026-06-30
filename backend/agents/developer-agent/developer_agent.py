@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -29,13 +30,20 @@ _DEV_AGENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 sys.path.insert(0, str(_DEV_AGENT_DIR))
 from scaffold import format_scaffold_report, scaffold_service
-from _shared.context_cli import load_context_extra, parse_context_args
+from _shared.artifact_store import (
+    is_s3_store,
+    list_run_artifact_keys,
+    put_context,
+    read_repo_artifact,
+    resolve_run_id,
+    write_repo_artifact,
+)
 from _shared.env import load_repo_env
 from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     PIPELINE_DIR,
     TargetAppRequiredError,
-    enrich_handoff_context,
+    merge_run_handoff_context,
     resolve_cli_context,
     resolve_design_doc_path,
     resolve_target_app,
@@ -361,6 +369,7 @@ _READ_PREFIXES = (
 _BLOCKED_PATH_PARTS = frozenset({".venv", "node_modules", "__pycache__", ".pytest_cache"})
 
 _written_files: list[str] = []
+_run_context: dict[str, Any] | None = None
 
 # Descriptive pattern names. Legacy A/B/B+/B++/C codes still accepted via _PATTERN_ALIASES.
 _PATTERN_KEYS: tuple[str, ...] = (
@@ -1258,6 +1267,19 @@ def _deployment_handoff(app: str, written_files: list[str]) -> dict[str, Any]:
 @tool
 def dev_list_tree(service: str, subpath: str = "") -> str:
     """List files under target-apps/<service>/ (optionally under subpath)."""
+    prefix = f"target-apps/{slugify(service)}/"
+    if subpath.strip():
+        prefix = f"{prefix}{subpath.strip().strip('/')}/"
+    ctx = _run_context
+    run_id = resolve_run_id(ctx) if ctx else None
+    if run_id and is_s3_store():
+        paths = [
+            key
+            for key in list_run_artifact_keys(run_id)
+            if key.startswith(prefix) and not key.endswith("/")
+        ]
+        return "\n".join(paths) if paths else "(no files)"
+
     root = _ensure_service_exists(service)
     base = (root / subpath).resolve()
     if not str(base).startswith(str(root.resolve())):
@@ -1299,6 +1321,9 @@ def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
         full = f"{prefix}{rel}"
         if full not in _written_files:
             _written_files.append(full)
+        if _run_context is not None:
+            content = (dest / rel).read_bytes()
+            write_repo_artifact(full, content, context=_run_context)
 
     return format_scaffold_report(result, service=slugify(service))
 
@@ -1307,6 +1332,16 @@ def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
 def dev_read_file(path: str) -> str:
     """Read a repo file. Allowed: target-apps/, docs/, agents/, inputs/.
     Use to read PRD, design doc, database handoff, and scraped markdown."""
+    raw = path.strip().replace("\\", "/")
+    ctx = _run_context
+    run_id = resolve_run_id(ctx) if ctx else None
+    if run_id:
+        try:
+            return read_repo_artifact(raw, context=ctx).decode("utf-8")
+        except FileNotFoundError:
+            pass
+        except UnicodeDecodeError:
+            return f"Error: binary or non-utf8 file: {path}"
     try:
         file_path = _resolve_repo_path(path, write=False)
     except ValueError as exc:
@@ -1339,6 +1374,8 @@ def dev_write_file(path: str, content: str) -> str:
     rel = file_path.relative_to(_REPO_ROOT).as_posix()
     if rel not in _written_files:
         _written_files.append(rel)
+    if _run_context is not None:
+        write_repo_artifact(rel, content, context=_run_context)
     return f"Wrote {rel} ({len(content)} bytes)"
 
 
@@ -1384,6 +1421,8 @@ def dev_write_files(files: dict[str, str]) -> str:
         rel = file_path.relative_to(_REPO_ROOT).as_posix()
         if rel not in _written_files:
             _written_files.append(rel)
+        if _run_context is not None:
+            write_repo_artifact(rel, content, context=_run_context)
         written.append(rel)
 
     summary = f"Wrote {len(written)} file(s)"
@@ -1977,11 +2016,22 @@ def _strip_duplicate_handoff_sections(text: str) -> str:
     return out.strip()
 
 
-def _write_developer_handoff(app: str, handoff: dict[str, Any]) -> str:
+def _write_developer_handoff(
+    app: str,
+    handoff: dict[str, Any],
+    *,
+    context: dict[str, Any] | None = None,
+) -> str:
     """Persist handoff JSON for qa-agent / devops-agent; return repo-relative path."""
+    rel = f"agents/pipeline/{slugify(app)}.developer-handoff.json"
+    payload = json.dumps(handoff, indent=2) + "\n"
+    run_id = resolve_run_id(context)
+    if run_id:
+        write_repo_artifact(rel, payload, context=context)
+        return rel
     PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
     path = PIPELINE_DIR / f"{slugify(app)}.developer-handoff.json"
-    path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+    path.write_text(payload, encoding="utf-8")
     return path.relative_to(_REPO_ROOT).as_posix()
 
 
@@ -2094,8 +2144,13 @@ def _resolve_target_app(name: str | None, context: dict[str, Any] | None) -> str
 
 def _enrich_developer_context(ctx: dict[str, Any]) -> None:
     """Add developer-specific paths that enrich_handoff_context doesn't cover."""
+    from _shared.artifact_store import enrich_db_paths_from_run, resolve_run_id
+
     app = slugify(str(ctx["targetApp"]))
     service_dir = _REPO_ROOT / "target-apps" / app
+
+    if resolve_run_id(ctx):
+        enrich_db_paths_from_run(ctx)
 
     # Database-agent handoff file
     if not ctx.get("databaseHandoffPath"):
@@ -2163,23 +2218,29 @@ def run_task(
     target_app: str | None = None,
     jira_key: str | None = None,
 ) -> tuple[str, list[str], str | None]:
-    global _written_files
+    global _written_files, _run_context
     _written_files = []
+    _run_context = None
 
     app = _resolve_target_app(target_app, context)
-    ctx = context if context is not None else _build_context(target_app=app, jira_key=jira_key)
-    ctx.setdefault("targetApp", app)
+    base_ctx = dict(context) if context is not None else _build_context(target_app=app, jira_key=jira_key)
+    base_ctx.setdefault("targetApp", app)
+    ctx = merge_run_handoff_context(base_ctx, include_db_paths=True)
     ctx.setdefault("targetAppDir", _ensure_service_exists(app).relative_to(_REPO_ROOT).as_posix())
 
-    enrich_handoff_context(ctx, include_db_paths=True)
     _enrich_developer_context(ctx)
 
     if jira_key:
         ctx.setdefault("jiraKey", jira_key)
+    
+    _run_context = ctx
 
-    telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=_coding_model_id())
-    agent = _build_agent(ctx, telemetry=telemetry)
-    summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
+    try:
+        telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=_coding_model_id())
+        agent = _build_agent(ctx, telemetry=telemetry)
+        summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
+    finally:
+        _run_context = None
 
     written = _dedupe_preserve_order(_written_files)
     handoff_rel: str | None = None
@@ -2204,7 +2265,8 @@ def run_task(
                 "# Windows: copy .env.example .env — then edit real values locally"
             )
             handoff["envVarsRequired"] = _env_var_names_from_example(written)
-        handoff_rel = _write_developer_handoff(app, handoff)
+        handoff_rel = _write_developer_handoff(app, handoff, context=ctx)
+        ctx["developerHandoffPath"] = handoff_rel
 
     # Telemetry: tokens, cache hits, wall-clock, file count; persist for next-run delta.
     telemetry.extra = {
@@ -2213,7 +2275,118 @@ def run_task(
     }
     telemetry.finalize()
 
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        ctx.setdefault("runId", run_id)
+        put_context(run_id, ctx)
+
     return summary, written, handoff_rel
+
+
+def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:
+    """Split orchestrator/A2A messages into task text and context JSON."""
+    marker = "\n\nContext:\n"
+    if marker in message:
+        task, rest = message.rsplit(marker, 1)
+        try:
+            parsed = json.loads(rest)
+            if isinstance(parsed, dict):
+                return task.strip(), parsed
+        except json.JSONDecodeError:
+            pass
+    return message.strip(), {}
+
+
+def _prompt_to_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        parts: list[str] = []
+        for item in message:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return str(message)
+
+
+def _execute_developer_pipeline_message(message: Any) -> str:
+    """AgentCore A2A: parse Context, run_task (sets _run_context for S3 writes)."""
+    text = _prompt_to_text(message)
+    task, ctx = parse_task_and_context(text)
+    if not task.strip():
+        task = DEFAULT_PIPELINE_TASK
+    try:
+        summary, written, handoff_rel = run_task(task, ctx or None)
+    except (ValueError, TargetAppRequiredError, SystemExit) as exc:
+        app = (ctx or {}).get("targetApp") or "demo-api"
+        run_id = resolve_run_id(ctx) or "smoke-001"
+        example = {
+            "targetApp": app,
+            "runId": run_id,
+            "designDocPath": f"docs/design/{app}.md",
+            "databaseHandoffPath": f"target-apps/{app}/db/HANDOFF.md",
+        }
+        return (
+            "Developer pipeline could not start.\n\n"
+            f"Reason: {exc}\n\n"
+            "Ensure database-agent ran first and Context includes runId + designDocPath:\n\n"
+            f"Context:\n{json.dumps(example, indent=2)}\n"
+        )
+
+    lines = [summary]
+    if written:
+        lines.append(f"\nPersisted {len(written)} file(s) to artifact store:")
+        for path in written[:20]:
+            lines.append(f"  - {path}")
+        if len(written) > 20:
+            lines.append(f"  ... and {len(written) - 20} more")
+    if handoff_rel:
+        lines.append(f"- developerHandoff: {handoff_rel}")
+    run_id = resolve_run_id(ctx)
+    if run_id:
+        lines.append(f"- runId: {run_id}")
+        if is_s3_store():
+            lines.append(f"- s3Prefix: runs/{run_id}/")
+    return "\n".join(lines)
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
+def build_developer_pipeline_agent() -> Agent:
+    """AgentCore mode: run_task on each A2A message so dev_write_file uploads to S3."""
+    agent = _build_agent()
+
+    def developer_invoke(message: Any, **kwargs: Any) -> str:
+        del kwargs
+        return _execute_developer_pipeline_message(message)
+
+    async def developer_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        from strands.types._events import AgentResultEvent
+
+        del invocation_state, kwargs
+        summary = _execute_developer_pipeline_message(prompt)
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
+
+    agent.__call__ = developer_invoke  # type: ignore[method-assign]
+    agent.stream_async = developer_stream_async  # type: ignore[method-assign]
+    return agent
 
 
 def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
@@ -2278,7 +2451,7 @@ def main() -> None:
     if extra.get("_contextFile"):
         print(f"[developer-agent] Context (auto): {extra['_contextFile']}", file=sys.stderr)
 
-    enrich_handoff_context(extra, include_db_paths=True)
+    extra = merge_run_handoff_context(extra, include_db_paths=True)
     _enrich_developer_context(extra)
 
     ctx = _build_context(target_app=target, jira_key=args.jira_key, extra=extra or None)

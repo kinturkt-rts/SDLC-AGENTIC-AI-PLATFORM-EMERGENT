@@ -14,7 +14,6 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.artifact_store import (
-    get_context,
     is_s3_store,
     put_context,
     read_repo_artifact,
@@ -28,8 +27,8 @@ from _shared.pipeline_context import (
     TargetAppRequiredError,
     design_doc_rel_for_app,
     diagram_path_for_app,
-    enrich_handoff_context,
     infer_target_app_from_context,
+    merge_run_handoff_context,
     pipeline_context_rel_for_app,
     repo_rel,
     resolve_cli_context,
@@ -598,22 +597,13 @@ def _infer_target_app_from_task(task: str) -> str | None:
 
 def enrich_architect_context(context: dict[str, Any], *, task: str = "") -> dict[str, Any]:
     """Merge S3 run context, infer targetApp, and fill standard handoff paths."""
-    ctx = dict(context)
-    run_id = resolve_run_id(ctx)
-    if run_id:
-        stored = get_context(run_id)
-        if stored:
-            merged = dict(stored)
-            merged.update({k: v for k, v in ctx.items() if v is not None and v != ""})
-            ctx = merged
-        ctx.setdefault("runId", run_id)
+    ctx = merge_run_handoff_context(context, include_db_paths=False)
 
     if not infer_target_app_from_context(ctx):
         inferred = _infer_target_app_from_task(task)
         if inferred:
             ctx["targetApp"] = inferred
 
-    enrich_handoff_context(ctx)
     ctx["designDocPath"] = resolve_design_doc_path(ctx)
     slug = infer_target_app_from_context(ctx)
     if slug:

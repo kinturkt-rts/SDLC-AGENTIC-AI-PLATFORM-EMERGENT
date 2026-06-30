@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,8 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.env import load_repo_env
 from _shared.runner import build_agent
 from _shared.sdlc_pipeline import (
-    PIPELINE_STEPS,
     PipelineOptions,
+    parse_pipeline_request,
     planned_steps,
     run_sdlc_pipeline,
 )
@@ -72,6 +73,7 @@ Return a short plan, steps executed, artifact paths, runId, and errors. Do not i
 def run_sdlc_pipeline_tool(
     target_app: str,
     input_file: str = "",
+    run_id: str = "",
     skip_product: bool = False,
     skip_architect: bool = False,
     skip_db: bool = False,
@@ -92,6 +94,7 @@ def run_sdlc_pipeline_tool(
     Args:
         target_app: Feature slug (e.g. inventory-app)
         input_file: Path to requirements brief (required unless skip_product)
+        run_id: Pipeline run id — brief must exist at runs/<runId>/inputs/... when using S3
         skip_product: Resume from existing PRD/context
         skip_architect: Skip diagram + design doc
         skip_db: Skip database-agent and RDS apply
@@ -110,6 +113,7 @@ def run_sdlc_pipeline_tool(
     options = PipelineOptions(
         target_app=target_app,
         input_file=input_file,
+        run_id=run_id.strip() or None,
         skip_product=skip_product,
         skip_architect=skip_architect,
         skip_db=skip_db,
@@ -148,6 +152,105 @@ def build_orchestrator_agent(*, enable_a2a_peers: bool = True) -> Any:
         tools=orchestrator_tools(),
         enable_a2a_peers=enable_a2a_peers,
     )
+
+
+def _prompt_to_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        parts: list[str] = []
+        for item in message:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return str(message)
+
+
+def _pipeline_result_payload(result: Any) -> dict[str, Any]:
+    return {
+        "success": result.success,
+        "summary": result.summary(),
+        "target_app": result.target_app,
+        "run_id": result.run_id,
+        "agents_run": result.agents_run,
+        "artifacts": result.artifacts,
+        "errors": result.errors,
+    }
+
+
+def _execute_pipeline_message(message: Any) -> str:
+    """Run the SDLC pipeline deterministically from an A2A/CLI message."""
+    text = _prompt_to_text(message)
+    options = parse_pipeline_request(text)
+    if options is None:
+        example = {
+            "target_app": "team-faq-bot",
+            "run_id": "smoke-004",
+            "input_file": "inputs/team-faq-bot.txt",
+            "transport": "a2a",
+            "skip_db": True,
+            "skip_developer": True,
+            "skip_gitlab": True,
+            "skip_verify": True,
+        }
+        return (
+            "Pipeline could not start — no valid JSON payload found.\n\n"
+            "Send a message like:\n"
+            "Run run_sdlc_pipeline with:\n\n"
+            f"{json.dumps(example, indent=2)}\n\n"
+            "Upload the brief first:\n"
+            "  s3://<bucket>/runs/<runId>/inputs/<targetApp>.txt"
+        )
+
+    if not options.target_app:
+        return "Pipeline could not start: target_app is required in the JSON payload."
+
+    _print_pipeline_plan(options)
+    result = run_sdlc_pipeline(options)
+    payload = _pipeline_result_payload(result)
+    lines = [payload["summary"]]
+    if payload["errors"]:
+        lines.append("errors: " + "; ".join(payload["errors"]))
+    return "\n".join(lines)
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
+def build_orchestrator_pipeline_agent() -> Any:
+    """AgentCore mode: run pipeline directly on each A2A message (no LLM round-trip)."""
+    agent = build_orchestrator_agent(enable_a2a_peers=False)
+
+    def pipeline_invoke(message: Any, **kwargs: Any) -> str:
+        del kwargs
+        return _execute_pipeline_message(message)
+
+    async def pipeline_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        from strands.types._events import AgentResultEvent
+
+        del invocation_state, kwargs
+        summary = _execute_pipeline_message(prompt)
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
+
+    agent.__call__ = pipeline_invoke  # type: ignore[method-assign]
+    agent.stream_async = pipeline_stream_async  # type: ignore[method-assign]
+    return agent
 
 
 def _print_pipeline_plan(options: PipelineOptions) -> None:

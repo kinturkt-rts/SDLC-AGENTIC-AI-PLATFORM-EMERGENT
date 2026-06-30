@@ -122,7 +122,7 @@ _written_files: list[str] = []
 _last_scan_results: dict[str, dict[str, Any]] = {}
 
 SECURITY_SYS_PROMPT = """\
-You are the Security Agent for the Autonomous SDLC platform. You run **after qa-agent**
+You are the Security Agent for the SDLC Agentic AI Platform. You run **after qa-agent**
 as the seventh pipeline step: product → architect → web-crawler → database → developer → qa → **YOU**.
 
 Your job is to **find security issues** in the generated service under target-apps/<service>/.

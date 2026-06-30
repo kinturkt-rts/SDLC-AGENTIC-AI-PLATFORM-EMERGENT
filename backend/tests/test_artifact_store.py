@@ -37,6 +37,34 @@ def test_put_and_get_context_local(repo_root: Path, monkeypatch: pytest.MonkeyPa
     assert loaded["runId"] == run_id
 
 
+def test_put_context_merges_existing(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import get_context, put_context
+
+    run_id = "test-run-merge"
+    put_context(run_id, {"targetApp": "demo-api", "prdPath": "docs/PRD/demo-api.md"})
+    put_context(run_id, {"designDocPath": "docs/design/demo-api.md", "dbOutputDir": "target-apps/demo-api/db"})
+    loaded = get_context(run_id)
+    assert loaded is not None
+    assert loaded["targetApp"] == "demo-api"
+    assert loaded["prdPath"] == "docs/PRD/demo-api.md"
+    assert loaded["designDocPath"] == "docs/design/demo-api.md"
+    assert loaded["dbOutputDir"] == "target-apps/demo-api/db"
+
+
+def test_enrich_db_paths_from_run(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import enrich_db_paths_from_run, put_artifact
+
+    run_id = "test-run-db-paths"
+    put_artifact(run_id, "target-apps/expense-tracker/db/sql/001_init.sql", "SELECT 1;")
+    ctx = enrich_db_paths_from_run(
+        {"runId": run_id, "targetApp": "expense-tracker"},
+    )
+    assert ctx["preferredSqlPath"] == "target-apps/expense-tracker/db/sql"
+    assert ctx["dbOutputDir"] == "target-apps/expense-tracker/db"
+
+
 def test_artifact_paths_for_developer(repo_root: Path) -> None:
     from _shared.artifact_store import artifact_paths_for_agent
 
@@ -83,6 +111,64 @@ def test_materialize_run_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch)
     put_artifact(run_id, "context.json", json.dumps({"targetApp": "x"}))
     workspace = materialize_run(run_id)
     assert (workspace / "context.json").is_file()
+
+
+def test_write_repo_artifact_skips_duplicate_pipeline_context_with_run_id(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import get_artifact, put_context, write_repo_artifact
+
+    run_id = "run-dedupe"
+    put_context(run_id, {"targetApp": "expense-tracker", "prdPath": "docs/PRD/expense-tracker.md"})
+    write_repo_artifact(
+        "agents/pipeline/expense-tracker.context.json",
+        '{"stale": true}\n',
+        context={"runId": run_id},
+    )
+
+    body = get_artifact(run_id, "context.json").decode("utf-8")
+    assert "expense-tracker" in body
+    assert "stale" not in body
+    with pytest.raises(FileNotFoundError):
+        get_artifact(run_id, "agents/pipeline/expense-tracker.context.json")
+
+
+def test_read_repo_artifact_resolves_pipeline_context_to_canonical(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import put_context, read_repo_artifact
+
+    run_id = "run-read-alias"
+    put_context(run_id, {"targetApp": "demo-api", "prdPath": "docs/PRD/demo-api.md"})
+    raw = read_repo_artifact(
+        "agents/pipeline/demo-api.context.json",
+        context={"runId": run_id},
+    )
+    assert json.loads(raw.decode("utf-8"))["targetApp"] == "demo-api"
+
+
+def test_get_context_falls_back_to_legacy_per_app_path(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import get_context, put_artifact
+    from _shared.pipeline_context import pipeline_context_rel_for_app
+
+    run_id = "run-legacy"
+    legacy_rel = pipeline_context_rel_for_app("demo-api")
+    put_artifact(
+        run_id,
+        legacy_rel,
+        json.dumps({"targetApp": "demo-api", "prdPath": "docs/PRD/demo-api.md"}) + "\n",
+    )
+    loaded = get_context(run_id, target_app="demo-api")
+    assert loaded is not None
+    assert loaded["targetApp"] == "demo-api"
 
 
 @pytest.fixture()

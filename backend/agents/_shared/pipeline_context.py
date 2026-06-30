@@ -20,11 +20,13 @@ class TargetAppRequiredError(ValueError):
 
 def artifact_layout() -> str:
     """Artifact path layout: target-app-root (default), target-app, or docs (legacy)."""
-    raw = os.getenv("PRODUCT_ARTIFACT_LAYOUT", "target-app-root").strip().lower()
+    explicit = os.getenv("PRODUCT_ARTIFACT_LAYOUT", "").strip().lower()
     legacy_prd = os.getenv("PRODUCT_PRD_LAYOUT", "").strip().lower()
-    if not raw and legacy_prd:
-        raw = legacy_prd
-    return raw or "target-app-root"
+    if explicit:
+        return explicit
+    if legacy_prd:
+        return legacy_prd
+    return "target-app-root"
 
 
 def target_app_root_rel(target_app: str) -> str:
@@ -65,6 +67,39 @@ def diagram_path_for_app(target_app: str) -> str:
 def diagram_dir_rel_for_app(target_app: str) -> str:
     """Directory for architecture PNG exports."""
     return str(Path(diagram_path_for_app(target_app)).parent)
+
+
+# Essential keys accumulated in runs/<runId>/context.json across the SDLC cycle.
+PIPELINE_CONTEXT_FIELDS = (
+    "runId",
+    "targetApp",
+    "targetAppDir",
+    "inputFile",
+    "inputPath",
+    "prdPath",
+    "productAgentOutput",
+    "designDocPath",
+    "diagramPaths",
+    "architectSummary",
+    "deliveryProfile",
+    "dbOutputDir",
+    "preferredSqlPath",
+    "preferredNoSqlPath",
+    "databaseHandoffPath",
+    "dbBackend",
+    "developerHandoffPath",
+    "jiraProjectKey",
+    "jiraKey",
+)
+
+
+CANONICAL_RUN_CONTEXT_REL = "context.json"
+
+
+def is_pipeline_context_rel(rel_path: str) -> bool:
+    """True for per-app handoff JSON (local repo or legacy run copy)."""
+    rel = rel_path.replace("\\", "/").lstrip("/")
+    return rel.endswith(".context.json") and "agents/pipeline/" in rel
 
 
 def pipeline_context_rel_for_app(target_app: str) -> str:
@@ -209,11 +244,27 @@ def load_pipeline_context(target_app: str) -> dict[str, Any] | None:
     return None
 
 
-def architect_summary_from_design(design_rel: str) -> str:
+def architect_summary_from_design(
+    design_rel: str,
+    context: dict[str, Any] | None = None,
+) -> str:
     path = (_REPO_ROOT / design_rel).resolve()
-    if not path.is_file():
+    text = ""
+    if path.is_file():
+        text = path.read_text(encoding="utf-8")
+    elif context:
+        from _shared.artifact_store import read_repo_artifact, resolve_run_id
+
+        run_id = resolve_run_id(context)
+        if run_id:
+            try:
+                text = read_repo_artifact(design_rel, context=context).decode("utf-8")
+            except FileNotFoundError:
+                return ""
+    else:
         return ""
-    lines = path.read_text(encoding="utf-8").splitlines()
+
+    lines = text.splitlines()
     summary_lines: list[str] = []
     for line in lines:
         stripped = line.strip()
@@ -277,11 +328,10 @@ def enrich_handoff_context(ctx: dict[str, Any], *, include_db_paths: bool = Fals
 
     if not ctx.get("diagramPaths"):
         discovered = discover_diagram_paths(slug)
-        if discovered:
-            ctx["diagramPaths"] = discovered
+        ctx["diagramPaths"] = discovered or [diagram_path_for_app(slug)]
 
     if not ctx.get("architectSummary"):
-        summary = architect_summary_from_design(str(ctx["designDocPath"]))
+        summary = architect_summary_from_design(str(ctx["designDocPath"]), ctx)
         if summary:
             ctx["architectSummary"] = summary
 
@@ -297,6 +347,36 @@ def enrich_handoff_context(ctx: dict[str, Any], *, include_db_paths: bool = Fals
         if handoff.is_file():
             ctx.setdefault("databaseHandoffPath", repo_rel(handoff))
 
+        from _shared.artifact_store import enrich_db_paths_from_run, resolve_run_id
+
+        if resolve_run_id(ctx):
+            enrich_db_paths_from_run(ctx)
+
+    return ctx
+
+
+def merge_run_handoff_context(
+    context: dict[str, Any] | None,
+    *,
+    include_db_paths: bool = False,
+) -> dict[str, Any]:
+    """Merge runs/<runId>/context.json with incoming Context; fill standard handoff paths."""
+    from _shared.artifact_store import get_context, resolve_run_id
+
+    ctx = dict(context or {})
+    run_id = resolve_run_id(ctx) or os.getenv("PIPELINE_RUN_ID", "").strip() or None
+    if run_id:
+        app_hint = infer_target_app_from_context(ctx)
+        stored = get_context(run_id, target_app=app_hint)
+        if stored:
+            merged = dict(stored)
+            for key, value in ctx.items():
+                if value is not None and value != "":
+                    merged[key] = value
+            ctx = merged
+        ctx.setdefault("runId", run_id)
+
+    enrich_handoff_context(ctx, include_db_paths=include_db_paths)
     return ctx
 
 

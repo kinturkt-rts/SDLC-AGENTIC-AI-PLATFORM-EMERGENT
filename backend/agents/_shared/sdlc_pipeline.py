@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .a2a_invoke import invoke_agent, response_text
+from .a2a_invoke import a2a_invoke_error, invoke_agent, response_text
 from .artifact_store import (
     artifact_paths_for_agent,
     is_s3_store,
@@ -34,7 +34,6 @@ from .env import load_repo_env
 from .pipeline_context import (
     design_doc_rel_for_app,
     diagram_path_for_app,
-    enrich_handoff_context,
     gitlab_handoff_rel_for_app,
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
@@ -45,7 +44,7 @@ from .pipeline_context import (
 logger = logging.getLogger(__name__)
 
 # Specialists that write artifacts directly to S3 (runId in context) — no local sync.
-_S3_DIRECT_WRITE_AGENTS = frozenset({"product-agent", "database-agent"})
+_S3_DIRECT_WRITE_AGENTS = frozenset({"product-agent", "database-agent", "developer-agent"})
 
 TransportMode = Literal["local", "a2a", "auto"]
 
@@ -218,9 +217,13 @@ class SdlcPipelineRunner:
             if not self.options.skip_product:
                 self._step_product()
             else:
-                self._update_context({"prdPath": prd_rel_path_for_app(self.feature)})
+                self._hydrate_run_context()
 
             if self.options.input_file:
+                input_rel = self.options.input_file.replace("\\", "/").lstrip("/")
+                self.context.setdefault("inputFile", input_rel)
+                self.context.setdefault("inputPath", input_rel)
+                self._save_context()
                 self._sync_delivery_profile(self.options.input_file)
             elif self.ctx_path.is_file():
                 self._sync_delivery_profile()
@@ -286,7 +289,9 @@ class SdlcPipelineRunner:
         """Specialists -> S3; orchestrator -> DynamoDB run index."""
         if not self.run_id:
             return
-        put_context(self.run_id, self.context)
+        self._merge_run_context_from_s3()
+        merged = put_context(self.run_id, self.context)
+        self.context.update(merged)
         if is_s3_store():
             if self.transport == "a2a" and agent_name in _S3_DIRECT_WRITE_AGENTS:
                 update_pipeline_run(self.run_id, last_agent=agent_name)
@@ -301,6 +306,26 @@ class SdlcPipelineRunner:
         self.context.setdefault("targetApp", self.feature)
         if self.run_id:
             self.context["runId"] = self.run_id
+            self._hydrate_run_context()
+
+    def _hydrate_run_context(self) -> None:
+        """Load run-scoped paths from context.json (S3/local) — authoritative for resume."""
+        if not self.run_id:
+            return
+        self._merge_run_context_from_s3()
+        self._normalize_docs_layout_paths()
+        if not self.context.get("prdPath"):
+            self.context["prdPath"] = prd_rel_path_for_app(self.feature)
+        self._save_context()
+
+    def _normalize_docs_layout_paths(self) -> None:
+        """Align design/diagram paths when PRD uses docs/ layout (cloud v1)."""
+        prd = str(self.context.get("prdPath") or "")
+        slug = self.feature
+        if not prd.startswith("docs/PRD/"):
+            return
+        self.context["designDocPath"] = f"docs/design/{slug}.md"
+        self.context["diagramPaths"] = [f"docs/diagrams/generated-diagrams/{slug}.png"]
 
     def _save_context(self) -> None:
         self.ctx_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,11 +338,23 @@ class SdlcPipelineRunner:
             self.context["designDocPath"] = design_doc_rel_for_app(self.feature)
         self._save_context()
 
-    def _context_for_agent(self) -> dict[str, Any]:
-        ctx = enrich_handoff_context(dict(self.context))
+    def _context_for_agent(self, *, include_db_paths: bool = False) -> dict[str, Any]:
+        from .pipeline_context import merge_run_handoff_context
+
+        ctx = merge_run_handoff_context(dict(self.context), include_db_paths=include_db_paths)
         if self.run_id:
             ctx["runId"] = self.run_id
         return ctx
+
+    def _merge_run_context_from_s3(self) -> None:
+        """After A2A specialist steps, merge paths the remote agent wrote to the run store."""
+        if not self.run_id:
+            return
+        from .artifact_store import get_context
+
+        remote = get_context(self.run_id)
+        if remote:
+            self.context.update(remote)
 
     def _run_python(self, args: list[str], *, step: str) -> None:
         cmd = [sys.executable, *args]
@@ -336,10 +373,17 @@ class SdlcPipelineRunner:
         if proc.returncode != 0:
             raise PipelineStepError(f"{step} failed (exit {proc.returncode})")
 
-    def _invoke_a2a(self, agent_name: str, task: str, *, step: str) -> None:
-        result = invoke_agent(agent_name, task, context=self._context_for_agent())
+    def _invoke_a2a(self, agent_name: str, task: str, *, step: str, include_db_paths: bool = False) -> None:
+        result = invoke_agent(
+            agent_name,
+            task,
+            context=self._context_for_agent(include_db_paths=include_db_paths),
+        )
         text = response_text(result)
         print(f"[{step}] {text}")
+        invoke_error = a2a_invoke_error(result)
+        if invoke_error:
+            raise PipelineStepError(f"{step} A2A failed: {invoke_error}")
         if result.get("status") != "success":
             raise PipelineStepError(f"{step} A2A failed: {result.get('error')}")
 
@@ -383,8 +427,11 @@ class SdlcPipelineRunner:
                 task += f" Create Jira epic and stories in project {self.options.jira_project}."
             self._invoke_a2a("product-agent", task, step="product-agent")
 
-        prd_rel = prd_rel_path_for_app(self.feature)
-        if self.transport == "a2a" and self.run_id and is_s3_store():
+        if self.transport == "a2a" and self.run_id:
+            self._merge_run_context_from_s3()
+
+        prd_rel = str(self.context.get("prdPath") or prd_rel_path_for_app(self.feature))
+        if self.transport == "a2a" and self.run_id:
             from .artifact_store import get_artifact
 
             try:
@@ -393,7 +440,7 @@ class SdlcPipelineRunner:
                 raise PipelineStepError(
                     f"PRD not found in S3 after product-agent: runs/{self.run_id}/{prd_rel} ({exc})"
                 ) from exc
-        else:
+        elif self.transport == "local":
             prd_path = self.root / prd_rel.replace("/", os.sep)
             if not prd_path.is_file() and self.transport == "local":
                 raise PipelineStepError(f"PRD not found: {prd_rel}")
@@ -411,6 +458,8 @@ class SdlcPipelineRunner:
         self._after_agent_step("product-agent")
 
     def _step_architect(self) -> None:
+        if self.run_id:
+            self._hydrate_run_context()
         if self.transport == "local":
             self._run_python(
                 [
@@ -431,9 +480,15 @@ class SdlcPipelineRunner:
                 step="architect-agent",
             )
 
-        design_rel = design_doc_rel_for_app(self.feature)
-        png_rel = diagram_path_for_app(self.feature)
-        self._update_context({"diagramPaths": [png_rel], "designDocPath": design_rel})
+        if self.transport == "a2a" and self.run_id:
+            self._merge_run_context_from_s3()
+
+        design_rel = str(self.context.get("designDocPath") or design_doc_rel_for_app(self.feature))
+        diagram_paths = [str(p) for p in (self.context.get("diagramPaths") or []) if p]
+        if not diagram_paths:
+            diagram_paths = [diagram_path_for_app(self.feature)]
+        png_rel = diagram_paths[0]
+        self._update_context({"diagramPaths": diagram_paths, "designDocPath": design_rel})
         self._delivery_check("design")
         self.agents_run.append("architect-agent")
         self.artifacts["Design"] = design_rel
@@ -467,6 +522,8 @@ class SdlcPipelineRunner:
         self.agents_run.append("web-crawler-agent")
 
     def _step_database(self) -> None:
+        if self.run_id:
+            self._hydrate_run_context()
         if self.transport == "local":
             args = [
                 "agents/database-agent/database_agent.py",
@@ -483,6 +540,9 @@ class SdlcPipelineRunner:
         else:
             task = DB_AGENT_TASK
             self._invoke_a2a("database-agent", task, step="database-agent")
+
+        if self.transport == "a2a" and self.run_id:
+            self._merge_run_context_from_s3()
 
         self.agents_run.append("database-agent")
         self.artifacts["DB"] = f"target-apps/{self.feature}/db/"
@@ -512,7 +572,9 @@ class SdlcPipelineRunner:
         return self.root, local_sql_dir
 
     def _handoff_context_for_rds(self) -> dict[str, Any]:
-        ctx = enrich_handoff_context(dict(self.context))
+        from .pipeline_context import merge_run_handoff_context
+
+        ctx = merge_run_handoff_context(dict(self.context), include_db_paths=True)
         if self.run_id:
             ctx["runId"] = self.run_id
         ctx.setdefault("postgresAppSchema", self.feature.replace("-", "_"))
@@ -569,6 +631,8 @@ class SdlcPipelineRunner:
         logger.info("[rds-apply] HANDOFF.md -> %s", handoff_rel)
 
     def _step_developer(self) -> None:
+        if self.run_id:
+            self._hydrate_run_context()
         task = DEV_TASK_NO_DB if self.options.skip_db else DEV_TASK_DB
         if self.transport == "local":
             self._run_python(
@@ -584,7 +648,15 @@ class SdlcPipelineRunner:
                 step="developer-agent",
             )
         else:
-            self._invoke_a2a("developer-agent", task, step="developer-agent")
+            self._invoke_a2a(
+                "developer-agent",
+                task,
+                step="developer-agent",
+                include_db_paths=not self.options.skip_db,
+            )
+
+        if self.transport == "a2a" and self.run_id:
+            self._merge_run_context_from_s3()
 
         self.agents_run.append("developer-agent")
         self.artifacts["App"] = f"target-apps/{self.feature}/"
@@ -736,4 +808,46 @@ def options_from_dict(data: dict[str, Any]) -> PipelineOptions:
         filtered["target_app"] = data["targetApp"]
     if "input_file" not in filtered and "inputFile" in data:
         filtered["input_file"] = data["inputFile"]
+    if "run_id" not in filtered:
+        for key in ("runId", "run_id", "pipelineRunId"):
+            value = data.get(key)
+            if value and str(value).strip():
+                filtered["run_id"] = str(value).strip()
+                break
     return PipelineOptions(**filtered)
+
+
+def parse_pipeline_request(message: str) -> PipelineOptions | None:
+    """Extract PipelineOptions from an A2A message containing a JSON payload."""
+    text = message.strip()
+    if not text:
+        return None
+
+    chunks: list[str] = []
+    lower = text.lower()
+    if "with:" in lower:
+        idx = lower.rfind("with:")
+        chunks.append(text[idx + len("with:") :].strip())
+    if "context:" in lower:
+        idx = lower.rfind("context:")
+        chunks.append(text[idx + len("context:") :].strip())
+    chunks.append(text)
+
+    seen: set[str] = set()
+    for chunk in chunks:
+        if chunk in seen:
+            continue
+        seen.add(chunk)
+        start = chunk.find("{")
+        if start < 0:
+            continue
+        try:
+            parsed = json.loads(chunk[start:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if not (parsed.get("target_app") or parsed.get("targetApp")):
+            continue
+        return options_from_dict(parsed)
+    return None

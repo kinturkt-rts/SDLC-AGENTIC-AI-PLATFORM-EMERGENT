@@ -2,7 +2,7 @@
 
 ## 1. Summary
 Web-based notice board for company announcements with Streamlit UI and FastAPI backend. Organizers manage notices with shared secret auth; employees browse active announcements. PostgreSQL stores notices and categories with scheduling and archival support.
-Diagram: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/Autonomous SDLC Agentic AI Platform/docs/diagrams/generated-diagrams/notice-board-ui.png
+Diagram: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC Agentic AI Platform/docs/diagrams/generated-diagrams/notice-board-ui.png
 
 ## 2. Stack
 | Layer | Technology | Location |

@@ -75,7 +75,11 @@ def orchestrator_agent_bundle() -> BundleFactory:
 
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
-        agent = mod.build_orchestrator_agent(enable_a2a_peers=enable_peers)
+        # Deterministic pipeline avoids LLM round-trip + 424 timeouts on long runs.
+        if env_flag("AGENTCORE_ORCHESTRATOR_DETERMINISTIC", default=True):
+            agent = mod.build_orchestrator_pipeline_agent()  # noqa: SLF001
+        else:
+            agent = mod.build_orchestrator_agent(enable_a2a_peers=enable_peers)
         yield agent, skills
 
     return factory
@@ -176,7 +180,7 @@ def developer_agent_bundle() -> BundleFactory:
 
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
-        yield mod._build_agent(), skills  # noqa: SLF001
+        yield mod.build_developer_pipeline_agent(), skills  # noqa: SLF001
 
     return factory
 
@@ -225,7 +229,11 @@ def database_agent_bundle() -> BundleFactory:
                 use_postgres=use_postgres,
                 use_mongodb=use_mongodb,
             )
-            agent = mod._build_agent(tools)  # noqa: SLF001
+            agent = mod.build_database_pipeline_agent(  # noqa: SLF001
+                tools,
+                use_postgres=use_postgres,
+                use_mongodb=use_mongodb,
+            )
             yield agent, skills
 
     return factory

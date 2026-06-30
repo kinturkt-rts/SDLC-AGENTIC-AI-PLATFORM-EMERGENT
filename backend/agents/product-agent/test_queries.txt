@@ -33,7 +33,7 @@ python agents/product-agent/product_agent.py `
 # 5. Add a comment to a ticket (addCommentToJiraIssue) — requires --allow-writes
 python agents/product-agent/product_agent.py `
   --allow-writes `
-  --task "Add a comment to Jira issue HAWKAI-1113 saying: 'Reviewed by autonomous SDLC agent - no blockers identified.'"
+  --task "Add a comment to Jira issue HAWKAI-1113 saying: 'Reviewed by SDLC agent - no blockers identified.'"
 
 # PRD only (FinOps)
 python agents/product-agent/product_agent.py `
