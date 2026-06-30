@@ -6,7 +6,7 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "${workspaceFolder}/scripts/gitlab_mcp_server.py"
+        "${workspaceFolder}/backend/scripts/gitlab_mcp_server.py"
       ],
       "envFile": "${workspaceFolder}/.env"
     },
@@ -16,7 +16,7 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "${workspaceFolder}/scripts/postgres_mcp_stdio.py"
+        "${workspaceFolder}/backend/scripts/postgres_mcp_stdio.py"
       ],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"

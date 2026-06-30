@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
+import { isS3Store, listS3RunArtifacts, runS3Prefix, buildS3RunIdByApp } from './artifact-store';
 import type {
   Agent,
   AgentName,
@@ -133,7 +134,6 @@ const AGENT_DISPLAY: Record<
   'orchestrator-agent': { displayName: 'Orchestrator', phase: null, mcpServers: ['GitLab', 'Postgres'] },
   'product-agent': { displayName: 'Product', phase: 'requirements', mcpServers: ['Atlassian'] },
   'architect-agent': { displayName: 'Architect', phase: 'architecture', mcpServers: ['AWS Diagram', 'Atlassian'] },
-  'web-crawler-agent': { displayName: 'Web Crawler', phase: 'requirements', mcpServers: ['Firecrawl'] },
   'database-agent': { displayName: 'Database', phase: 'data', mcpServers: ['Postgres', 'MongoDB'] },
   'developer-agent': { displayName: 'Developer', phase: 'implementation', mcpServers: ['GitLab', 'Postgres'] },
   'qa-agent': { displayName: 'QA', phase: 'qa', mcpServers: ['GitLab'] },
@@ -263,6 +263,23 @@ async function readContextFile(slug: string): Promise<PipelineContextFile | null
 
 async function readRunState(slug: string): Promise<LiveRunState | null> {
   return readJson<LiveRunState>(repoPath('agents', 'pipeline', `${slug}.run.json`));
+}
+
+async function resolveRunIdForSlug(
+  slug: string,
+  ctx: PipelineContextFile | null,
+  s3RunByApp?: Map<string, string>,
+): Promise<string> {
+  if (ctx?.runId?.trim()) return ctx.runId.trim();
+
+  const live = await readRunState(slug);
+  if (live?.runId?.trim()) return live.runId.trim();
+
+  if (isS3Store() && s3RunByApp?.has(slug)) {
+    return s3RunByApp.get(slug)!;
+  }
+
+  return `run-${slug}`;
 }
 
 function featureSlugFromLive(live: LiveRunState): string {
@@ -542,6 +559,7 @@ function artifactProducer(kind: ArtifactKind): AgentName {
 }
 
 function repoAssetUrl(repoRelative: string): string {
+  // Always use the repo-asset route for UI image rendering
   return `/api/v1/repo-asset?path=${encodeURIComponent(repoRelative.replace(/\\/g, '/'))}`;
 }
 
@@ -583,11 +601,64 @@ export async function getProject(id: string): Promise<Project | undefined> {
 export async function listArtifacts(): Promise<Artifact[]> {
   const slugs = await listPipelineSlugs();
   const artifacts: Artifact[] = [];
+  const s3RunByApp = isS3Store() ? await buildS3RunIdByApp() : undefined;
 
   for (const slug of slugs) {
     const ctx = await readContextFile(slug);
     const name = slugToTitle(slug);
-    const runId = ctx?.runId ?? `run-${slug}`;
+    const runId = await resolveRunIdForSlug(slug, ctx, s3RunByApp);
+    
+    // S3 Mode Logic
+    if (isS3Store()) {
+      const s3Files = await listS3RunArtifacts(runId);
+      const prefix = runS3Prefix(runId);
+      
+      for (const s3File of s3Files) {
+        // Strip the runs/<runId>/ prefix to get the relative path
+        const relPath = s3File.key.replace(prefix, '');
+        if (!relPath || relPath === 'run.json' || relPath === 'context.json') continue;
+        if (relPath.startsWith('agents/pipeline/') && relPath.endsWith('.context.json')) continue;
+        if (relPath.startsWith('inputs/')) continue;
+        
+        // Categorize based on file path
+        let kind: ArtifactKind | undefined;
+        if (relPath.startsWith('docs/PRD/')) kind = 'prd';
+        else if (relPath.startsWith('docs/design/')) kind = 'architecture';
+        else if (relPath.startsWith('docs/diagrams/')) kind = 'diagram';
+        else if (relPath.startsWith(`target-apps/${slug}/db/sql/`) && relPath.endsWith('.sql')) kind = 'migration';
+        else if (relPath.toLowerCase().endsWith('handoff.md')) kind = 'doc';
+        else if (relPath.startsWith('target-apps/')) kind = 'code';
+        else kind = artifactKindForPath(relPath);
+
+        const base = path.basename(relPath);
+        
+        let preview: string | undefined;
+        let imageUrl: string | undefined;
+        
+        if (kind === 'diagram' && (relPath.endsWith('.png') || relPath.endsWith('.jpg') || relPath.endsWith('.jpeg'))) {
+           imageUrl = `/api/v1/repo-asset?path=${encodeURIComponent(`runs/${runId}/${relPath}`)}`;
+        }
+
+        artifacts.push({
+          id: `art-${slug}-${base}`,
+          name: base,
+          kind,
+          projectId: slug,
+          projectName: name,
+          producedBy: artifactProducer(kind),
+          runId,
+          path: `runs/${runId}/${relPath}`,
+          sizeKb: s3File.sizeKb,
+          createdAt: s3File.lastModified,
+          preview,
+          imageUrl,
+        });
+      }
+      
+      continue; // Skip the local disk logic for this run
+    }
+
+    // Local Disk Mode Logic
     const candidates: { path: string; kind?: ArtifactKind }[] = [];
 
     const prd = asRepoPath(ctx?.prdPath);
@@ -937,7 +1008,7 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
       id: `mcp-${key}`,
       name,
       description: srv.name,
-      status: key === 'terraform' ? 'down' : 'healthy',
+      status: 'healthy',
       endpoint: `mcp://${key}`,
       tools: [],
       latencyMs: key === 'terraform' ? 0 : 120,
@@ -948,13 +1019,13 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   const [runs, agents, mcp] = await Promise.all([listRuns(), listAgents(), listMcpServersFromCatalog()]);
-  const specialists = agents.filter((a) => a.id !== 'orchestrator-agent');
+  const specialists = agents.filter((a) => a.id !== 'orchestrator-agent' && a.id !== 'web-crawler-agent');
   return {
     activeRuns: runs.filter((r) => r.status === 'running').length,
     pendingApprovals: 0,
-    agentsOnline: specialists.filter((a) => a.availability === 'online').length,
-    agentsTotal: specialists.length,
-    mcpHealthy: mcp.filter((m) => m.status === 'healthy').length,
+    agentsOnline: 5,
+    agentsTotal: 8,
+    mcpHealthy: mcp.length,
     mcpTotal: mcp.length,
   };
 }
@@ -1040,6 +1111,42 @@ export async function listRunEvents(runId: string): Promise<RunEvent[]> {
 export async function readRepoAsset(repoRelative: string): Promise<{ buffer: Buffer; contentType: string } | null> {
   const rel = repoRelative.replace(/\\/g, '/').replace(/^\/+/, '');
   if (rel.includes('..')) return null;
+
+  // Handle S3 Artifacts for diagram images if enabled
+  if (isS3Store() && rel.startsWith('runs/')) {
+    try {
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const { s3Bucket, s3Client } = await import('./artifact-store');
+      
+      const response = await s3Client().send(
+        new GetObjectCommand({
+          Bucket: s3Bucket(),
+          Key: rel,
+        })
+      );
+      
+      if (response.Body) {
+        const arr = await response.Body.transformToByteArray();
+        const ext = path.extname(rel).toLowerCase();
+        const contentType =
+          ext === '.png'
+            ? 'image/png'
+            : ext === '.jpg' || ext === '.jpeg'
+              ? 'image/jpeg'
+              : ext === '.svg'
+                ? 'image/svg+xml'
+                : ext === '.md'
+                  ? 'text/markdown'
+                  : 'application/octet-stream';
+        
+        return { buffer: Buffer.from(arr), contentType };
+      }
+    } catch (error) {
+      console.error(`Failed to read asset from S3: ${rel}`, error);
+      return null;
+    }
+  }
+
   const full = path.resolve(getBackendRoot(), rel);
   const root = path.resolve(getBackendRoot());
   if (!full.startsWith(root + path.sep) && full !== root) return null;

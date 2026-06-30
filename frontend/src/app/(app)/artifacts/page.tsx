@@ -45,6 +45,36 @@ export default function ArtifactsPage() {
   const currentProjectId = useUiStore((s) => s.currentProjectId);
   const [kind, setKind] = React.useState<ArtifactKind | 'all'>('all');
   const [preview, setPreview] = React.useState<Artifact | null>(null);
+  const [previewText, setPreviewText] = React.useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!preview || preview.imageUrl || preview.preview) {
+      setPreviewText(preview?.preview ?? null);
+      setPreviewLoading(false);
+      return;
+    }
+    if (!preview.path.startsWith('runs/')) {
+      setPreviewText(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    fetch(`/api/v1/repo-asset?path=${encodeURIComponent(preview.path)}`)
+      .then((res) => (res.ok ? res.text() : Promise.reject(new Error('preview failed'))))
+      .then((text) => {
+        if (!cancelled) setPreviewText(text.slice(0, 8000));
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewText('Preview unavailable for this artifact.');
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [preview]);
 
   const currentProjectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
 
@@ -79,8 +109,8 @@ export default function ArtifactsPage() {
             return (
               <Card
                 key={a.id}
-                onClick={() => (a.preview || a.imageUrl) && setPreview(a)}
-                className={`overflow-hidden border-white/[0.06] bg-card/80 p-4 transition-all duration-300 ${(a.preview || a.imageUrl) ? 'cursor-pointer hover:border-teal-500/30 hover:bg-card hover:shadow-lg' : ''}`}
+                onClick={() => setPreview(a)}
+                className="overflow-hidden border-white/[0.06] bg-card/80 p-4 transition-all duration-300 cursor-pointer hover:border-teal-500/30 hover:bg-card hover:shadow-lg"
               >
                 <div className="flex items-start gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground ring-1 ring-white/[0.06]">
@@ -96,7 +126,9 @@ export default function ArtifactsPage() {
                   <span>{a.producedBy}</span>
                   <span>{a.sizeKb} KB \u00b7 {formatRelative(a.createdAt)}</span>
                 </div>
-                {(a.preview || a.imageUrl) ? <p className="mt-2 text-[11px] font-medium text-teal-400">Click to preview</p> : null}
+                {(a.preview || a.imageUrl || a.path.startsWith('runs/')) ? (
+                  <p className="mt-2 text-[11px] font-medium text-teal-400">Click to preview</p>
+                ) : null}
               </Card>
             );
           })}
@@ -117,9 +149,11 @@ export default function ArtifactsPage() {
                 className="w-full rounded-md object-contain"
               />
             </div>
+          ) : previewLoading ? (
+            <p className="text-sm text-muted-foreground">Loading preview…</p>
           ) : (
             <pre className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
-              {preview?.preview}
+              {previewText ?? preview?.preview ?? 'No preview available.'}
             </pre>
           )}
         </DialogContent>

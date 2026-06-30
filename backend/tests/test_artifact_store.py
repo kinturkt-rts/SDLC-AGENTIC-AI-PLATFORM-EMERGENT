@@ -175,3 +175,23 @@ def test_get_context_falls_back_to_legacy_per_app_path(
 def repo_root(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()
     return tmp_path
+
+
+def test_get_artifact_s3_missing_key_raises_file_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    from botocore.exceptions import ClientError
+
+    from _shared.artifact_store import get_artifact
+
+    def _raise_no_such_key(*_args: object, **_kwargs: object) -> None:
+        raise ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "Not found"}},
+            "GetObject",
+        )
+
+    with patch("_shared.artifact_store._s3_client") as mock_client:
+        mock_client.return_value.get_object.side_effect = _raise_no_such_key
+        with pytest.raises(FileNotFoundError, match="S3 artifact not found"):
+            get_artifact("smoke-006", "docs/design/field-service-dispatch.md")

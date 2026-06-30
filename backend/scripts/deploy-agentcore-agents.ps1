@@ -19,6 +19,23 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+# agentcore CLI prints unicode glyphs (checkmarks); Windows console codepage (cp1252) can't
+# encode them and the process crashes mid-command even after the action already succeeded.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
+$DotenvForwardedKeys = @(
+    "ARTIFACT_S3_BUCKET",
+    "ARTIFACT_DYNAMODB_TABLE",
+    "POSTGRES_MCP_DB_ENDPOINT",
+    "POSTGRES_MCP_DATABASE",
+    "POSTGRES_MCP_DB_USER",
+    "POSTGRES_MCP_DB_PASSWORD",
+    "POSTGRES_MCP_PORT",
+    "POSTGRES_MCP_REGION",
+    "POSTGRES_MCP_SSLMODE"
+)
+
 function Import-ArtifactEnvFromDotenv {
     foreach ($path in @(
         (Join-Path (Split-Path -Parent $RepoRoot) ".env.local"),
@@ -33,11 +50,8 @@ function Import-ArtifactEnvFromDotenv {
             if ($line -match '^\s*([^=]+)=(.*)$') {
                 $key = $matches[1].Trim()
                 $val = $matches[2].Trim().Trim('"').Trim("'")
-                if ($key -eq "ARTIFACT_S3_BUCKET" -and $val -and -not $env:ARTIFACT_S3_BUCKET) {
-                    $env:ARTIFACT_S3_BUCKET = $val
-                }
-                if ($key -eq "ARTIFACT_DYNAMODB_TABLE" -and $val -and -not $env:ARTIFACT_DYNAMODB_TABLE) {
-                    $env:ARTIFACT_DYNAMODB_TABLE = $val
+                if ($val -and ($DotenvForwardedKeys -contains $key) -and -not [Environment]::GetEnvironmentVariable($key)) {
+                    [Environment]::SetEnvironmentVariable($key, $val, "Process")
                 }
             }
         }
@@ -54,6 +68,13 @@ $AllAgents = @(
     @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = @() },
     @{ awsName = "qa_agent"; bundle = "qa-agent"; node = $false; extra = @() },
     @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() },
+    # VPC-mode orchestrator runtime: AgentCore network mode is immutable after creation, so RDS
+    # access (needs to reach RDS in vpc-036155f359e2e940c) requires a separate runtime, not a
+    # reconfigure of orchestrator_agent. Cut config/agentcore/runtimes.json over once verified.
+    @{ awsName = "orchestrator_agent_vpc"; bundle = "orchestrator-agent"; node = $false; extra = @(); vpc = @{
+        subnets = "subnet-0c0e7c749de659e32,subnet-07651619f77b51d7f,subnet-044c04012037ca457"
+        securityGroups = "sg-077b416683295dd42"
+    } },
     @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @() },
     @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
     @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $false; extra = @() }
@@ -106,15 +127,25 @@ foreach ($agent in $TargetAgents) {
     Write-Host "`n=== $awsName (bundle=$bundle) ===" -ForegroundColor Cyan
 
     if ($RunConfigure) {
-        agentcore configure `
-            --entrypoint deploy/agentcore `
-            --requirements-file deploy/agentcore/requirements.txt `
-            --protocol A2A `
-            --deployment-type container `
-            --name $awsName `
-            --region $Region `
-            --disable-memory `
-            --non-interactive
+        $configureArgs = @(
+            "configure",
+            "--entrypoint", "deploy/agentcore/a2a_server.py",
+            "--requirements-file", "deploy/agentcore/requirements.txt",
+            "--protocol", "A2A",
+            "--deployment-type", "container",
+            "--name", $awsName,
+            "--region", $Region,
+            "--disable-memory",
+            "--non-interactive"
+        )
+        if ($agent.vpc) {
+            $configureArgs += @(
+                "--vpc",
+                "--subnets", $agent.vpc.subnets,
+                "--security-groups", $agent.vpc.securityGroups
+            )
+        }
+        & agentcore @configureArgs
         Write-Warning "After configure, verify source_path is 'backend' (not deploy/agentcore) in .bedrock_agentcore.yaml"
     }
 
@@ -122,7 +153,7 @@ foreach ($agent in $TargetAgents) {
 
     $deployArgs = @("deploy", "--agent", $awsName, "--env", "AGENTCORE_AGENT=$bundle")
     $envBlock = $CommonEnv + $agent.extra
-    if ($awsName -eq "orchestrator_agent") {
+    if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc") {
         $envBlock += $OrchestratorExtra
     }
     foreach ($item in $envBlock) {

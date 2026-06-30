@@ -128,7 +128,15 @@ def get_artifact(run_id: str, rel_path: str) -> bytes:
 
     if is_s3_store():
         key = f"{run_s3_prefix(run_id)}{rel}"
-        response = _s3_client().get_object(Bucket=s3_bucket(), Key=key)
+        try:
+            response = _s3_client().get_object(Bucket=s3_bucket(), Key=key)
+        except Exception as exc:
+            code = ""
+            if hasattr(exc, "response"):
+                code = str(exc.response.get("Error", {}).get("Code", ""))  # type: ignore[union-attr]
+            if code in ("NoSuchKey", "404"):
+                raise FileNotFoundError(f"S3 artifact not found: s3://{s3_bucket()}/{key}") from exc
+            raise
         body = response["Body"].read()
         return body if isinstance(body, bytes) else bytes(body)
 

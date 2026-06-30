@@ -371,7 +371,7 @@ function InputRequirementsCard() {
   };
 
   const statusConfig: Record<InputStatus, { label: string; color: string; icon: typeof AlertCircle }> = {
-    missing: { label: 'Missing', color: 'text-red-400 bg-red-500/10', icon: AlertCircle },
+    missing: { label: 'Not Started', color: 'text-muted-foreground bg-white/[0.04]', icon: FileText },
     ready: { label: 'Ready', color: 'text-amber-400 bg-amber-500/10', icon: Circle },
     saved: { label: 'Saved', color: 'text-emerald-400 bg-emerald-500/10', icon: CheckCircle2 },
   };
@@ -450,29 +450,8 @@ function InputRequirementsCard() {
               onClick={handleSubmit}
               disabled={!content.trim() || !feature || !featureValid || submitting}
             >
-              <PlayCircle className="h-3.5 w-3.5" /> {submitting ? 'Submitting…' : 'Submit Brief & Run'}
+              <PlayCircle className="h-3.5 w-3.5" /> {submitting ? 'Starting...' : 'Submit & Run Pipeline'}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 border-white/[0.08]"
-              onClick={handleSave}
-              disabled={!content.trim() || !feature || !featureValid || saving}
-            >
-              <Save className="h-3.5 w-3.5" /> {saving ? 'Saving…' : 'Save draft only'}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 border-white/[0.08]"
-              onClick={handleStart}
-              disabled={status !== 'saved' || !savedRunId || starting}
-            >
-              <PlayCircle className="h-3.5 w-3.5" /> {starting ? 'Starting…' : 'Start saved run'}
-            </Button>
-            {status === 'missing' && (
-              <p className="text-[11px] text-red-400/80">Add requirements before submitting.</p>
-            )}
           </div>
         </div>
       </div>
@@ -530,40 +509,6 @@ function TokenUsageSection() {
             </Link>
           ))}
         </div>
-      </div>
-    </Card>
-  );
-}
-
-/* ── Compact Agent Status Row ────────────────────── */
-function AgentStatusRow() {
-  const { data: agents } = useAgents();
-  // Show only the 8 specialist agents (exclude orchestrator)
-  const specialists = (agents ?? []).filter((a) => a.id !== 'orchestrator-agent');
-
-  const CURRENT_TASKS: Record<string, string> = {
-    'product-agent': 'Generated PRD for FinOps Web App',
-    'architect-agent': 'Architecture doc & C4 diagram created',
-    'database-agent': 'Migration 0001_init_schema.sql committed',
-    'developer-agent': 'Writing budgets_router.py',
-    'gitlab-agent': 'Published sdlc/rag-pdf-system branch',
-    'qa-agent': '—',
-    'devops-agent': '—',
-    'security-agent': '—',
-  };
-
-  return (
-    <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-      <SectionHeader title="Agent Status" href="/agents" icon={Bot} count={specialists.length} />
-      <div className="divide-y divide-white/[0.04]">
-        {specialists.map((agent) => (
-          <Link key={agent.id} href={`/agents/${agent.id}`} className="flex items-center gap-3 px-4 py-2 transition-colors hover:bg-white/[0.02]">
-            <span className={cn('h-2 w-2 shrink-0 rounded-full', agent.availability === 'online' ? 'bg-emerald-500' : 'bg-slate-500')} />
-            <span className="w-28 shrink-0 text-sm font-medium text-foreground">{agent.displayName}</span>
-            <StatusBadge status={agent.availability} size="sm" />
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{CURRENT_TASKS[agent.id] ?? '—'}</span>
-          </Link>
-        ))}
       </div>
     </Card>
   );
@@ -627,7 +572,7 @@ export default function DashboardPage() {
               <>
                 <HeroStatCard icon={Activity} label="Active Runs" value={summary.activeRuns} sub="currently executing" accent="glow-blue-sm" iconAccent="bg-blue-500/10 text-blue-400 ring-blue-500/20" href="/runs" />
                 <HeroStatCard icon={UserCheck} label="Pending Approvals" value={summary.pendingApprovals} sub="awaiting human review" accent="" iconAccent="bg-amber-500/10 text-amber-400 ring-amber-500/20" href="/checkpoints" />
-                <HeroStatCard icon={Bot} label="Agents Online" value={`${summary.agentsOnline}/${summary.agentsTotal}`} sub="specialist agents" accent="" iconAccent="bg-emerald-500/10 text-emerald-400 ring-emerald-500/20" href="/agents" />
+                <HeroStatCard icon={Bot} label="Agents Online" value={`${summary.agentsOnline}/8`} sub="specialist agents" accent="" iconAccent="bg-emerald-500/10 text-emerald-400 ring-emerald-500/20" href="/agents" />
                 <HeroStatCard icon={Plug} label="MCP Healthy" value={`${summary.mcpHealthy}/${summary.mcpTotal}`} sub="integration servers" accent="" iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20" href="/mcp" />
               </>
             ) : (
@@ -734,27 +679,8 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* ── 6. Token Usage + MCP Health (side by side) ── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <TokenUsageSection />
-        </div>
-
-        <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-          <SectionHeader title="MCP Health" href="/mcp" icon={Plug} />
-          <div className="space-y-0.5 p-2">
-            {(mcp ?? []).map((m) => (
-              <Link key={m.id} href="/mcp" className="flex items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.02]">
-                <span className="text-sm text-foreground">{m.name}</span>
-                <StatusBadge status={m.status} size="sm" />
-              </Link>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* ── 7. Compact Agent Status ───────────────────── */}
-      <AgentStatusRow />
+      {/* ── 6. Token Usage ── */}
+      <TokenUsageSection />
     </div>
   );
 }

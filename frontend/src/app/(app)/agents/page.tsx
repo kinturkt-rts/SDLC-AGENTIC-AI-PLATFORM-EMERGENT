@@ -18,8 +18,9 @@ export default function AgentsPage() {
   const [view, setView] = React.useState<'cards' | 'table'>('cards');
   const router = useRouter();
 
-  // Orchestrator is a system component — show only the 8 specialist agents
-  const agents = (rawAgents ?? []).filter((a) => a.id !== 'orchestrator-agent');
+  // Orchestrator is a system component — show only the specialist agents
+  // Exclude web crawler per user request
+  const agents = (rawAgents ?? []).filter((a) => a.id !== 'orchestrator-agent' && a.id !== 'web-crawler-agent');
 
   const columns: Column<Agent>[] = [
     {
@@ -41,14 +42,17 @@ export default function AgentsPage() {
     {
       key: 'tools',
       header: 'MCP tools',
-      render: (a) => (
-        <div className="flex flex-wrap gap-1">
-          {a.mcpTools.slice(0, 2).map((t) => (
-            <span key={t} className="rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{t}</span>
-          ))}
-          {a.mcpTools.length > 2 ? <span className="text-[11px] text-muted-foreground">+{a.mcpTools.length - 2}</span> : null}
-        </div>
-      ),
+      render: (a) => {
+        const servers = a.mcpServers.filter((s) => s !== 'Atlassian' && s !== 'AWS Diagram');
+        return (
+          <div className="flex flex-wrap gap-1">
+            {servers.slice(0, 2).map((t) => (
+              <span key={t} className="rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{t}</span>
+            ))}
+            {servers.length > 2 ? <span className="text-[11px] text-muted-foreground">+{servers.length - 2}</span> : null}
+          </div>
+        );
+      },
     },
     { key: 'port', header: 'Port', align: 'left', render: (a) => <span className="font-mono text-muted-foreground">:{a.port}</span> },
     { key: 'availability', header: 'Status', render: (a) => <StatusBadge status={a.availability} size="sm" /> },

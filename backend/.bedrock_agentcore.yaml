@@ -1,4 +1,4 @@
-default_agent: developer_agent
+default_agent: orchestrator_agent_vpc
 agents:
   product_agent:
     name: product_agent
@@ -306,6 +306,66 @@ agents:
     codebuild:
       project_name: bedrock-agentcore-orchestrator_agent-builder
       execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-00cafffea8
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  orchestrator_agent_vpc:
+    name: orchestrator_agent_vpc
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
+      Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: none
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\SDLC
+      Agentic AI Platform\backend
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-a56f2bbfac
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-orchestrator_agent_vpc
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: VPC
+        network_mode_config:
+          security_groups:
+          - sg-077b416683295dd42
+          subnets:
+          - subnet-0c0e7c749de659e32
+          - subnet-07651619f77b51d7f
+          - subnet-044c04012037ca457
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: orchestrator_agent_vpc-OjsXSo2v9h
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent_vpc-OjsXSo2v9h
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-orchestrator_agent_vpc-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-a56f2bbfac
       source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
     memory:
       mode: NO_MEMORY
