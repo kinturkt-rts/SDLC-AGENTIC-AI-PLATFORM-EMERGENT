@@ -77,6 +77,8 @@ The Dockerfile copies `agents/`, `a2a/`, `scripts/`, and `config/` from the **re
 
 CodeBuild uses the repo-root `Dockerfile` (kept in sync with `deploy/agentcore/Dockerfile`). Base image: `public.ecr.aws/docker/library/python:...` (avoids Docker Hub rate limits).
 
+**`agents/_shared/` in every image:** All AgentCore Dockerfiles use `COPY agents /app/agents`, which ships the full `agents/_shared/` library tree plus every agent package. Each runtime still selects one specialist via `AGENTCORE_AGENT` at deploy time. After editing `deploy/agentcore/Dockerfile`, run `scripts/sync-agentcore-dockerfiles.ps1` to refresh `backend/Dockerfile` and `.bedrock_agentcore/*/Dockerfile`.
+
 AWS runtime `--name` uses underscores (`product_agent`); container env `AGENTCORE_AGENT` uses hyphens (`product-agent`).
 
 ### Prerequisites (once)
