@@ -218,7 +218,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
           {/* Inline HITL when waiting for a human */}
           {waitingStep ? (
             (() => {
-              const cp = runCheckpoints.find((c) => c.status === 'pending');
+              const cp = (checkpoints ?? []).find((c) => c.runId === params.id && c.status === 'pending');
               return (
                 <Card className="border-amber-500/30 bg-amber-500/[0.04] p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

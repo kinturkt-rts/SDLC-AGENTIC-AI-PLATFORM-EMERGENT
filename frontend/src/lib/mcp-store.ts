@@ -2,22 +2,13 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { McpConfig, McpServerConfig, McpValidationResult } from '@/src/types';
 
-// Persisted at <project>/data/mcp.json in Cursor's mcpServers format.
+// Persisted at <project>/data/mcp.json.
 const DATA_DIR = path.join(process.cwd(), 'data');
 const MCP_FILE = path.join(DATA_DIR, 'mcp.json');
 
 // Seeded on first read. env VALUES are secret REFERENCES only (never raw secrets).
 const DEFAULT_MCP: McpConfig = {
   mcpServers: {
-    Atlassian: {
-      command: 'npx',
-      args: ['-y', 'mcp-atlassian'],
-      env: { ATLASSIAN_URL: '${env:ATLASSIAN_URL}', ATLASSIAN_API_TOKEN: '${env:ATLASSIAN_API_TOKEN}' },
-      envFile: '${workspaceFolder}/.env',
-      disabled: false,
-      timeout: 60,
-      type: 'stdio',
-    },
     GitLab: {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-gitlab'],
@@ -26,31 +17,86 @@ const DEFAULT_MCP: McpConfig = {
       timeout: 60,
       type: 'stdio',
     },
-    Postgres: {
+    Atlassian: {
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-postgres'],
-      env: { DATABASE_URL: '${env:DATABASE_URL}' },
-      disabled: false,
+      args: ['-y', 'mcp-atlassian'],
+      env: { ATLASSIAN_URL: '${env:ATLASSIAN_URL}', ATLASSIAN_API_TOKEN: '${env:ATLASSIAN_API_TOKEN}' },
+      envFile: '${workspaceFolder}/.env',
+      disabled: true,
+      timeout: 60,
       type: 'stdio',
     },
-    MongoDB: {
+    'AWS Diagram': {
+      command: 'uvx',
+      args: ['awslabs.aws-diagram-mcp-server'],
+      disabled: true,
+      type: 'stdio',
+    },
+    'Draw.io': {
       command: 'npx',
-      args: ['-y', 'mongodb-mcp-server'],
-      env: { MDB_MCP_CONNECTION_STRING: '${env:MDB_MCP_CONNECTION_STRING}' },
-      disabled: false,
+      args: ['-y', 'drawio-mcp-server'],
+      disabled: true,
       type: 'stdio',
     },
     Firecrawl: {
       command: 'npx',
       args: ['-y', 'firecrawl-mcp'],
       env: { FIRECRAWL_API_KEY: '${env:FIRECRAWL_API_KEY}' },
-      disabled: false,
+      disabled: true,
       type: 'stdio',
     },
-    'AWS Diagram': {
-      command: 'uvx',
-      args: ['awslabs.aws-diagram-mcp-server'],
-      disabled: false,
+    GitHub: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-github'],
+      env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${env:GITHUB_PERSONAL_ACCESS_TOKEN}' },
+      disabled: true,
+      type: 'stdio',
+    },
+    MongoDB: {
+      command: 'npx',
+      args: ['-y', 'mongodb-mcp-server'],
+      env: { MDB_MCP_CONNECTION_STRING: '${env:MDB_MCP_CONNECTION_STRING}' },
+      disabled: true,
+      type: 'stdio',
+    },
+    Playwright: {
+      command: 'npx',
+      args: ['-y', '@playwright/mcp@latest', '--headless', '--isolated'],
+      disabled: true,
+      type: 'stdio',
+    },
+    Postgres: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-postgres'],
+      env: { DATABASE_URL: '${env:DATABASE_URL}' },
+      disabled: true,
+      type: 'stdio',
+    },
+    Postman: {
+      url: 'https://mcp.postman.com/mcp',
+      env: { POSTMAN_API_KEY: '${env:POSTMAN_API_KEY}' },
+      disabled: true,
+      type: 'http',
+    },
+    Sentry: {
+      command: 'npx',
+      args: ['-y', '@sentry/mcp-server'],
+      env: { SENTRY_AUTH_TOKEN: '${env:SENTRY_AUTH_TOKEN}' },
+      disabled: true,
+      type: 'stdio',
+    },
+    Slack: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-slack'],
+      env: { SLACK_BOT_TOKEN: '${env:SLACK_BOT_TOKEN}', SLACK_TEAM_ID: '${env:SLACK_TEAM_ID}' },
+      disabled: true,
+      type: 'stdio',
+    },
+    SonarQube: {
+      command: 'npx',
+      args: ['-y', 'sonarqube-mcp-server'],
+      env: { SONARQUBE_TOKEN: '${env:SONARQUBE_TOKEN}', SONARQUBE_URL: '${env:SONARQUBE_URL}' },
+      disabled: true,
       type: 'stdio',
     },
     Terraform: {

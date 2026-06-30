@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plug, Plus, Pencil, Trash2, FileJson, Terminal } from 'lucide-react';
+import { Plug, Plus, Pencil, Trash2, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -159,7 +159,7 @@ export default function McpPage() {
       <PageHeader
         eyebrow="Integrations"
         title="MCP Registry"
-        description="Manage Model Context Protocol servers (Cursor mcp.json format). Changes persist to data/mcp.json. env values must be secret references (e.g. ${env:NAME}) \u2014 never raw secrets."
+        description="Integration servers that expose tools to SDLC pipeline agents."
         actions={
           <Button className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700" onClick={openAdd}>
             <Plus className="h-4 w-4" /> Add MCP Server
@@ -186,7 +186,6 @@ export default function McpPage() {
                     </div>
                     <div className="min-w-0">
                       <p className="font-semibold text-foreground">{name}</p>
-                      <p className="font-mono text-[11px] text-muted-foreground">{cfg.type ?? (cfg.url ? 'remote' : 'stdio')}</p>
                     </div>
                   </div>
                   <Switch checked={enabled} onCheckedChange={(c) => toggleDisabled(name, cfg, c)} />
@@ -225,16 +224,12 @@ export default function McpPage() {
         </div>
       )}
 
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <FileJson className="h-3.5 w-3.5" /> Persisted to <code className="rounded-md bg-muted/40 px-1 py-0.5 font-mono">data/mcp.json</code> in Cursor format.
-      </p>
-
       {/* Add / Edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto border-white/[0.08] bg-card">
           <DialogHeader>
             <DialogTitle>{editingName ? `Edit ${editingName}` : 'Add MCP Server'}</DialogTitle>
-            <DialogDescription>Matches Cursor mcp.json. env values must be references like ${'{'}env:NAME{'}'}.</DialogDescription>
+            <DialogDescription>Configure how agents connect to this server. Reference secrets via ${'{'}env:NAME{'}'} — do not enter raw credentials.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
@@ -292,7 +287,7 @@ export default function McpPage() {
         <AlertDialogContent className="border-white/[0.08] bg-card">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete &ldquo;{deleteTarget}&rdquo;?</AlertDialogTitle>
-            <AlertDialogDescription>This removes the server from data/mcp.json. This cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>This permanently removes the server from the registry.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="border-white/[0.08]">Cancel</AlertDialogCancel>

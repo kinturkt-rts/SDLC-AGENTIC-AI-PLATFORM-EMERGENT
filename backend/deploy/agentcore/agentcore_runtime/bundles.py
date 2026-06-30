@@ -226,7 +226,6 @@ def database_agent_bundle() -> BundleFactory:
         with ExitStack() as stack:
             tools = mod._build_toolset(  # noqa: SLF001
                 stack,
-                use_postgres=use_postgres,
                 use_mongodb=use_mongodb,
             )
             agent = mod.build_database_pipeline_agent(  # noqa: SLF001

@@ -303,9 +303,34 @@ def check_seed_schema_nullability(sql_dir: Path) -> list[str]:
     return errors
 
 
+_UUID_LITERAL_RE = re.compile(
+    r"'([0-9a-zA-Z]{8}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{12})'"
+)
+_VALID_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def check_uuid_literals(sql_dir: Path) -> list[str]:
+    """Reject UUID-shaped literals that contain non-hex characters (g-z)."""
+    errors: list[str] = []
+    for path in sorted(sql_dir.glob("*.sql")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in _UUID_LITERAL_RE.finditer(text):
+            candidate = match.group(1)
+            if not _VALID_UUID_RE.match(candidate):
+                bad_chars = sorted(set(c for c in candidate.replace("-", "") if c.lower() not in "0123456789abcdef"))
+                errors.append(
+                    f"{path.name}: invalid UUID literal '{candidate}' — "
+                    f"non-hex character(s): {', '.join(bad_chars)}. "
+                    f"UUIDs may only contain 0-9 and a-f."
+                )
+    return errors
+
+
 def validate_sql_dir(sql_dir: Path) -> list[str]:
     """Run all blocking sql/ artifact checks."""
-    return check_seed_schema_nullability(sql_dir)
+    errors = check_seed_schema_nullability(sql_dir)
+    errors.extend(check_uuid_literals(sql_dir))
+    return errors
 
 
 def _nullability_reconcile_enabled() -> bool:

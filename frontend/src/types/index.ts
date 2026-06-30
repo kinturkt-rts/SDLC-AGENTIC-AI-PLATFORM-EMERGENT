@@ -248,7 +248,7 @@ export type RunEvent =
 
 export type RunEventKind = RunEvent['kind'];
 
-// ---- MCP (Cursor mcp.json format) ----
+// ---- MCP registry ----
 export interface McpServerConfig {
   command?: string;
   args?: string[];

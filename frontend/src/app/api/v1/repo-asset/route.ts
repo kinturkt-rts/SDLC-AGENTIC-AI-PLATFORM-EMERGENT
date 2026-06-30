@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
 
-  return new NextResponse(asset.buffer, {
+  return new NextResponse(new Uint8Array(asset.buffer), {
     headers: {
       'Content-Type': asset.contentType,
       'Cache-Control': 'private, max-age=60',

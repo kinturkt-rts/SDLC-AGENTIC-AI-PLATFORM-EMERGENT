@@ -1,4 +1,4 @@
-"""Database agent - Strands + Bedrock + Postgres & MongoDB MCP Servers"""
+"""Database agent - Strands + Bedrock; optional MongoDB MCP; RDS apply via host script."""
 
 from __future__ import annotations
 
@@ -25,12 +25,14 @@ from _shared.artifact_store import (
     resolve_run_id,
     write_repo_artifact,
 )
+from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.db_handoff import write_db_handoff
 from _shared.env import load_repo_env
-from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_client, postgres_mcp_tool_params
+from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_tool_params
 from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
+    enrich_handoff_context,
     merge_run_handoff_context,
     resolve_cli_context,
     resolve_target_app,
@@ -157,6 +159,29 @@ Return **once**, in order:
 Do **not** repeat sections. Do **not** paste full SQL bodies in the reply.
 Do **not** add a `## Files written` section — the CLI logs written paths on stderr.
 Use **one `db_write_file` call per sql file**; put full SQL only in the tool `content` argument, not in chat text.
+
+## UUID literals in seed SQL — hex digits only
+When writing hardcoded UUIDs in seed INSERT rows, **every character must be a valid hex digit** (`0-9`, `a-f`).
+Letters `g` through `z` are **invalid** in UUID and will crash `apply_sql_to_rds.py`.
+
+**Good examples:**
+```sql
+('a1b2c3d4-e5f6-7890-abcd-ef1234567890', ...)
+('00000001-0000-0000-0000-000000000001', ...)
+('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', ...)  -- OK: a is hex
+('ffffffff-ffff-ffff-ffff-ffffffffffff', ...)  -- OK: f is hex
+```
+
+**Bad — will fail:**
+```sql
+('gggggggg-gggg-gggg-gggg-gggggggggggg', ...)  -- g is NOT hex
+('iiiiiiii-iiii-iiii-iiii-iiiiiiiiiiii', ...)  -- i is NOT hex
+```
+
+When you need more than 15 distinct seed IDs (a-f + 0-9 exhausted), use zero-padded counters:
+`'00000001-0000-0000-0000-000000000001'`, `'00000002-...'`, etc.
+
+Alternatively, use `gen_random_uuid()` as DEFAULT and omit the `id` column from INSERT.
 
 ## Guardrails
 - Never write outside `target-apps/`.
@@ -327,12 +352,6 @@ def db_validate_sql(service: str) -> str:
     )
 
 
-@tool
-def db_get_postgres_params() -> str:
-    """Return JSON connection params for postgres_run_query (from POSTGRES_MCP_* env)."""
-    return json.dumps(postgres_mcp_tool_params(), indent=2)
-
-
 def _enrich_postgres_mcp_context(ctx: dict[str, Any], *, use_postgres: bool) -> None:
     """Inject RDS target and post-run apply flag when --with-postgres is set."""
     ctx.setdefault("seedMinRows", int(_SEED_MIN_ROWS))
@@ -415,6 +434,7 @@ def _coding_model() -> BedrockModel:
         ),
     )
 
+
 def _build_context(
     *,
     target_app: str,
@@ -463,14 +483,8 @@ def _file_tools() -> list[Any]:
     return [db_list_tree, db_read_file, db_write_file, db_validate_sql]
 
 
-def _postgres_mcp_tools(stack: ExitStack) -> list[Any]:
-    """Attach AWS Postgres MCP tools (composable with MongoDB MCP)."""
-    client = stack.enter_context(postgres_mcp_client(cwd=_REPO_ROOT))
-    return client.list_tools_sync()
-
-
 def _mongodb_mcp_tools(stack: ExitStack) -> list[Any]:
-    """Attach MongoDB MCP tools (composable with Postgres MCP)."""
+    """Attach MongoDB MCP tools when design requires document storage."""
     client = stack.enter_context(mongodb_mcp_client(cwd=_REPO_ROOT))
     return client.list_tools_sync()
 
@@ -478,10 +492,9 @@ def _mongodb_mcp_tools(stack: ExitStack) -> list[Any]:
 def _build_toolset(
     stack: ExitStack,
     *,
-    use_postgres: bool = False,
     use_mongodb: bool = False,
 ) -> list[Any]:
-    """File tools plus MongoDB MCP when requested. Postgres RDS apply is post-run, not MCP."""
+    """File tools plus optional MongoDB MCP. RDS apply is post-run via apply_sql_to_rds.py."""
     tools = _file_tools()
     if use_mongodb:
         tools.extend(_mongodb_mcp_tools(stack))
@@ -505,32 +518,21 @@ def run_task(
     base_ctx = dict(context) if context is not None else {}
     base_ctx.setdefault("targetApp", app)
     ctx = merge_run_handoff_context(base_ctx, include_db_paths=False)
-    service_dir = _ensure_service_exists(app)
-    ctx.setdefault("targetAppDir", service_dir.relative_to(_REPO_ROOT).as_posix())
-    db_dir = service_dir / db_subdir
-    db_dir.mkdir(parents=True, exist_ok=True)
-    ctx.setdefault("dbOutputDir", db_dir.relative_to(_REPO_ROOT).as_posix())
-    ctx.setdefault("preferredSqlPath", (db_dir / "sql").relative_to(_REPO_ROOT).as_posix())
-    ctx.setdefault("preferredNoSqlPath", (db_dir / "nosql").relative_to(_REPO_ROOT).as_posix())
+    for key, value in _build_context(target_app=app, db_subdir=db_subdir).items():
+        ctx.setdefault(key, value)
     _enrich_postgres_mcp_context(ctx, use_postgres=use_postgres)
     _run_context = ctx
 
     try:
         with ExitStack() as stack:
-            toolset = _build_toolset(stack, use_postgres=use_postgres, use_mongodb=use_mongodb)
+            toolset = _build_toolset(stack, use_mongodb=use_mongodb)
             telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=coding_model_id())
             agent = _build_agent(toolset, telemetry=telemetry)
             summary = str(agent(_user_message(task, ctx)))
     except MCPClientInitializationError as exc:
-        backends = []
-        if use_postgres:
-            backends.append("Postgres")
-        if use_mongodb:
-            backends.append("MongoDB")
-        label = " + ".join(backends) if backends else "MCP"
         raise SystemExit(
-            f"{label} MCP failed to start.\n"
-            "Check POSTGRES_MCP_* / MDB_MCP_* env and MCP server install.\n"
+            "MongoDB MCP failed to start.\n"
+            "Check MDB_MCP_* env and MCP server install.\n"
             f"Details: {exc}"
         ) from exc
     finally:
@@ -599,22 +601,9 @@ def _execute_database_pipeline_message(
             use_mongodb=use_mongodb,
         )
     except (ValueError, TargetAppRequiredError, SystemExit) as exc:
-        run_id = resolve_run_id(ctx) or "smoke-001"
-        app = ctx.get("targetApp") or "inventory-app"
-        example = {
-            "targetApp": app,
-            "runId": run_id,
-            "designDocPath": f"docs/design/{app}.md",
-            "prdPath": f"docs/PRD/{app}.md",
-            "dbOutputDir": f"target-apps/{app}/db",
-            "preferredSqlPath": f"target-apps/{app}/db/sql",
-        }
-        return (
-            "Database pipeline could not start.\n\n"
-            f"Reason: {exc}\n\n"
-            "Ensure architect ran first and Context includes runId + designDocPath:\n\n"
-            f"Context:\n{json.dumps(example, indent=2)}\n"
-        )
+        return _database_pipeline_error_message(exc, ctx)
+    except Exception as exc:
+        return _database_pipeline_error_message(exc, ctx)
 
     lines = [summary]
     if written:
@@ -627,6 +616,37 @@ def _execute_database_pipeline_message(
         if is_s3_store():
             lines.append(f"- s3Prefix: runs/{run_id}/")
     return "\n".join(lines)
+
+
+def _database_pipeline_error_message(exc: BaseException, ctx: dict[str, Any]) -> str:
+    run_id = resolve_run_id(ctx) or "smoke-001"
+    app = (ctx or {}).get("targetApp") or "inventory-app"
+    example = {
+        "targetApp": app,
+        "runId": run_id,
+        "designDocPath": f"docs/design/{app}.md",
+        "prdPath": f"docs/PRD/{app}.md",
+        "dbOutputDir": f"target-apps/{app}/db",
+        "preferredSqlPath": f"target-apps/{app}/db/sql",
+    }
+    hint = ""
+    msg = str(exc)
+    if "ARTIFACT_S3_BUCKET" in msg:
+        hint = (
+            "\n\nRuntime env: set ARTIFACT_STORE=s3 and ARTIFACT_S3_BUCKET on the "
+            "database_agent AgentCore deploy (see scripts/deploy-agentcore-agents.ps1)."
+        )
+    elif "AccessDenied" in msg or "403" in msg:
+        hint = (
+            "\n\nIAM: AgentCore execution role needs s3:GetObject and s3:PutObject on "
+            f"s3://<ARTIFACT_S3_BUCKET>/runs/*."
+        )
+    return (
+        "Database pipeline could not start.\n\n"
+        f"Reason: {type(exc).__name__}: {exc}{hint}\n\n"
+        "Ensure product + architect ran first and S3 has PRD/design under runs/<runId>/:\n\n"
+        f"Context:\n{json.dumps(example, indent=2)}\n"
+    )
 
 
 def _agent_result_from_text(text: str) -> Any:
@@ -667,11 +687,15 @@ def build_database_pipeline_agent(
         from strands.types._events import AgentResultEvent
 
         del invocation_state, kwargs
-        summary = _execute_database_pipeline_message(
-            prompt,
-            use_postgres=use_postgres,
-            use_mongodb=use_mongodb,
-        )
+        try:
+            summary = _execute_database_pipeline_message(
+                prompt,
+                use_postgres=use_postgres,
+                use_mongodb=use_mongodb,
+            )
+        except Exception as exc:
+            _, ctx = parse_task_and_context(_prompt_to_text(prompt))
+            summary = _database_pipeline_error_message(exc, ctx)
         yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
 
     agent.__call__ = database_invoke  # type: ignore[method-assign]
@@ -679,83 +703,10 @@ def build_database_pipeline_agent(
     return agent
 
 
-def run_task_files_only(
-    task: str,
-    context: dict[str, Any] | None = None,
-    *,
-    target_app: str | None = None,
-    db_subdir: str = _DEFAULT_DB_SUBDIR,
-) -> tuple[str, list[str]]:
-    """Write/read SQL files only — no Postgres or MongoDB MCP processes."""
-    return run_task(
-        task,
-        context,
-        target_app=target_app,
-        db_subdir=db_subdir,
-        use_postgres=False,
-        use_mongodb=False,
-    )
-
-
-def run_task_with_postgres(
-    task: str,
-    context: dict[str, Any] | None = None,
-    *,
-    target_app: str | None = None,
-    db_subdir: str = _DEFAULT_DB_SUBDIR,
-) -> tuple[str, list[str]]:
-    """File tools + AWS Postgres MCP."""
-    return run_task(
-        task,
-        context,
-        target_app=target_app,
-        db_subdir=db_subdir,
-        use_postgres=True,
-        use_mongodb=False,
-    )
-
-
-def run_task_with_mongodb(
-    task: str,
-    context: dict[str, Any] | None = None,
-    *,
-    target_app: str | None = None,
-    db_subdir: str = _DEFAULT_DB_SUBDIR,
-) -> tuple[str, list[str]]:
-    """File tools + MongoDB MCP."""
-    return run_task(
-        task,
-        context,
-        target_app=target_app,
-        db_subdir=db_subdir,
-        use_postgres=False,
-        use_mongodb=True,
-    )
-
-
-def run_task_with_postgres_and_mongodb(
-    task: str,
-    context: dict[str, Any] | None = None,
-    *,
-    target_app: str | None = None,
-    db_subdir: str = _DEFAULT_DB_SUBDIR,
-) -> tuple[str, list[str]]:
-    """File tools + Postgres MCP + MongoDB MCP (sql/ and nosql/ respectively)."""
-    return run_task(
-        task,
-        context,
-        target_app=target_app,
-        db_subdir=db_subdir,
-        use_postgres=True,
-        use_mongodb=True,
-    )
-
-
 def serve_a2a(
     host: str = "127.0.0.1",
     port: int = A2A_PORT,
     *,
-    use_postgres: bool = False,
     use_mongodb: bool = False,
 ) -> None:
     skills = [
@@ -767,13 +718,13 @@ def serve_a2a(
         )
     ]
     with ExitStack() as stack:
-        tools = _build_toolset(stack, use_postgres=use_postgres, use_mongodb=use_mongodb)
+        tools = _build_toolset(stack, use_mongodb=use_mongodb)
         agent = _build_agent(tools)
         A2AServer(agent, host=host, port=port, skills=skills).serve()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Database agent - Strands + Postgres/MongoDB MCP")
+    parser = argparse.ArgumentParser(description="Database agent - Strands + optional MongoDB MCP; RDS via host script")
     parser.add_argument(
         "--task",
         help="Optional override. Default: pipeline task (reads design/PRD from Context).",
@@ -819,7 +770,7 @@ def main() -> None:
     use_mongodb = args.with_mongodb
 
     if args.serve_a2a:
-        serve_a2a(host=args.host, port=args.port, use_postgres=use_postgres, use_mongodb=use_mongodb)
+        serve_a2a(host=args.host, port=args.port, use_mongodb=use_mongodb)
         return
 
     try:

@@ -19,6 +19,33 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+function Import-ArtifactEnvFromDotenv {
+    foreach ($path in @(
+        (Join-Path (Split-Path -Parent $RepoRoot) ".env.local"),
+        (Join-Path $RepoRoot ".env.local"),
+        (Join-Path (Split-Path -Parent $RepoRoot) ".env"),
+        (Join-Path $RepoRoot ".env")
+    )) {
+        if (-not (Test-Path $path)) { continue }
+        Get-Content $path | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -match '^\s*#' -or -not $line) { return }
+            if ($line -match '^\s*([^=]+)=(.*)$') {
+                $key = $matches[1].Trim()
+                $val = $matches[2].Trim().Trim('"').Trim("'")
+                if ($key -eq "ARTIFACT_S3_BUCKET" -and $val -and -not $env:ARTIFACT_S3_BUCKET) {
+                    $env:ARTIFACT_S3_BUCKET = $val
+                }
+                if ($key -eq "ARTIFACT_DYNAMODB_TABLE" -and $val -and -not $env:ARTIFACT_DYNAMODB_TABLE) {
+                    $env:ARTIFACT_DYNAMODB_TABLE = $val
+                }
+            }
+        }
+    }
+}
+
+Import-ArtifactEnvFromDotenv
+
 $AllAgents = @(
     @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @("PRODUCT_ARTIFACT_LAYOUT=docs") },
     @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true", "PRODUCT_ARTIFACT_LAYOUT=docs") },
@@ -48,6 +75,12 @@ $CommonEnv = @(
 
 if ($env:ARTIFACT_S3_BUCKET) { $CommonEnv += "ARTIFACT_S3_BUCKET=$($env:ARTIFACT_S3_BUCKET)" }
 if ($env:ARTIFACT_DYNAMODB_TABLE) { $CommonEnv += "ARTIFACT_DYNAMODB_TABLE=$($env:ARTIFACT_DYNAMODB_TABLE)" }
+
+if (-not $env:ARTIFACT_S3_BUCKET) {
+    Write-Error "ARTIFACT_S3_BUCKET is not set. Add it to .env.local or export it before deploy."
+}
+
+if ($env:CODING_MODEL_ID) { $CommonEnv += "CODING_MODEL_ID=$($env:CODING_MODEL_ID)" }
 
 # Orchestrator runs apply_sql_to_rds after database-agent — pass RDS creds on orchestrator runtime only.
 $OrchestratorExtra = @()

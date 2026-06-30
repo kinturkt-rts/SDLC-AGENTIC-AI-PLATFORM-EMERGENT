@@ -19,6 +19,7 @@ _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "agents"))
 
 from _shared.agentcore_invoke import extract_text_from_a2a_jsonrpc, invoke_agent_runtime_a2a
+from _shared.a2a_invoke import a2a_invoke_error
 from _shared.sdlc_pipeline import DB_AGENT_TASK
 
 
@@ -54,6 +55,9 @@ def main() -> None:
     text = result.get("text") or ""
     if not text and result.get("response"):
         text = extract_text_from_a2a_jsonrpc(result["response"])
+    err = a2a_invoke_error(result.get("response") or {})
+    if err:
+        print("a2a_task:", err)
     print("--- response text ---")
     print(text[:6000])
     print()

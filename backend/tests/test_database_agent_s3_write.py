@@ -95,6 +95,22 @@ def test_build_database_pipeline_agent_calls_run_task(
     assert "001.sql" in str(events[-1]["result"])
 
 
+def test_database_pipeline_surfaces_run_task_errors(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    mod = _load_agent_module()
+
+    with patch.object(mod, "run_task", side_effect=RuntimeError("bedrock unavailable")):
+        text = mod._execute_database_pipeline_message(
+            "task\n\nContext:\n" + '{"targetApp":"demo-api","runId":"r1"}',
+        )
+
+    assert "Database pipeline could not start" in text
+    assert "bedrock unavailable" in text
+
+
 @pytest.fixture()
 def repo_root(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()

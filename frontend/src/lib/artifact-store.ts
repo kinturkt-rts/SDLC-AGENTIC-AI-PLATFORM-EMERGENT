@@ -39,6 +39,11 @@ export function runInputS3Uri(runId: string, feature: string): string {
 function s3Client(): S3Client {
   loadBackendEnv();
   const region = process.env.AWS_REGION?.trim() || 'us-east-2';
+  const profile = process.env.AWS_PROFILE?.trim();
+  if (profile) {
+    // Default AWS SDK chain reads AWS_PROFILE from the environment at request time.
+    process.env.AWS_PROFILE = profile;
+  }
   return new S3Client({ region });
 }
 

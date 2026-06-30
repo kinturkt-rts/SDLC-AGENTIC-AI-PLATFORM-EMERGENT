@@ -1,5 +1,16 @@
 import { NextResponse } from 'next/server';
+import { loadBackendEnv } from '@/src/lib/backend-env';
 import { submitBrief, validateTargetApp } from '@/src/lib/pipeline-run';
+
+function formatSubmitError(err: unknown): string {
+  loadBackendEnv();
+  const message = err instanceof Error ? err.message : String(err);
+  if (/SSO session associated with this profile has expired/i.test(message)) {
+    const profile = process.env.AWS_PROFILE?.trim() || 'your-aws-profile';
+    return `AWS SSO session expired for profile "${profile}". Run: aws sso login --profile ${profile}, then retry.`;
+  }
+  return message;
+}
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,6 +32,7 @@ function bad(message: string, status = 400) {
  * runs/<runId>/inputs/<targetApp>.txt, then starts the orchestrator.
  */
 export async function POST(request: Request) {
+  loadBackendEnv();
   let body: SubmitBody;
   try {
     body = (await request.json()) as SubmitBody;
@@ -52,7 +64,6 @@ export async function POST(request: Request) {
       submittedAt: new Date().toISOString(),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: formatSubmitError(err) }, { status: 500 });
   }
 }

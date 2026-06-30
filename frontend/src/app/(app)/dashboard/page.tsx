@@ -530,12 +530,6 @@ function TokenUsageSection() {
             </Link>
           ))}
         </div>
-
-        {/* GitLab Agent note */}
-        <div className="mt-3 flex items-center gap-2 rounded-md border border-white/[0.04] bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-          <GitBranch className="h-3.5 w-3.5 shrink-0 text-orange-400" />
-          GitLab Agent is integration-only (deterministic CLI via MCP) and does not use LLM tokens.
-        </div>
       </div>
     </Card>
   );
