@@ -1,41 +1,56 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+# AgentCore container image (linux/arm64). Build context: backend/ repo root.
+#
+# Every specialist runtime needs the full agents/_shared/ library (artifact_store,
+# pipeline_context, sdlc_pipeline, env, runner, …) even though each container only
+# sets AGENTCORE_AGENT to one bundle. COPY agents/ ships _shared plus all agent packages.
+#
+# Keep in sync: backend/Dockerfile and .bedrock_agentcore/*/Dockerfile
+# Regenerate per-agent copies: scripts/sync-agentcore-dockerfiles.ps1
+FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
+
+ARG AGENTCORE_AGENT=orchestrator-agent
+ARG INSTALL_NODE=false
+ARG GITLAB_MCP_VERSION=v2.2.1
+
 WORKDIR /app
 
-# All environment variables in one layer
-ENV UV_SYSTEM_PYTHON=1 \
-    UV_COMPILE_BYTECODE=1 \
-    UV_NO_PROGRESS=1 \
-    PYTHONUNBUFFERED=1 \
-    DOCKER_CONTAINER=1 \
-    AWS_REGION=us-east-2 \
-    AWS_DEFAULT_REGION=us-east-2
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        graphviz \
+    && rm -rf /var/lib/apt/lists/*
 
+RUN if [ "$INSTALL_NODE" = "true" ]; then \
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+      && apt-get install -y --no-install-recommends nodejs \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
+ENV REPO_ROOT=/app
+ENV PYTHONUNBUFFERED=1
+ENV AGENTCORE_A2A_HOST=0.0.0.0
+ENV AGENTCORE_A2A_PORT=9000
+ENV AGENTCORE_AGENT=${AGENTCORE_AGENT}
+ENV GITLAB_MCP_SERVER_PATH=/app/bin/gitlab-mcp-server
 
-COPY deploy/agentcore/requirements.txt deploy/agentcore/requirements.txt
-# Install from requirements file
-RUN uv pip install -r deploy/agentcore/requirements.txt
+COPY deploy/agentcore /app/deploy/agentcore
+RUN pip install --no-cache-dir -r /app/deploy/agentcore/requirements.txt
 
+# Full agents tree — includes agents/_shared/ required by every specialist + orchestrator.
+COPY agents /app/agents
+COPY a2a /app/a2a
+COPY scripts /app/scripts
+COPY config /app/config
 
+RUN mkdir -p /app/bin \
+    && curl -fsSL \
+        "https://github.com/jmrplens/gitlab-mcp-server/releases/download/${GITLAB_MCP_VERSION}/gitlab-mcp-server-linux-arm64" \
+        -o /app/bin/gitlab-mcp-server \
+    && chmod +x /app/bin/gitlab-mcp-server
 
-
-RUN uv pip install aws-opentelemetry-distro==0.12.2
-
-
-# Signal that this is running in Docker for host binding logic
-ENV DOCKER_CONTAINER=1
-
-# Create non-root user
-RUN useradd -m -u 1000 bedrock_agentcore
-USER bedrock_agentcore
+WORKDIR /app/deploy/agentcore
 
 EXPOSE 9000
-EXPOSE 8000
-EXPOSE 8080
 
-# Copy entire project (respecting .dockerignore)
-COPY . .
-
-# Use the full module path
-
-CMD ["opentelemetry-instrument", "python", "-m", "a2a_server"]
+CMD ["python", "a2a_server.py"]

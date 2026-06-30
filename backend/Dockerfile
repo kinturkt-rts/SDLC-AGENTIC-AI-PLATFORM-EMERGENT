@@ -1,5 +1,11 @@
-# AgentCore CodeBuild entry (context = repository root).
-# Canonical copy: deploy/agentcore/Dockerfile — keep both in sync.
+# AgentCore container image (linux/arm64). Build context: backend/ repo root.
+#
+# Every specialist runtime needs the full agents/_shared/ library (artifact_store,
+# pipeline_context, sdlc_pipeline, env, runner, …) even though each container only
+# sets AGENTCORE_AGENT to one bundle. COPY agents/ ships _shared plus all agent packages.
+#
+# Keep in sync: backend/Dockerfile and .bedrock_agentcore/*/Dockerfile
+# Regenerate per-agent copies: scripts/sync-agentcore-dockerfiles.ps1
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
 ARG AGENTCORE_AGENT=orchestrator-agent
@@ -31,6 +37,7 @@ ENV GITLAB_MCP_SERVER_PATH=/app/bin/gitlab-mcp-server
 COPY deploy/agentcore /app/deploy/agentcore
 RUN pip install --no-cache-dir -r /app/deploy/agentcore/requirements.txt
 
+# Full agents tree — includes agents/_shared/ required by every specialist + orchestrator.
 COPY agents /app/agents
 COPY a2a /app/a2a
 COPY scripts /app/scripts
