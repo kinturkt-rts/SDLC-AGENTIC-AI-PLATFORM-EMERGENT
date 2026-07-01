@@ -20,13 +20,7 @@ class TargetAppRequiredError(ValueError):
 
 def _is_cloud_store() -> bool:
     """True when S3 artifact store is configured (cloud pipeline runs)."""
-    store = os.getenv("ARTIFACT_STORE", "").strip().lower()
-    if store == "s3":
-        return True
-    return bool(
-        os.getenv("ARTIFACT_S3_BUCKET", "").strip()
-        or os.getenv("ARTIFACT_STORE_S3_BUCKET", "").strip()
-    )
+    return os.getenv("ARTIFACT_STORE", "").strip().lower() == "s3"
 
 
 def artifact_layout() -> str:
@@ -96,18 +90,102 @@ def input_rel_for_app(target_app: str) -> str:
     return f"inputs/{slug}.txt"
 
 
-# Essential keys accumulated in runs/<runId>/context.json across the SDLC cycle.
+def db_dir_rel_for_app(target_app: str) -> str:
+    """``<root>/db`` for a target app (cloud or local layout)."""
+    return f"{target_app_root_rel(slugify(target_app))}/db"
+
+
+def sql_dir_rel_for_app(target_app: str) -> str:
+    """``<root>/db/sql`` for a target app."""
+    return f"{db_dir_rel_for_app(target_app)}/sql"
+
+
+def db_handoff_rel_for_app(target_app: str) -> str:
+    """``HANDOFF.md`` path under the app db directory."""
+    return f"{db_dir_rel_for_app(target_app)}/HANDOFF.md"
+
+
+_PATH_REWRITE_KEYS = (
+    "targetAppDir",
+    "prdPath",
+    "prd_path",
+    "designDocPath",
+    "design_doc_path",
+    "inputFile",
+    "inputPath",
+    "dbOutputDir",
+    "preferredSqlPath",
+    "preferredNoSqlPath",
+    "databaseHandoffPath",
+    "developerHandoffPath",
+)
+
+
+def rewrite_legacy_app_path(slug: str, value: str) -> str:
+    """Map ``target-apps/<slug>/...`` to ``<slug>/...`` when using cloud artifact layout."""
+    normalized = value.replace("\\", "/").lstrip("/")
+    legacy_prefix = f"target-apps/{slug}/"
+    if normalized.startswith(legacy_prefix):
+        return f"{slug}/{normalized[len(legacy_prefix):]}"
+    return normalized
+
+
+def cloud_artifact_rel(local_rel: str) -> str:
+    """Rewrite local ``target-apps/<slug>/...`` to cloud ``<slug>/...`` for S3 artifact keys."""
+    if not _is_cloud_store():
+        return local_rel.replace("\\", "/").lstrip("/")
+    normalized = local_rel.replace("\\", "/").lstrip("/")
+    if normalized.startswith("target-apps/"):
+        return normalized[len("target-apps/") :]
+    return normalized
+
+
+def normalize_handoff_paths(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize handoff paths for cloud runs (single ``<slug>/`` tree under runs/<runId>/)."""
+    if not _is_cloud_store():
+        return ctx
+    app = infer_target_app_from_context(ctx)
+    if not app:
+        return ctx
+    slug = slugify(app)
+    root = target_app_root_rel(slug)
+
+    ctx["targetApp"] = slug
+    ctx["targetAppDir"] = root
+    ctx["dbOutputDir"] = db_dir_rel_for_app(slug)
+    ctx["preferredSqlPath"] = sql_dir_rel_for_app(slug)
+    ctx["preferredNoSqlPath"] = f"{db_dir_rel_for_app(slug)}/nosql"
+
+    for key in _PATH_REWRITE_KEYS:
+        value = ctx.get(key)
+        if isinstance(value, str) and value.strip():
+            ctx[key] = rewrite_legacy_app_path(slug, value)
+
+    diagrams = ctx.get("diagramPaths")
+    if isinstance(diagrams, list):
+        ctx["diagramPaths"] = [
+            rewrite_legacy_app_path(slug, str(item))
+            for item in diagrams
+            if item and str(item).strip()
+        ]
+
+    ctx.setdefault("prdPath", prd_rel_path_for_app(slug))
+    ctx.setdefault("designDocPath", design_doc_rel_for_app(slug))
+    if not ctx.get("diagramPaths"):
+        ctx["diagramPaths"] = [diagram_path_for_app(slug)]
+
+    return ctx
+
+
+# Essential keys persisted in runs/<runId>/<slug>/context.json across the SDLC cycle.
 PIPELINE_CONTEXT_FIELDS = (
     "runId",
     "targetApp",
     "targetAppDir",
     "inputFile",
-    "inputPath",
     "prdPath",
-    "productAgentOutput",
     "designDocPath",
     "diagramPaths",
-    "architectSummary",
     "deliveryProfile",
     "dbOutputDir",
     "preferredSqlPath",
@@ -117,7 +195,83 @@ PIPELINE_CONTEXT_FIELDS = (
     "developerHandoffPath",
     "jiraProjectKey",
     "jiraKey",
+    "applyToRdsAfterWrite",
+    "postgresAppSchema",
 )
+
+# Runtime-only or derivable fields — stripped before context.json is written to S3/local.
+CONTEXT_RUNTIME_DROP_KEYS = frozenset(
+    {
+        "diagramOutputDir",
+        "diagramOutputFile",
+        "diagramBaseName",
+        "inputPath",
+        "productAgentOutput",
+        "architectSummary",
+        "postgresMcpParams",
+        "postgresMcpWarning",
+        "seedMinRows",
+        "seedMaxRows",
+    }
+)
+
+
+def _is_generic_product_output(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower().startswith("see prdpath")
+
+
+def _filter_diagram_paths(paths: Any) -> list[str] | None:
+    if not isinstance(paths, list):
+        return None
+    kept = [
+        str(item).replace("\\", "/")
+        for item in paths
+        if item
+        and str(item).strip()
+        and not str(item).startswith("/tmp/")
+        and not str(item).startswith("/var/")
+    ]
+    return kept or None
+
+
+def sanitize_context_for_persist(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Normalize paths and keep only pipeline handoff fields for context.json."""
+    cleaned: dict[str, Any] = dict(ctx)
+
+    if not cleaned.get("inputFile") and cleaned.get("inputPath"):
+        cleaned["inputFile"] = cleaned["inputPath"]
+
+    for key in CONTEXT_RUNTIME_DROP_KEYS:
+        cleaned.pop(key, None)
+
+    if _is_generic_product_output(cleaned.get("productAgentOutput")):
+        cleaned.pop("productAgentOutput", None)
+
+    filtered_diagrams = _filter_diagram_paths(cleaned.get("diagramPaths"))
+    if filtered_diagrams is not None:
+        cleaned["diagramPaths"] = filtered_diagrams
+    elif "diagramPaths" in cleaned:
+        cleaned.pop("diagramPaths", None)
+
+    if _is_cloud_store():
+        cleaned = normalize_handoff_paths(cleaned)
+
+    allowed = frozenset(PIPELINE_CONTEXT_FIELDS)
+    result: dict[str, Any] = {}
+    for key in allowed:
+        value = cleaned.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (dict, list)) and not value:
+            continue
+        result[key] = value
+
+    run_id = cleaned.get("runId") or ctx.get("runId")
+    if run_id:
+        result["runId"] = run_id
+    return result
 
 
 CANONICAL_RUN_CONTEXT_REL = "context.json"
@@ -160,6 +314,15 @@ def qa_handoff_rel_for_app(target_app: str) -> str:
     if artifact_layout() == "target-app-root":
         return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.qa-handoff.json"
     return f"agents/pipeline/{slug}.qa-handoff.json"
+
+
+def developer_handoff_rel_for_app(target_app: str) -> str:
+    slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/handoffs/developer-handoff.json"
+    if artifact_layout() == "target-app-root":
+        return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.developer-handoff.json"
+    return f"agents/pipeline/{slug}.developer-handoff.json"
 
 
 def slugify(text: str) -> str:
@@ -376,23 +539,24 @@ def enrich_handoff_context(ctx: dict[str, Any], *, include_db_paths: bool = Fals
             ctx["architectSummary"] = summary
 
     if include_db_paths:
-        service_dir = _REPO_ROOT / "target-apps" / slug
-        db_dir = service_dir / "db"
-        sql_dir = db_dir / "sql"
-        if db_dir.is_dir():
-            ctx.setdefault("dbOutputDir", repo_rel(db_dir))
-        if sql_dir.is_dir():
-            ctx.setdefault("preferredSqlPath", repo_rel(sql_dir))
-        handoff = db_dir / "HANDOFF.md"
-        if handoff.is_file():
-            ctx.setdefault("databaseHandoffPath", repo_rel(handoff))
+        if _is_cloud_store():
+            from _shared.artifact_store import enrich_db_paths_from_run, resolve_run_id
 
-        from _shared.artifact_store import enrich_db_paths_from_run, resolve_run_id
+            if resolve_run_id(ctx):
+                enrich_db_paths_from_run(ctx)
+        else:
+            service_dir = _REPO_ROOT / target_app_root_rel(slug)
+            db_dir = service_dir / "db"
+            sql_dir = db_dir / "sql"
+            if db_dir.is_dir():
+                ctx.setdefault("dbOutputDir", repo_rel(db_dir))
+            if sql_dir.is_dir():
+                ctx.setdefault("preferredSqlPath", repo_rel(sql_dir))
+            handoff = db_dir / "HANDOFF.md"
+            if handoff.is_file():
+                ctx.setdefault("databaseHandoffPath", repo_rel(handoff))
 
-        if resolve_run_id(ctx):
-            enrich_db_paths_from_run(ctx)
-
-    return ctx
+    return normalize_handoff_paths(ctx)
 
 
 def merge_run_handoff_context(
@@ -417,7 +581,7 @@ def merge_run_handoff_context(
         ctx.setdefault("runId", run_id)
 
     enrich_handoff_context(ctx, include_db_paths=include_db_paths)
-    return ctx
+    return normalize_handoff_paths(ctx)
 
 
 def resolve_cli_context(

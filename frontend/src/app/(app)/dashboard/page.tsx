@@ -47,6 +47,7 @@ import {
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
+import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
@@ -655,7 +656,7 @@ export default function DashboardPage() {
                   <p className="truncate font-mono text-sm text-foreground">{a.name}</p>
                   <p className="truncate text-[11px] text-muted-foreground">{a.projectName} · {a.producedBy.replace('-agent', '')}</p>
                 </div>
-                <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{a.kind}</span>
+                <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{artifactKindLabel(a.kind)}</span>
                 <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">{formatRelative(a.createdAt)}</span>
               </Link>
             ))}

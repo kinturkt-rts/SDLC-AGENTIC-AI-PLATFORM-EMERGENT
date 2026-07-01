@@ -44,6 +44,7 @@ from _shared.pipeline_context import (
     PIPELINE_DIR,
     TargetAppRequiredError,
     _is_cloud_store,
+    developer_handoff_rel_for_app,
     merge_run_handoff_context,
     resolve_cli_context,
     resolve_design_doc_path,
@@ -1199,6 +1200,16 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     return candidate
 
 
+def _cloud_artifact_rel(local_rel: str) -> str:
+    """Rewrite local ``target-apps/<slug>/...`` to cloud ``<slug>/...`` for S3 keys."""
+    if not _is_cloud_store():
+        return local_rel
+    normalized = local_rel.replace("\\", "/")
+    if normalized.startswith("target-apps/"):
+        return normalized[len("target-apps/"):]
+    return normalized
+
+
 def _service_dir(service: str) -> Path:
     return _TARGET_APPS / slugify(service)
 
@@ -1320,14 +1331,14 @@ def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
     except (ValueError, FileNotFoundError) as exc:
         return f"SCAFFOLD ERROR: {exc}"
 
-    prefix = f"target-apps/{slugify(service)}/"
+    local_prefix = f"target-apps/{slugify(service)}/"
     for rel in result["copied"]:
-        full = f"{prefix}{rel}"
-        if full not in _written_files:
-            _written_files.append(full)
+        local_full = f"{local_prefix}{rel}"
+        if local_full not in _written_files:
+            _written_files.append(local_full)
         if _run_context is not None:
             content = (dest / rel).read_bytes()
-            write_repo_artifact(full, content, context=_run_context)
+            write_repo_artifact(_cloud_artifact_rel(local_full), content, context=_run_context)
 
     return format_scaffold_report(result, service=slugify(service))
 
@@ -1340,12 +1351,14 @@ def dev_read_file(path: str) -> str:
     ctx = _run_context
     run_id = resolve_run_id(ctx) if ctx else None
     if run_id:
-        try:
-            return read_repo_artifact(raw, context=ctx).decode("utf-8")
-        except FileNotFoundError:
-            pass
-        except UnicodeDecodeError:
-            return f"Error: binary or non-utf8 file: {path}"
+        cloud_rel = _cloud_artifact_rel(raw)
+        for attempt in dict.fromkeys([cloud_rel, raw]):
+            try:
+                return read_repo_artifact(attempt, context=ctx).decode("utf-8")
+            except FileNotFoundError:
+                continue
+            except UnicodeDecodeError:
+                return f"Error: binary or non-utf8 file: {path}"
     try:
         file_path = _resolve_repo_path(path, write=False)
     except ValueError as exc:
@@ -1379,7 +1392,7 @@ def dev_write_file(path: str, content: str) -> str:
     if rel not in _written_files:
         _written_files.append(rel)
     if _run_context is not None:
-        write_repo_artifact(rel, content, context=_run_context)
+        write_repo_artifact(_cloud_artifact_rel(rel), content, context=_run_context)
     return f"Wrote {rel} ({len(content)} bytes)"
 
 
@@ -1426,7 +1439,7 @@ def dev_write_files(files: dict[str, str]) -> str:
         if rel not in _written_files:
             _written_files.append(rel)
         if _run_context is not None:
-            write_repo_artifact(rel, content, context=_run_context)
+            write_repo_artifact(_cloud_artifact_rel(rel), content, context=_run_context)
         written.append(rel)
 
     summary = f"Wrote {len(written)} file(s)"
@@ -2027,14 +2040,15 @@ def _write_developer_handoff(
     context: dict[str, Any] | None = None,
 ) -> str:
     """Persist handoff JSON for qa-agent / devops-agent; return repo-relative path."""
-    rel = f"agents/pipeline/{slugify(app)}.developer-handoff.json"
+    slug = slugify(app)
+    rel = developer_handoff_rel_for_app(slug)
     payload = json.dumps(handoff, indent=2) + "\n"
     run_id = resolve_run_id(context)
     if run_id:
         write_repo_artifact(rel, payload, context=context)
         return rel
     PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
-    path = PIPELINE_DIR / f"{slugify(app)}.developer-handoff.json"
+    path = PIPELINE_DIR / f"{slug}.developer-handoff.json"
     path.write_text(payload, encoding="utf-8")
     return path.relative_to(_REPO_ROOT).as_posix()
 
@@ -2149,8 +2163,10 @@ def _resolve_target_app(name: str | None, context: dict[str, Any] | None) -> str
 def _enrich_developer_context(ctx: dict[str, Any]) -> None:
     """Add developer-specific paths that enrich_handoff_context doesn't cover."""
     from _shared.artifact_store import enrich_db_paths_from_run, resolve_run_id
+    from _shared.pipeline_context import db_handoff_rel_for_app
 
     app = slugify(str(ctx["targetApp"]))
+    app_root = _REPO_ROOT / target_app_root_rel(app)
     service_dir = _REPO_ROOT / "target-apps" / app
 
     if resolve_run_id(ctx):
@@ -2159,9 +2175,11 @@ def _enrich_developer_context(ctx: dict[str, Any]) -> None:
     # Database-agent handoff file
     if not ctx.get("databaseHandoffPath"):
         for candidate in (
+            app_root / "db" / "HANDOFF.md",
             service_dir / "db" / "HANDOFF.md",
             service_dir / "db" / "handoff.md",
             service_dir / "db" / "database_handoff.md",
+            _REPO_ROOT / db_handoff_rel_for_app(app),
             _REPO_ROOT / "agents" / "pipeline" / f"{app}.db-handoff.md",
         ):
             if candidate.is_file():
@@ -2183,7 +2201,8 @@ def _enrich_developer_context(ctx: dict[str, Any]) -> None:
     if not ctx.get("dbBackend"):
         has_sql = bool(ctx.get("preferredSqlPath") or ctx.get("dbOutputDir"))
         has_nosql = bool(
-            (service_dir / "db" / "nosql").is_dir()
+            (app_root / "db" / "nosql").is_dir()
+            or (service_dir / "db" / "nosql").is_dir()
             or ctx.get("preferredNoSqlPath")
         )
         if has_sql and has_nosql:
@@ -2203,10 +2222,13 @@ def _build_context(
     jira_key: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    service_path = _ensure_service_exists(target_app)
+    slug = slugify(target_app)
+    root_rel = target_app_root_rel(slug)
+    if not _is_cloud_store():
+        _ensure_service_exists(target_app)
     ctx: dict[str, Any] = {
-        "targetApp": target_app,
-        "targetAppDir": service_path.relative_to(_REPO_ROOT).as_posix(),
+        "targetApp": slug,
+        "targetAppDir": root_rel,
     }
     if jira_key:
         ctx["jiraKey"] = jira_key
@@ -2230,7 +2252,10 @@ def run_task(
     base_ctx = dict(context) if context is not None else _build_context(target_app=app, jira_key=jira_key)
     base_ctx.setdefault("targetApp", app)
     ctx = merge_run_handoff_context(base_ctx, include_db_paths=True)
-    ctx.setdefault("targetAppDir", _ensure_service_exists(app).relative_to(_REPO_ROOT).as_posix())
+    if _is_cloud_store():
+        ctx["targetAppDir"] = target_app_root_rel(app)
+    else:
+        ctx.setdefault("targetAppDir", _ensure_service_exists(app).relative_to(_REPO_ROOT).as_posix())
 
     _enrich_developer_context(ctx)
 
@@ -2326,11 +2351,12 @@ def _execute_developer_pipeline_message(message: Any) -> str:
     except (ValueError, TargetAppRequiredError, SystemExit) as exc:
         app = (ctx or {}).get("targetApp") or "demo-api"
         run_id = resolve_run_id(ctx) or "smoke-001"
+        root = target_app_root_rel(str(app))
         example = {
             "targetApp": app,
             "runId": run_id,
-            "designDocPath": f"docs/design/{app}.md",
-            "databaseHandoffPath": f"target-apps/{app}/db/HANDOFF.md",
+            "designDocPath": f"{root}/docs/design/{app}.md",
+            "databaseHandoffPath": f"{root}/db/HANDOFF.md",
         }
         return (
             "Developer pipeline could not start.\n\n"

@@ -18,7 +18,9 @@ import type { ContextItem, PipelineContext } from '@/src/types';
 function PipelineContextCard({ ctx }: { ctx: PipelineContext }) {
   const [open, setOpen] = React.useState(false);
   const rows: [string, React.ReactNode][] = [
+    ...(ctx.runId ? [['runId', ctx.runId] as [string, React.ReactNode]] : []),
     ['targetApp', ctx.targetApp],
+    ...(ctx.inputPath ? [['inputPath', ctx.inputPath] as [string, React.ReactNode]] : []),
     ['prdPath', ctx.prdPath],
     ['designDocPath', ctx.designDocPath],
     ['diagramPaths', ctx.diagramPaths.join(', ')],
@@ -48,7 +50,7 @@ function PipelineContextCard({ ctx }: { ctx: PipelineContext }) {
         </CollapsibleTrigger>
         <CollapsibleContent>
           <pre className="max-h-72 overflow-auto border-t border-border bg-muted/40 p-3 text-[11px] leading-relaxed text-foreground">
-            {JSON.stringify(ctx, null, 2)}
+            {JSON.stringify(ctx.raw ?? ctx, null, 2)}
           </pre>
         </CollapsibleContent>
       </Collapsible>

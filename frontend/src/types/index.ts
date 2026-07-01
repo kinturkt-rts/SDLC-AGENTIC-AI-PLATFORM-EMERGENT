@@ -177,6 +177,8 @@ export interface ContextItem {
 // Pipeline handoff context written by agents during a run (aligns with real handoff JSON).
 export interface PipelineContext {
   targetApp: string;
+  runId?: string;
+  inputPath?: string;
   prdPath: string;
   designDocPath: string;
   diagramPaths: string[];
@@ -184,6 +186,8 @@ export interface PipelineContext {
   architectSummary: string;
   dbOutputDir: string;
   preferredSqlPath: string;
+  /** Full handoff JSON from S3/local context.json (for raw view). */
+  raw?: Record<string, unknown>;
 }
 
 export interface LogEntry {

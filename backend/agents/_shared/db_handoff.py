@@ -76,10 +76,12 @@ def build_handoff_markdown(
     repo_root: Path | None = None,
 ) -> str:
     """Assemble HANDOFF.md for developer-agent."""
+    from _shared.pipeline_context import sql_dir_rel_for_app
+
     root = repo_root or _REPO_ROOT
     slug = target_app.strip()
     schema = (ctx.get("postgresAppSchema") or slug.replace("-", "_")).strip()
-    sql_rel = ctx.get("preferredSqlPath") or f"target-apps/{slug}/db/sql"
+    sql_rel = ctx.get("preferredSqlPath") or sql_dir_rel_for_app(slug)
     sql_dir = (root / sql_rel).resolve()
     artifacts = sorted_sql_artifacts(sql_dir)
 

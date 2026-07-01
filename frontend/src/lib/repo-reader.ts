@@ -1,9 +1,10 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
-import { isS3Store, listS3RunArtifacts, runS3Prefix, buildS3RunIdByApp } from './artifact-store';
+import { isS3Store, listS3RunArtifacts, runS3Prefix, buildS3RunIdByApp, getS3RunContext } from './artifact-store';
 import type {
   Agent,
+  AgentAvailability,
   AgentName,
   Artifact,
   ArtifactKind,
@@ -49,6 +50,7 @@ interface PipelineContextFile {
   dbOutputDir?: string;
   preferredSqlPath?: string;
   inputPath?: string;
+  inputFile?: string;
 }
 
 interface AgentRegistry {
@@ -141,6 +143,25 @@ const AGENT_DISPLAY: Record<
   'gitlab-agent': { displayName: 'GitLab', phase: 'deploy', mcpServers: ['GitLab'] },
   'security-agent': { displayName: 'Security', phase: 'security', mcpServers: ['GitLab'] },
 };
+
+/** Phase 1 MVP agents deployed on AgentCore. */
+const MVP_ONLINE_AGENTS = new Set<string>([
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+]);
+
+/** Reserved for phase 2 — shown offline in the UI. */
+const PHASE2_OFFLINE_AGENTS = new Set<string>(['qa-agent', 'devops-agent', 'security-agent']);
+
+function resolveAgentAvailability(agentId: string): AgentAvailability {
+  if (MVP_ONLINE_AGENTS.has(agentId)) return 'online';
+  if (PHASE2_OFFLINE_AGENTS.has(agentId)) return 'offline';
+  if (agentId === 'orchestrator-agent') return 'online';
+  return 'unknown';
+}
 
 const MCP_NAME_MAP: Record<string, McpServerName> = {
   atlassian: 'Atlassian',
@@ -257,6 +278,32 @@ async function listPipelineSlugs(): Promise<string[]> {
   return [...slugs].sort();
 }
 
+/** Union of pipeline handoffs, target-apps folders, and S3 run folders (cloud). */
+async function listArtifactProjectSlugs(): Promise<string[]> {
+  const [pipelineSlugs, appSlugs] = await Promise.all([listPipelineSlugs(), listTargetAppSlugs()]);
+  const slugs = new Set([...pipelineSlugs, ...appSlugs]);
+  if (isS3Store()) {
+    const s3Runs = await buildS3RunIdByApp();
+    for (const app of s3Runs.keys()) slugs.add(app);
+  }
+  return [...slugs].sort();
+}
+
+async function resolveContextForSlug(
+  slug: string,
+  s3RunByApp?: Map<string, string>,
+): Promise<PipelineContextFile | null> {
+  let ctx = await readContextFile(slug);
+  if (isS3Store()) {
+    const map = s3RunByApp ?? (await buildS3RunIdByApp());
+    const runId = await resolveRunIdForSlug(slug, ctx, map);
+    if (runId) {
+      ctx = ((await getS3RunContext(runId)) as PipelineContextFile | null) ?? ctx;
+    }
+  }
+  return ctx;
+}
+
 async function readContextFile(slug: string): Promise<PipelineContextFile | null> {
   return readJson<PipelineContextFile>(repoPath('agents', 'pipeline', `${slug}.context.json`));
 }
@@ -270,14 +317,14 @@ async function resolveRunIdForSlug(
   ctx: PipelineContextFile | null,
   s3RunByApp?: Map<string, string>,
 ): Promise<string> {
+  if (isS3Store() && s3RunByApp?.has(slug)) {
+    return s3RunByApp.get(slug)!;
+  }
+
   if (ctx?.runId?.trim()) return ctx.runId.trim();
 
   const live = await readRunState(slug);
   if (live?.runId?.trim()) return live.runId.trim();
-
-  if (isS3Store() && s3RunByApp?.has(slug)) {
-    return s3RunByApp.get(slug)!;
-  }
 
   return `run-${slug}`;
 }
@@ -536,7 +583,12 @@ function artifactKindForPath(filePath: string): ArtifactKind {
   return 'doc';
 }
 
-function artifactProducer(kind: ArtifactKind): AgentName {
+function artifactProducer(kind: ArtifactKind, relPath?: string): AgentName {
+  if (relPath) {
+    const lower = relPath.toLowerCase();
+    if (lower.includes('/db/') && (lower.endsWith('.sql') || lower.endsWith('handoff.md')))
+      return 'database-agent';
+  }
   switch (kind) {
     case 'prd':
       return 'product-agent';
@@ -599,14 +651,16 @@ export async function getProject(id: string): Promise<Project | undefined> {
 }
 
 export async function listArtifacts(): Promise<Artifact[]> {
-  const slugs = await listPipelineSlugs();
+  const slugs = await listArtifactProjectSlugs();
   const artifacts: Artifact[] = [];
   const s3RunByApp = isS3Store() ? await buildS3RunIdByApp() : undefined;
 
   for (const slug of slugs) {
-    const ctx = await readContextFile(slug);
+    const localCtx = await readContextFile(slug);
+    const runId = await resolveRunIdForSlug(slug, localCtx, s3RunByApp);
+    const ctx =
+      isS3Store() && runId ? ((await getS3RunContext(runId)) ?? localCtx) : localCtx;
     const name = slugToTitle(slug);
-    const runId = await resolveRunIdForSlug(slug, ctx, s3RunByApp);
     
     // S3 Mode Logic
     if (isS3Store()) {
@@ -632,7 +686,13 @@ export async function listArtifacts(): Promise<Artifact[]> {
         else if (lower.includes('/docs/diagrams/') || lower.startsWith('docs/diagrams/')) kind = 'diagram';
         else if (lower.includes('/db/sql/') && lower.endsWith('.sql')) kind = 'migration';
         else if (lower.endsWith('handoff.md')) kind = 'doc';
-        else if (lower.startsWith('target-apps/')) kind = 'code';
+        else if (lower.startsWith('target-apps/') && !lower.includes('/db/sql/')) kind = 'code';
+        else if (
+          !lower.startsWith('target-apps/') &&
+          (lower.includes('/app/') || lower.endsWith('.py') || lower.endsWith('requirements.txt'))
+        ) {
+          kind = 'code';
+        }
         else kind = artifactKindForPath(relPath);
 
         const base = path.basename(relPath);
@@ -650,7 +710,7 @@ export async function listArtifacts(): Promise<Artifact[]> {
           kind,
           projectId: slug,
           projectName: name,
-          producedBy: artifactProducer(kind),
+          producedBy: artifactProducer(kind, relPath),
           runId,
           path: `runs/${runId}/${relPath}`,
           sizeKb: s3File.sizeKb,
@@ -865,11 +925,12 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
 }
 
 export async function listContextItems(projectSlug?: string): Promise<ContextItem[]> {
-  const slugs = projectSlug ? [projectSlug] : await listPipelineSlugs();
+  const s3RunByApp = isS3Store() ? await buildS3RunIdByApp() : undefined;
+  const slugs = projectSlug ? [projectSlug] : await listArtifactProjectSlugs();
   const items: ContextItem[] = [];
 
   for (const slug of slugs) {
-    const ctx = await readContextFile(slug);
+    const ctx = await resolveContextForSlug(slug, s3RunByApp);
     if (!ctx) continue;
     const name = slugToTitle(slug);
     const updatedAt = await latestPipelineMtime(slug);
@@ -950,17 +1011,22 @@ export async function listContextItems(projectSlug?: string): Promise<ContextIte
 }
 
 export async function getPipelineContext(projectSlug: string): Promise<PipelineContext | null> {
-  const ctx = await readContextFile(projectSlug);
+  const ctx = await resolveContextForSlug(projectSlug);
   if (!ctx) return null;
+  const slug = projectSlug;
+  const appRoot = isS3Store() ? slug : `target-apps/${slug}`;
   return {
     targetApp: ctx.targetApp ?? projectSlug,
-    prdPath: asRepoPath(ctx.prdPath) ?? `docs/PRD/${projectSlug}.md`,
-    designDocPath: asRepoPath(ctx.designDocPath) ?? `docs/design/${projectSlug}.md`,
+    runId: ctx.runId,
+    inputPath: asRepoPath(ctx.inputPath) ?? asRepoPath(ctx.inputFile) ?? undefined,
+    prdPath: asRepoPath(ctx.prdPath) ?? `${appRoot}/docs/PRD/${projectSlug}.md`,
+    designDocPath: asRepoPath(ctx.designDocPath) ?? `${appRoot}/docs/design/${projectSlug}.md`,
     diagramPaths: asRepoPaths(ctx.diagramPaths),
     productAgentOutput: ctx.productAgentOutput ?? '',
     architectSummary: ctx.architectSummary ?? '',
-    dbOutputDir: asRepoPath(ctx.dbOutputDir) ?? `target-apps/${projectSlug}/db/sql`,
-    preferredSqlPath: asRepoPath(ctx.preferredSqlPath) ?? '',
+    dbOutputDir: asRepoPath(ctx.dbOutputDir) ?? `${appRoot}/db`,
+    preferredSqlPath: asRepoPath(ctx.preferredSqlPath) ?? `${appRoot}/db/sql`,
+    raw: ctx as Record<string, unknown>,
   };
 }
 
@@ -986,7 +1052,7 @@ export async function listAgents(): Promise<Agent[]> {
       mcpTools: [],
       mcpServers: meta.mcpServers,
       port: entry.port,
-      availability: 'unknown',
+      availability: resolveAgentAvailability(id),
       lastRunAt: null,
       phase: meta.phase,
     });
@@ -1028,7 +1094,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   return {
     activeRuns: runs.filter((r) => r.status === 'running').length,
     pendingApprovals: 0,
-    agentsOnline: 5,
+    agentsOnline: specialists.filter((a) => a.availability === 'online').length,
     agentsTotal: 8,
     mcpHealthy: mcp.length,
     mcpTotal: mcp.length,

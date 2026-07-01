@@ -58,7 +58,8 @@ def test_resolve_target_app_requires_explicit_source(monkeypatch: pytest.MonkeyP
         resolve_target_app(None, None)
 
 
-def test_consolidated_artifact_paths() -> None:
+def test_consolidated_artifact_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
     from _shared.pipeline_context import (
         design_doc_rel_for_app,
         diagram_path_for_app,
@@ -86,6 +87,7 @@ def test_artifact_layout_honors_product_prd_layout_legacy(
     from _shared.pipeline_context import artifact_layout, prd_rel_path_for_app
 
     monkeypatch.delenv("PRODUCT_ARTIFACT_LAYOUT", raising=False)
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
     monkeypatch.setenv("PRODUCT_PRD_LAYOUT", "docs")
     assert artifact_layout() == "docs"
     assert prd_rel_path_for_app("expense-tracker") == "docs/PRD/expense-tracker.md"
@@ -138,3 +140,69 @@ def test_merge_run_handoff_context_loads_run_store(
     assert merged["designDocPath"] == "docs/design/expense-tracker.md"
     assert merged["inputFile"] == "inputs/expense-tracker.txt"
     assert merged["diagramPaths"] == ["docs/diagrams/generated-diagrams/expense-tracker.png"]
+
+
+def test_normalize_handoff_paths_cloud_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from _shared.pipeline_context import normalize_handoff_paths
+
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    ctx = normalize_handoff_paths(
+        {
+            "targetApp": "agent-ops-assistant",
+            "runId": "smoke-007",
+            "prdPath": "target-apps/agent-ops-assistant/docs/PRD/agent-ops-assistant.md",
+            "designDocPath": "target-apps/agent-ops-assistant/docs/design/agent-ops-assistant.md",
+            "dbOutputDir": "target-apps/agent-ops-assistant/db",
+            "preferredSqlPath": "target-apps/agent-ops-assistant/db/sql",
+        }
+    )
+    assert ctx["targetAppDir"] == "agent-ops-assistant"
+    assert ctx["prdPath"] == "agent-ops-assistant/docs/PRD/agent-ops-assistant.md"
+    assert ctx["dbOutputDir"] == "agent-ops-assistant/db"
+    assert ctx["preferredSqlPath"] == "agent-ops-assistant/db/sql"
+
+
+def test_sanitize_context_for_persist_strips_runtime_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    from _shared.pipeline_context import sanitize_context_for_persist
+
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    raw = {
+        "runId": "smoke-006",
+        "targetApp": "field-service-dispatch",
+        "targetAppDir": "target-apps/field-service-dispatch",
+        "inputPath": "inputs/field-service-dispatch.txt",
+        "prdPath": "target-apps/field-service-dispatch/docs/PRD/field-service-dispatch.md",
+        "designDocPath": "target-apps/field-service-dispatch/docs/design/field-service-dispatch.md",
+        "diagramPaths": [
+            "field-service-dispatch/docs/diagrams/generated-diagrams/field-service-dispatch.png",
+            "/tmp/generated-diagrams/field-service-dispatch.png",
+        ],
+        "diagramOutputDir": "/tmp/generated-diagrams",
+        "diagramOutputFile": "/tmp/generated-diagrams/field-service-dispatch",
+        "productAgentOutput": "See prdPath for field-service-dispatch MVP requirements.",
+        "architectSummary": "Streamlit UI + FastAPI...",
+        "postgresMcpParams": {"db_endpoint": "", "database": ""},
+        "postgresMcpWarning": "POSTGRES_MCP_DB_ENDPOINT is not set.",
+        "seedMinRows": 5,
+        "deliveryProfile": {"uiRequired": False},
+        "applyToRdsAfterWrite": True,
+        "postgresAppSchema": "field_service_dispatch",
+    }
+    cleaned = sanitize_context_for_persist(raw)
+
+    assert cleaned["runId"] == "smoke-006"
+    assert cleaned["targetAppDir"] == "field-service-dispatch"
+    assert cleaned["inputFile"] == "inputs/field-service-dispatch.txt"
+    assert "inputPath" not in cleaned
+    assert "diagramOutputDir" not in cleaned
+    assert "architectSummary" not in cleaned
+    assert "productAgentOutput" not in cleaned
+    assert "postgresMcpParams" not in cleaned
+    assert cleaned["prdPath"] == "field-service-dispatch/docs/PRD/field-service-dispatch.md"
+    assert len(cleaned["diagramPaths"]) == 1
+    assert cleaned["diagramPaths"][0].startswith("field-service-dispatch/")
+    assert cleaned["applyToRdsAfterWrite"] is True

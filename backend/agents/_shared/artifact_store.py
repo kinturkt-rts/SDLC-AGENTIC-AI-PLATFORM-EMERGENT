@@ -13,12 +13,16 @@ from typing import Any
 from _shared.pipeline_context import (
     CANONICAL_RUN_CONTEXT_REL,
     _is_cloud_store,
+    db_dir_rel_for_app,
+    db_handoff_rel_for_app,
     gitlab_handoff_rel_for_app,
     infer_target_app_from_context,
     is_pipeline_context_rel,
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
     qa_handoff_rel_for_app,
+    sanitize_context_for_persist,
+    sql_dir_rel_for_app,
     target_app_root_rel,
     slugify,
 )
@@ -191,6 +195,8 @@ def put_context(run_id: str, context: dict[str, Any]) -> dict[str, Any]:
     existing = _load_context_artifact(run_id, rel) or {}
     payload = _merge_context_updates(existing, context)
     payload["runId"] = run_id
+    payload = sanitize_context_for_persist(payload)
+    payload["runId"] = run_id
     put_artifact(
         run_id,
         rel,
@@ -218,20 +224,20 @@ def enrich_db_paths_from_run(ctx: dict[str, Any]) -> dict[str, Any]:
         return ctx
 
     slug = slugify(app)
-    root = target_app_root_rel(slug)
-    db_dir = f"{root}/db"
-    sql_dir = f"{db_dir}/sql"
-    ctx.setdefault("dbOutputDir", db_dir)
-    ctx.setdefault("preferredSqlPath", sql_dir)
-    ctx.setdefault("preferredNoSqlPath", f"{db_dir}/nosql")
+    db_dir = db_dir_rel_for_app(slug)
+    sql_dir = sql_dir_rel_for_app(slug)
+    ctx["dbOutputDir"] = db_dir
+    ctx["preferredSqlPath"] = sql_dir
+    ctx["preferredNoSqlPath"] = f"{db_dir}/nosql"
 
     if run_sql_artifact_keys(run_id, slug):
         ctx["dbOutputDir"] = db_dir
         ctx["preferredSqlPath"] = sql_dir
 
-    handoff_rel = f"{db_dir}/HANDOFF.md"
-    if run_artifact_exists(run_id, handoff_rel):
-        ctx["databaseHandoffPath"] = handoff_rel
+    for handoff_rel in (db_handoff_rel_for_app(slug), f"target-apps/{slug}/db/HANDOFF.md"):
+        if run_artifact_exists(run_id, handoff_rel):
+            ctx["databaseHandoffPath"] = handoff_rel
+            break
 
     return ctx
 
@@ -302,6 +308,14 @@ def get_context(run_id: str, *, target_app: str | None = None) -> dict[str, Any]
         loaded = _load_context_artifact(run_id, f"{slug}/context.json")
         if loaded:
             return loaded
+
+    if not target_app:
+        for rel in list_run_artifact_keys(run_id):
+            parts = rel.split("/")
+            if len(parts) == 2 and parts[1] == "context.json":
+                loaded = _load_context_artifact(run_id, rel)
+                if loaded:
+                    return loaded
 
     loaded = _load_context_artifact(run_id, CANONICAL_RUN_CONTEXT_REL)
     if loaded:

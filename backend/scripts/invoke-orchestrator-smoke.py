@@ -18,7 +18,10 @@ def _build_task(
     run_id: str,
     input_file: str,
     transport: str = "a2a",
+    skip_product: bool = False,
+    skip_architect: bool = False,
     skip_db: bool = True,
+    skip_postgres: bool = True,
     skip_developer: bool = True,
     skip_gitlab: bool = True,
     skip_verify: bool = True,
@@ -28,7 +31,10 @@ def _build_task(
         "run_id": run_id,
         "input_file": input_file,
         "transport": transport,
+        "skip_product": skip_product,
+        "skip_architect": skip_architect,
         "skip_db": skip_db,
+        "skip_postgres": skip_postgres,
         "skip_developer": skip_developer,
         "skip_gitlab": skip_gitlab,
         "skip_verify": skip_verify,
@@ -42,13 +48,32 @@ def main() -> None:
     parser.add_argument("--run-id", default="smoke-004")
     parser.add_argument("--input-file", default="")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--skip-product", action="store_true")
+    parser.add_argument("--skip-architect", action="store_true")
+    parser.add_argument("--skip-db", action="store_true", default=True)
+    parser.add_argument("--no-skip-db", action="store_false", dest="skip_db")
+    parser.add_argument("--skip-postgres", action="store_true", default=True)
+    parser.add_argument("--no-skip-postgres", action="store_false", dest="skip_postgres")
+    parser.add_argument("--skip-developer", action="store_true", default=True)
+    parser.add_argument("--no-skip-developer", action="store_false", dest="skip_developer")
+    parser.add_argument("--skip-gitlab", action="store_true", default=True)
+    parser.add_argument("--no-skip-gitlab", action="store_false", dest="skip_gitlab")
+    parser.add_argument("--skip-verify", action="store_true", default=True)
+    parser.add_argument("--no-skip-verify", action="store_false", dest="skip_verify")
     args = parser.parse_args()
 
-    input_file = args.input_file or f"inputs/{args.app}.txt"
+    input_file = args.input_file or f"{args.app}/inputs/{args.app}.txt"
     task = _build_task(
         target_app=args.app,
         run_id=args.run_id,
         input_file=input_file,
+        skip_product=args.skip_product,
+        skip_architect=args.skip_architect,
+        skip_db=args.skip_db,
+        skip_postgres=args.skip_postgres,
+        skip_developer=args.skip_developer,
+        skip_gitlab=args.skip_gitlab,
+        skip_verify=args.skip_verify,
     )
 
     print("Invoking orchestrator-agent...")

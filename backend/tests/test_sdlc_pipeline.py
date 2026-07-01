@@ -268,6 +268,7 @@ def test_after_agent_step_merges_remote_context_before_put(
 
     monkeypatch.setenv("ARTIFACT_STORE", "local")
     monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr("agents._shared.sdlc_pipeline.load_repo_env", lambda: None)
     (tmp_path / "agents" / "pipeline").mkdir(parents=True)
 
     run_id = "after-db-merge"

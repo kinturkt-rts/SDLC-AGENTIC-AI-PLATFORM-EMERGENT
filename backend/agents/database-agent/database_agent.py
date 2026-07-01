@@ -33,6 +33,7 @@ from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     _is_cloud_store,
+    cloud_artifact_rel,
     enrich_handoff_context,
     merge_run_handoff_context,
     resolve_cli_context,
@@ -323,14 +324,15 @@ def db_read_file(path: str) -> str:
 
 @tool
 def db_write_file(path: str, content: str) -> str:
-    """Write a file under target-apps/ only."""
+    """Write SQL/NoSQL artifacts under the app db tree (cloud: ``<slug>/db/...``)."""
+    artifact_rel = cloud_artifact_rel(path.strip())
     try:
-        file_path = _resolve_repo_path(path, write=True)
+        file_path = _resolve_repo_path(artifact_rel if _is_cloud_store() else path, write=True)
     except ValueError as exc:
         return f"Error: {exc}"
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(content, encoding="utf-8", newline="\n")
-    rel = file_path.relative_to(_REPO_ROOT).as_posix()
+    rel = cloud_artifact_rel(file_path.relative_to(_REPO_ROOT).as_posix())
     _written_files.append(rel)
     if _run_context is not None:
         write_repo_artifact(rel, content, context=_run_context)
@@ -445,15 +447,17 @@ def _build_context(
     db_subdir: str = _DEFAULT_DB_SUBDIR,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    service_dir = _ensure_service_exists(target_app)
-    db_dir = service_dir / db_subdir
-    db_dir.mkdir(parents=True, exist_ok=True)
+    slug = slugify(target_app)
+    root_rel = target_app_root_rel(slug)
+    if not _is_cloud_store():
+        service_dir = _ensure_service_exists(target_app)
+        (service_dir / db_subdir).mkdir(parents=True, exist_ok=True)
     ctx: dict[str, Any] = {
-        "targetApp": target_app,
-        "targetAppDir": service_dir.relative_to(_REPO_ROOT).as_posix(),
-        "dbOutputDir": db_dir.relative_to(_REPO_ROOT).as_posix(),
-        "preferredSqlPath": (db_dir / "sql").relative_to(_REPO_ROOT).as_posix(),
-        "preferredNoSqlPath": (db_dir / "nosql").relative_to(_REPO_ROOT).as_posix(),
+        "targetApp": slug,
+        "targetAppDir": root_rel,
+        "dbOutputDir": f"{root_rel}/{db_subdir}".rstrip("/"),
+        "preferredSqlPath": f"{root_rel}/{db_subdir}/sql".replace("//", "/"),
+        "preferredNoSqlPath": f"{root_rel}/{db_subdir}/nosql".replace("//", "/"),
     }
     if extra:
         ctx.update(extra)
@@ -523,7 +527,8 @@ def run_task(
     base_ctx.setdefault("targetApp", app)
     ctx = merge_run_handoff_context(base_ctx, include_db_paths=False)
     for key, value in _build_context(target_app=app, db_subdir=db_subdir).items():
-        ctx.setdefault(key, value)
+        if _is_cloud_store() or key not in ctx:
+            ctx[key] = value
     _enrich_postgres_mcp_context(ctx, use_postgres=use_postgres)
     _run_context = ctx
 
@@ -554,6 +559,15 @@ def run_task(
     if run_id:
         ctx.setdefault("runId", run_id)
         put_context(run_id, ctx)
+        if _written_files:
+            handoff_rel = write_db_handoff(
+                app,
+                ctx,
+                agent_result=summary,
+                rds_applied=False,
+            )
+            ctx["databaseHandoffPath"] = handoff_rel
+            put_context(run_id, ctx)
 
     return summary, list(_written_files)
 

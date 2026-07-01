@@ -23,14 +23,14 @@ inputs/*.txt
     → security-agent       (SAST, deps, compliance — roadmap / manual)
 ```
 
-| Step | Agent / script | Status in `run-sdlc.ps1` | Primary outputs |
-|------|----------------|--------------------------|-----------------|
-| 1 | **product-agent** | Default (skip with `-SkipProduct`) | `docs/PRD/<app>.md`, `agents/pipeline/<app>.context.json` |
-| 2 | **architect-agent** | Default (skip with `-SkipArchitect`) | `docs/design/<app>.md`, `docs/diagrams/generated-diagrams/<app>.png` |
+| Step | Agent / script | Status in `run-sdlc.ps1` | Primary outputs (local) |
+|------|----------------|--------------------------|-------------------------|
+| 1 | **product-agent** | Default (skip with `-SkipProduct`) | `target-apps/<app>/docs/PRD/<app>.md`, `agents/pipeline/<app>.context.json` |
+| 2 | **architect-agent** | Default (skip with `-SkipArchitect`) | `target-apps/<app>/docs/design/<app>.md`, diagram PNG |
 | 2b | web-crawler-agent | Opt-in `-WithWebCrawler` | `docs/PRD/scraped/<app>/` |
-| 3 | **database-agent** | Default (skip with `-SkipDb`) | `target-apps/<app>/db/sql/` |
+| 3 | **database-agent** | Default (skip with `-SkipDb`) | `target-apps/<app>/db/sql/`, `db/HANDOFF.md` |
 | 3b | `apply_sql_to_rds.py` | Default when DB runs (skip with `-SkipPostgres`) | RDS schema + seed |
-| 4 | **developer-agent** | Default (skip with `-SkipDeveloper`) | `target-apps/<app>/` |
+| 4 | **developer-agent** | Default (skip with `-SkipDeveloper`) | `target-apps/<app>/` (app, tests, README) |
 | 5 | local verify | Default (skip with `-SkipVerify`) | pytest in app folder |
 | 6 | **gitlab-agent** | Default after verify when `GITLAB_*` in `.env` (skip with `-SkipGitlab`) | branch `sdlc/<app>`, `agents/pipeline/<app>.gitlab-handoff.json` |
 | 7 | **qa-agent** | Opt-in `-WithQa` (skip with `-SkipQa`) | `agents/pipeline/<app>.qa-handoff.json` |
@@ -177,6 +177,27 @@ SDLC_PIPELINE_TRANSPORT=local   # force local subprocess chain
 
 When deploying agents to AWS one-by-one, flip these env vars (no code changes). See `backend/orchestrator/README.md` for the rollout checklist and the shared-storage caveat that applies when all five agents are on AgentCore.
 
+### Cloud artifact layout (AgentCore + S3)
+
+When `ARTIFACT_STORE=s3`, each pipeline run stores **one app-scoped tree** under `s3://<bucket>/runs/<runId>/<slug>/`. Agents read and update a single **`context.json`** at that root so later steps recall PRD, design, SQL paths, and summaries from earlier agents.
+
+```text
+runs/<runId>/<slug>/
+  context.json              # merged handoff — prdPath, designDocPath, dbOutputDir, architectSummary, …
+  inputs/<slug>.txt
+  docs/PRD/<slug>.md
+  docs/design/<slug>.md
+  docs/diagrams/<slug>.png
+  db/sql/*.sql
+  db/HANDOFF.md
+  handoffs/gitlab-handoff.json
+  app/ …                    # developer-agent (FastAPI scaffold)
+```
+
+**Local dev** keeps the repo layout under `backend/target-apps/<slug>/` (same relative paths, prefixed with `target-apps/`). Path helpers in `backend/agents/_shared/pipeline_context.py` switch automatically via `ARTIFACT_STORE` / `ARTIFACT_S3_BUCKET`.
+
+The control-plane **Artifacts** page lists all objects under `runs/<runId>/` when S3 is configured, including legacy `target-apps/` prefixes from older runs.
+
 ## MCP (open source)
 
 | Scope | File | Servers |
@@ -202,7 +223,7 @@ Never commit secrets; use `.env` (git-ignored via `.gitignore`).
 - AWS credentials: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
 - Bedrock model IDs via `MODEL_ID` (product/architect) and `CODING_MODEL_ID` (database/developer) in `.env`
 - Target apps scaffold from `backend/target-apps/_template/`; each may add `backend/target-apps/{service}/.cursor/rules/`
-- Requirement briefs live under `backend/inputs/`; pipeline handoff under `backend/agents/pipeline/<feature>.context.json`
+- Requirement briefs live under `backend/inputs/`; pipeline handoff under `backend/agents/pipeline/<feature>.context.json` (local) or `runs/<runId>/<slug>/context.json` (cloud S3)
 - GitLab publish: `GITLAB_PERSONAL_ACCESS_TOKEN`, `GITLAB_PROJECT_PATH` in `.env` — see `backend/agents/gitlab-agent/`
 - RDS apply: `python backend/scripts/apply_sql_to_rds.py --target-app <app>` (validates seed nullability before apply)
 - Terraform remote state per `backend/config/mcp/servers.json` → terraform server section

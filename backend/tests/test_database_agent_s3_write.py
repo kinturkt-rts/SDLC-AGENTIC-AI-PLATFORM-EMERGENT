@@ -25,6 +25,34 @@ def _load_agent_module():
     return module
 
 
+def test_db_write_file_rewrites_target_apps_path_in_cloud_s3(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+
+    mod = _load_agent_module()
+    mod._run_context = {"targetApp": "demo-api", "runId": "db-write-cloud-001"}
+    captured: list[str] = []
+
+    def _capture_write(rel: str, content: str, *, context: dict | None = None) -> str:
+        captured.append(rel)
+        return rel
+
+    with patch.object(mod, "write_repo_artifact", side_effect=_capture_write):
+        with patch.object(mod, "_is_cloud_store", return_value=True):
+            with patch("_shared.pipeline_context._is_cloud_store", return_value=True):
+                result = mod.db_write_file(
+                    "target-apps/demo-api/db/sql/001_users.sql",
+                    "CREATE TABLE users (id uuid PRIMARY KEY);",
+                )
+
+    assert "Wrote demo-api/db/sql/001_users.sql" in result
+    assert captured == ["demo-api/db/sql/001_users.sql"]
+    mod._run_context = None
+
+
 def test_db_write_file_persists_to_s3_when_run_id_set(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,

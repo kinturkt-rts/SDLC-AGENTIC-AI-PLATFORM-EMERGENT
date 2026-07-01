@@ -225,8 +225,8 @@ export async function getS3ArtifactPreview(key: string): Promise<string | undefi
     );
     
     const str = await response.Body?.transformToString('utf-8');
-    if (str && str.length > 2000) {
-      return str.substring(0, 2000) + '\n\n... (truncated for preview)';
+    if (str && str.length > 20000) {
+      return str.substring(0, 20000) + '\n\n... (truncated for preview)';
     }
     return str;
   } catch (error) {

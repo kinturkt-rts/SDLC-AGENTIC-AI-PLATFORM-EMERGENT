@@ -314,6 +314,9 @@ class SdlcPipelineRunner:
         if not self.run_id:
             return
         self._merge_run_context_from_s3()
+        from .pipeline_context import normalize_handoff_paths
+
+        normalize_handoff_paths(self.context)
         self._normalize_docs_layout_paths()
         if not self.context.get("prdPath"):
             self.context["prdPath"] = prd_rel_path_for_app(self.feature)
@@ -356,6 +359,9 @@ class SdlcPipelineRunner:
         remote = get_context(self.run_id, target_app=self.feature)
         if remote:
             self.context.update(remote)
+        from .pipeline_context import normalize_handoff_paths
+
+        normalize_handoff_paths(self.context)
 
     def _run_python(self, args: list[str], *, step: str) -> None:
         cmd = [sys.executable, *args]
@@ -547,7 +553,7 @@ class SdlcPipelineRunner:
             self._merge_run_context_from_s3()
 
         self.agents_run.append("database-agent")
-        self.artifacts["DB"] = f"target-apps/{self.feature}/db/"
+        self.artifacts["DB"] = f"{target_app_root_rel(self.feature)}/db/"
         self._after_agent_step("database-agent")
 
     def _resolve_rds_workspace(self) -> tuple[Path, Path]:
@@ -667,11 +673,15 @@ class SdlcPipelineRunner:
             self._merge_run_context_from_s3()
 
         self.agents_run.append("developer-agent")
-        self.artifacts["App"] = f"target-apps/{self.feature}/"
+        self.artifacts["App"] = f"{target_app_root_rel(self.feature)}/"
         self._after_agent_step("developer-agent")
 
     def _step_verify(self) -> None:
-        app_dir = self.root / "target-apps" / self.feature
+        app_root = target_app_root_rel(self.feature)
+        app_dir = self.root / app_root.replace("/", os.sep)
+        if not app_dir.is_dir():
+            legacy = self.root / "target-apps" / self.feature
+            app_dir = legacy if legacy.is_dir() else app_dir
         tests_dir = app_dir / "tests"
         if not tests_dir.is_dir():
             self._delivery_check("app")

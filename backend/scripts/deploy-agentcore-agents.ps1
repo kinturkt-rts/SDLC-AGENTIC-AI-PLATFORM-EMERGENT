@@ -1,4 +1,4 @@
-# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
+﻿# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
 # Prereqs: pip install bedrock-agentcore-starter-toolkit, AWS credentials, Bedrock model access.
 #
 # AgentCore registry names use underscores (database_agent). AGENTCORE_AGENT uses hyphenated
@@ -19,14 +19,13 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
-# agentcore CLI prints unicode glyphs (checkmarks); Windows console codepage (cp1252) can't
-# encode them and the process crashes mid-command even after the action already succeeded.
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
 $DotenvForwardedKeys = @(
     "ARTIFACT_S3_BUCKET",
     "ARTIFACT_DYNAMODB_TABLE",
+    "AWS_PROFILE",
     "CODING_MODEL_ID",
     "MODEL_ID",
     "ATLASSIAN_MCP_TOKEN",
@@ -84,32 +83,44 @@ function Import-ArtifactEnvFromDotenv {
 
 Import-ArtifactEnvFromDotenv
 
-$AllAgents = @(
-    @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
+function Test-AgentRegisteredInYaml {
+    param([string] $AwsName)
+    $yamlPath = Join-Path $RepoRoot ".bedrock_agentcore.yaml"
+    if (-not (Test-Path $yamlPath)) { return $false }
+    return (Select-String -Path $yamlPath -Pattern "^\s{2}${AwsName}:" -Quiet)
+}
+
+# Default SDLC pipeline runtimes (batch deploy without -Agents).
+$PipelineAgents = @(
     @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true") },
+    @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
     @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @() },
     @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @() },
     @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = @() },
+    @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() }
+)
+
+# Deploy on demand via -Agents (not part of default pipeline batch).
+$OptionalAgents = @(
     @{ awsName = "qa_agent"; bundle = "qa-agent"; node = $false; extra = @() },
-    @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() },
-    # VPC-mode orchestrator runtime: AgentCore network mode is immutable after creation, so RDS
-    # access (needs to reach RDS in vpc-036155f359e2e940c) requires a separate runtime, not a
-    # reconfigure of orchestrator_agent. Cut config/agentcore/runtimes.json over once verified.
+    # VPC-mode orchestrator: network mode is immutable after creation; use when orchestrator
+    # must reach RDS in vpc-036155f359e2e940c. Example:
+    #   .\scripts\deploy-agentcore-agents.ps1 -Agents orchestrator_agent_vpc -SkipConfigure
     @{ awsName = "orchestrator_agent_vpc"; bundle = "orchestrator-agent"; node = $false; extra = @(); vpc = @{
         subnets = "subnet-0c0e7c749de659e32,subnet-07651619f77b51d7f,subnet-044c04012037ca457"
         securityGroups = "sg-077b416683295dd42"
     } },
-    @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @() },
-    @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
-    @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $false; extra = @() }
+    @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() }
 )
+
+$AllAgents = $PipelineAgents + $OptionalAgents
 
 $TargetAgents = if ($Agents.Count -gt 0) {
     $AllAgents | Where-Object {
         ($Agents -contains $_.awsName) -or ($Agents -contains $_.bundle)
     }
 } else {
-    $AllAgents
+    $PipelineAgents
 }
 
 $CommonEnv = @(
@@ -138,13 +149,11 @@ $AgentSecretKeys = @{
     gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     orchestrator_agent     = @()
     orchestrator_agent_vpc = @()
-    web_crawler_agent      = @("FIRECRAWL_API_KEY")
     security_agent         = @()
-    devops_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL")
     qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL")
 }
 
-# Orchestrator runs apply_sql_to_rds after database-agent — pass RDS creds on orchestrator runtime only.
+# Orchestrator runs apply_sql_to_rds after database-agent - pass RDS creds on orchestrator runtime only.
 $OrchestratorRdsKeys = @(
     "POSTGRES_MCP_DEPLOYMENT",
     "POSTGRES_MCP_CONNECTION_METHOD",
@@ -161,6 +170,9 @@ $OrchestratorRdsKeys = @(
 
 # Default: skip configure on redeploy (configure shrinks source_path to deploy/agentcore only).
 $RunConfigure = ($Configure -or $ConfigureOnly) -and -not $SkipConfigure
+
+$DeployFailures = @()
+$DeploySkipped = @()
 
 foreach ($agent in $TargetAgents) {
     $awsName = $agent.awsName
@@ -192,6 +204,12 @@ foreach ($agent in $TargetAgents) {
 
     if ($ConfigureOnly) { continue }
 
+    if ($SkipConfigure -and -not (Test-AgentRegisteredInYaml -AwsName $awsName)) {
+        Write-Warning "Skipping $awsName - not registered in .bedrock_agentcore.yaml. First-time setup:`n  .\scripts\deploy-agentcore-agents.ps1 -Agents $awsName -Configure`nThen verify source_path is 'backend' (not deploy/agentcore) before redeploying with -SkipConfigure."
+        $DeploySkipped += $awsName
+        continue
+    }
+
     $deployArgs = @("deploy", "--agent", $awsName, "--env", "AGENTCORE_AGENT=$bundle")
     $envBlock = $CommonEnv + $agent.extra
     if ($AgentSecretKeys.ContainsKey($awsName)) {
@@ -204,6 +222,17 @@ foreach ($agent in $TargetAgents) {
         $deployArgs += @("--env", $item)
     }
     & agentcore @deployArgs
+    if ($LASTEXITCODE -ne 0) {
+        $DeployFailures += $awsName
+        Write-Warning "Deploy failed for $awsName (exit $LASTEXITCODE)."
+    }
+}
+
+if ($DeploySkipped.Count -gt 0) {
+    Write-Host "`nSkipped (not configured): $($DeploySkipped -join ', ')" -ForegroundColor Yellow
+}
+if ($DeployFailures.Count -gt 0) {
+    Write-Error "Deploy failed for: $($DeployFailures -join ', ')"
 }
 
 Write-Host "`nUpdate config/agentcore/runtimes.json with runtime ARNs and invoke URLs." -ForegroundColor Green

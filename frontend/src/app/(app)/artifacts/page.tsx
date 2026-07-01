@@ -23,11 +23,12 @@ import { EmptyState } from '@/src/components/common/EmptyState';
 import { useArtifacts, useProjects } from '@/src/lib/queries';
 import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
+import { ARTIFACT_FILTER_KINDS, artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { Artifact, ArtifactKind } from '@/src/types';
 
 const KIND_ICON: Record<ArtifactKind, typeof FileBox> = {
   prd: FileText,
-  architecture: GitBranch,
+  architecture: FileText,
   migration: Database,
   code: FileCode2,
   test: FlaskConical,
@@ -37,7 +38,10 @@ const KIND_ICON: Record<ArtifactKind, typeof FileBox> = {
   doc: FileType,
 };
 
-const KINDS: (ArtifactKind | 'all')[] = ['all', 'prd', 'architecture', 'migration', 'code', 'test', 'scan', 'cicd', 'diagram', 'doc'];
+const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
+  { value: 'all', label: 'All kinds' },
+  ...ARTIFACT_FILTER_KINDS.map((k) => ({ value: k, label: artifactKindLabel(k) })),
+];
 
 export default function ArtifactsPage() {
   const { data: artifacts, isLoading } = useArtifacts();
@@ -63,7 +67,7 @@ export default function ArtifactsPage() {
     fetch(`/api/v1/repo-asset?path=${encodeURIComponent(preview.path)}`)
       .then((res) => (res.ok ? res.text() : Promise.reject(new Error('preview failed'))))
       .then((text) => {
-        if (!cancelled) setPreviewText(text.slice(0, 8000));
+        if (!cancelled) setPreviewText(text.length > 20000 ? text.slice(0, 20000) + '\n\n... (truncated for preview)' : text);
       })
       .catch(() => {
         if (!cancelled) setPreviewText('Preview unavailable for this artifact.');
@@ -87,12 +91,16 @@ export default function ArtifactsPage() {
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description={`Deliverables produced by agents for ${currentProjectName} \u2014 PRDs, design docs, migrations, code, tests, scans, and CI/CD.`}
+        description={`Deliverables for ${currentProjectName} — PRDs, design docs, architecture diagrams, SQL, code, and CI/CD.`}
         actions={
           <Select value={kind} onValueChange={(v) => setKind(v as ArtifactKind | 'all')}>
-            <SelectTrigger className="h-9 w-[150px] border-white/[0.08] bg-white/[0.02] capitalize"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-[190px] border-white/[0.08] bg-white/[0.02]">
+              <SelectValue placeholder="All kinds" />
+            </SelectTrigger>
             <SelectContent>
-              {KINDS.map((k) => <SelectItem key={k} value={k} className="capitalize">{k === 'all' ? 'All kinds' : k}</SelectItem>)}
+              {FILTER_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         }
@@ -120,11 +128,13 @@ export default function ArtifactsPage() {
                     <p className="truncate font-mono text-sm font-medium text-foreground">{a.name}</p>
                     <p className="truncate text-xs text-muted-foreground">{a.path}</p>
                   </div>
-                  <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">{a.kind}</span>
+                  <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {artifactKindLabel(a.kind)}
+                  </span>
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5 text-xs text-muted-foreground">
                   <span>{a.producedBy}</span>
-                  <span>{a.sizeKb} KB \u00b7 {formatRelative(a.createdAt)}</span>
+                  <span>{a.sizeKb} KB &middot; {formatRelative(a.createdAt)}</span>
                 </div>
                 {(a.preview || a.imageUrl || a.path.startsWith('runs/')) ? (
                   <p className="mt-2 text-[11px] font-medium text-teal-400">Click to preview</p>
@@ -139,7 +149,7 @@ export default function ArtifactsPage() {
         <DialogContent className="max-w-2xl border-white/[0.08] bg-card">
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
-            <DialogDescription>{preview?.path} \u00b7 produced by {preview?.producedBy}</DialogDescription>
+            <DialogDescription>{preview?.path} &middot; produced by {preview?.producedBy}</DialogDescription>
           </DialogHeader>
           {preview?.imageUrl ? (
             <div className="overflow-hidden rounded-lg border border-white/[0.06] bg-muted/20 p-2">

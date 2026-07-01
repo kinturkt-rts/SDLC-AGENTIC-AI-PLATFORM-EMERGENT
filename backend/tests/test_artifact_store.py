@@ -12,6 +12,8 @@ import pytest
 @pytest.fixture(autouse=True)
 def local_artifact_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.delenv("ARTIFACT_S3_BUCKET", raising=False)
+    monkeypatch.delenv("ARTIFACT_STORE_S3_BUCKET", raising=False)
 
 
 def test_put_and_get_artifact_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,6 +52,34 @@ def test_put_context_merges_existing(repo_root: Path, monkeypatch: pytest.Monkey
     assert loaded["prdPath"] == "docs/PRD/demo-api.md"
     assert loaded["designDocPath"] == "docs/design/demo-api.md"
     assert loaded["dbOutputDir"] == "target-apps/demo-api/db"
+
+
+def test_put_context_strips_runtime_fields_on_persist(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import get_context, put_context
+
+    run_id = "test-run-sanitize"
+    put_context(
+        run_id,
+        {
+            "targetApp": "demo-api",
+            "prdPath": "docs/PRD/demo-api.md",
+            "inputPath": "inputs/demo-api.txt",
+            "diagramOutputDir": "/tmp/generated-diagrams",
+            "productAgentOutput": "See prdPath for demo-api MVP requirements.",
+            "architectSummary": "summary text",
+        },
+    )
+    loaded = get_context(run_id)
+    assert loaded is not None
+    assert loaded["inputFile"] == "inputs/demo-api.txt"
+    assert "inputPath" not in loaded
+    assert "diagramOutputDir" not in loaded
+    assert "architectSummary" not in loaded
+    assert "productAgentOutput" not in loaded
 
 
 def test_enrich_db_paths_from_run(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
