@@ -1,4 +1,4 @@
-# Shared GitLab MCP for ECS Fargate (HTTP mode). Not the gitlab-agent AgentCore image.
+# Shared GitLab MCP for ECS Fargate (HTTP mode). Pushed as bedrock-agentcore-gitlab_agent:gitlab_mcp.
 # Build context: backend/deploy/gitlab-mcp-server/
 #
 #   docker build -t gitlab-mcp-server .

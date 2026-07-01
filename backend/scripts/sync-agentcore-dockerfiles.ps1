@@ -46,4 +46,4 @@ foreach ($target in $targets) {
 }
 
 Write-Host "Done. Agent images: no gitlab-mcp binary unless INSTALL_GITLAB_MCP_BINARY=true."
-Write-Host "ECS MCP service: deploy/gitlab-mcp-server/Dockerfile -> scripts/push-gitlab-mcp-ecr.ps1"
+Write-Host "ECS MCP service: deploy/gitlab-mcp-server/Dockerfile -> bedrock-agentcore-gitlab_agent:gitlab_mcp"

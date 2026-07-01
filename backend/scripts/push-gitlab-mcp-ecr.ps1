@@ -1,18 +1,19 @@
 # Push jmrplens/gitlab-mcp-server to ECR for shared HTTP MCP on ECS.
-# This is NOT the gitlab-agent AgentCore image (bedrock-agentcore-gitlab_agent).
+# Canonical image (team-tested):
+#   061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent:gitlab_mcp
+# Same ECR repo also holds gitlab-agent AgentCore at tag :latest (different image).
 #
 # Prereqs: Docker Desktop, AWS CLI, `aws sso login --profile "Juno Developers"`
 #
 # Usage (from backend/):
 #   .\scripts\push-gitlab-mcp-ecr.ps1
 #   .\scripts\push-gitlab-mcp-ecr.ps1 -SkipCreateRepo
-#   .\scripts\push-gitlab-mcp-ecr.ps1 -Repository gitlab-mcp-server -Tag latest
 #   .\scripts\push-gitlab-mcp-ecr.ps1 -BuildFromDockerfile
 param(
     [string] $Region = "us-east-2",
     [string] $AccountId = "061836593297",
-    [string] $Repository = "gitlab-mcp-server",
-    [string] $Tag = "latest",
+    [string] $Repository = "bedrock-agentcore-gitlab_agent",
+    [string] $Tag = "gitlab_mcp",
     [string] $SourceImage = "ghcr.io/jmrplens/gitlab-mcp-server:latest",
     [string] $Profile = "Juno Developers",
     [switch] $SkipCreateRepo,
@@ -28,9 +29,9 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Error "Docker is not installed or not on PATH. Install Docker Desktop, then re-run."
 }
 
-if ($Repository -eq "bedrock-agentcore-gitlab_agent") {
-    Write-Warning "bedrock-agentcore-gitlab_agent is the gitlab-agent Python runtime repo, not the MCP server."
-    Write-Warning "Use -Repository gitlab-mcp-server (default) for the shared MCP HTTP service."
+if ($Repository -eq "bedrock-agentcore-gitlab_agent" -and $Tag -eq "latest") {
+    Write-Warning ":latest on bedrock-agentcore-gitlab_agent is the gitlab-agent Python runtime, not the MCP server."
+    Write-Warning "Use -Tag gitlab_mcp for the shared MCP HTTP service image."
 }
 
 Write-Host "Checking AWS identity..." -ForegroundColor Cyan

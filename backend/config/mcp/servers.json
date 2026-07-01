@@ -75,7 +75,8 @@
         "GITLAB_PROJECT_PATH": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
         "GITLAB_BASE_BRANCH": "main"
       },
-      "notes": "jmrplens uses REST API v4 on GitLab Free. Native https://host/api/v4/mcp needs Duo Premium. Local/AgentCore stdio: bin/gitlab-mcp-server via install script. AWS shared deploy: run ghcr.io/jmrplens/gitlab-mcp-server:latest in HTTP mode on ECS; set GITLAB_MCP_HTTP_URL on gitlab-agent runtime (token per request via PRIVATE-TOKEN header).",
+      "notes": "jmrplens uses REST API v4 on GitLab Free. Native https://host/api/v4/mcp needs Duo Premium. Local/AgentCore stdio: bin/gitlab-mcp-server via install script. AWS shared deploy: ECR bedrock-agentcore-gitlab_agent:gitlab_mcp (HTTP on ECS); set GITLAB_MCP_HTTP_URL on gitlab-agent runtime (token per request via PRIVATE-TOKEN header).",
+      "ecrImage": "061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent:gitlab_mcp",
       "usedBy": ["cursor", "gitlab-agent", "devops-agent", "qa-agent (optional MR comments)"]
     },
     "Playwright": {
