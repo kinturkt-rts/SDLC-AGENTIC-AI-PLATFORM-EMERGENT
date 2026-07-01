@@ -6,7 +6,7 @@
 //
 // The control plane NEVER executes agents. It only reads platform state.
 
-import { mockLogs, mockAgentMessages } from '@/src/mocks';
+import { mockAgentMessages } from '@/src/mocks';
 import type {
   Agent,
   Project,
@@ -78,7 +78,10 @@ export const api = {
     }
   },
   async getRunLogs(runId: string): Promise<LogEntry[]> {
-    return mockLogs.filter((l) => l.runId === runId);
+    const data = await httpGet<{ logs: LogEntry[] }>(
+      `/api/v1/runs/${encodeURIComponent(runId)}/logs`,
+    );
+    return data.logs;
   },
   async getRunEvents(runId: string): Promise<RunEvent[]> {
     const data = await httpGet<{ events: RunEvent[] }>(
@@ -140,8 +143,14 @@ export const api = {
       return null;
     }
   },
-  async getLogs(): Promise<LogEntry[]> {
-    return mockLogs;
+  async getLogs(options?: { runId?: string; agent?: string; minutes?: number }): Promise<LogEntry[]> {
+    const params = new URLSearchParams();
+    if (options?.runId) params.set('runId', options.runId);
+    if (options?.agent) params.set('agent', options.agent);
+    if (options?.minutes) params.set('minutes', String(options.minutes));
+    const qs = params.toString();
+    const data = await httpGet<{ logs: LogEntry[] }>(`/api/v1/logs${qs ? `?${qs}` : ''}`);
+    return data.logs;
   },
   async getDashboardSummary(): Promise<DashboardSummary> {
     return httpGet<DashboardSummary>('/api/v1/dashboard');

@@ -23,7 +23,7 @@
       "runtimeId": "orchestrator_agent-O0WIlYDDeX",
       "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent-O0WIlYDDeX",
       "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Forchestrator_agent-O0WIlYDDeX/invocations",
-      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_A2A_PEER_URLS or future ARN transport. PUBLIC mode — can run product/architect/database/developer/gitlab steps but apply_sql_to_rds.py cannot reach RDS (sg-077b416683295dd42 only allows specific static IPs, not AgentCore's PUBLIC-mode egress).",
+      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_A2A_PEER_URLS. Runs full pipeline including in-cloud RDS apply when skip_postgres=false (orchestrator runs apply_sql_to_rds.py after database-agent). POSTGRES_MCP_* env required on orchestrator runtime. invoke-orchestrator-smoke.py defaults skip_postgres=true and applies RDS locally for testing convenience.",
       "vpcCandidateRuntime": {
         "awsName": "orchestrator_agent_vpc",
         "runtimeId": "orchestrator_agent_vpc-OjsXSo2v9h",

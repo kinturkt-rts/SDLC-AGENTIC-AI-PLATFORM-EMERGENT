@@ -143,6 +143,57 @@ function slugifyApp(value: string): string {
   return value.trim().toLowerCase().replace(/_/g, '-');
 }
 
+/** Paths under a run prefix that are pipeline metadata, not user-facing artifacts. */
+export function isSkippableS3ArtifactRelPath(relPath: string): boolean {
+  if (!relPath || relPath === 'run.json') return true;
+  if (relPath === 'context.json' || relPath.endsWith('/context.json')) return true;
+  if (relPath.includes('/inputs/') || relPath.startsWith('inputs/')) return true;
+  if (relPath.includes('/handoffs/') && relPath.endsWith('.json')) return true;
+  if (relPath.startsWith('agents/pipeline/') && relPath.endsWith('.context.json')) return true;
+  return false;
+}
+
+/** Infer target app from context.json or submitted input paths in S3. */
+export async function inferTargetAppFromS3Run(runId: string): Promise<string | null> {
+  const ctx = await getS3RunContext(runId);
+  if (typeof ctx?.targetApp === 'string' && ctx.targetApp.trim()) {
+    return slugifyApp(ctx.targetApp);
+  }
+
+  const prefix = runS3Prefix(runId);
+  let continuationToken: string | undefined;
+  do {
+    const response = await s3Client().send(
+      new ListObjectsV2Command({
+        Bucket: s3Bucket(),
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }),
+    );
+    for (const item of response.Contents ?? []) {
+      if (!item.Key) continue;
+      const rel = item.Key.slice(prefix.length);
+      const nested = rel.match(/^([^/]+)\/inputs\/([^/]+)\.txt$/);
+      if (nested && nested[1] === nested[2]) return slugifyApp(nested[1]);
+      const legacy = rel.match(/^inputs\/([^/]+)\.txt$/);
+      if (legacy) return slugifyApp(legacy[1]);
+    }
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return null;
+}
+
+async function s3RunLatestModifiedMs(runId: string): Promise<number> {
+  const files = await listS3RunArtifacts(runId);
+  let max = 0;
+  for (const file of files) {
+    const ms = Date.parse(file.lastModified);
+    if (Number.isFinite(ms)) max = Math.max(max, ms);
+  }
+  return max;
+}
+
 /** Build targetApp -> newest runId map with one pass over S3 run folders. */
 export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
   const latest = new Map<string, { runId: string; time: number }>();
@@ -150,18 +201,10 @@ export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
 
   const runIds = await listS3RunIds();
   for (const runId of runIds) {
-    const ctx = await getS3RunContext(runId);
-    const app = typeof ctx?.targetApp === 'string' ? slugifyApp(ctx.targetApp) : '';
+    const app = await inferTargetAppFromS3Run(runId);
     if (!app) continue;
 
-    const listing = await s3Client().send(
-      new ListObjectsV2Command({
-        Bucket: s3Bucket(),
-        Prefix: runS3Prefix(runId),
-        MaxKeys: 1,
-      }),
-    );
-    const stamp = listing.Contents?.[0]?.LastModified?.getTime() ?? 0;
+    const stamp = await s3RunLatestModifiedMs(runId);
     const current = latest.get(app);
     if (!current || stamp >= current.time) {
       latest.set(app, { runId, time: stamp });
@@ -169,6 +212,23 @@ export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
   }
 
   return new Map([...latest.entries()].map(([app, value]) => [app, value.runId]));
+}
+
+/** Project slugs discovered from S3 runs only (newest run per app). */
+export async function listS3ProjectSlugs(): Promise<string[]> {
+  const map = await buildS3RunIdByApp();
+  return [...map.keys()].sort();
+}
+
+export async function countS3RunArtifacts(runId: string): Promise<number> {
+  const prefix = runS3Prefix(runId);
+  const files = await listS3RunArtifacts(runId);
+  return files.filter((file) => !isSkippableS3ArtifactRelPath(file.key.replace(prefix, ''))).length;
+}
+
+export async function getS3RunLastModified(runId: string): Promise<string> {
+  const ms = await s3RunLatestModifiedMs(runId);
+  return ms ? new Date(ms).toISOString() : new Date().toISOString();
 }
 
 /** Resolve the newest S3 run folder for a target app when local context lacks runId. */

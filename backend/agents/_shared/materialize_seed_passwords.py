@@ -21,7 +21,12 @@ from _shared.seed_credentials import (
 )
 
 import bcrypt
-from sqlalchemy import create_engine, text
+import psycopg
+from psycopg import sql as psql
+
+
+def _connect(conn_url: str) -> psycopg.Connection:
+    return psycopg.connect(conn_url, autocommit=False)
 
 
 def count_invalid_hashes(
@@ -33,15 +38,19 @@ def count_invalid_hashes(
         return 0
     schema = schema_for_app(target_app)
     _, hash_col = creds[0][2], creds[0][3]
-    engine = create_engine(connection_url(), pool_pre_ping=True)
-    with engine.connect() as conn:
-        row = conn.execute(
-            text(
-                f"SELECT COUNT(*) FROM {schema}.users "
-                f"WHERE {hash_col} = :placeholder OR {hash_col} NOT LIKE '$2%'"
-            ),
-            {"placeholder": _PLACEHOLDER},
-        ).fetchone()
+    with _connect(connection_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                psql.SQL(
+                    "SELECT COUNT(*) FROM {schema}.users "
+                    "WHERE {hash_col} = %s OR {hash_col} NOT LIKE '$2%'"
+                ).format(
+                    schema=psql.Identifier(schema),
+                    hash_col=psql.Identifier(hash_col),
+                ),
+                (str(_PLACEHOLDER),),
+            )
+            row = cur.fetchone()
     return int(row[0]) if row else 0
 
 
@@ -69,28 +78,29 @@ def materialize(
         return []
 
     schema = schema_for_app(target_app)
-    engine = create_engine(connection_url(), pool_pre_ping=True)
     updated = 0
 
-    with engine.begin() as conn:
-        for lookup_value, plaintext, lookup_col, hash_col in creds:
-            digest = bcrypt.hashpw(
-                plaintext.encode("utf-8"), bcrypt.gensalt(rounds=12)
-            ).decode("utf-8")
-            result = conn.execute(
-                text(
-                    f"UPDATE {schema}.users "
-                    f"SET {hash_col} = :digest "
-                    f"WHERE {lookup_col} = :lookup "
-                    f"AND ({hash_col} = :placeholder OR {hash_col} NOT LIKE '$2%')"
-                ),
-                {
-                    "digest": digest,
-                    "lookup": lookup_value,
-                    "placeholder": _PLACEHOLDER,
-                },
-            )
-            updated += result.rowcount or 0
+    with _connect(connection_url()) as conn:
+        with conn.cursor() as cur:
+            for lookup_value, plaintext, lookup_col, hash_col in creds:
+                digest = bcrypt.hashpw(
+                    plaintext.encode("utf-8"), bcrypt.gensalt(rounds=12)
+                ).decode("utf-8")
+                cur.execute(
+                    psql.SQL(
+                        "UPDATE {schema}.users "
+                        "SET {hash_col} = %s "
+                        "WHERE {lookup_col} = %s "
+                        "AND ({hash_col} = %s OR {hash_col} NOT LIKE '$2%')"
+                    ).format(
+                        schema=psql.Identifier(schema),
+                        hash_col=psql.Identifier(hash_col),
+                        lookup_col=psql.Identifier(lookup_col),
+                    ),
+                    (digest, lookup_value, str(_PLACEHOLDER)),
+                )
+                updated += cur.rowcount or 0
+        conn.commit()
 
     remaining = count_invalid_hashes(target_app, root, creds)
     if remaining > 0 and strict:

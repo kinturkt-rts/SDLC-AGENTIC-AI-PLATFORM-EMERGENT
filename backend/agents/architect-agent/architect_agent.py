@@ -368,9 +368,14 @@ def _diagram_output_dir(override: str | None = None) -> Path:
 
 
 def _diagram_work_dir() -> Path:
-    """Ephemeral workspace for Diagram MCP (PNG synced to S3 after generation)."""
+    """Ephemeral workspace for Diagram MCP (PNG synced to S3 after generation).
+
+    The AWS Diagram MCP server saves to <tmpdir>/generated-diagrams/ by default.
+    Work dir must match so _collect_saved_pngs finds the PNG and uploads it to S3.
+    """
     raw = os.getenv("ARCHITECT_DIAGRAM_WORK_DIR", "").strip()
-    path = Path(raw) if raw else Path(tempfile.gettempdir()) / "architect-diagrams"
+    # Default matches the AWS Diagram MCP server's own output path convention
+    path = Path(raw) if raw else Path(tempfile.gettempdir()) / "generated-diagrams"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -497,6 +502,7 @@ def run_task(
     output_dir: Path | None = None,
     diagram_base_name: str | None = None,
     skip_design: bool | None = None,
+    tools: list[Any] | None = None,
 ) -> tuple[str, list[Path], Path | None]:
     out_dir = output_dir or _diagram_output_dir()
     if context is None:
@@ -512,9 +518,13 @@ def run_task(
     target_app = str(context.get("targetApp") or context.get("diagramBaseName") or "").strip() or None
     telemetry = RunTelemetry(AGENT_NAME, target_app=target_app, model_id=_model_id())
     try:
-        with aws_diagram_mcp_client(cwd=_REPO_ROOT) as mcp:
-            agent = _build_agent(mcp.list_tools_sync(), telemetry=telemetry)
+        if tools is not None:
+            agent = _build_agent(tools, telemetry=telemetry)
             summary = str(agent(_user_message(task, context)))
+        else:
+            with aws_diagram_mcp_client(cwd=_REPO_ROOT) as mcp:
+                agent = _build_agent(mcp.list_tools_sync(), telemetry=telemetry)
+                summary = str(agent(_user_message(task, context)))
         base = context.get("diagramBaseName", DEFAULT_DIAGRAM_BASE_NAME)
         saved = _normalize_diagram_outputs(out_dir, str(base), scan_start)
 
@@ -605,9 +615,6 @@ def enrich_architect_context(context: dict[str, Any], *, task: str = "") -> dict
             ctx["targetApp"] = inferred
 
     ctx["designDocPath"] = resolve_design_doc_path(ctx)
-    slug = infer_target_app_from_context(ctx)
-    if slug:
-        ctx.setdefault("diagramPaths", [diagram_path_for_app(slug)])
     return ctx
 
 
@@ -638,6 +645,7 @@ def run_architect_from_context(
     context: dict[str, Any] | None = None,
     *,
     skip_design: bool | None = None,
+    tools: list[Any] | None = None,
 ) -> str:
     """Generate diagram + design doc, persist to S3/local, return short status."""
     ctx = enrich_architect_context(dict(context or {}), task=task)
@@ -671,8 +679,17 @@ def run_architect_from_context(
         ctx,
         output_dir=work_dir,
         skip_design=skip_design,
+        tools=tools,
     )
     diagram_rels = _persist_diagram_pngs(saved, ctx)
+    if not diagram_rels:
+        for key in ("diagramPaths", "diagramOutputDir", "diagramOutputFile", "diagramBaseName"):
+            ctx.pop(key, None)
+        print(
+            "[architect-agent] WARNING: no diagram PNG persisted — "
+            "check Diagram MCP / generate_diagram in CloudWatch logs.",
+            file=sys.stderr,
+        )
 
     if design_path is not None and run_id and design_path.is_file():
         write_repo_artifact(design_rel, design_path.read_text(encoding="utf-8"), context=ctx)
@@ -720,14 +737,18 @@ def _architect_pipeline_error_message(exc: Exception, ctx: dict[str, Any]) -> st
     )
 
 
-def _execute_architect_pipeline_message(message: Any) -> str:
+def _execute_architect_pipeline_message(
+    message: Any,
+    *,
+    tools: list[Any] | None = None,
+) -> str:
     text = _prompt_to_text(message)
     task, ctx = parse_task_and_context(text)
     if not task.strip():
         task = DEFAULT_PIPELINE_TASK
     ctx = enrich_architect_context(ctx, task=task)
     try:
-        return run_architect_from_context(task, ctx)
+        return run_architect_from_context(task, ctx, tools=tools)
     except (ValueError, TargetAppRequiredError) as exc:
         return _architect_pipeline_error_message(exc, ctx)
 
@@ -747,9 +768,11 @@ def _agent_result_from_text(text: str) -> Any:
 def build_architect_pipeline_agent(tools: list[Any]) -> Agent:
     """AgentCore mode: deterministic architect pipeline on each A2A message."""
     agent = _build_agent(tools)
+    pipeline_tools = list(tools)
 
     def architect_invoke(message: Any, **kwargs: Any) -> str:
-        return _execute_architect_pipeline_message(message)
+        del kwargs
+        return _execute_architect_pipeline_message(message, tools=pipeline_tools)
 
     async def architect_stream_async(
         prompt: Any = None,
@@ -760,7 +783,7 @@ def build_architect_pipeline_agent(tools: list[Any]) -> Agent:
         from strands.types._events import AgentResultEvent
 
         del invocation_state, kwargs
-        summary = _execute_architect_pipeline_message(prompt)
+        summary = _execute_architect_pipeline_message(prompt, tools=pipeline_tools)
         yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
 
     agent.__call__ = architect_invoke  # type: ignore[method-assign]

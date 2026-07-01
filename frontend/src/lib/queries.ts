@@ -49,6 +49,17 @@ export const useContextItems = (projectSlug?: string) =>
   useQuery({ queryKey: queryKeys.context(projectSlug), queryFn: () => api.getContextItems(projectSlug) });
 export const usePipelineContext = (projectSlug: string) =>
   useQuery({ queryKey: queryKeys.pipelineContext(projectSlug), queryFn: () => api.getPipelineContext(projectSlug), enabled: !!projectSlug });
-export const useLogs = () => useQuery({ queryKey: queryKeys.logs, queryFn: api.getLogs });
+export type LogsFilter = {
+  runId?: string;
+  agent?: string;
+  minutes?: number;
+};
+
+export const useLogs = (filters?: LogsFilter) =>
+  useQuery({
+    queryKey: [...queryKeys.logs, filters ?? {}],
+    queryFn: () => api.getLogs(filters),
+    refetchInterval: filters?.minutes && filters.minutes <= 30 ? 5000 : 30_000,
+  });
 export const useDashboardSummary = () =>
   useQuery({ queryKey: queryKeys.dashboard, queryFn: api.getDashboardSummary });

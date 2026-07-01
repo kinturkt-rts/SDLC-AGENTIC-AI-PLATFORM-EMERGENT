@@ -106,8 +106,17 @@ def test_build_database_pipeline_agent_calls_run_task(
         captured["kwargs"] = kwargs
         return ("schema ok", ["target-apps/demo-api/db/sql/001.sql"])
 
+    class FakeShellAgent:
+        def __call__(self, *args, **kwargs):
+            return ""
+
+        async def stream_async(self, *args, **kwargs):
+            if False:
+                yield {}
+
     with patch.object(mod, "run_task", side_effect=fake_run_task):
-        agent = mod.build_database_pipeline_agent([])
+        with patch.object(mod, "_build_agent", return_value=FakeShellAgent()):
+            agent = mod.build_database_pipeline_agent([])
 
         async def collect_events() -> list[dict]:
             events: list[dict] = []

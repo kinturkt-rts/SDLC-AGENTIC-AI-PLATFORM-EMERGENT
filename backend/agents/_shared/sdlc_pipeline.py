@@ -378,7 +378,30 @@ class SdlcPipelineRunner:
         if proc.stderr:
             print(proc.stderr, end="", file=sys.stderr)
         if proc.returncode != 0:
-            raise PipelineStepError(f"{step} failed (exit {proc.returncode})")
+            tail = (proc.stderr or proc.stdout or "").strip()
+            if len(tail) > 800:
+                tail = "…" + tail[-800:]
+            detail = f"{step} failed (exit {proc.returncode})"
+            if tail:
+                detail = f"{detail}: {tail}"
+            raise PipelineStepError(detail)
+
+    def _soft_fail_seed_materialize(self) -> bool:
+        """When True, seed bcrypt failures warn but do not abort after SQL apply."""
+        flag = os.getenv("SDLC_SOFT_FAIL_SEED_MATERIALIZE", "").strip().lower()
+        if flag in ("0", "false", "no", "off"):
+            return False
+        if flag in ("1", "true", "yes", "on"):
+            return True
+        return self.transport == "a2a"
+
+    def _app_dir_for_rds(self, workspace_root: Path) -> Path:
+        app_dir = workspace_root / target_app_root_rel(self.feature).replace("/", os.sep)
+        if not (app_dir / "db").is_dir():
+            legacy = workspace_root / "target-apps" / self.feature
+            if (legacy / "db").is_dir():
+                return legacy
+        return app_dir
 
     def _invoke_a2a(self, agent_name: str, task: str, *, step: str, include_db_paths: bool = False) -> None:
         result = invoke_agent(
@@ -597,6 +620,8 @@ class SdlcPipelineRunner:
         return ctx
 
     def _step_rds_apply(self) -> None:
+        from .seed_credentials import seed_sql_has_placeholders
+
         workspace_root, sql_dir = self._resolve_rds_workspace()
         self._run_python(
             [
@@ -605,33 +630,51 @@ class SdlcPipelineRunner:
                 str(sql_dir),
                 "--target-app",
                 self.feature,
+                "--skip-seed-materialize",
             ],
             step="rds-apply",
         )
-        self._run_python(
-            [
-                "agents/_shared/materialize_seed_passwords.py",
-                "--target-app",
-                self.feature,
-                "--repo-root",
-                str(workspace_root),
-            ],
-            step="seed-materialize",
-        )
-        for flag in ("", "--check-rds"):
-            args = [
-                "agents/_shared/verify_seed_bcrypt.py",
-                "--target-app",
-                self.feature,
-                "--repo-root",
-                str(workspace_root),
-                "--quiet",
-            ]
-            if flag:
-                args.append(flag)
-            self._run_python(args, step="verify-seed-bcrypt")
+
+        app_dir = self._app_dir_for_rds(workspace_root)
+        seed_warnings: list[str] = []
+        if seed_sql_has_placeholders(app_dir):
+            try:
+                self._run_python(
+                    [
+                        "agents/_shared/materialize_seed_passwords.py",
+                        "--target-app",
+                        self.feature,
+                        "--repo-root",
+                        str(workspace_root),
+                    ],
+                    step="seed-materialize",
+                )
+                for flag in ("", "--check-rds"):
+                    verify_args = [
+                        "agents/_shared/verify_seed_bcrypt.py",
+                        "--target-app",
+                        self.feature,
+                        "--repo-root",
+                        str(workspace_root),
+                        "--quiet",
+                    ]
+                    if flag:
+                        verify_args.append(flag)
+                    self._run_python(verify_args, step="verify-seed-bcrypt")
+            except PipelineStepError as exc:
+                if self._soft_fail_seed_materialize():
+                    seed_warnings.append(str(exc))
+                    logger.warning("[rds-apply] seed materialize soft-fail: %s", exc)
+                else:
+                    raise
+        else:
+            logger.info(
+                "[rds-apply] No __BCRYPT_PLACEHOLDER__ in seed SQL — skipping seed materialize"
+            )
 
         handoff_ctx = self._handoff_context_for_rds()
+        if seed_warnings:
+            handoff_ctx["seedMaterializeWarning"] = "; ".join(seed_warnings)
         handoff_rel = write_db_handoff(
             self.feature,
             handoff_ctx,
@@ -639,6 +682,8 @@ class SdlcPipelineRunner:
             repo_root=workspace_root,
         )
         self.context["databaseHandoffPath"] = handoff_rel
+        if seed_warnings:
+            self.context["seedMaterializeWarning"] = handoff_ctx["seedMaterializeWarning"]
         self._save_context()
         if self.run_id and is_s3_store():
             put_context(self.run_id, self.context)

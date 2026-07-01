@@ -1,7 +1,17 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
-import { isS3Store, listS3RunArtifacts, runS3Prefix, buildS3RunIdByApp, getS3RunContext } from './artifact-store';
+import {
+  isS3Store,
+  isSkippableS3ArtifactRelPath,
+  listS3RunArtifacts,
+  runS3Prefix,
+  buildS3RunIdByApp,
+  getS3RunContext,
+  listS3ProjectSlugs,
+  countS3RunArtifacts,
+  getS3RunLastModified,
+} from './artifact-store';
 import type {
   Agent,
   AgentAvailability,
@@ -11,6 +21,7 @@ import type {
   ContextItem,
   DashboardSummary,
   Environment,
+  LogEntry,
   McpServer,
   McpServerName,
   PipelineContext,
@@ -278,30 +289,24 @@ async function listPipelineSlugs(): Promise<string[]> {
   return [...slugs].sort();
 }
 
-/** Union of pipeline handoffs, target-apps folders, and S3 run folders (cloud). */
+/** Project slugs for artifact/context views — S3 runs only when ARTIFACT_STORE=s3. */
 async function listArtifactProjectSlugs(): Promise<string[]> {
+  if (isS3Store()) return listS3ProjectSlugs();
   const [pipelineSlugs, appSlugs] = await Promise.all([listPipelineSlugs(), listTargetAppSlugs()]);
-  const slugs = new Set([...pipelineSlugs, ...appSlugs]);
-  if (isS3Store()) {
-    const s3Runs = await buildS3RunIdByApp();
-    for (const app of s3Runs.keys()) slugs.add(app);
-  }
-  return [...slugs].sort();
+  return [...new Set([...pipelineSlugs, ...appSlugs])].sort();
 }
 
 async function resolveContextForSlug(
   slug: string,
   s3RunByApp?: Map<string, string>,
 ): Promise<PipelineContextFile | null> {
-  let ctx = await readContextFile(slug);
   if (isS3Store()) {
     const map = s3RunByApp ?? (await buildS3RunIdByApp());
-    const runId = await resolveRunIdForSlug(slug, ctx, map);
-    if (runId) {
-      ctx = ((await getS3RunContext(runId)) as PipelineContextFile | null) ?? ctx;
-    }
+    const runId = map.get(slug);
+    if (!runId) return null;
+    return (await getS3RunContext(runId)) as PipelineContextFile | null;
   }
-  return ctx;
+  return readContextFile(slug);
 }
 
 async function readContextFile(slug: string): Promise<PipelineContextFile | null> {
@@ -357,6 +362,116 @@ async function readPipelineLog(runId: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function pipelineLogMtime(runId: string): Promise<number> {
+  const logPath = repoPath('agents', 'pipeline', '.logs', `${runId}.log`);
+  try {
+    const stat = await fs.stat(logPath);
+    return stat.mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function listPipelineLogRunIds(): Promise<string[]> {
+  const logsDir = repoPath('agents', 'pipeline', '.logs');
+  try {
+    const files = await fs.readdir(logsDir);
+    return files
+      .filter((f) => f.endsWith('.log'))
+      .map((f) => f.slice(0, -4))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+const KNOWN_AGENTS = new Set<string>([
+  'orchestrator-agent',
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+  'qa-agent',
+  'devops-agent',
+  'security-agent',
+]);
+
+function inferLogLevel(line: string): LogEntry['level'] {
+  const lower = line.toLowerCase();
+  if (
+    lower.startsWith('error:') ||
+    lower.includes(' failed') ||
+    lower.includes('failed:') ||
+    lower.includes('traceback') ||
+    lower.includes('exception')
+  ) {
+    return 'error';
+  }
+  if (lower.includes('warn') || lower.includes('degraded')) return 'warn';
+  if (lower.includes('debug')) return 'debug';
+  return 'info';
+}
+
+function parseLogLine(line: string): { agent: AgentName; message: string } {
+  const agentMatch = line.match(/^\[([a-z-]+-agent)\]\s*(.*)$/);
+  if (agentMatch && KNOWN_AGENTS.has(agentMatch[1])) {
+    return { agent: agentMatch[1] as AgentName, message: agentMatch[2] || line };
+  }
+  return { agent: 'orchestrator-agent', message: line };
+}
+
+export interface ListPipelineLogsOptions {
+  runId?: string;
+  agent?: string;
+  /** Only include entries at or after this many minutes ago. */
+  minutes?: number;
+  limit?: number;
+}
+
+/** Parse orchestrator pipeline `.log` files into structured log entries. */
+export async function listPipelineLogs(options: ListPipelineLogsOptions = {}): Promise<LogEntry[]> {
+  const { runId, agent, minutes, limit = 1000 } = options;
+  const cutoffMs = minutes ? Date.now() - minutes * 60_000 : 0;
+
+  const runIds = runId ? [runId] : await listPipelineLogRunIds();
+  const entries: LogEntry[] = [];
+
+  for (const id of runIds) {
+    const log = await readPipelineLog(id);
+    if (!log) continue;
+
+    const run = await getRun(id);
+    const logMtime = await pipelineLogMtime(id);
+    const baseMs = run?.startedAt ? new Date(run.startedAt).getTime() : logMtime || Date.now();
+
+    if (minutes && logMtime && logMtime < cutoffMs && baseMs < cutoffMs) continue;
+
+    const lines = log.split('\n');
+    for (let idx = 0; idx < lines.length; idx++) {
+      const trimmed = lines[idx].trim();
+      if (!trimmed) continue;
+
+      const parsed = parseLogLine(trimmed);
+      if (agent && parsed.agent !== agent) continue;
+
+      const ts = new Date(baseMs + idx * 1000).toISOString();
+      if (minutes && new Date(ts).getTime() < cutoffMs) continue;
+
+      entries.push({
+        id: `log-${id}-${idx}`,
+        ts,
+        level: inferLogLevel(trimmed),
+        agent: parsed.agent,
+        runId: id,
+        message: parsed.message,
+      });
+    }
+  }
+
+  return entries.sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit);
 }
 
 async function latestUuidRunMtime(runId: string): Promise<string> {
@@ -526,14 +641,27 @@ async function latestPipelineMtime(slug: string): Promise<string> {
   return max ? new Date(max).toISOString() : new Date().toISOString();
 }
 
-async function inferPipelineStatus(slug: string): Promise<RunStatus> {
+async function inferPipelineStatus(slug: string, runId?: string): Promise<RunStatus> {
+  if (runId && UUID_RE.test(runId)) {
+    const uuidLive = await readUuidRunState(runId);
+    if (uuidLive?.status) {
+      if (uuidLive.status === 'cancelled') return 'cancelled';
+      if (uuidLive.status === 'failed') return 'failed';
+      if (uuidLive.status === 'completed') return 'completed';
+      if (uuidLive.status === 'running') return 'running';
+      if (uuidLive.status === 'queued') return 'queued';
+    }
+  }
+
   const live = await readRunState(slug);
   if (live) {
-    if (live.status === 'cancelled') return 'cancelled';
-    if (live.status === 'failed') return 'failed';
-    if (live.status === 'completed') return 'completed';
-    if (live.status === 'running') return 'running';
-    if (live.status === 'queued') return 'queued';
+    if (!runId || !live.runId || live.runId === runId) {
+      if (live.status === 'cancelled') return 'cancelled';
+      if (live.status === 'failed') return 'failed';
+      if (live.status === 'completed') return 'completed';
+      if (live.status === 'running') return 'running';
+      if (live.status === 'queued') return 'queued';
+    }
   }
   if (await handoffExists(slug, 'gitlab-handoff.json')) return 'completed';
   if (await handoffExists(slug, 'developer-handoff.json')) return 'running';
@@ -543,6 +671,10 @@ async function inferPipelineStatus(slug: string): Promise<RunStatus> {
     (await handoffExists(slug, 'qa-handoff.json'))
   ) {
     return 'running';
+  }
+  if (isS3Store()) {
+    if (runId) return 'queued';
+    return 'queued';
   }
   if (await readContextFile(slug)) return 'queued';
   return 'queued';
@@ -616,6 +748,35 @@ function repoAssetUrl(repoRelative: string): string {
 }
 
 export async function listProjects(): Promise<Project[]> {
+  if (isS3Store()) {
+    const s3RunByApp = await buildS3RunIdByApp();
+    const projects: Project[] = [];
+
+    for (const [slug, runId] of s3RunByApp) {
+      const ctx = (await getS3RunContext(runId)) as PipelineContextFile | null;
+      const [status, lastRunAt, artifactCount, description] = await Promise.all([
+        inferPipelineStatus(slug, runId),
+        getS3RunLastModified(runId),
+        countS3RunArtifacts(runId),
+        extractDescription(slug, ctx),
+      ]);
+
+      projects.push({
+        id: slug,
+        name: slugToTitle(slug),
+        slug,
+        description,
+        pipelineStatus: status,
+        artifactCount,
+        lastRunAt,
+        repo: `runs/${runId}`,
+        environment: 'dev' as Environment,
+      });
+    }
+
+    return projects.sort((a, b) => a.slug.localeCompare(b.slug));
+  }
+
   const [apps, pipelineSlugs] = await Promise.all([listTargetAppSlugs(), listPipelineSlugs()]);
   const slugs = [...new Set([...apps, ...pipelineSlugs])].sort();
   const projects: Project[] = [];
@@ -651,34 +812,19 @@ export async function getProject(id: string): Promise<Project | undefined> {
 }
 
 export async function listArtifacts(): Promise<Artifact[]> {
-  const slugs = await listArtifactProjectSlugs();
-  const artifacts: Artifact[] = [];
-  const s3RunByApp = isS3Store() ? await buildS3RunIdByApp() : undefined;
+  if (isS3Store()) {
+    const s3RunByApp = await buildS3RunIdByApp();
+    const artifacts: Artifact[] = [];
 
-  for (const slug of slugs) {
-    const localCtx = await readContextFile(slug);
-    const runId = await resolveRunIdForSlug(slug, localCtx, s3RunByApp);
-    const ctx =
-      isS3Store() && runId ? ((await getS3RunContext(runId)) ?? localCtx) : localCtx;
-    const name = slugToTitle(slug);
-    
-    // S3 Mode Logic
-    if (isS3Store()) {
+    for (const [slug, runId] of s3RunByApp) {
+      const name = slugToTitle(slug);
       const s3Files = await listS3RunArtifacts(runId);
       const prefix = runS3Prefix(runId);
-      
+
       for (const s3File of s3Files) {
         const relPath = s3File.key.replace(prefix, '');
-        if (!relPath || relPath === 'run.json') continue;
-        // Skip context files, input files, and legacy pipeline metadata
-        if (relPath === 'context.json') continue;
-        if (relPath.endsWith('/context.json')) continue;
-        if (relPath.startsWith('agents/pipeline/') && relPath.endsWith('.context.json')) continue;
-        if (relPath.includes('/inputs/')) continue;
-        if (relPath.startsWith('inputs/')) continue;
-        if (relPath.includes('/handoffs/') && relPath.endsWith('.json')) continue;
-        
-        // Categorize based on file path — supports both new (<slug>/docs/...) and legacy (docs/...) layouts
+        if (isSkippableS3ArtifactRelPath(relPath)) continue;
+
         let kind: ArtifactKind | undefined;
         const lower = relPath.toLowerCase();
         if (lower.includes('/docs/prd/') || lower.startsWith('docs/prd/')) kind = 'prd';
@@ -692,16 +838,12 @@ export async function listArtifacts(): Promise<Artifact[]> {
           (lower.includes('/app/') || lower.endsWith('.py') || lower.endsWith('requirements.txt'))
         ) {
           kind = 'code';
-        }
-        else kind = artifactKindForPath(relPath);
+        } else kind = artifactKindForPath(relPath);
 
         const base = path.basename(relPath);
-        
-        let preview: string | undefined;
         let imageUrl: string | undefined;
-        
         if (kind === 'diagram' && (relPath.endsWith('.png') || relPath.endsWith('.jpg') || relPath.endsWith('.jpeg'))) {
-           imageUrl = `/api/v1/repo-asset?path=${encodeURIComponent(`runs/${runId}/${relPath}`)}`;
+          imageUrl = `/api/v1/repo-asset?path=${encodeURIComponent(`runs/${runId}/${relPath}`)}`;
         }
 
         artifacts.push({
@@ -715,13 +857,23 @@ export async function listArtifacts(): Promise<Artifact[]> {
           path: `runs/${runId}/${relPath}`,
           sizeKb: s3File.sizeKb,
           createdAt: s3File.lastModified,
-          preview,
+          preview: undefined,
           imageUrl,
         });
       }
-      
-      continue; // Skip the local disk logic for this run
     }
+
+    return artifacts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  const slugs = await listArtifactProjectSlugs();
+  const artifacts: Artifact[] = [];
+
+  for (const slug of slugs) {
+    const localCtx = await readContextFile(slug);
+    const runId = await resolveRunIdForSlug(slug, localCtx);
+    const ctx = localCtx;
+    const name = slugToTitle(slug);
 
     // Local Disk Mode Logic
     const candidates: { path: string; kind?: ArtifactKind }[] = [];
@@ -933,7 +1085,9 @@ export async function listContextItems(projectSlug?: string): Promise<ContextIte
     const ctx = await resolveContextForSlug(slug, s3RunByApp);
     if (!ctx) continue;
     const name = slugToTitle(slug);
-    const updatedAt = await latestPipelineMtime(slug);
+    const runId = s3RunByApp?.get(slug);
+    const updatedAt =
+      isS3Store() && runId ? await getS3RunLastModified(runId) : await latestPipelineMtime(slug);
 
     if (ctx.productAgentOutput) {
       items.push({

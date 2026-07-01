@@ -309,6 +309,32 @@ _UUID_LITERAL_RE = re.compile(
 _VALID_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
+_BARE_SEARCH_PATH_RE = re.compile(
+    r"SET\s+search_path\s*=\s*public\s*;",
+    re.IGNORECASE,
+)
+
+
+def check_bare_search_path(sql_dir: Path) -> list[str]:
+    """Detect SET search_path = public (bare, no app schema) which breaks cross-file type lookups.
+
+    apply_sql_to_rds.py sets search_path = <app_schema>, public at the connection level.
+    A bare 'SET search_path = public' in any migration file overrides that and hides enums/types
+    created in the app schema by earlier migrations (causes 'type does not exist' errors).
+    """
+    errors: list[str] = []
+    for path in sorted(sql_dir.glob("*.sql")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if _BARE_SEARCH_PATH_RE.search(text):
+            errors.append(
+                f"{path.name}: 'SET search_path = public' without app schema — "
+                f"this hides enums/types from earlier migrations and causes 'type does not exist' errors. "
+                f"Remove the SET statement (apply_sql_to_rds.py already sets the correct search_path) "
+                f"or use 'SET search_path = <app_schema>, public'."
+            )
+    return errors
+
+
 def check_uuid_literals(sql_dir: Path) -> list[str]:
     """Reject UUID-shaped literals that contain non-hex characters (g-z)."""
     errors: list[str] = []
@@ -330,6 +356,7 @@ def validate_sql_dir(sql_dir: Path) -> list[str]:
     """Run all blocking sql/ artifact checks."""
     errors = check_seed_schema_nullability(sql_dir)
     errors.extend(check_uuid_literals(sql_dir))
+    errors.extend(check_bare_search_path(sql_dir))
     return errors
 
 

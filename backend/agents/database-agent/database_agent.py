@@ -113,6 +113,27 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `target-apps/<service>/db/` locally):
 - `HANDOFF.md` — host-written after each CLI run (developer-agent reads `databaseHandoffPath`)
 - `sql/001_*.sql` … numbered, idempotent DDL (`IF NOT EXISTS` where possible)
+- **`SET search_path` rule — applies to every migration file:**
+  `apply_sql_to_rds.py` already sets `search_path = <app_schema>, public` at the **connection level** before each file runs.
+  - **NEVER write `SET search_path = public` alone** — it overrides the connection setting and hides enums/types created by earlier migrations, causing `type does not exist` at apply time. `db_validate_sql` will block your run if it detects this.
+  - Default: **omit `SET search_path` entirely** from all migration files — the connection-level setting is already correct.
+  - If you must set it explicitly, always include both schemas: `SET search_path = <app_schema>, public`.
+  - `001_enable_pgvector.sql` is the one exception: it must have **no** `SET search_path` at all (per pgvector rule below).
+- **Schema-qualified type existence checks — mandatory for DO $$ blocks:**
+  Multiple apps share one RDS instance with separate schemas. A bare `IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'my_enum')` checks ALL schemas, not just the current app schema. If `my_enum` already exists in another app's schema (e.g. `inventory_app.user_role`), the check returns TRUE, the DO block skips type creation, and the following `CREATE TABLE` fails with "type does not exist".
+  - **Always add a schema filter** using `current_schema()`:
+    ```sql
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_type t
+            JOIN pg_namespace n ON n.oid = t.typnamespace
+            WHERE t.typname = 'my_enum' AND n.nspname = current_schema()
+        ) THEN
+            CREATE TYPE my_enum AS ENUM ('a', 'b', 'c');
+        END IF;
+    END $$;
+    ```
+  - The apply script auto-patches bare checks as a safety net, but always generate the correct form.
 - **Postgres extensions before indexes:** `CREATE EXTENSION IF NOT EXISTS pg_trgm` (and any other extension) must run in an early migration **before** any index using `gin_trgm_ops` or extension-specific operator classes — never only in seed files.
 - **pgvector / VECTOR columns (RAG, dedup, semantic search):** When design §2/§3 uses `vector(n)`, HNSW, or cosine similarity:
   - First migration MUST be `001_enable_pgvector.sql` (before any `VECTOR(...)` column or `vector_cosine_ops` index).

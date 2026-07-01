@@ -32,6 +32,34 @@ load_repo_env()
 
 _DOLLAR_BLOCK = re.compile(r"\$\$.*?\$\$", re.DOTALL)
 
+# Matches bare pg_type typname checks that lack a schema (nspname) filter.
+# On a shared RDS instance with multiple app schemas the same type name can exist in several
+# schemas.  "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'foo')" finds the type in
+# ANY schema and skips creation in the current schema, causing the following CREATE TABLE to fail.
+_BARE_TYPE_CHECK_RE = re.compile(
+    r"IF\s+NOT\s+EXISTS\s*"
+    r"\(\s*SELECT\s+1\s+FROM\s+pg_type\s+WHERE\s+typname\s*=\s*('[^']+')\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_SCHEMA_QUALIFIED_TYPE_CHECK = (
+    r"IF NOT EXISTS ("
+    r"SELECT 1 FROM pg_type t "
+    r"JOIN pg_namespace n ON n.oid = t.typnamespace "
+    r"WHERE t.typname = \1 AND n.nspname = current_schema()"
+    r")"
+)
+
+
+def _patch_type_existence_checks(stmt: str) -> str:
+    """Rewrite bare pg_type IF NOT EXISTS checks to be schema-qualified.
+
+    Prevents false-positive EXISTS on shared RDS: the same type name (user_role, etc.) can exist
+    in other app schemas.  Adds AND n.nspname = current_schema() so each app only sees its own.
+    """
+    if "pg_type" not in stmt:
+        return stmt
+    return _BARE_TYPE_CHECK_RE.sub(_SCHEMA_QUALIFIED_TYPE_CHECK, stmt)
+
 
 def resolve_app_schema(target_app: str | None) -> str | None:
     """Postgres schema for unqualified DDL/DML (meeting-assistant → meeting_assistant)."""
@@ -293,8 +321,10 @@ def apply_sql_files(
     *,
     target_app: str | None = None,
     skip_seed: bool = False,
+    skip_seed_materialize: bool = False,
     dry_run: bool = False,
     quiet: bool = False,
+    reset_schema: bool = False,
 ) -> int:
     verbose = not quiet or _is_verbose()
     if not _preflight_aws(verbose=verbose):
@@ -367,6 +397,13 @@ def apply_sql_files(
     try:
         with psycopg.connect(conn_url, autocommit=True, connect_timeout=connect_timeout) as conn:
             with conn.cursor() as cur:
+                if app_schema and reset_schema:
+                    from psycopg import sql as psql
+                    if verbose:
+                        print(f"Resetting schema {app_schema!r} (DROP CASCADE + CREATE) ...", file=sys.stderr)
+                    cur.execute(psql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(psql.Identifier(app_schema)))
+                    cur.execute(psql.SQL("CREATE SCHEMA {}").format(psql.Identifier(app_schema)))
+                    cur.execute(psql.SQL("SET search_path TO {}, public").format(psql.Identifier(app_schema), psql.Identifier("public")))
                 if app_schema:
                     _ensure_schema_and_search_path(cur, app_schema)
                 if _sql_files_need_pgvector(files):
@@ -389,7 +426,7 @@ def apply_sql_files(
                         if verbose:
                             print(f"Applying {path.name} ...", file=sys.stderr)
                         for stmt in split_sql_statements(sql):
-                            cur.execute(stmt)
+                            cur.execute(_patch_type_existence_checks(stmt))
                         applied.append(path.name)
                         if verbose:
                             print("  OK", file=sys.stderr)
@@ -440,7 +477,7 @@ def apply_sql_files(
         print(f"[apply-sql] Applied: {', '.join(applied)}", file=sys.stderr)
     print("[apply-sql] Done.", file=sys.stderr)
 
-    if target_app and not skip_seed:
+    if target_app and not skip_seed and not skip_seed_materialize:
         app_schema = resolve_app_schema(target_app)
         if app_schema:
             os.environ["POSTGRES_APP_SCHEMA"] = app_schema
@@ -505,6 +542,11 @@ def main() -> int:
         help="Skip files with 'seed' in the name",
     )
     parser.add_argument(
+        "--skip-seed-materialize",
+        action="store_true",
+        help="Apply SQL only; do not run materialize_seed_passwords (orchestrator runs it separately)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="List files only; do not connect or execute",
@@ -518,6 +560,11 @@ def main() -> int:
         "--verbose",
         action="store_true",
         help="Full AWS caller, SQL dir listing, per-file apply lines",
+    )
+    parser.add_argument(
+        "--reset-schema",
+        action="store_true",
+        help="DROP SCHEMA CASCADE then recreate before applying (for fresh pipeline runs)",
     )
     args = parser.parse_args()
 
@@ -540,8 +587,10 @@ def main() -> int:
         sql_dir,
         target_app=args.target_app,
         skip_seed=args.skip_seed,
+        skip_seed_materialize=args.skip_seed_materialize,
         dry_run=args.dry_run,
         quiet=quiet,
+        reset_schema=args.reset_schema,
     )
 
 

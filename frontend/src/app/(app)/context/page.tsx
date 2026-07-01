@@ -53,8 +53,8 @@ function ContextInner() {
         description={subtitle}
         actions={
           <Select value={selected} onValueChange={setSelected}>
-            <SelectTrigger className="h-9 w-[220px] border-white/[0.08] bg-white/[0.02]">
-              <SelectValue />
+            <SelectTrigger className="h-9 w-auto min-w-[9rem] max-w-[11rem] border-white/[0.08] bg-white/[0.02] px-2.5 [&>span]:truncate">
+              <SelectValue placeholder="All projects" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All projects</SelectItem>

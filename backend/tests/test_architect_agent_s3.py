@@ -97,6 +97,73 @@ def test_run_architect_from_context_persists_artifacts(
     assert run_ctx.get("diagramPaths")
 
 
+def test_run_architect_from_context_clears_diagram_paths_when_no_png(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import get_artifact_text, put_artifact
+
+    run_id = "run-arch-003"
+    slug = "demo-api"
+    put_artifact(run_id, "docs/PRD/demo-api.md", "# Demo PRD\n")
+    mod = _load_agent_module()
+
+    fake_design = repo_root / "docs" / "design" / "demo-api.md"
+    fake_design.parent.mkdir(parents=True, exist_ok=True)
+    fake_design.write_text("# Demo — Solution Design\n\n## 1. Summary\nShort.\n", encoding="utf-8")
+
+    with patch.object(
+        mod,
+        "run_task",
+        return_value=("diagram failed", [], fake_design),
+    ):
+        summary = mod.run_architect_from_context(
+            "Produce architecture for demo-api",
+            {
+                "targetApp": "demo-api",
+                "runId": run_id,
+                "prdPath": "docs/PRD/demo-api.md",
+                "diagramPaths": ["docs/diagrams/generated-diagrams/demo-api.png"],
+            },
+        )
+
+    assert "diagramPaths: (none)" in summary
+    run_ctx = json.loads(get_artifact_text(run_id, "context.json"))
+    assert "diagramPaths" not in run_ctx
+
+
+def test_run_task_uses_provided_tools_without_spawning_mcp(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    mod = _load_agent_module()
+    fake_tool = object()
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        def __call__(self, message: str) -> str:
+            captured["message"] = message
+            return "ok"
+
+    with patch.object(mod, "_build_agent", return_value=FakeAgent()) as build_agent:
+        with patch.object(mod, "_skip_design_generation", return_value=True):
+            with patch.object(mod, "aws_diagram_mcp_client") as mcp_client:
+                summary, saved, design = mod.run_task(
+                    "draw diagram",
+                    {"targetApp": "demo-api"},
+                    tools=[fake_tool],
+                )
+
+    build_agent.assert_called_once()
+    assert build_agent.call_args.args[0] == [fake_tool]
+    mcp_client.assert_not_called()
+    assert summary == "ok"
+    assert saved == []
+    assert design is None
+
+
 def test_build_architect_pipeline_agent_stream_async(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -109,12 +176,21 @@ def test_build_architect_pipeline_agent_stream_async(
         + json.dumps({"targetApp": "demo-api", "runId": "run-a2a", "prdPath": "docs/PRD/demo-api.md"})
     )
 
+    class FakeShellAgent:
+        def __call__(self, *args, **kwargs):
+            return ""
+
+        async def stream_async(self, *args, **kwargs):
+            if False:
+                yield {}
+
     with patch.object(
         mod,
         "run_architect_from_context",
         return_value="Architecture artifacts created for demo-api.",
     ):
-        agent = mod.build_architect_pipeline_agent([])
+        with patch.object(mod, "_build_agent", return_value=FakeShellAgent()):
+            agent = mod.build_architect_pipeline_agent([])
 
         async def collect_events() -> list[dict]:
             events: list[dict] = []

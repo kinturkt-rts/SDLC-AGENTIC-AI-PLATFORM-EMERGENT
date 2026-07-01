@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agents._shared.artifact_store import put_artifact, run_sql_artifact_keys
-from agents._shared.sdlc_pipeline import PipelineOptions, SdlcPipelineRunner
+from agents._shared.sdlc_pipeline import PipelineOptions, PipelineStepError, SdlcPipelineRunner
 
 
 @pytest.fixture(autouse=True)
@@ -99,10 +99,55 @@ def test_step_rds_apply_invokes_scripts_with_materialized_sql_dir(
         runner._step_rds_apply()
 
     assert calls[0][0].endswith("apply_sql_to_rds.py")
+    assert "--skip-seed-materialize" in calls[0]
     assert "--sql-dir" in calls[0]
     sql_dir = Path(calls[0][calls[0].index("--sql-dir") + 1])
     assert (sql_dir / "001_init.sql").is_file()
-    assert calls[1][0].endswith("materialize_seed_passwords.py")
+    assert not any(c[0].endswith("materialize_seed_passwords.py") for c in calls)
+
+
+def test_step_rds_apply_soft_fails_seed_materialize_on_a2a(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    run_id = "run-db-004"
+
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "desk-booking"
+    runner.root = repo_root
+    runner.context = {"targetApp": "desk-booking", "runId": run_id}
+    runner.ctx_path = repo_root / "agents" / "pipeline" / "desk-booking.context.json"
+
+    def fake_run_python(args: list[str], *, step: str) -> None:
+        if step == "seed-materialize":
+            raise PipelineStepError("seed-materialize failed (exit 1): bad hash column")
+
+    with (
+        patch.object(runner, "_resolve_rds_workspace") as resolve_ws,
+        patch.object(runner, "_run_python", side_effect=fake_run_python),
+        patch(
+            "agents._shared.seed_credentials.seed_sql_has_placeholders",
+            return_value=True,
+        ),
+        patch.object(runner, "_save_context"),
+        patch("agents._shared.sdlc_pipeline.write_db_handoff", return_value="desk-booking/db/HANDOFF.md") as handoff,
+        patch("agents._shared.sdlc_pipeline.put_context"),
+    ):
+        workspace = repo_root / "workspace"
+        sql_dir = workspace / "desk-booking" / "db" / "sql"
+        sql_dir.mkdir(parents=True)
+        resolve_ws.return_value = (workspace, sql_dir)
+        runner._step_rds_apply()
+
+    handoff.assert_called_once()
+    assert handoff.call_args.kwargs["rds_applied"] is True
+    assert "seedMaterializeWarning" in handoff.call_args.args[1]
+    assert runner.context.get("databaseHandoffPath") == "desk-booking/db/HANDOFF.md"
 
 
 @pytest.fixture()
