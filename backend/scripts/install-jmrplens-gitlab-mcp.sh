@@ -7,18 +7,27 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DIR="${REPO_ROOT}/bin"
 mkdir -p "${BIN_DIR}"
 
-ARCH="$(uname -m)"
+ARCH="$(uname -s)"
+MACHINE="$(uname -m)"
 case "${ARCH}" in
-  x86_64|amd64)
-    ASSET="gitlab-mcp-server-linux-amd64"
+  Darwin)
+    case "${MACHINE}" in
+      x86_64) ASSET="gitlab-mcp-server-darwin-amd64" ;;
+      arm64|aarch64) ASSET="gitlab-mcp-server-darwin-arm64" ;;
+      *) echo "Unsupported macOS architecture: ${MACHINE}" >&2; exit 1 ;;
+    esac
     DEST="${BIN_DIR}/gitlab-mcp-server"
     ;;
-  aarch64|arm64)
-    ASSET="gitlab-mcp-server-linux-arm64"
+  Linux)
+    case "${MACHINE}" in
+      x86_64|amd64) ASSET="gitlab-mcp-server-linux-amd64" ;;
+      aarch64|arm64) ASSET="gitlab-mcp-server-linux-arm64" ;;
+      *) echo "Unsupported Linux architecture: ${MACHINE}" >&2; exit 1 ;;
+    esac
     DEST="${BIN_DIR}/gitlab-mcp-server"
     ;;
   *)
-    echo "Unsupported architecture: ${ARCH}" >&2
+    echo "Unsupported OS: ${ARCH}" >&2
     exit 1
     ;;
 esac

@@ -45,7 +45,7 @@ if (-not $SkipCreateRepo) {
         --region $Region `
         2>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Repository may already exist — continuing." -ForegroundColor Yellow
+        Write-Host 'Repository may already exist - continuing.' -ForegroundColor Yellow
     }
 }
 
@@ -77,5 +77,5 @@ Write-Host "ECS task command (if not using deploy/gitlab-mcp-server/Dockerfile C
 Write-Host "  --http --http-addr=0.0.0.0:8080 --gitlab-url=https://code.junodev.net"
 Write-Host ""
 Write-Host "gitlab-agent AgentCore runtime env:" -ForegroundColor Cyan
-Write-Host "  GITLAB_MCP_HTTP_URL=http://<internal-service-dns>:8080/mcp"
-Write-Host "  GITLAB_PERSONAL_ACCESS_TOKEN=glpat_..."
+Write-Host '  GITLAB_MCP_HTTP_URL=http://<internal-service-dns>:8080/mcp'
+Write-Host '  GITLAB_PERSONAL_ACCESS_TOKEN=glpat_...'

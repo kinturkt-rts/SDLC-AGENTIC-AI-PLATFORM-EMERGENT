@@ -39,8 +39,9 @@ def _resolve_binary() -> Path:
             return candidate
 
     raise SystemExit(
-        "jmrplens gitlab-mcp-server binary not found. "
-        "Run: .\\scripts\\install-jmrplens-gitlab-mcp.ps1"
+        "jmrplens gitlab-mcp-server binary not found under backend/bin/. "
+        "Windows: .\\scripts\\install-jmrplens-gitlab-mcp.ps1 | "
+        "macOS/Linux: ./scripts/install-jmrplens-gitlab-mcp.sh"
     )
 
 
