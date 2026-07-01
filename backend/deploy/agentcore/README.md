@@ -188,6 +188,16 @@ You still create **one AgentCore runtime per agent** in AWS (separate scaling/IA
 | `AGENTCORE_WEBCRAWLER_WITH_POSTGRES` | web-crawler-agent (default true) |
 | `AGENTCORE_A2A_PEER_URLS` | orchestrator: deployed peer runtime URLs |
 | `AGENTCORE_ENABLE_A2A_PEERS` | orchestrator: set `false` to disable peer tools |
+| `GITLAB_MCP_HTTP_URL` | gitlab-agent / qa-agent: shared MCP on ECS (`http://<dns>:8080/mcp`). Token via `GITLAB_PERSONAL_ACCESS_TOKEN` per request — not baked into the MCP image. |
+
+**GitLab MCP (two images):**
+
+| Image | ECR repo (example) | Purpose |
+|-------|-------------------|---------|
+| **gitlab-agent** | `bedrock-agentcore-gitlab_agent` | Python AgentCore runtime (`deploy/agentcore/Dockerfile`, `AGENTCORE_AGENT=gitlab-agent`) |
+| **gitlab-mcp-server** | `gitlab-mcp-server` | Shared HTTP MCP for ECS (`deploy/gitlab-mcp-server/Dockerfile`). Push: `scripts/push-gitlab-mcp-ecr.ps1` |
+
+Do not push the MCP server image into the gitlab-agent AgentCore repo. Agent images no longer bundle the jmrplens binary by default; set `GITLAB_MCP_HTTP_URL` on gitlab-agent after ECS MCP is up.
 
 See `agents/README.md` for MCP credentials (`ATLASSIAN_*`, `GITLAB_*`, `FIRECRAWL_*`, `POSTGRES_MCP_*`, etc.).
 

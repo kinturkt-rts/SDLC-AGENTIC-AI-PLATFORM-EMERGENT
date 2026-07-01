@@ -64,6 +64,38 @@ def _dockerignore_blocks(path: Path) -> bool:
     return False
 
 
+def test_agentcore_dockerfile_gitlab_mcp_binary_optional() -> None:
+    text = _CANONICAL.read_text(encoding="utf-8")
+    assert "INSTALL_GITLAB_MCP_BINARY" in text
+    assert "gitlab-mcp-server-linux-arm64" in text
+    assert 'if [ "$INSTALL_GITLAB_MCP_BINARY" = "true" ]; then' in text
+
+
+def test_gitlab_mcp_service_dockerfile_exists() -> None:
+    mcp_dockerfile = _BACKEND / "deploy" / "gitlab-mcp-server" / "Dockerfile"
+    assert mcp_dockerfile.is_file()
+    text = mcp_dockerfile.read_text(encoding="utf-8")
+    assert "jmrplens/gitlab-mcp-server" in text
+    assert "--gitlab-url=https://code.junodev.net" in text
+
+
+@pytest.mark.parametrize("dockerfile", _dockerfile_paths(), ids=lambda p: p.relative_to(_BACKEND).as_posix())
+def test_agentcore_dockerfile_sets_agent_bundle(dockerfile: Path) -> None:
+    rel = dockerfile.relative_to(_BACKEND).as_posix()
+    if rel == "deploy/agentcore/Dockerfile" or rel == "Dockerfile":
+        expected = "orchestrator-agent"
+    elif rel.startswith(".bedrock_agentcore/"):
+        folder = rel.split("/")[1]
+        if folder == "orchestrator_agent_vpc":
+            expected = "orchestrator-agent"
+        else:
+            expected = folder.replace("_", "-")
+    else:
+        return
+    text = dockerfile.read_text(encoding="utf-8")
+    assert f"ARG AGENTCORE_AGENT={expected}" in text, f"{rel} should default AGENTCORE_AGENT to {expected}"
+
+
 @pytest.mark.parametrize("dockerfile", _dockerfile_paths(), ids=lambda p: p.relative_to(_BACKEND).as_posix())
 def test_agentcore_dockerfile_copies_agents_tree(dockerfile: Path) -> None:
     text = dockerfile.read_text(encoding="utf-8")
