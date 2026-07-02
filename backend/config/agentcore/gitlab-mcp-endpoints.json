@@ -1,0 +1,34 @@
+{
+  "description": "Shared GitLab MCP HTTP endpoints for the Juno SDLC platform (no secrets). AgentCore gitlab-agent and qa-agent publish must use directMcpUrl to bypass CloudFront WAF.",
+  "region": "us-east-2",
+  "accountId": "061836593297",
+  "ecs": {
+    "cluster": "sdlc-agentic-ai",
+    "service": "gitlab-mcp-server",
+    "albName": "gitlab-mcp-alb",
+    "albDnsName": "gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com"
+  },
+  "cloudFront": {
+    "distributionId": "E1O1IIBQEY4Y2Q",
+    "domain": "d1cvmpnnohwpj8.cloudfront.net",
+    "mcpUrl": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
+    "webAclName": "CreatedByCloudFront-0a676d76"
+  },
+  "directMcpUrl": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
+  "waf": {
+    "blockedRuleExample": "AWSManagedRulesCommonRuleSet/GenericLFI_BODY",
+    "symptom": "403 on POST /mcp when publish payloads contain patterns like http://localhost",
+    "mitigation": "Set GITLAB_MCP_HTTP_DIRECT_URL to directMcpUrl on gitlab_agent and qa_agent AgentCore runtimes"
+  },
+  "usage": {
+    "gitlabAgentPublish": "directMcpUrl",
+    "qaAgentGitLabTools": "directMcpUrl",
+    "cursorIdeMcpRead": "cloudFront.mcpUrl",
+    "agentcoreGatewayTarget": "cloudFront.mcpUrl"
+  },
+  "runtimeEnv": {
+    "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl",
+    "GITLAB_MCP_HTTP_BATCH_SIZE": "1",
+    "GITLAB_MCP_URL": "Optional; keep cloudFront.mcpUrl for IDE. gitlab_mcp_client prefers GITLAB_MCP_HTTP_DIRECT_URL."
+  }
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ from .gitlab_mcp_client import (
     _list_repository_tree_async,
     call_gitlab_mcp_tool,
     gitlab_mcp_session,
+    gitlab_mcp_uses_cloudfront,
     list_existing_blob_paths,
     use_gitlab_mcp_http,
 )
@@ -22,9 +24,24 @@ _DEFAULT_APPS_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-
 _BATCH_SIZE = 20
 _HTTP_FILE_API_HINT = (
     "CloudFront/WAF returned 403 on the MCP POST body. Common causes: AWS WAF managed "
-    "rules blocking URLs like http://localhost or large batched commits. Allow /mcp POST "
-    "bodies in your WAF or set GITLAB_MCP_HTTP_BATCH_SIZE=1 (default for HTTP)."
+    "rules blocking URLs like http://localhost or large batched commits. For gitlab-agent "
+    "publish, set GITLAB_MCP_HTTP_DIRECT_URL to the ECS ALB /mcp endpoint (bypasses WAF). "
+    "Alternatively allow /mcp POST bodies in WAF or set GITLAB_MCP_HTTP_BATCH_SIZE=1."
 )
+
+_WAF_LOCALHOST_HTTP = re.compile(r"https?://localhost(?=[:/])", re.IGNORECASE)
+
+
+def sanitize_publish_content_for_waf(content: str) -> str:
+    """Replace substrings that commonly trigger CloudFront/WAF on MCP POST bodies."""
+    if not gitlab_mcp_uses_cloudfront():
+        return content
+
+    def _replace(match: re.Match[str]) -> str:
+        scheme = match.group(0).split("://", 1)[0].lower()
+        return f"{scheme}://127.0.0.1"
+
+    return _WAF_LOCALHOST_HTTP.sub(_replace, content)
 
 
 def _publish_batch_size() -> int:
@@ -221,7 +238,7 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
 
             content = base64.b64encode(data).decode("ascii")
         elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = data.decode("utf-8")
+            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
         else:
             import base64
 
@@ -247,7 +264,7 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
 
             content = base64.b64encode(data).decode("ascii")
         elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = data.decode("utf-8")
+            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
         else:
             import base64
 

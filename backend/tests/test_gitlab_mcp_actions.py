@@ -19,6 +19,7 @@ from _shared.gitlab_mcp_actions import (  # noqa: E402
     gitlab_base_branch,
     gitlab_personal_access_token,
     gitlab_project_path,
+    sanitize_publish_content_for_waf,
 )
 from _shared.gitlab_mcp_client import GitLabMcpError  # noqa: E402
 
@@ -86,3 +87,18 @@ def test_publish_error_includes_project_and_unwraps_group() -> None:
     assert result["error"] == "file already exists"
     assert result["gitlabProject"] == "group/apps"
     assert result["gitlabBaseBranch"] == "main"
+
+
+def test_sanitize_publish_content_for_waf_only_on_cloudfront(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = "curl http://localhost:8000/health"
+    monkeypatch.setenv("GITLAB_MCP_URL", "https://d123.cloudfront.net/mcp")
+    monkeypatch.delenv("GITLAB_MCP_HTTP_DIRECT_URL", raising=False)
+    assert sanitize_publish_content_for_waf(text) == "curl http://127.0.0.1:8000/health"
+
+    monkeypatch.setenv(
+        "GITLAB_MCP_HTTP_DIRECT_URL",
+        "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp",
+    )
+    assert sanitize_publish_content_for_waf(text) == text

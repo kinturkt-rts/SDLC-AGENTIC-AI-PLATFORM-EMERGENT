@@ -84,23 +84,35 @@ def normalize_gitlab_mcp_http_url(url: str) -> str:
     return urljoin(f"{parsed.scheme}://{parsed.netloc}/", "mcp")
 
 
+def _gitlab_mcp_http_url_env_keys() -> tuple[str, ...]:
+    """Env keys in priority order (first wins for agent HTTP transport)."""
+    return ("GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL")
+
+
 def _raw_gitlab_mcp_http_url() -> str | None:
-    raw = (
-        os.getenv("GITLAB_MCP_URL", "").strip()
-        or os.getenv("GITLAB_MCP_HTTP_URL", "").strip()
-    )
-    return raw or None
+    for key in _gitlab_mcp_http_url_env_keys():
+        raw = os.getenv(key, "").strip()
+        if raw:
+            return raw
+    return None
 
 
 def gitlab_mcp_url() -> str | None:
-    """Remote Streamable HTTP MCP endpoint (CloudFront / ECS).
+    """Remote Streamable HTTP MCP endpoint (ALB direct, CloudFront, or ECS).
 
-    Accepts GITLAB_MCP_URL (.env.local) or GITLAB_MCP_HTTP_URL (AgentCore deploy docs).
+  Priority: GITLAB_MCP_HTTP_DIRECT_URL (ALB, publish-safe) then GITLAB_MCP_URL /
+  GITLAB_MCP_HTTP_URL (often CloudFront for IDE/gateway).
     """
     raw = _raw_gitlab_mcp_http_url()
     if not raw:
         return None
     return normalize_gitlab_mcp_http_url(raw)
+
+
+def gitlab_mcp_uses_cloudfront() -> bool:
+    """True when the active HTTP MCP URL is a CloudFront distribution."""
+    url = gitlab_mcp_url()
+    return bool(url and "cloudfront.net" in url.lower())
 
 
 def gitlab_mcp_http_url() -> str | None:
