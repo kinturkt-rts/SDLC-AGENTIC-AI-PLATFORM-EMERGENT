@@ -246,10 +246,14 @@ foreach ($agent in $TargetAgents) {
     foreach ($item in $envBlock) {
         $deployArgs += @("--env", $item)
     }
-    & agentcore @deployArgs
-    if ($LASTEXITCODE -ne 0) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & agentcore @deployArgs 2>&1 | ForEach-Object { Write-Host $_ }
+    $agentcoreExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($agentcoreExit -ne 0) {
         $DeployFailures += $awsName
-        Write-Warning "Deploy failed for $awsName (exit $LASTEXITCODE)."
+        Write-Warning "Deploy failed for $awsName (exit $agentcoreExit)."
     }
 }
 
