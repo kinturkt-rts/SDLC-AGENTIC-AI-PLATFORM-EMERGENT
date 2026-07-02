@@ -253,10 +253,14 @@ foreach ($agent in $TargetAgents) {
         }
         $deployArgs += @("--env", $item)
     }
-    & agentcore @deployArgs
-    if ($LASTEXITCODE -ne 0) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & agentcore @deployArgs 2>&1 | ForEach-Object { Write-Host $_ }
+    $agentcoreExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($agentcoreExit -ne 0) {
         $DeployFailures += $awsName
-        Write-Warning "Deploy failed for $awsName (exit $LASTEXITCODE)."
+        Write-Warning "Deploy failed for $awsName (exit $agentcoreExit)."
     } else {
         # agentcore deploy pushes a versioned tag but AgentCore references :latest.
         # Re-tag the most recent versioned image as :latest so the runtime pulls it.
