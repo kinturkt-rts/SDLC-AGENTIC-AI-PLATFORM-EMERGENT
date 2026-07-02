@@ -44,7 +44,6 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
-from strands.tools.mcp import MCPClient
 
 AGENT_NAME = "architect-agent"
 A2A_PORT = 9102
@@ -516,33 +515,30 @@ def run_task(
     design_path: Path | None = None
     target_app = str(context.get("targetApp") or context.get("diagramBaseName") or "").strip() or None
     telemetry = RunTelemetry(AGENT_NAME, target_app=target_app, model_id=_model_id())
-    try:
-        effective_tools = tools if tools is not None else local_diagram_tools()
-        agent = _build_agent(effective_tools, telemetry=telemetry)
-        summary = str(agent(_user_message(task, context)))
-        base = context.get("diagramBaseName", DEFAULT_DIAGRAM_BASE_NAME)
-        saved = _normalize_diagram_outputs(out_dir, str(base), scan_start)
+    effective_tools = tools if tools is not None else local_diagram_tools()
+    agent = _build_agent(effective_tools, telemetry=telemetry)
+    summary = str(agent(_user_message(task, context)))
+    base = context.get("diagramBaseName", DEFAULT_DIAGRAM_BASE_NAME)
+    saved = _normalize_diagram_outputs(out_dir, str(base), scan_start)
 
-        do_design = not (skip_design if skip_design is not None else _skip_design_generation())
-        if do_design:
-            design_md = _generate_design_markdown(
-                task=task,
-                context=context,
-                diagram_summary=summary,
-                diagram_paths=saved,
-                telemetry=telemetry,
-            )
-            design_rel = str(context["designDocPath"])
-            design_path = _write_design_doc(design_md, design_rel=design_rel, context=context)
-            context["architectSummary"] = _architect_summary_from_design(design_md)
-        telemetry.extra = {
-            "diagramsSaved": len(saved),
-            "designWritten": design_path is not None,
-        }
-        telemetry.finalize()
-        return summary, saved, design_path
-    except Exception as exc:
-        raise
+    do_design = not (skip_design if skip_design is not None else _skip_design_generation())
+    if do_design:
+        design_md = _generate_design_markdown(
+            task=task,
+            context=context,
+            diagram_summary=summary,
+            diagram_paths=saved,
+            telemetry=telemetry,
+        )
+        design_rel = str(context["designDocPath"])
+        design_path = _write_design_doc(design_md, design_rel=design_rel, context=context)
+        context["architectSummary"] = _architect_summary_from_design(design_md)
+    telemetry.extra = {
+        "diagramsSaved": len(saved),
+        "designWritten": design_path is not None,
+    }
+    telemetry.finalize()
+    return summary, saved, design_path
 
 
 def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:
