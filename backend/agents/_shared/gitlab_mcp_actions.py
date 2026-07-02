@@ -61,8 +61,77 @@ def should_include_file(path: Path) -> bool:
     return not any(part in _EXCLUDE_DIR_NAMES for part in path.parts)
 
 
+def is_cloud_materialized_workspace(root: Path, slug: str) -> bool:
+    """True when *root* is a materialized S3 run dir (``<slug>/...``), not local monorepo."""
+    if (root / "target-apps" / slug).is_dir():
+        return False
+    return (root / slug).is_dir()
+
+
+def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
+    """Map a materialized cloud artifact path to monorepo GitLab destination path."""
+    normalized = workspace_rel.replace("\\", "/").lstrip("/")
+    prefix = f"{slug}/"
+    if not normalized.startswith(prefix):
+        return None
+    tail = normalized[len(prefix) :]
+    if not tail or tail.startswith("inputs/"):
+        return None
+
+    if tail == "context.json":
+        return f"agents/pipeline/{slug}.context.json"
+
+    if tail.startswith("handoffs/"):
+        handoff_map = {
+            "developer-handoff.json": f"agents/pipeline/{slug}.developer-handoff.json",
+            "gitlab-handoff.json": f"agents/pipeline/{slug}.gitlab-handoff.json",
+            "qa-handoff.json": f"agents/pipeline/{slug}.qa-handoff.json",
+            "devops-handoff.json": f"agents/pipeline/{slug}.devops-handoff.json",
+        }
+        return handoff_map.get(Path(tail).name)
+
+    if tail.startswith("docs/PRD/") or tail.startswith("docs/design/"):
+        return tail
+
+    if tail.startswith("docs/diagrams/"):
+        return f"docs/diagrams/generated-diagrams/{Path(tail).name}"
+
+    return f"target-apps/{slug}/{tail}"
+
+
+def collect_feature_artifact_entries(
+    feature: str,
+    *,
+    root: Path | None = None,
+) -> list[tuple[str, str]]:
+    """Return ``(workspace_source_rel, gitlab_dest_rel)`` pairs to publish."""
+    root = root or repo_root()
+    slug = slugify_feature(feature)
+
+    if is_cloud_materialized_workspace(root, slug):
+        entries: set[tuple[str, str]] = set()
+        cloud_root = root / slug
+        for file_path in cloud_root.rglob("*"):
+            if not file_path.is_file() or not should_include_file(file_path):
+                continue
+            source = file_path.relative_to(root).as_posix()
+            dest = cloud_workspace_to_gitlab_dest(slug, source)
+            if dest:
+                entries.add((source, dest))
+        return sorted(entries, key=lambda item: item[1])
+
+    return [(rel, rel) for rel in collect_feature_artifact_paths(feature, root=root)]
+
+
 def collect_feature_artifact_paths(feature: str, *, root: Path | None = None) -> list[str]:
-    """Return repo-relative paths to publish for one SDLC feature (monorepo layout)."""
+    """Return repo-relative GitLab destination paths for one SDLC feature."""
+    if is_cloud_materialized_workspace(root or repo_root(), slugify_feature(feature)):
+        return [dest for _, dest in collect_feature_artifact_entries(feature, root=root)]
+    return _collect_local_monorepo_artifact_paths(feature, root=root)
+
+
+def _collect_local_monorepo_artifact_paths(feature: str, *, root: Path | None = None) -> list[str]:
+    """Local monorepo layout: ``target-apps/<slug>/``, ``docs/PRD/``, pipeline handoffs."""
     root = root or repo_root()
     slug = slugify_feature(feature)
     rel_paths: set[str] = set()
@@ -211,10 +280,10 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
     slug = slugify_feature(feature)
     text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
     files: list[dict[str, str]] = []
-    for rel in collect_feature_artifact_paths(slug, root=root_path):
-        if rel.endswith(".devops-handoff.json"):
+    for source_rel, dest_rel in collect_feature_artifact_entries(slug, root=root_path):
+        if dest_rel.endswith(".devops-handoff.json"):
             continue
-        src = root_path / rel
+        src = root_path / source_rel
         data = src.read_bytes()
         if src.suffix.lower() == ".png":
             import base64
@@ -226,7 +295,7 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
             import base64
 
             content = base64.b64encode(data).decode("ascii")
-        files.append({"path": rel, "content": content, "binary": src.suffix.lower() == ".png"})
+        files.append({"path": dest_rel, "content": content, "binary": src.suffix.lower() == ".png"})
     return files
 
 
@@ -236,11 +305,11 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
     slug = slugify_feature(feature)
     text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
     files: list[dict[str, str]] = []
-    for rel in collect_feature_artifact_paths(slug, root=root_path):
-        dest = dest_path_for_apps_repo(rel, slug)
+    for source_rel, dest_rel in collect_feature_artifact_entries(slug, root=root_path):
+        dest = dest_path_for_apps_repo(dest_rel, slug)
         if dest is None:
             continue
-        src = root_path / rel
+        src = root_path / source_rel
         data = src.read_bytes()
         if src.suffix.lower() == ".png":
             import base64

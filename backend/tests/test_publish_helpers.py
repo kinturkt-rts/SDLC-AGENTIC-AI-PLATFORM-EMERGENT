@@ -6,9 +6,12 @@ from pathlib import Path
 
 from agents._shared.gitlab_mcp_actions import (
     apps_branch_name,
+    cloud_workspace_to_gitlab_dest,
+    collect_feature_artifact_entries,
     collect_feature_artifact_paths,
     default_branch_name,
     dest_path_for_apps_repo,
+    is_cloud_materialized_workspace,
     should_include_file,
 )
 
@@ -51,3 +54,32 @@ def test_collect_feature_artifact_paths_includes_prd_and_app(tmp_path: Path) -> 
     assert f"target-apps/{feature}/app/main.py" in paths
     assert f"docs/PRD/{feature}.md" in paths
     assert not any(p.endswith(".env") for p in paths)
+
+
+def test_cloud_materialized_workspace_maps_to_monorepo_paths(tmp_path: Path) -> None:
+    feature = "demo-app"
+    cloud_root = tmp_path / feature
+    (cloud_root / "app").mkdir(parents=True)
+    (cloud_root / "app" / "main.py").write_text("# main", encoding="utf-8")
+    (cloud_root / "db" / "sql").mkdir(parents=True)
+    (cloud_root / "db" / "sql" / "001.sql").write_text("SELECT 1;", encoding="utf-8")
+    (cloud_root / "docs" / "PRD").mkdir(parents=True)
+    (cloud_root / "docs" / "PRD" / f"{feature}.md").write_text("# PRD", encoding="utf-8")
+    (cloud_root / "handoffs").mkdir()
+    (cloud_root / "handoffs" / "developer-handoff.json").write_text("{}", encoding="utf-8")
+    cloud_root.joinpath("context.json").write_text("{}", encoding="utf-8")
+
+    assert is_cloud_materialized_workspace(tmp_path, feature)
+
+    entries = collect_feature_artifact_entries(feature, root=tmp_path)
+    dests = {dest for _, dest in entries}
+    assert f"target-apps/{feature}/app/main.py" in dests
+    assert f"target-apps/{feature}/db/sql/001.sql" in dests
+    assert f"docs/PRD/{feature}.md" in dests
+    assert f"agents/pipeline/{feature}.developer-handoff.json" in dests
+    assert f"agents/pipeline/{feature}.context.json" in dests
+
+
+def test_cloud_workspace_to_gitlab_dest_diagram() -> None:
+    dest = cloud_workspace_to_gitlab_dest("demo-app", "demo-app/docs/diagrams/demo-app.png")
+    assert dest == "docs/diagrams/generated-diagrams/demo-app.png"

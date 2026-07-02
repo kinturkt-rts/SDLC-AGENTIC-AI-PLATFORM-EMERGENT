@@ -182,6 +182,13 @@ export async function startPipeline(options: {
     | 'auto'
     | 'local'
     | 'a2a';
+  const skipDeveloper =
+    (process.env.SDLC_PIPELINE_SKIP_DEVELOPER ?? 'true').trim().toLowerCase() !== 'false';
+  const skipGitlab =
+    (process.env.SDLC_PIPELINE_SKIP_GITLAB ?? 'true').trim().toLowerCase() !== 'false';
+  const skipVerify =
+    (process.env.SDLC_PIPELINE_SKIP_VERIFY ?? 'true').trim().toLowerCase() !== 'false';
+
   const args = [
     orchestratorScript,
     '--run-pipeline',
@@ -193,6 +200,9 @@ export async function startPipeline(options: {
     inputRel,
     '--transport',
     transport,
+    ...(skipDeveloper ? ['--skip-developer'] : []),
+    ...(skipGitlab ? ['--skip-gitlab'] : []),
+    ...(skipVerify ? ['--skip-verify'] : []),
   ];
 
   const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');

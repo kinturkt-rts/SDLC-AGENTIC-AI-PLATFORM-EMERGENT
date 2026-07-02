@@ -1142,7 +1142,22 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
   }
 
   const runs = await listRuns();
-  return runs.find((r) => r.id === id || r.projectId === id);
+  const direct = runs.find((r) => r.id === id || r.projectId === id);
+  if (direct) return direct;
+
+  // Slug-based runIds (e.g. "change-request-hub-003") are stored under runs/<id>/run.json
+  // but listRuns() only scans UUID dirs. Try reading it directly.
+  const slugRunState = await readUuidRunState(id);
+  if (slugRunState) {
+    const slug = featureSlugFromLive(slugRunState);
+    if (slug) {
+      const bySlug = runs.find((r) => r.projectId === slug);
+      if (bySlug) return bySlug;
+      return buildPipelineRunFromLive(slug, { ...slugRunState, runId: slugRunState.runId || id });
+    }
+  }
+
+  return undefined;
 }
 
 export async function listContextItems(projectSlug?: string): Promise<ContextItem[]> {

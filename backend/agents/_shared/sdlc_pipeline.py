@@ -717,6 +717,7 @@ class SdlcPipelineRunner:
                 "--target-app",
                 self.feature,
                 "--skip-seed-materialize",
+                "--reset-schema",
             ],
             step="rds-apply",
         )

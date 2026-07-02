@@ -2,8 +2,6 @@ default_agent: orchestrator_agent
 agents:
   product_agent:
     name: product_agent
-    language: python
-    node_version: null
     entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
       Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
@@ -50,12 +48,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -64,8 +56,6 @@ agents:
     is_generated_by_agentcore_create: false
   architect_agent:
     name: architect_agent
-    language: python
-    node_version: null
     entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
       Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
@@ -112,12 +102,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -126,8 +110,6 @@ agents:
     is_generated_by_agentcore_create: false
   database_agent:
     name: database_agent
-    language: python
-    node_version: null
     entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
       Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
@@ -174,12 +156,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -188,8 +164,6 @@ agents:
     is_generated_by_agentcore_create: false
   developer_agent:
     name: developer_agent
-    language: python
-    node_version: null
     entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
       Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
@@ -236,12 +210,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -250,14 +218,14 @@ agents:
     is_generated_by_agentcore_create: false
   gitlab_agent:
     name: gitlab_agent
-    language: python
-    node_version: null
-    entrypoint: C:/Users/RahulNayak/Desktop/sdlc-agentic-ai-mvp/backend/deploy/agentcore/a2a_server.py
+    entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
+      Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
     platform: linux/arm64
     container_runtime: docker
-    source_path: C:\Users\RahulNayak\Desktop\sdlc-agentic-ai-mvp\backend
+    source_path: C:\Users\KinturShah\OneDrive - Resolve Tech Solutions\KT - Personal\SDLC
+      Agentic AI Platform\backend
     aws:
       execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-8a38e8c335
       execution_role_auto_create: false
@@ -296,12 +264,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -310,8 +272,6 @@ agents:
     is_generated_by_agentcore_create: false
   orchestrator_agent:
     name: orchestrator_agent
-    language: python
-    node_version: null
     entrypoint: C:/Users/KinturShah/OneDrive - Resolve Tech Solutions/KT - Personal/SDLC
       Agentic AI Platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
@@ -358,12 +318,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
