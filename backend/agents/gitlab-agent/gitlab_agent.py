@@ -142,6 +142,172 @@ def run_publish(
     return summary, handoff
 
 
+def _prompt_to_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        parts: list[str] = []
+        for item in message:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return str(message)
+
+
+def parse_publish_request(message: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """Parse targetApp and runId from an A2A/AgentCore publish message."""
+    import re
+
+    text = _prompt_to_text(message)
+    ctx: dict[str, Any] = {}
+    if "Context:" in text:
+        _, _, json_part = text.partition("Context:")
+        try:
+            parsed = json.loads(json_part.strip())
+            if isinstance(parsed, dict):
+                ctx = parsed
+        except json.JSONDecodeError:
+            pass
+
+    target = str(
+        ctx.get("targetApp") or ctx.get("target_app") or ctx.get("target-app") or ""
+    ).strip()
+    run_id = str(ctx.get("runId") or ctx.get("run_id") or ctx.get("run-id") or "").strip()
+
+    if not target:
+        match = re.search(r"target_app\s*=\s*['\"]([^'\"]+)['\"]", text, re.I)
+        if match:
+            target = match.group(1).strip()
+    if not target:
+        match = re.search(r"for\s+([\w-]+)\s+to\s+GitLab", text, re.I)
+        if match:
+            target = match.group(1).strip()
+
+    if not run_id:
+        match = re.search(r"run_id\s*=\s*['\"]([^'\"]+)['\"]", text, re.I)
+        if match:
+            run_id = match.group(1).strip()
+
+    if not target:
+        return None
+    return target, run_id, ctx
+
+
+def _apps_repo_enabled(ctx: dict[str, Any] | None = None) -> bool:
+    if ctx and str(ctx.get("gitlabPublishLayout") or "").strip().lower() == "apps":
+        return True
+    return os.getenv("GITLAB_APPS_REPO", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def run_publish_for_agentcore(
+    target_app: str,
+    run_id: str = "",
+    context: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Materialize S3 run artifacts (when configured) and publish via MCP — no LLM."""
+    import tempfile
+
+    from _shared.artifact_store import is_s3_store, list_run_artifact_keys, materialize_run, put_handoff
+
+    ctx = dict(context or {})
+    rid = (
+        run_id.strip()
+        or str(ctx.get("runId") or ctx.get("run_id") or "").strip()
+        or os.getenv("PIPELINE_RUN_ID", "").strip()
+    )
+    if rid:
+        ctx["runId"] = rid
+
+    root: Path | None = None
+    if rid and is_s3_store():
+        keys = list_run_artifact_keys(rid)
+        root = materialize_run(rid, Path(tempfile.mkdtemp(prefix="sdlc-gitlab-")))
+        if not keys:
+            handoff = {
+                "targetApp": slugify_feature(target_app),
+                "status": "failed",
+                "error": f"No S3 artifacts for runId {rid}",
+                "pathsPublished": [],
+            }
+            put_handoff(rid, "gitlab", handoff)
+            return f"## status\nfailed\n\n## error\nNo S3 artifacts for runId {rid}\n", handoff
+
+    summary, handoff = run_publish(
+        target_app,
+        ctx,
+        open_mr=os.getenv("GITLAB_OPEN_MR", "").strip().lower() in {"1", "true", "yes", "on"},
+        apps_repo=_apps_repo_enabled(ctx),
+        root=root,
+    )
+    if rid and is_s3_store():
+        put_handoff(rid, "gitlab", handoff)
+    return summary, handoff
+
+
+def execute_publish_message(message: Any) -> str:
+    """Deterministic AgentCore handler: parse message → publish → return summary text."""
+    parsed = parse_publish_request(message)
+    if parsed is None:
+        example = {
+            "targetApp": "pr-diff-summarizer",
+            "runId": "92099e5f-be02-4894-9276-67f2e5a72343",
+        }
+        return (
+            "GitLab publish could not start — no targetApp found in the message.\n\n"
+            "Send a message like:\n"
+            f"Publish SDLC artifacts for pr-diff-summarizer to GitLab.\n\n"
+            f"Context:\n{json.dumps(example, indent=2)}"
+        )
+
+    target_app, run_id, ctx = parsed
+    summary, handoff = run_publish_for_agentcore(target_app, run_id, ctx)
+    if handoff.get("status") != "published":
+        return summary
+    return summary
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
+def build_gitlab_pipeline_agent() -> Any:
+    """AgentCore mode: publish directly on each A2A message (no LLM round-trip)."""
+    from collections.abc import AsyncIterator
+
+    from _shared.runner import build_agent
+    from strands.types._events import AgentResultEvent
+
+    agent = build_agent("gitlab-agent", system_prompt="Deterministic GitLab publish.", enable_a2a_peers=False)
+
+    def publish_invoke(message: Any, **kwargs: Any) -> str:
+        del kwargs
+        return execute_publish_message(message)
+
+    async def publish_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        del invocation_state, kwargs
+        summary = execute_publish_message(prompt)
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
+
+    agent.__call__ = publish_invoke  # type: ignore[method-assign]
+    agent.stream_async = publish_stream_async  # type: ignore[method-assign]
+    return agent
+
+
 def _print_json(data: dict[str, Any]) -> None:
     print(json.dumps(data, indent=2))
 

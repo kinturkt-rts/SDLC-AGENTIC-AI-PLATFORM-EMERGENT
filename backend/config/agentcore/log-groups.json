@@ -1,0 +1,37 @@
+{
+  "description": "Agent -> CloudWatch Logs group mapping (no secrets). Derived from config/agentcore/runtimes.json. Re-derive after any agent redeploy (runtimeId changes).",
+  "region": "us-east-2",
+  "logGroupPattern": "/aws/bedrock-agentcore/runtimes/{awsName}-{runtimeId}-DEFAULT",
+  "agents": {
+    "orchestrator-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/orchestrator_agent-O0WIlYDDeX-DEFAULT",
+      "awsName": "orchestrator_agent",
+      "runtimeId": "O0WIlYDDeX"
+    },
+    "product-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/product_agent-az4pY1Blv1-DEFAULT",
+      "awsName": "product_agent",
+      "runtimeId": "az4pY1Blv1"
+    },
+    "architect-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/architect_agent-MSC7JE4JIK-DEFAULT",
+      "awsName": "architect_agent",
+      "runtimeId": "MSC7JE4JIK"
+    },
+    "database-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/database_agent-B28RDG3CX2-DEFAULT",
+      "awsName": "database_agent",
+      "runtimeId": "B28RDG3CX2"
+    },
+    "developer-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/developer_agent-s6E4Vd82AM-DEFAULT",
+      "awsName": "developer_agent",
+      "runtimeId": "s6E4Vd82AM"
+    },
+    "gitlab-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/gitlab_agent-qgx3u2CWtC-DEFAULT",
+      "awsName": "gitlab_agent",
+      "runtimeId": "qgx3u2CWtC"
+    }
+  }
+}

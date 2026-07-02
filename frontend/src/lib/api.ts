@@ -7,6 +7,8 @@
 // The control plane NEVER executes agents. It only reads platform state.
 
 import { mockAgentMessages } from '@/src/mocks';
+import type { ActivityFeedItem } from '@/src/lib/run-events';
+import type { PlatformSettings } from '@/src/lib/platform-settings';
 import type {
   Agent,
   Project,
@@ -89,6 +91,10 @@ export const api = {
     );
     return data.events;
   },
+  async getRecentActivity(): Promise<ActivityFeedItem[]> {
+    const data = await httpGet<{ activity: ActivityFeedItem[] }>('/api/v1/activity');
+    return data.activity;
+  },
   async getAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
     const all = mockAgentMessages;
     return correlationId ? all.filter((m) => m.correlationId === correlationId) : all;
@@ -143,16 +149,27 @@ export const api = {
       return null;
     }
   },
-  async getLogs(options?: { runId?: string; agent?: string; minutes?: number }): Promise<LogEntry[]> {
+  async getLogs(options?: {
+    runId?: string;
+    agent?: string;
+    minutes?: number;
+    source?: 'local' | 'cloudwatch';
+    limit?: number;
+  }): Promise<LogEntry[]> {
     const params = new URLSearchParams();
     if (options?.runId) params.set('runId', options.runId);
     if (options?.agent) params.set('agent', options.agent);
     if (options?.minutes) params.set('minutes', String(options.minutes));
+    if (options?.source) params.set('source', options.source);
+    if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
     const data = await httpGet<{ logs: LogEntry[] }>(`/api/v1/logs${qs ? `?${qs}` : ''}`);
     return data.logs;
   },
   async getDashboardSummary(): Promise<DashboardSummary> {
     return httpGet<DashboardSummary>('/api/v1/dashboard');
+  },
+  async getPlatformSettings(): Promise<PlatformSettings> {
+    return httpGet<PlatformSettings>('/api/v1/settings');
   },
 };

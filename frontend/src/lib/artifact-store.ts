@@ -226,6 +226,10 @@ export async function countS3RunArtifacts(runId: string): Promise<number> {
   return files.filter((file) => !isSkippableS3ArtifactRelPath(file.key.replace(prefix, ''))).length;
 }
 
+export async function getS3RunLastModifiedMs(runId: string): Promise<number> {
+  return s3RunLatestModifiedMs(runId);
+}
+
 export async function getS3RunLastModified(runId: string): Promise<string> {
   const ms = await s3RunLatestModifiedMs(runId);
   return ms ? new Date(ms).toISOString() : new Date().toISOString();

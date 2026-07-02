@@ -1,8 +1,6 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Search } from 'lucide-react';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -44,16 +42,9 @@ export function Topbar() {
         </Select>
       ) : null}
 
-      <div className={`relative hidden w-full max-w-sm md:block ${showProjectFilter ? 'ml-auto' : ''}`}>
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
-        <Input
-          placeholder="Search runs, agents, artifacts..."
-          className="h-9 border-white/[0.06] bg-white/[0.02] pl-9 text-sm placeholder:text-muted-foreground/40 focus:border-teal-500/30 focus:ring-teal-500/10"
-          disabled
-        />
+      <div className="ml-auto flex items-center gap-2">
+        <ThemeToggle />
       </div>
-
-      <ThemeToggle />
     </header>
   );
 }

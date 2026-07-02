@@ -44,10 +44,12 @@ import {
   useArtifacts,
   useAgents,
   useMcpServers,
+  useRecentActivity,
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
+import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PipelineRun } from '@/src/types';
 import { cn } from '@/lib/utils';
 
@@ -73,27 +75,15 @@ const PIPELINE_STEPS: {
   { id: 'gitlab', label: 'Publish', agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'deploy', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
 ];
 
-/* ─────────────────────────────────────────────────────
-   Live Activity (mock)
-   ───────────────────────────────────────────────────── */
-interface ActivityEvent {
-  id: string;
-  agent: string;
-  description: string;
-  time: string;
-  icon: LucideIcon;
-  accent: string;
-  href: string;
-}
-
-const MOCK_ACTIVITY: ActivityEvent[] = [
-  { id: 'act-1', agent: 'Developer Agent', description: 'Committed budgets_router.py — 4 endpoints', time: '2m ago', icon: Code2, accent: 'text-amber-400', href: '/runs' },
-  { id: 'act-2', agent: 'Database Agent', description: 'Migration 0001_init_schema.sql generated', time: '8m ago', icon: Database, accent: 'text-emerald-400', href: '/artifacts' },
-  { id: 'act-3', agent: 'Architect Agent', description: 'Architecture doc handed off to DB Agent', time: '12m ago', icon: Building2, accent: 'text-violet-400', href: '/agents/architect-agent' },
-  { id: 'act-4', agent: 'Product Agent', description: 'PRD finalized — 12 user stories', time: '15m ago', icon: FileText, accent: 'text-blue-400', href: '/artifacts' },
-  { id: 'act-5', agent: 'GitLab Agent', description: 'Published sdlc/rag-pdf-system branch', time: '28m ago', icon: GitBranch, accent: 'text-orange-400', href: '/agents/gitlab-agent' },
-  { id: 'act-6', agent: 'Product Agent', description: 'PRD v2 approved — scope locked', time: '1h ago', icon: FileText, accent: 'text-blue-400', href: '/checkpoints' },
-];
+const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
+  'orchestrator-agent': Activity,
+  'product-agent': FileText,
+  'architect-agent': Building2,
+  'database-agent': Database,
+  'developer-agent': Code2,
+  'gitlab-agent': GitBranch,
+  'qa-agent': Shield,
+};
 
 /* ─────────────────────────────────────────────────────
    Token Usage (corrected Claude model mapping)
@@ -122,6 +112,62 @@ const TOTAL_TOKENS = MOCK_TOKEN_USAGE.reduce((s, t) => s + t.totalTokens, 0);
 const TOTAL_COST = MOCK_TOKEN_USAGE.reduce((s, t) => s + t.cost, 0);
 const MAX_AGENT_TOKENS = Math.max(...MOCK_TOKEN_USAGE.map((t) => t.totalTokens));
 const ACTIVE_MODELS = new Set(MOCK_TOKEN_USAGE.map((t) => t.model)).size; // 2
+
+function LiveActivityFeed({ poll }: { poll: boolean }) {
+  const { data: activity, isLoading, isFetching } = useRecentActivity(poll);
+  const items = activity ?? [];
+
+  return (
+    <Card className="overflow-hidden border-white/[0.06] bg-card/80">
+      <SectionHeader title="Live Activity" icon={Zap} href="/logs" />
+      <div className="relative px-4 py-2">
+        {poll && isFetching && items.length > 0 ? (
+          <span className="absolute right-4 top-2 inline-flex items-center gap-1 text-[10px] font-medium text-blue-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" /> live
+          </span>
+        ) : null}
+        <div className="absolute bottom-0 left-[29px] top-0 w-px bg-white/[0.06]" />
+        {isLoading ? (
+          <div className="space-y-3 py-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            Submit a pipeline to see live agent activity here.
+          </p>
+        ) : (
+          items.map((event: ActivityFeedItem) => {
+            const Icon = ACTIVITY_AGENT_ICON[event.agentId] ?? Activity;
+            return (
+              <Link
+                key={event.id}
+                href={event.href}
+                className="group relative flex gap-3 pb-3.5 last:pb-1 transition-colors hover:bg-white/[0.01] rounded-lg -mx-1 px-1"
+              >
+                <div className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-card transition-all group-hover:border-white/[0.16]">
+                  <Icon className={cn('h-3 w-3', event.accent)} />
+                </div>
+                <div className="min-w-0 flex-1 pt-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className={cn('text-[11px] font-semibold', event.accent)}>{event.agent}</span>
+                    <span className="text-[10px] text-muted-foreground/60">{formatRelative(event.ts)}</span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                    <span className="text-foreground/80">{event.projectName}</span>
+                    {' · '}
+                    {event.description}
+                  </p>
+                </div>
+              </Link>
+            );
+          })
+        )}
+      </div>
+    </Card>
+  );
+}
 
 /* ─────────────────────────────────────────────────────
    Subcomponents
@@ -561,6 +607,7 @@ export default function DashboardPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.activity });
     }, 4000);
     return () => window.clearInterval(id);
   }, [hasActive, queryClient]);
@@ -644,26 +691,7 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-          <SectionHeader title="Live Activity" icon={Zap} href="/logs" />
-          <div className="relative px-4 py-2">
-            <div className="absolute bottom-0 left-[29px] top-0 w-px bg-white/[0.06]" />
-            {MOCK_ACTIVITY.map((event) => (
-              <Link key={event.id} href={event.href} className="group relative flex gap-3 pb-3.5 last:pb-1 transition-colors hover:bg-white/[0.01] rounded-lg -mx-1 px-1">
-                <div className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-card transition-all group-hover:border-white/[0.16]">
-                  <event.icon className={cn('h-3 w-3', event.accent)} />
-                </div>
-                <div className="min-w-0 flex-1 pt-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className={cn('text-[11px] font-semibold', event.accent)}>{event.agent}</span>
-                    <span className="text-[10px] text-muted-foreground/60">{event.time}</span>
-                  </div>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{event.description}</p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </Card>
+        <LiveActivityFeed poll={hasActive || activeRuns.length > 0 || (runs?.length ?? 0) > 0} />
       </div>
 
       {/* ── 5. Recent Artifacts + HITL Approvals (side by side) */}

@@ -83,6 +83,22 @@ def test_planned_steps_skip_db_and_gitlab() -> None:
     assert steps == ["developer-agent"]
 
 
+def test_planned_steps_gitlab_only_when_developer_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    options = PipelineOptions(
+        target_app="pr-diff-summarizer",
+        skip_product=True,
+        skip_architect=True,
+        skip_db=True,
+        skip_developer=True,
+        skip_gitlab=False,
+        transport="a2a",
+    )
+    steps = planned_steps(options)
+    assert steps == ["gitlab-agent"]
+
+
 def test_artifact_paths_for_product_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARTIFACT_STORE", "local")
     monkeypatch.delenv("ARTIFACT_S3_BUCKET", raising=False)

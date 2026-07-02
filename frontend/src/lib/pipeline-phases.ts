@@ -1,5 +1,36 @@
-import type { PipelineStep, SdlcPhase, StepStatus } from '@/src/types';
+import type { AgentName, PipelineStep, SdlcPhase, StepStatus } from '@/src/types';
 import { formatRelative } from './format';
+
+/** Agent responsible for each SDLC phase (timeline + run reconciliation). */
+export const PHASE_AGENT: Record<SdlcPhase, AgentName> = {
+  requirements: 'product-agent',
+  architecture: 'architect-agent',
+  data: 'database-agent',
+  implementation: 'developer-agent',
+  qa: 'qa-agent',
+  security: 'security-agent',
+  deploy: 'gitlab-agent',
+};
+
+/** Agents surfaced in logs / CloudWatch filters (MVP + orchestrator). */
+export const MVP_LOG_AGENT_NAMES: AgentName[] = [
+  'orchestrator-agent',
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+  'qa-agent',
+  'devops-agent',
+  'security-agent',
+];
+
+export const MVP_LOG_AGENT_SET = new Set<string>(MVP_LOG_AGENT_NAMES);
+
+export function parseLogAgentQuery(value: string | null | undefined): AgentName | undefined {
+  const trimmed = value?.trim();
+  return trimmed && MVP_LOG_AGENT_SET.has(trimmed) ? (trimmed as AgentName) : undefined;
+}
 
 /** User-facing labels for SDLC timeline phases. */
 export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {

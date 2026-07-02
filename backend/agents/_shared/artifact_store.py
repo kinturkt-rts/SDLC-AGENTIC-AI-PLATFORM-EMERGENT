@@ -563,3 +563,12 @@ def put_handoff(run_id: str, name: str, handoff: dict[str, Any]) -> str:
     put_artifact(run_id, rel, json.dumps(handoff, indent=2) + "\n", content_type="application/json")
     _put_dynamodb_pointer(run_id, f"HANDOFF#{name}", s3_uri=f"s3://{s3_bucket()}/{run_s3_prefix(run_id)}{rel}")
     return rel
+
+
+def get_handoff(run_id: str, name: str) -> dict[str, Any] | None:
+    """Load handoffs/<name>.json for a pipeline run."""
+    rel = f"handoffs/{name}.json"
+    try:
+        return json.loads(get_artifact_text(run_id, rel))
+    except FileNotFoundError:
+        return None

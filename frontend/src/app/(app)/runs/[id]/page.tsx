@@ -118,7 +118,8 @@ function RunEventItem({ event }: { event: RunEvent }) {
 
 export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: run, isLoading } = useRun(params.id);
-  const { data: events } = useRunEvents(params.id);
+  const isLive = run?.status === 'running' || run?.status === 'paused';
+  const { data: events } = useRunEvents(params.id, isLive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
 
@@ -142,7 +143,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     .map((c) => ({ ...c, status: hitlOverride[c.id] ?? c.status }));
   const waitingStep = run?.steps.find((s) => s.status === 'waiting_for_human') ?? null;
   const runEvents = [...(events ?? [])].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
-  const isLive = status === 'running';
+  const displayLive = status === 'running';
 
   const control = async (action: 'pause' | 'resume' | 'cancel') => {
     setBusy(action);
@@ -289,7 +290,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
             <Card className="flex flex-col border-white/[0.06] bg-card/80">
               <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Radio className="h-4 w-4 text-teal-400" /> Event Stream</h2>
-                {isLive ? (
+                {displayLive ? (
                   <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-400">
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" /> live
                   </span>

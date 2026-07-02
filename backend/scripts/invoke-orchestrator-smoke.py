@@ -173,7 +173,9 @@ def main() -> None:
     parser.add_argument("--skip-developer", action="store_true", default=True)
     parser.add_argument("--no-skip-developer", action="store_false", dest="skip_developer")
     parser.add_argument("--skip-gitlab", action="store_true", default=True)
+    parser.add_argument("--no-skip-gitlab", action="store_false", dest="skip_gitlab")
     parser.add_argument("--skip-verify", action="store_true", default=True)
+    parser.add_argument("--no-skip-verify", action="store_false", dest="skip_verify")
     args = parser.parse_args()
 
     _resolve_artifact_bucket()

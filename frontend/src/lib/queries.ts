@@ -22,6 +22,8 @@ export const queryKeys = {
   pipelineContext: (projectSlug: string) => ['pipelineContext', projectSlug] as const,
   logs: ['logs'] as const,
   dashboard: ['dashboard'] as const,
+  activity: ['activity'] as const,
+  settings: ['settings'] as const,
 };
 
 export const useAgents = () => useQuery({ queryKey: queryKeys.agents, queryFn: api.getAgents });
@@ -31,13 +33,35 @@ export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryF
 export const useProject = (id: string) =>
   useQuery({ queryKey: queryKeys.project(id), queryFn: () => api.getProject(id), enabled: !!id });
 export const usePipelines = () => useQuery({ queryKey: queryKeys.pipelines, queryFn: api.getPipelines });
-export const useRuns = () => useQuery({ queryKey: queryKeys.runs, queryFn: api.getRuns });
+export const useRuns = () =>
+  useQuery({
+    queryKey: queryKeys.runs,
+    queryFn: api.getRuns,
+    refetchInterval: (query) => {
+      const runs = query.state.data;
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 4000;
+      return false;
+    },
+  });
 export const useRun = (id: string) =>
-  useQuery({ queryKey: queryKeys.run(id), queryFn: () => api.getRun(id), enabled: !!id });
+  useQuery({
+    queryKey: queryKeys.run(id),
+    queryFn: () => api.getRun(id),
+    enabled: !!id,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'running' || status === 'paused' ? 4000 : false;
+    },
+  });
 export const useRunLogs = (id: string) =>
   useQuery({ queryKey: queryKeys.runLogs(id), queryFn: () => api.getRunLogs(id), enabled: !!id });
-export const useRunEvents = (id: string) =>
-  useQuery({ queryKey: queryKeys.runEvents(id), queryFn: () => api.getRunEvents(id), enabled: !!id });
+export const useRunEvents = (id: string, live = false) =>
+  useQuery({
+    queryKey: queryKeys.runEvents(id),
+    queryFn: () => api.getRunEvents(id),
+    enabled: !!id,
+    refetchInterval: live ? 4000 : false,
+  });
 export const useAgentMessages = (correlationId?: string) =>
   useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
 export const useArtifacts = () => useQuery({ queryKey: queryKeys.artifacts, queryFn: api.getArtifacts });
@@ -53,13 +77,32 @@ export type LogsFilter = {
   runId?: string;
   agent?: string;
   minutes?: number;
+  source?: 'local' | 'cloudwatch';
+  limit?: number;
 };
 
 export const useLogs = (filters?: LogsFilter) =>
   useQuery({
     queryKey: [...queryKeys.logs, filters ?? {}],
     queryFn: () => api.getLogs(filters),
-    refetchInterval: filters?.minutes && filters.minutes <= 30 ? 5000 : 30_000,
+    refetchInterval:
+      filters?.source === 'cloudwatch'
+        ? filters?.minutes && filters.minutes <= 30
+          ? 5000
+          : 15_000
+        : filters?.minutes && filters.minutes <= 30
+          ? 5000
+          : 30_000,
   });
 export const useDashboardSummary = () =>
   useQuery({ queryKey: queryKeys.dashboard, queryFn: api.getDashboardSummary });
+
+export const useRecentActivity = (poll = true) =>
+  useQuery({
+    queryKey: queryKeys.activity,
+    queryFn: () => api.getRecentActivity(),
+    refetchInterval: poll ? 4000 : false,
+  });
+
+export const usePlatformSettings = () =>
+  useQuery({ queryKey: queryKeys.settings, queryFn: () => api.getPlatformSettings() });

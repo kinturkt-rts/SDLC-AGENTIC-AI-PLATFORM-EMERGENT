@@ -177,32 +177,29 @@ export async function startPipeline(options: {
   );
 
   const python = await resolvePythonExecutable(repoRoot);
-  const orchestratorScript = path.join(repoRoot, 'agents', 'orchestrator-agent', 'orchestrator_agent.py');
-  const transport = (process.env.SDLC_PIPELINE_TRANSPORT?.trim().toLowerCase() || 'auto') as
-    | 'auto'
-    | 'local'
-    | 'a2a';
   const skipDeveloper =
-    (process.env.SDLC_PIPELINE_SKIP_DEVELOPER ?? 'true').trim().toLowerCase() !== 'false';
+    (process.env.SDLC_PIPELINE_SKIP_DEVELOPER ?? 'false').trim().toLowerCase() !== 'false';
   const skipGitlab =
     (process.env.SDLC_PIPELINE_SKIP_GITLAB ?? 'true').trim().toLowerCase() !== 'false';
   const skipVerify =
     (process.env.SDLC_PIPELINE_SKIP_VERIFY ?? 'true').trim().toLowerCase() !== 'false';
 
+  // Use the smoke script to invoke the cloud orchestrator end-to-end.
+  // --no-skip-postgres: cloud orchestrator runs apply_sql_to_rds.py itself (has scripts/, _shared/, POSTGRES_MCP_* env).
+  // --no-skip-developer: run developer-agent by default (skip with SDLC_PIPELINE_SKIP_DEVELOPER=true in .env.local).
+  const smokeScript = path.join(repoRoot, 'scripts', 'invoke-orchestrator-smoke.py');
+  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '1800', 10);
   const args = [
-    orchestratorScript,
-    '--run-pipeline',
-    '--target-app',
-    feature,
-    '--run-id',
-    runId,
-    '--input-file',
-    inputRel,
-    '--transport',
-    transport,
-    ...(skipDeveloper ? ['--skip-developer'] : []),
-    ...(skipGitlab ? ['--skip-gitlab'] : []),
-    ...(skipVerify ? ['--skip-verify'] : []),
+    smokeScript,
+    '--app', feature,
+    '--run-id', runId,
+    '--input-file', inputRel,
+    '--no-skip-db',
+    '--no-skip-postgres',
+    '--timeout', String(timeoutSec),
+    ...(skipDeveloper ? ['--skip-developer'] : ['--no-skip-developer']),
+    ...(skipGitlab ? ['--skip-gitlab'] : ['--no-skip-gitlab']),
+    ...(skipVerify ? ['--skip-verify'] : ['--no-skip-verify']),
   ];
 
   const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');

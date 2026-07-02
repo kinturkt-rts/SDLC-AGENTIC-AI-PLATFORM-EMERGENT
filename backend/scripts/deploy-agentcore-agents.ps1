@@ -95,11 +95,15 @@ function Import-GitLabMcpEndpointsFromConfig {
     }
     $config = Get-Content $configPath -Raw | ConvertFrom-Json
     if ($config.cloudFront.mcpUrl) {
-        [Environment]::SetEnvironmentVariable("GITLAB_MCP_URL", $config.cloudFront.mcpUrl.Trim(), "Process")
-        Write-Host "Using GITLAB_MCP_URL (CloudFront) from config/agentcore/gitlab-mcp-endpoints.json" -ForegroundColor DarkGray
+        if (-not [Environment]::GetEnvironmentVariable("GITLAB_MCP_URL")) {
+            [Environment]::SetEnvironmentVariable("GITLAB_MCP_URL", $config.cloudFront.mcpUrl.Trim(), "Process")
+            Write-Host "Using GITLAB_MCP_URL (CloudFront) from config/agentcore/gitlab-mcp-endpoints.json" -ForegroundColor DarkGray
+        }
     }
     if ($config.directMcpUrl) {
-        [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_DIRECT_URL", $config.directMcpUrl.Trim(), "Process")
+        if (-not [Environment]::GetEnvironmentVariable("GITLAB_MCP_HTTP_DIRECT_URL")) {
+            [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_DIRECT_URL", $config.directMcpUrl.Trim(), "Process")
+        }
     }
     if (-not $env:GITLAB_MCP_HTTP_BATCH_SIZE) {
         [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_BATCH_SIZE", "1", "Process")
@@ -171,7 +175,7 @@ $AgentSecretKeys = @{
     architect_agent        = @()
     database_agent         = @()
     developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
-    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
+    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE", "GITLAB_APPS_REPO")
     orchestrator_agent     = @()
     orchestrator_agent_vpc = @()
     security_agent         = @()
@@ -244,12 +248,36 @@ foreach ($agent in $TargetAgents) {
         $envBlock += Get-EnvPairsForKeys -Keys $OrchestratorRdsKeys
     }
     foreach ($item in $envBlock) {
+        if ($awsName -eq "gitlab_agent" -and $item -like "MODEL_ID=*") {
+            continue
+        }
         $deployArgs += @("--env", $item)
     }
     & agentcore @deployArgs
     if ($LASTEXITCODE -ne 0) {
         $DeployFailures += $awsName
         Write-Warning "Deploy failed for $awsName (exit $LASTEXITCODE)."
+    } else {
+        # agentcore deploy pushes a versioned tag but AgentCore references :latest.
+        # Re-tag the most recent versioned image as :latest so the runtime pulls it.
+        $ecrRepo = "bedrock-agentcore-$awsName"
+        python -c "
+import boto3, sys
+ecr = boto3.Session(profile_name='eks-admin-user', region_name='$Region').client('ecr')
+imgs = ecr.describe_images(repositoryName='$ecrRepo')['imageDetails']
+tagged = [i for i in imgs if i.get('imageTags') and 'latest' not in i['imageTags']]
+tagged.sort(key=lambda i: i['imagePushedAt'], reverse=True)
+if not tagged:
+    sys.exit(0)
+vtag = tagged[0]['imageTags'][0]
+resp = ecr.batch_get_image(repositoryName='$ecrRepo', imageIds=[{'imageTag': vtag}])
+m = resp['images'][0]['imageManifest']
+try:
+    ecr.put_image(repositoryName='$ecrRepo', imageTag='latest', imageManifest=m)
+    print('  Tagged ' + vtag + ' as :latest in $ecrRepo')
+except ecr.exceptions.ImageAlreadyExistsException:
+    print('  :latest already current in $ecrRepo')
+" 2>`$null
     }
 }
 

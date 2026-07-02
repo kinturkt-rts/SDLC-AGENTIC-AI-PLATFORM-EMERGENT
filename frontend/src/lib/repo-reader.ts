@@ -11,8 +11,16 @@ import {
   listS3ProjectSlugs,
   countS3RunArtifacts,
   getS3RunLastModified,
+  getS3RunLastModifiedMs,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
+import { parseLogTerminalStatus, reconcileRunStatus } from './run-reconcile';
+import {
+  buildRunEvents,
+  runEventToActivityFeed,
+  type ActivityFeedItem,
+  type S3ArtifactRef,
+} from './run-events';
 import type {
   Agent,
   AgentAvailability,
@@ -388,17 +396,7 @@ async function listPipelineLogRunIds(): Promise<string[]> {
   }
 }
 
-const KNOWN_AGENTS = new Set<string>([
-  'orchestrator-agent',
-  'product-agent',
-  'architect-agent',
-  'database-agent',
-  'developer-agent',
-  'gitlab-agent',
-  'qa-agent',
-  'devops-agent',
-  'security-agent',
-]);
+import { MVP_LOG_AGENT_SET } from './pipeline-phases';
 
 function inferLogLevel(line: string): LogEntry['level'] {
   const lower = line.toLowerCase();
@@ -417,9 +415,17 @@ function inferLogLevel(line: string): LogEntry['level'] {
 }
 
 function parseLogLine(line: string): { agent: AgentName; message: string } {
-  const agentMatch = line.match(/^\[([a-z-]+-agent)\]\s*(.*)$/);
-  if (agentMatch && KNOWN_AGENTS.has(agentMatch[1])) {
-    return { agent: agentMatch[1] as AgentName, message: agentMatch[2] || line };
+  const agentMatch = line.match(/^\[([a-z-]+(?:-agent)?)\]\s*(.*)$/);
+  if (agentMatch) {
+    const raw = agentMatch[1];
+    const agentId = raw.endsWith('-agent') ? raw : `${raw === 'orchestrator' ? 'orchestrator' : raw}-agent`;
+    const normalized =
+      agentId === 'orchestrator-agent' || MVP_LOG_AGENT_SET.has(agentId)
+        ? (agentId as AgentName)
+        : null;
+    if (normalized) {
+      return { agent: normalized, message: agentMatch[2] || line };
+    }
   }
   return { agent: 'orchestrator-agent', message: line };
 }
@@ -495,7 +501,8 @@ async function latestUuidRunMtime(runId: string): Promise<string> {
 function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   const next: LiveRunState = { ...live, steps: live.steps ? [...live.steps] : live.steps };
 
-  if (log.includes('SDLC pipeline completed')) {
+  const terminal = parseLogTerminalStatus(log);
+  if (terminal?.status === 'completed') {
     next.status = 'completed';
     next.currentStep = null;
     if (next.steps) {
@@ -503,13 +510,10 @@ function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
         if (step.status !== 'skipped') step.status = 'completed';
       }
     }
-  } else if (log.includes('SDLC pipeline failed')) {
+  } else if (terminal?.status === 'failed') {
     next.status = 'failed';
-    const errLine = log
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.startsWith('error:'));
-    if (errLine) next.error = errLine.replace(/^error:\s*/i, '');
+    next.currentStep = null;
+    if (terminal.error) next.error = terminal.error;
   } else if (next.status === 'queued' && PIPELINE_AGENT_ORDER.some((a) => log.includes(`[${a}]`))) {
     next.status = 'running';
   }
@@ -543,22 +547,20 @@ function mergeStepProgressFromPhases(
   status: RunStatus,
 ): LiveStepState[] | undefined {
   if (!live.steps?.length) return live.steps;
-  let firstOpen: number | null = null;
-  return live.steps.map((step, idx) => {
+  let firstOpen = false;
+  return live.steps.map((step) => {
     const phase = agentPhase[step.name];
     if (!phase) return step;
-    const done = completed[phase];
-    if (done) return { ...step, status: 'completed' };
-    if (step.status === 'running' || step.status === 'completed' || step.status === 'failed') {
-      return step;
-    }
-    if (firstOpen === null) {
-      firstOpen = idx;
+    if (step.status === 'skipped') return step;
+    if (completed[phase]) return { ...step, status: 'completed' };
+    if (!firstOpen) {
+      firstOpen = true;
       if (status === 'failed') return { ...step, status: 'failed' };
       if (status === 'completed') return { ...step, status: 'completed' };
       if (status === 'running') return { ...step, status: 'running' };
+      return { ...step, status: 'queued' };
     }
-    return step;
+    return { ...step, status: 'queued' };
   });
 }
 
@@ -571,31 +573,52 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
     : await readContextFile(slug);
 
-  const isActive = enriched.status === 'running' || enriched.status === 'queued';
   const phaseDone = await phaseCompletionForRun(runId, slug, ctx);
+  const startedAt =
+    enriched.startedAt ?? (UUID_RE.test(runId) ? await latestUuidRunMtime(runId) : await latestPipelineMtime(slug));
+  const logMtimeMs = await pipelineLogMtime(runId);
+  const s3MtimeMs = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
 
-  // While a run is active, trust run.json step state (do not mark complete from slug-level artifacts).
-  if (!isActive && enriched.steps?.length) {
+  const reconciled = reconcileRunStatus({
+    status: enriched.status as RunStatus,
+    startedAt,
+    logMtimeMs,
+    s3MtimeMs,
+    logText: log,
+    phaseDone,
+    error: enriched.error,
+  });
+
+  enriched = {
+    ...enriched,
+    status: reconciled.status as LiveRunState['status'],
+    currentStep: reconciled.currentStep,
+    error: reconciled.error ?? enriched.error,
+  };
+
+  if (enriched.steps?.length) {
     enriched = {
       ...enriched,
-      steps: mergeStepProgressFromPhases(enriched, phaseDone, enriched.status as RunStatus),
+      steps: mergeStepProgressFromPhases(enriched, phaseDone, reconciled.status),
     };
   }
 
-  const startedAt =
-    enriched.startedAt ?? (UUID_RE.test(runId) ? await latestUuidRunMtime(runId) : await latestPipelineMtime(slug));
-  const finishedAt = enriched.finishedAt ?? null;
+  const finishedAt =
+    enriched.finishedAt ??
+    (reconciled.status === 'completed' || reconciled.status === 'failed'
+      ? new Date(lastRunActivityMsFromParts(startedAt, logMtimeMs, s3MtimeMs)).toISOString()
+      : null);
   const elapsedSec = finishedAt
     ? Math.max(1, Math.floor((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000))
     : Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
 
-  const currentAgentName = enriched.currentStep ?? null;
+  const currentAgentName = reconciled.currentStep ?? null;
   const currentPhase =
     currentAgentName && currentAgentName in agentPhase ? agentPhase[currentAgentName] : null;
 
   const steps = (enriched.steps?.length
     ? buildStepsFromLive(runId, enriched)
-    : buildSteps(runId, phaseDone, enriched.status as RunStatus)
+    : buildSteps(runId, phaseDone, reconciled.status)
   ).filter((step) => MVP_TIMELINE_PHASES.includes(step.phase));
 
   return {
@@ -603,11 +626,11 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     projectId: slug,
     projectName: slugToTitle(slug),
     pipeline: 'Standard SDLC',
-    status: enriched.status as RunStatus,
+    status: reconciled.status,
     currentPhase:
-      enriched.status === 'completed' || enriched.status === 'failed' ? null : currentPhase,
+      reconciled.status === 'completed' || reconciled.status === 'failed' ? null : currentPhase,
     currentAgent:
-      enriched.status === 'completed' || enriched.status === 'failed' || !currentAgentName
+      reconciled.status === 'completed' || reconciled.status === 'failed' || !currentAgentName
         ? null
         : (currentAgentName as AgentName),
     startedAt,
@@ -616,6 +639,15 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     triggeredBy: enriched.triggeredBy ?? 'frontend',
     steps,
   };
+}
+
+function lastRunActivityMsFromParts(
+  startedAt: string,
+  logMtimeMs: number,
+  s3MtimeMs: number,
+): number {
+  const started = Date.parse(startedAt);
+  return Math.max(Number.isFinite(started) ? started : 0, logMtimeMs || 0, s3MtimeMs || 0);
 }
 
 async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
@@ -1343,77 +1375,65 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
   return mockPipelines;
 }
 
-export async function listRunEvents(runId: string): Promise<RunEvent[]> {
-  const run = await getRun(runId);
+export async function listRunEvents(runId: string, cachedRun?: PipelineRun): Promise<RunEvent[]> {
+  const run = cachedRun ?? (await getRun(runId));
   if (!run) return [];
 
-  const events: RunEvent[] = [];
-  let i = 0;
-
   const log = await readPipelineLog(runId);
-  if (log) {
-    const lines = log.split('\n').map((l) => l.trim()).filter(Boolean);
-    for (const line of lines) {
-      const agentMatch = line.match(/^\[([a-z-]+-agent)\]\s*(.*)$/);
-      if (agentMatch) {
-        events.push({
-          id: `ev-log-${runId}-${i++}`,
-          runId,
-          kind: 'log',
-          ts: run.startedAt,
-          level: line.toLowerCase().includes('failed') ? 'error' : 'info',
-          agent: agentMatch[1] as AgentName,
-          message: agentMatch[2] || line,
-        });
-      } else if (line.startsWith('error:')) {
-        events.push({
-          id: `ev-log-${runId}-${i++}`,
-          runId,
-          kind: 'log',
-          ts: run.startedAt,
-          level: 'error',
-          agent: 'orchestrator-agent',
-          message: line,
-        });
-      }
+  const logMtimeMs = await pipelineLogMtime(runId);
+  const s3Artifacts: S3ArtifactRef[] = [];
+
+  if (isS3Store()) {
+    const prefix = runS3Prefix(runId);
+    const files = await listS3RunArtifacts(runId);
+    for (const file of files) {
+      const relPath = file.key.replace(prefix, '');
+      if (isSkippableS3ArtifactRelPath(relPath)) continue;
+      s3Artifacts.push({
+        relPath,
+        lastModified: file.lastModified,
+        sizeKb: file.sizeKb,
+      });
     }
   }
 
-  for (const step of run.steps) {
-    if (step.status === 'completed' || step.status === 'running') {
-      events.push({
-        id: `ev-${runId}-${i++}`,
-        runId,
-        kind: 'phase.started',
-        ts: step.startedAt ?? run.startedAt,
-        phase: step.phase,
-        agent: step.agent,
-      });
-    }
-    if (step.status === 'completed') {
-      events.push({
-        id: `ev-${runId}-${i++}`,
-        runId,
-        kind: 'phase.completed',
-        ts: step.finishedAt ?? run.startedAt,
-        phase: step.phase,
-        agent: step.agent,
-        durationSec: step.durationSec ?? 0,
-      });
-    }
-    if (step.status === 'failed') {
-      events.push({
-        id: `ev-${runId}-${i++}`,
-        runId,
-        kind: 'step.failed',
-        ts: step.startedAt ?? run.startedAt,
-        phase: step.phase,
-        agent: step.agent,
-        error: 'Step did not complete successfully',
-      });
+  return buildRunEvents({
+    run,
+    log,
+    s3Artifacts,
+    latestActivityTs: new Date(
+      Math.max(
+        Date.parse(run.startedAt),
+        logMtimeMs,
+        isS3Store() ? await getS3RunLastModifiedMs(runId) : 0,
+      ),
+    ).toISOString(),
+  });
+}
+
+/** Recent pipeline activity for the dashboard — S3 artifacts + run lifecycle (cloud-aware). */
+export async function listRecentActivity(limit = 8): Promise<ActivityFeedItem[]> {
+  const runs = await listRuns();
+  const ranked = [...runs].sort((a, b) => {
+    const aLive = a.status === 'running' || a.status === 'paused' ? 1 : 0;
+    const bLive = b.status === 'running' || b.status === 'paused' ? 1 : 0;
+    if (aLive !== bLive) return bLive - aLive;
+    return b.startedAt.localeCompare(a.startedAt);
+  });
+
+  const scan = ranked.slice(0, 8);
+  const feed: ActivityFeedItem[] = [];
+
+  for (const run of scan) {
+    const events = await listRunEvents(run.id, run);
+    for (const event of events.slice(0, 12)) {
+      feed.push(runEventToActivityFeed(run, event));
     }
   }
-  return events;
+
+  return feed
+    .sort((a, b) => b.ts.localeCompare(a.ts))
+    .slice(0, limit);
 }
 
 /** Safe read of a repo file for diagram/artifact preview (path must stay under repo root). */

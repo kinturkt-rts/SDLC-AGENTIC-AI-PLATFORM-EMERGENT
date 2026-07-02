@@ -197,8 +197,11 @@ def planned_steps(options: PipelineOptions) -> list[str]:
 
 
 def _should_run_gitlab(options: PipelineOptions) -> bool:
-    if options.skip_gitlab or options.skip_developer:
+    if options.skip_gitlab:
         return False
+    # A2A/AgentCore: gitlab-agent runtime holds GITLAB_* secrets; orchestrator only schedules the step.
+    if resolve_transport(options.transport) == "a2a":
+        return True
     token = os.getenv("GITLAB_PERSONAL_ACCESS_TOKEN") or os.getenv("GITLAB_TOKEN")
     if not token:
         return False
@@ -843,7 +846,26 @@ class SdlcPipelineRunner:
 
         self._delivery_check("app")
 
+    def _read_gitlab_handoff(self) -> dict[str, Any] | None:
+        """Load gitlab handoff from S3 run store or local repo path."""
+        if self.run_id and is_s3_store():
+            from .artifact_store import get_handoff
+
+            return get_handoff(self.run_id, "gitlab")
+
+        handoff_path = self.root / gitlab_handoff_rel_for_app(self.feature).replace("/", os.sep)
+        if handoff_path.is_file():
+            return json.loads(handoff_path.read_text(encoding="utf-8"))
+
+        from .pipeline_context import slugify
+
+        legacy = self.root / "agents" / "pipeline" / f"{slugify(self.feature)}.gitlab-handoff.json"
+        if legacy.is_file():
+            return json.loads(legacy.read_text(encoding="utf-8"))
+        return None
+
     def _step_gitlab(self) -> None:
+        apps_repo = os.getenv("GITLAB_APPS_REPO", "").strip().lower() in {"1", "true", "yes", "on"}
         if self.transport == "local":
             args = [
                 "agents/gitlab-agent/gitlab_agent.py",
@@ -852,21 +874,20 @@ class SdlcPipelineRunner:
                 "--context-file",
                 self.context_file,
             ]
+            if apps_repo:
+                args.append("--apps-repo")
             if self.options.gitlab_project:
                 args.extend(["--gitlab-project", self.options.gitlab_project])
             if self.options.gitlab_base:
                 args.extend(["--gitlab-base", self.options.gitlab_base])
             self._run_python(args, step="gitlab-agent")
         else:
-            self._invoke_a2a(
-                "gitlab-agent",
-                f"Publish SDLC artifacts for {self.feature} to GitLab branch sdlc/{self.feature}.",
-                step="gitlab-agent",
-            )
+            branch_hint = self.feature if apps_repo else f"sdlc/{self.feature}"
+            task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
+            self._invoke_a2a("gitlab-agent", task, step="gitlab-agent")
 
-        handoff_path = self.root / gitlab_handoff_rel_for_app(self.feature).replace("/", os.sep)
-        if handoff_path.is_file():
-            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff = self._read_gitlab_handoff()
+        if handoff:
             self._update_context(
                 {
                     "mergeRequestIid": handoff.get("mergeRequestIid"),
@@ -875,7 +896,15 @@ class SdlcPipelineRunner:
                     "featureBranch": handoff.get("branch"),
                 }
             )
-            self.artifacts["GitLab"] = gitlab_handoff_rel_for_app(self.feature)
+            self.artifacts["GitLab"] = (
+                f"handoffs/gitlab.json"
+                if self.run_id and is_s3_store()
+                else gitlab_handoff_rel_for_app(self.feature)
+            )
+        if not handoff or handoff.get("status") != "published":
+            detail = (handoff or {}).get("error") or "no gitlab handoff produced"
+            raise PipelineStepError(f"gitlab-agent publish failed: {detail}")
+
         self.agents_run.append("gitlab-agent")
         self._after_agent_step("gitlab-agent")
 

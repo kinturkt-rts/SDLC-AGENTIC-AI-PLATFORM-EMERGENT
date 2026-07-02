@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ScrollText } from 'lucide-react';
+import { ScrollText, Cloud, HardDrive } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -12,12 +12,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { useLogs, useRuns, type LogsFilter } from '@/src/lib/queries';
+import { filterLogRows } from '@/src/lib/log-filters';
 import { formatRelative } from '@/src/lib/format';
 import type { AgentName, LogEntry } from '@/src/types';
+
+type LogSource = 'cloudwatch' | 'local';
 
 const LEVELS: (LogEntry['level'] | 'all')[] = ['all', 'info', 'warn', 'error', 'debug'];
 
@@ -26,6 +30,7 @@ const TIME_WINDOWS: { value: string; minutes?: number; label: string }[] = [
   { value: '15', minutes: 15, label: 'Last 15 min' },
   { value: '30', minutes: 30, label: 'Last 30 min' },
   { value: '60', minutes: 60, label: 'Last 1 hour' },
+  { value: '240', minutes: 240, label: 'Last 4 hours' },
   { value: 'all', label: 'All time' },
 ];
 
@@ -40,49 +45,58 @@ const MVP_AGENTS: { id: AgentName; label: string }[] = [
 
 export default function LogsPage() {
   const { data: runs } = useRuns();
+  const [source, setSource] = React.useState<LogSource>('cloudwatch');
   const [level, setLevel] = React.useState<LogEntry['level'] | 'all'>('all');
   const [q, setQ] = React.useState('');
-  const [timeWindow, setTimeWindow] = React.useState('30');
+  const [timeWindow, setTimeWindow] = React.useState('60');
   const [runId, setRunId] = React.useState<string>('all');
   const [agent, setAgent] = React.useState<string>('all');
 
   const minutes = TIME_WINDOWS.find((w) => w.value === timeWindow)?.minutes;
   const filters: LogsFilter = {
+    source,
     ...(minutes ? { minutes } : {}),
     ...(runId !== 'all' ? { runId } : {}),
     ...(agent !== 'all' ? { agent } : {}),
+    limit: 500,
   };
 
   const { data: logs, isLoading, isFetching } = useLogs(filters);
 
-  const rows = (logs ?? [])
-    .filter((l) => level === 'all' || l.level === level)
-    .filter(
-      (l) =>
-        !q ||
-        l.message.toLowerCase().includes(q.toLowerCase()) ||
-        l.agent.includes(q.toLowerCase()) ||
-        l.runId.toLowerCase().includes(q.toLowerCase()),
-    )
-    .sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
+  const rows = filterLogRows(logs ?? [], { q, level }).sort(
+    (a, b) => +new Date(b.ts) - +new Date(a.ts),
+  );
 
   const runOptions = [...(runs ?? [])]
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
     .slice(0, 20);
+
+  const isCloudWatch = source === 'cloudwatch';
 
   return (
     <>
       <PageHeader
         eyebrow="Observe"
         title="Pipeline logs"
-        description="Orchestrator output from backend/agents/pipeline/.logs/ — written when you Submit & Run from the dashboard."
         actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <Tabs value={source} onValueChange={(v) => setSource(v as LogSource)}>
+            <TabsList className="h-9">
+              <TabsTrigger value="cloudwatch" className="gap-1.5 text-xs">
+                <Cloud className="h-3.5 w-3.5" /> CloudWatch
+              </TabsTrigger>
+              <TabsTrigger value="local" className="gap-1.5 text-xs">
+                <HardDrive className="h-3.5 w-3.5" /> Local
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        }
+        toolbar={
+          <>
             <Input
               placeholder="Search message, agent, run…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              className="h-9 w-[200px] border-white/[0.08] bg-white/[0.02] placeholder:text-muted-foreground/40 focus:border-teal-500/30"
+              className="h-9 w-full min-w-[200px] flex-1 border-white/[0.08] bg-white/[0.02] placeholder:text-muted-foreground/40 focus:border-teal-500/30 sm:max-w-xs"
             />
             <Select value={timeWindow} onValueChange={setTimeWindow}>
               <SelectTrigger className="h-9 w-[130px] border-white/[0.08] bg-white/[0.02]">
@@ -130,21 +144,38 @@ export default function LogsPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </>
         }
       />
 
-      {isFetching && !isLoading ? (
-        <p className="mb-2 text-xs text-muted-foreground">Refreshing…</p>
-      ) : null}
+      <p className="mb-3 text-sm text-muted-foreground">
+        {isCloudWatch ? (
+          <>CloudWatch logs of agents — live stdout from deployed Bedrock AgentCore runtimes.</>
+        ) : (
+          <>Local pipeline logs — orchestrator output captured on this machine.</>
+        )}
+      </p>
+
+      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className={isCloudWatch ? 'text-teal-400' : ''}>
+          {isCloudWatch ? 'CloudWatch' : 'Local'}
+        </span>
+        <span>·</span>
+        <span>{rows.length} entries</span>
+        {isFetching && !isLoading ? <span>· refreshing…</span> : null}
+      </div>
 
       {isLoading ? (
         <Skeleton className="h-96 w-full rounded-xl" />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={ScrollText}
-          title="No pipeline logs"
-          description="Submit a run from the dashboard to generate logs under backend/agents/pipeline/.logs/<runId>.log"
+          title={isCloudWatch ? 'No CloudWatch log events' : 'No pipeline logs'}
+          description={
+            isCloudWatch
+              ? 'No events in this window for the selected agent(s). Try widening the time window, or switch to Local to view smoke-script captures.'
+              : 'Start a pipeline run from the dashboard to capture orchestrator output locally.'
+          }
         />
       ) : (
         <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-card/80 font-mono text-xs">
@@ -153,15 +184,19 @@ export default function LogsPage() {
               key={l.id}
               className="flex items-start gap-3 border-b border-white/[0.04] px-3 py-2.5 last:border-0 transition-colors hover:bg-white/[0.02]"
             >
-              <span className="w-16 shrink-0 text-muted-foreground">{formatRelative(l.ts)}</span>
+              <span className="w-32 shrink-0 text-muted-foreground">{formatRelative(l.ts)}</span>
               <StatusBadge status={l.level} size="sm" className="shrink-0" />
-              <span className="w-36 shrink-0 truncate text-teal-400">{l.agent.replace('-agent', '')}</span>
-              <Link
-                href={`/runs/${l.runId}`}
-                className="w-28 shrink-0 truncate text-muted-foreground hover:text-teal-400"
-              >
-                {l.runId.slice(0, 13)}
-              </Link>
+              <span className="w-32 shrink-0 truncate text-teal-400">{l.agent.replace('-agent', '')}</span>
+              {l.runId ? (
+                <Link
+                  href={`/runs/${l.runId}`}
+                  className="w-28 shrink-0 truncate text-muted-foreground hover:text-teal-400"
+                >
+                  {l.runId.slice(0, 13)}
+                </Link>
+              ) : (
+                <span className="w-28 shrink-0 truncate text-muted-foreground/40">—</span>
+              )}
               <span className="flex-1 whitespace-pre-wrap break-words text-foreground">{l.message}</span>
             </div>
           ))}

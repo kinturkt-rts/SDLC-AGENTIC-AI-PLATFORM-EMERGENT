@@ -661,6 +661,28 @@ def _is_cloudfront_waf_403(exc: BaseException) -> bool:
     return "403 forbidden" in message and "cloudfront.net/mcp" in message
 
 
+def _empty_publish_diagnostic(slug: str, *, root: Path) -> str:
+    """Hint why file collection returned nothing (S3 layout vs monorepo layout)."""
+    cloud = is_cloud_materialized_workspace(root, slug)
+    local_app = (root / "target-apps" / slug).is_dir()
+    cloud_app = (root / slug).is_dir()
+    entries = len(collect_feature_artifact_entries(slug, root=root))
+    parts = [
+        f" workspace={root}",
+        f"cloud_layout={cloud}",
+        f"has_target_apps={local_app}",
+        f"has_slug_root={cloud_app}",
+        f"mapped_entries={entries}",
+    ]
+    if cloud_app and not local_app and entries == 0:
+        parts.append(
+            "hint=cloud S3 tree present but no paths mapped; redeploy gitlab_agent with latest _shared/gitlab_mcp_actions.py"
+        )
+    elif not cloud_app and not local_app:
+        parts.append("hint=materialized workspace empty or wrong runId; check ARTIFACT_STORE=s3 and S3 IAM on runtime")
+    return " (" + ", ".join(parts) + ")"
+
+
 async def publish_feature_async(
     feature: str,
     *,
@@ -686,9 +708,10 @@ async def publish_feature_async(
     project_id = cfg["project"]
 
     if not files:
+        detail = _empty_publish_diagnostic(slug, root=root_path)
         return {
             "ok": False,
-            "error": f"No publishable artifacts found for '{slug}'",
+            "error": f"No publishable artifacts found for '{slug}'{detail}",
             "targetApp": slug,
             "branch": publish_branch,
             **cfg,

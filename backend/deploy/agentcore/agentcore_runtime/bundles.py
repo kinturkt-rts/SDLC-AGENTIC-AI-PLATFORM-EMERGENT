@@ -266,14 +266,6 @@ def web_crawler_agent_bundle() -> BundleFactory:
 
 
 def gitlab_agent_bundle() -> BundleFactory:
-    import tempfile
-    from pathlib import Path
-
-    from strands import tool
-
-    from _shared.artifact_store import is_s3_store, materialize_run, put_handoff, resolve_run_id
-    from _shared.runner import build_agent
-
     mod = import_agent_module("gitlab-agent")
 
     skills = [
@@ -285,37 +277,39 @@ def gitlab_agent_bundle() -> BundleFactory:
         )
     ]
 
-    @tool
-    def gitlab_publish_feature(target_app: str, run_id: str = "") -> str:
-        """Publish SDLC outputs for targetApp to GitLab (branch sdlc/<app>)."""
-        ctx: dict[str, object] = {"targetApp": target_app}
-        rid = (run_id or resolve_run_id(ctx) or os.getenv("PIPELINE_RUN_ID", "")).strip()
-        if rid:
-            ctx["runId"] = rid
-
-        root: Path | None = None
-        if rid and is_s3_store():
-            root = materialize_run(rid, Path(tempfile.mkdtemp(prefix="sdlc-gitlab-")))
-
-        summary, handoff = mod.run_publish(  # noqa: SLF001
-            target_app,
-            dict(ctx),
-            open_mr=env_flag("GITLAB_OPEN_MR"),
-            apps_repo=env_flag("GITLAB_APPS_REPO"),
-            root=root,
-        )
-        if rid and is_s3_store():
-            put_handoff(rid, "gitlab", handoff)
-        return summary
-
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
+        import logging
+
+        from strands import tool
+
+        from _shared.runner import build_agent
+
+        logger = logging.getLogger("agentcore.gitlab_agent")
+
+        @tool
+        def gitlab_publish_feature(target_app: str, run_id: str = "") -> str:
+            """Publish SDLC artifacts for a target app to GitLab.
+
+            Materializes S3 run artifacts (if configured) and publishes them
+            to a GitLab branch via MCP.  Returns a markdown summary.
+
+            Args:
+                target_app: Feature / service slug (e.g. "pr-diff-summarizer").
+                run_id: Pipeline run UUID for S3 artifact retrieval.
+            """
+            logger.info("gitlab_publish_feature called: app=%s run_id=%s", target_app, run_id)
+            summary, handoff = mod.run_publish_for_agentcore(target_app, run_id)
+            logger.info("publish result: status=%s paths=%d", handoff.get("status"), len(handoff.get("pathsPublished", [])))
+            return summary
+
         agent = build_agent(
             "gitlab-agent",
             system_prompt=(
-                "You publish SDLC feature artifacts to GitLab. "
-                "When asked to publish, call gitlab_publish_feature with targetApp "
-                "and runId from context when present."
+                "You are the GitLab publish agent. "
+                "When asked to publish, call gitlab_publish_feature with the "
+                "targetApp and runId from the user message. "
+                "Return the tool output verbatim."
             ),
             tools=[gitlab_publish_feature],
             enable_a2a_peers=False,

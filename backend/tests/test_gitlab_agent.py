@@ -70,3 +70,17 @@ def test_write_gitlab_handoff_creates_json(tmp_path: Path, monkeypatch) -> None:
     assert handoff_path.is_file()
     data = json.loads(handoff_path.read_text(encoding="utf-8"))
     assert data["branch"] == "sdlc/training-compliance"
+
+
+def test_parse_publish_request_from_context_block() -> None:
+    mod = _load_gitlab_agent_module()
+    message = (
+        "Publish SDLC artifacts for pr-diff-summarizer to GitLab.\n\n"
+        'Context:\n{"targetApp": "pr-diff-summarizer", "runId": "92099e5f-be02-4894-9276-67f2e5a72343"}'
+    )
+    parsed = mod.parse_publish_request(message)
+    assert parsed is not None
+    app, run_id, ctx = parsed
+    assert app == "pr-diff-summarizer"
+    assert run_id == "92099e5f-be02-4894-9276-67f2e5a72343"
+    assert ctx["targetApp"] == "pr-diff-summarizer"
