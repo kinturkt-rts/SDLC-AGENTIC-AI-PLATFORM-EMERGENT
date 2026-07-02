@@ -1,4 +1,4 @@
-"""Call jmrplens/gitlab-mcp-server from agents (stdio locally or HTTP on ECS)."""
+"""Call jmrplens/gitlab-mcp-server from agents (stdio locally or HTTP on AWS)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import urljoin, urlparse
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
@@ -37,41 +38,78 @@ class GitLabMcpError(RuntimeError):
     """Raised when a jmrplens MCP tool returns isError."""
 
 
-def gitlab_mcp_url() -> str | None:
-    """Remote Streamable HTTP MCP endpoint (e.g. ECS behind CloudFront)."""
-    url = os.getenv("GITLAB_MCP_URL", "").strip().rstrip("/")
-    return url or None
+def _gitlab_instance_url() -> str:
+    explicit = os.getenv("GITLAB_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    api = os.getenv("GITLAB_API_URL", "").strip().rstrip("/")
+    if api.endswith("/api/v4"):
+        return api[: -len("/api/v4")]
+    return "https://code.junodev.net"
 
 
-def gitlab_mcp_http_headers() -> dict[str, str]:
-    """Headers required by the deployed jmrplens HTTP MCP server."""
+def _gitlab_token() -> str:
     token = (
         os.getenv("GITLAB_TOKEN", "").strip()
         or os.getenv("GITLAB_PERSONAL_ACCESS_TOKEN", "").strip()
+        or os.getenv("GL_TOKEN", "").strip()
     )
     if not token:
         raise GitLabMcpError(
             "Set GITLAB_TOKEN or GITLAB_PERSONAL_ACCESS_TOKEN for GitLab MCP."
         )
+    return token
 
-    explicit = os.getenv("GITLAB_URL", "").strip().rstrip("/")
-    if explicit:
-        gitlab_url = explicit
-    else:
-        api = os.getenv("GITLAB_API_URL", "").strip().rstrip("/")
-        if api.endswith("/api/v4"):
-            gitlab_url = api[: -len("/api/v4")]
-        else:
-            gitlab_url = "https://code.junodev.net"
 
-    return {
-        "PRIVATE-TOKEN": token,
-        "GITLAB-URL": gitlab_url,
-    }
+def gitlab_mcp_http_headers() -> dict[str, str]:
+    """Per-request auth for HTTP mode (token not baked into the MCP server image)."""
+    headers = {"PRIVATE-TOKEN": _gitlab_token()}
+    if os.getenv("GITLAB_MCP_SEND_GITLAB_URL", "true").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }:
+        headers["GITLAB-URL"] = _gitlab_instance_url()
+    return headers
+
+
+def normalize_gitlab_mcp_http_url(url: str) -> str:
+    """Ensure jmrplens Streamable HTTP path (/mcp) is present."""
+    trimmed = url.strip().rstrip("/")
+    if trimmed.endswith("/mcp"):
+        return trimmed
+    parsed = urlparse(trimmed)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"Invalid GitLab MCP HTTP URL: {url!r}")
+    return urljoin(f"{parsed.scheme}://{parsed.netloc}/", "mcp")
+
+
+def _raw_gitlab_mcp_http_url() -> str | None:
+    raw = (
+        os.getenv("GITLAB_MCP_URL", "").strip()
+        or os.getenv("GITLAB_MCP_HTTP_URL", "").strip()
+    )
+    return raw or None
+
+
+def gitlab_mcp_url() -> str | None:
+    """Remote Streamable HTTP MCP endpoint (CloudFront / ECS).
+
+    Accepts GITLAB_MCP_URL (.env.local) or GITLAB_MCP_HTTP_URL (AgentCore deploy docs).
+    """
+    raw = _raw_gitlab_mcp_http_url()
+    if not raw:
+        return None
+    return normalize_gitlab_mcp_http_url(raw)
+
+
+def gitlab_mcp_http_url() -> str | None:
+    """Alias for gitlab_mcp_url() — matches ECS/AgentCore deploy naming."""
+    return gitlab_mcp_url()
 
 
 def use_gitlab_mcp_http() -> bool:
-    return gitlab_mcp_url() is not None
+    return _raw_gitlab_mcp_http_url() is not None
 
 
 def uses_dynamic_gitlab_tool_surface(tool_names: set[str]) -> bool:
@@ -128,7 +166,7 @@ async def _stdio_gitlab_mcp_session() -> AsyncIterator[ClientSession]:
 async def _http_gitlab_mcp_session() -> AsyncIterator[ClientSession]:
     url = gitlab_mcp_url()
     if not url:
-        raise GitLabMcpError("GITLAB_MCP_URL is not set.")
+        raise GitLabMcpError("Set GITLAB_MCP_URL or GITLAB_MCP_HTTP_URL for HTTP GitLab MCP.")
 
     headers = gitlab_mcp_http_headers()
     async with create_mcp_http_client(headers=headers) as client:
@@ -146,7 +184,7 @@ async def _configure_tool_surface(session: ClientSession) -> None:
 
 @asynccontextmanager
 async def gitlab_mcp_session() -> AsyncIterator[ClientSession]:
-    """One MCP session per publish run (stdio locally, HTTP when GITLAB_MCP_URL is set)."""
+    """One MCP session per publish run (stdio locally, HTTP when MCP URL env is set)."""
     token = _use_dynamic_actions.set(False)
     try:
         if use_gitlab_mcp_http():

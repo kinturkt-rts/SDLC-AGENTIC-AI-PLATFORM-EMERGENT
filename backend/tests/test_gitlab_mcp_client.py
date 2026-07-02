@@ -13,7 +13,9 @@ from _shared.gitlab_mcp_client import (  # noqa: E402
     GitLabMcpError,
     dynamic_action_for_individual_tool,
     gitlab_mcp_http_headers,
+    gitlab_mcp_http_url,
     gitlab_mcp_url,
+    normalize_gitlab_mcp_http_url,
     use_gitlab_mcp_http,
     uses_dynamic_gitlab_tool_surface,
 )
@@ -21,7 +23,9 @@ from _shared.gitlab_mcp_client import (  # noqa: E402
 
 def test_gitlab_mcp_url_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITLAB_MCP_URL", raising=False)
+    monkeypatch.delenv("GITLAB_MCP_HTTP_URL", raising=False)
     assert gitlab_mcp_url() is None
+    assert gitlab_mcp_http_url() is None
     assert use_gitlab_mcp_http() is False
 
 
@@ -29,6 +33,24 @@ def test_gitlab_mcp_url_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("GITLAB_MCP_URL", "https://example.cloudfront.net/mcp/")
     assert gitlab_mcp_url() == "https://example.cloudfront.net/mcp"
     assert use_gitlab_mcp_http() is True
+
+
+def test_gitlab_mcp_http_url_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITLAB_MCP_URL", raising=False)
+    monkeypatch.setenv("GITLAB_MCP_HTTP_URL", "http://gitlab-mcp.internal:8080")
+    assert gitlab_mcp_http_url() == "http://gitlab-mcp.internal:8080/mcp"
+    assert use_gitlab_mcp_http() is True
+
+
+def test_normalize_gitlab_mcp_http_url_appends_mcp() -> None:
+    assert (
+        normalize_gitlab_mcp_http_url("http://gitlab-mcp.internal:8080")
+        == "http://gitlab-mcp.internal:8080/mcp"
+    )
+    assert (
+        normalize_gitlab_mcp_http_url("http://gitlab-mcp.internal:8080/mcp")
+        == "http://gitlab-mcp.internal:8080/mcp"
+    )
 
 
 def test_gitlab_mcp_http_headers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,8 +71,17 @@ def test_gitlab_mcp_http_headers_derive_url_from_api(monkeypatch: pytest.MonkeyP
     assert headers["GITLAB-URL"] == "https://gitlab.example.com"
 
 
+def test_gitlab_mcp_http_headers_omit_gitlab_url_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITLAB_TOKEN", "glpat-test")
+    monkeypatch.setenv("GITLAB_MCP_SEND_GITLAB_URL", "false")
+    headers = gitlab_mcp_http_headers()
+    assert "GITLAB-URL" not in headers
+
+
 def test_gitlab_mcp_http_headers_missing_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("GITLAB_TOKEN", "GITLAB_PERSONAL_ACCESS_TOKEN"):
+    for key in ("GITLAB_TOKEN", "GITLAB_PERSONAL_ACCESS_TOKEN", "GL_TOKEN"):
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(GitLabMcpError, match="GITLAB_TOKEN"):
         gitlab_mcp_http_headers()
@@ -72,6 +103,7 @@ def test_publish_batch_size_smaller_for_http(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.delenv("GITLAB_MCP_HTTP_BATCH_SIZE", raising=False)
     monkeypatch.delenv("GITLAB_MCP_URL", raising=False)
+    monkeypatch.delenv("GITLAB_MCP_HTTP_URL", raising=False)
     assert _publish_batch_size() == 20
     assert len(_batch_files([{"path": "a"}] * 5)) == 1
 

@@ -36,6 +36,7 @@ $DotenvForwardedKeys = @(
     "GITLAB_API_URL",
     "GITLAB_PROJECT_PATH",
     "GITLAB_MCP_URL",
+    "GITLAB_MCP_HTTP_URL",
     "POSTGRES_MCP_DEPLOYMENT",
     "POSTGRES_MCP_CONNECTION_METHOD",
     "POSTGRES_MCP_INSTANCE_IDENTIFIER",
@@ -147,11 +148,11 @@ $AgentSecretKeys = @{
     architect_agent        = @()
     database_agent         = @()
     developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
-    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL")
+    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL")
     orchestrator_agent     = @()
     orchestrator_agent_vpc = @()
     security_agent         = @()
-    qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL")
+    qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL")
 }
 
 # Orchestrator runs apply_sql_to_rds after database-agent - pass RDS creds on orchestrator runtime only.
