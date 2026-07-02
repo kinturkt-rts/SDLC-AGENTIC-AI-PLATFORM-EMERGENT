@@ -14,4 +14,4 @@ def test_gitlab_mcp_endpoints_config_has_direct_and_cloudfront_urls() -> None:
     assert direct.endswith("/mcp")
     assert cloudfront.endswith("/mcp")
     assert "cloudfront.net" in cloudfront
-    assert data["usage"]["gitlabAgentPublish"] == "directMcpUrl"
+    assert data["usage"]["gitlabAgentPublish"] == "cloudFront.mcpUrl"

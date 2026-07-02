@@ -81,15 +81,17 @@
       "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fgitlab_agent-qgx3u2CWtC/invocations",
       "env": {
         "MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+        "GITLAB_MCP_URL": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
         "GITLAB_MCP_HTTP_DIRECT_URL": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
         "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
       },
       "gitlabMcp": {
         "configFile": "config/agentcore/gitlab-mcp-endpoints.json",
-        "publishUrl": "directMcpUrl",
-        "ideReadUrl": "cloudFront.mcpUrl"
+        "canonicalUrl": "cloudFront.mcpUrl",
+        "fallbackUrl": "directMcpUrl",
+        "wafFixScript": "scripts/update-gitlab-mcp-waf.ps1"
       },
-      "notes": "Requires GITLAB_PERSONAL_ACCESS_TOKEN, GITLAB_API_URL, GITLAB_PROJECT_PATH, GITLAB_MCP_HTTP_DIRECT_URL on runtime. Pipeline publish (A2A) uses this runtime — not developer laptops. CloudFront WAF blocks commit POSTs (GenericLFI_BODY); agents must use ALB directMcpUrl from gitlab-mcp-endpoints.json."
+      "notes": "Canonical MCP URL is CloudFront (GITLAB_MCP_URL). Run update-gitlab-mcp-waf.ps1 once so publish POSTs are not blocked by GenericLFI_BODY. ALB direct URL is automatic fallback on 403."
     },
     "qa-agent": {
       "deployed": false,

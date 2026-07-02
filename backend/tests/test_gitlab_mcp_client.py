@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
 from _shared.gitlab_mcp_client import (  # noqa: E402
     GitLabMcpError,
     dynamic_action_for_individual_tool,
+    gitlab_mcp_fallback_url,
     gitlab_mcp_http_headers,
     gitlab_mcp_http_url,
     gitlab_mcp_url,
@@ -31,16 +32,14 @@ def test_gitlab_mcp_url_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     assert use_gitlab_mcp_http() is False
 
 
-def test_gitlab_mcp_http_direct_url_takes_priority(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gitlab_mcp_url_prefers_cloudfront_over_direct(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITLAB_MCP_URL", "https://example.cloudfront.net/mcp")
     monkeypatch.setenv(
         "GITLAB_MCP_HTTP_DIRECT_URL",
         "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp",
     )
-    assert (
-        gitlab_mcp_url()
-        == "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp"
-    )
+    assert gitlab_mcp_url() == "https://example.cloudfront.net/mcp"
+    assert gitlab_mcp_fallback_url() == "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp"
 
 
 def test_gitlab_mcp_url_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -138,4 +137,5 @@ def test_gitlab_mcp_uses_cloudfront(monkeypatch: pytest.MonkeyPatch) -> None:
         "GITLAB_MCP_HTTP_DIRECT_URL",
         "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp",
     )
-    assert gitlab_mcp_uses_cloudfront() is False
+    assert gitlab_mcp_uses_cloudfront() is True
+    assert gitlab_mcp_url() == "https://d123.cloudfront.net/mcp"

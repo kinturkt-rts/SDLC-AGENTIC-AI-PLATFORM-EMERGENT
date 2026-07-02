@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -32,6 +33,7 @@ _INDIVIDUAL_TOOL_TO_DYNAMIC_ACTION: dict[str, str] = {
 }
 
 _use_dynamic_actions: ContextVar[bool] = ContextVar("_use_dynamic_actions", default=False)
+_forced_mcp_url: ContextVar[str | None] = ContextVar("_forced_mcp_url", default=None)
 
 
 class GitLabMcpError(RuntimeError):
@@ -85,34 +87,64 @@ def normalize_gitlab_mcp_http_url(url: str) -> str:
 
 
 def _gitlab_mcp_http_url_env_keys() -> tuple[str, ...]:
-    """Env keys in priority order (first wins for agent HTTP transport)."""
-    return ("GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL")
+    """Env keys in priority order (CloudFront canonical; direct ALB is fallback)."""
+    return ("GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL")
+
+
+def gitlab_mcp_url_candidates() -> list[str]:
+    """Distinct MCP HTTP URLs in priority order."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    for key in _gitlab_mcp_http_url_env_keys():
+        raw = os.getenv(key, "").strip()
+        if not raw:
+            continue
+        normalized = normalize_gitlab_mcp_http_url(raw)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        urls.append(normalized)
+    return urls
 
 
 def _raw_gitlab_mcp_http_url() -> str | None:
-    for key in _gitlab_mcp_http_url_env_keys():
-        raw = os.getenv(key, "").strip()
-        if raw:
-            return raw
-    return None
+    candidates = gitlab_mcp_url_candidates()
+    return candidates[0] if candidates else None
 
 
 def gitlab_mcp_url() -> str | None:
-    """Remote Streamable HTTP MCP endpoint (ALB direct, CloudFront, or ECS).
+    """Remote Streamable HTTP MCP endpoint (CloudFront canonical, ALB fallback).
 
-  Priority: GITLAB_MCP_HTTP_DIRECT_URL (ALB, publish-safe) then GITLAB_MCP_URL /
-  GITLAB_MCP_HTTP_URL (often CloudFront for IDE/gateway).
+    Priority: GITLAB_MCP_URL / GITLAB_MCP_HTTP_URL (CloudFront) then
+    GITLAB_MCP_HTTP_DIRECT_URL (ALB bypass when WAF blocks or env override).
     """
-    raw = _raw_gitlab_mcp_http_url()
-    if not raw:
-        return None
-    return normalize_gitlab_mcp_http_url(raw)
+    forced = _forced_mcp_url.get()
+    if forced:
+        return forced
+    return _raw_gitlab_mcp_http_url()
+
+
+def gitlab_mcp_fallback_url() -> str | None:
+    """Next MCP HTTP URL after the primary (usually ALB when CloudFront is primary)."""
+    candidates = gitlab_mcp_url_candidates()
+    return candidates[1] if len(candidates) > 1 else None
+
+
+@asynccontextmanager
+async def using_gitlab_mcp_url(url: str) -> AsyncIterator[None]:
+    """Force MCP HTTP transport to a specific URL for one publish/session."""
+    token = _forced_mcp_url.set(normalize_gitlab_mcp_http_url(url))
+    try:
+        yield
+    finally:
+        _forced_mcp_url.reset(token)
 
 
 def gitlab_mcp_uses_cloudfront() -> bool:
-    """True when the active HTTP MCP URL is a CloudFront distribution."""
-    url = gitlab_mcp_url()
-    return bool(url and "cloudfront.net" in url.lower())
+    """True when the primary HTTP MCP URL is a CloudFront distribution."""
+    forced = _forced_mcp_url.get()
+    primary = forced if forced else _raw_gitlab_mcp_http_url()
+    return bool(primary and "cloudfront.net" in primary.lower())
 
 
 def gitlab_mcp_http_url() -> str | None:
@@ -175,17 +207,22 @@ async def _stdio_gitlab_mcp_session() -> AsyncIterator[ClientSession]:
 
 
 @asynccontextmanager
-async def _http_gitlab_mcp_session() -> AsyncIterator[ClientSession]:
-    url = gitlab_mcp_url()
-    if not url:
-        raise GitLabMcpError("Set GITLAB_MCP_URL or GITLAB_MCP_HTTP_URL for HTTP GitLab MCP.")
-
+async def _http_gitlab_mcp_session_at(url: str) -> AsyncIterator[ClientSession]:
     headers = gitlab_mcp_http_headers()
     async with create_mcp_http_client(headers=headers) as client:
         async with streamable_http_client(url, http_client=client) as (read, write, _get_session_id):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session
+
+
+@asynccontextmanager
+async def _http_gitlab_mcp_session() -> AsyncIterator[ClientSession]:
+    url = gitlab_mcp_url()
+    if not url:
+        raise GitLabMcpError("Set GITLAB_MCP_URL or GITLAB_MCP_HTTP_URL for HTTP GitLab MCP.")
+    async with _http_gitlab_mcp_session_at(url) as session:
+        yield session
 
 
 async def _configure_tool_surface(session: ClientSession) -> None:

@@ -101,4 +101,4 @@ def test_sanitize_publish_content_for_waf_only_on_cloudfront(
         "GITLAB_MCP_HTTP_DIRECT_URL",
         "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp",
     )
-    assert sanitize_publish_content_for_waf(text) == text
+    assert sanitize_publish_content_for_waf(text) == "curl http://127.0.0.1:8000/health"
