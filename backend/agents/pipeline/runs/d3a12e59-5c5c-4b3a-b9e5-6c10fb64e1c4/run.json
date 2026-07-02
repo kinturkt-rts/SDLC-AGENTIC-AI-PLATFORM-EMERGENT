@@ -1,0 +1,45 @@
+{
+  "runId": "d3a12e59-5c5c-4b3a-b9e5-6c10fb64e1c4",
+  "feature": "rag-pdf-system",
+  "targetApp": "rag-pdf-system",
+  "status": "running",
+  "triggeredBy": "frontend",
+  "startedAt": "2026-07-02T20:21:35.539Z",
+  "finishedAt": null,
+  "currentStep": "product-agent",
+  "inputPath": "rag-pdf-system/inputs/rag-pdf-system.txt",
+  "inputFile": "rag-pdf-system/inputs/rag-pdf-system.txt",
+  "error": null,
+  "steps": [
+    {
+      "name": "product-agent",
+      "label": "1/6 Product (PRD)",
+      "status": "running"
+    },
+    {
+      "name": "architect-agent",
+      "label": "2/6 Architect (design + diagram)",
+      "status": "queued"
+    },
+    {
+      "name": "database-agent",
+      "label": "3/6 Database (SQL migrations)",
+      "status": "queued"
+    },
+    {
+      "name": "developer-agent",
+      "label": "4/6 Developer (FastAPI)",
+      "status": "queued"
+    },
+    {
+      "name": "gitlab-agent",
+      "label": "5/6 GitLab publish",
+      "status": "queued"
+    },
+    {
+      "name": "qa-agent",
+      "label": "6/6 QA (optional)",
+      "status": "skipped"
+    }
+  ]
+}

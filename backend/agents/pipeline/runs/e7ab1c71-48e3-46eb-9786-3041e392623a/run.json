@@ -1,0 +1,45 @@
+{
+  "runId": "e7ab1c71-48e3-46eb-9786-3041e392623a",
+  "feature": "contacts-api",
+  "targetApp": "contacts-api",
+  "status": "running",
+  "triggeredBy": "frontend",
+  "startedAt": "2026-07-02T18:52:03.472Z",
+  "finishedAt": null,
+  "currentStep": "product-agent",
+  "inputPath": "contacts-api/inputs/contacts-api.txt",
+  "inputFile": "contacts-api/inputs/contacts-api.txt",
+  "error": null,
+  "steps": [
+    {
+      "name": "product-agent",
+      "label": "1/6 Product (PRD)",
+      "status": "running"
+    },
+    {
+      "name": "architect-agent",
+      "label": "2/6 Architect (design + diagram)",
+      "status": "queued"
+    },
+    {
+      "name": "database-agent",
+      "label": "3/6 Database (SQL migrations)",
+      "status": "queued"
+    },
+    {
+      "name": "developer-agent",
+      "label": "4/6 Developer (FastAPI)",
+      "status": "queued"
+    },
+    {
+      "name": "gitlab-agent",
+      "label": "5/6 GitLab publish",
+      "status": "queued"
+    },
+    {
+      "name": "qa-agent",
+      "label": "6/6 QA (optional)",
+      "status": "skipped"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "runId": "change-request-hub-003",
+  "feature": "change-request-hub",
+  "targetApp": "change-request-hub",
+  "status": "completed",
+  "triggeredBy": "frontend",
+  "startedAt": "2026-07-02T16:26:58.502Z",
+  "finishedAt": "2026-07-02T16:34:33.927204+00:00",
+  "currentStep": "rds-apply",
+  "inputPath": "inputs/change-request-hub.txt",
+  "inputFile": "inputs/change-request-hub.txt",
+  "error": null,
+  "steps": [
+    {
+      "name": "product-agent",
+      "label": "1/6 Product (PRD)",
+      "status": "completed"
+    },
+    {
+      "name": "architect-agent",
+      "label": "2/6 Architect (design + diagram)",
+      "status": "completed"
+    },
+    {
+      "name": "database-agent",
+      "label": "3/6 Database (SQL migrations)",
+      "status": "completed"
+    },
+    {
+      "name": "developer-agent",
+      "label": "4/6 Developer (FastAPI)",
+      "status": "completed"
+    },
+    {
+      "name": "gitlab-agent",
+      "label": "5/6 GitLab publish",
+      "status": "completed"
+    },
+    {
+      "name": "qa-agent",
+      "label": "6/6 QA (optional)",
+      "status": "skipped"
+    }
+  ]
+}
