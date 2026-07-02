@@ -145,7 +145,6 @@ def main() -> None:
     parser.add_argument("--input-file", default="", help="Override input file path in S3 run prefix")
     parser.add_argument("--timeout", type=int, default=900)
 
-    # --full: product+architect+db (+ local RDS), skip dev/gitlab/verify
     parser.add_argument(
         "--full",
         action="store_true",
@@ -190,7 +189,6 @@ def main() -> None:
         args.skip_gitlab = True
         args.skip_verify = True
 
-    # When skip_postgres is True (default / --full), apply RDS locally after orchestrator.
     if args.skip_postgres and not args.skip_db and not args.apply_rds_local:
         args.apply_rds_local = True
 

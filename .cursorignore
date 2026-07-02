@@ -1,10 +1,41 @@
+﻿# Keep in sync with root .gitignore (general patterns). Cursor also skips these from indexing.
+
 .git/
-**/node_modules/
-**/.terraform/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Python
 **/__pycache__/
 **/.pytest_cache/
+**/.mypy_cache/
 **/.venv/
 **/venv/
+**/.coverage
+**/htmlcov/
+**/*.egg-info/
 
-Thumbs.db
+# Node / frontend
+**/node_modules/
+frontend/.next/
+frontend/out/
+frontend/data/
+
+# Build & infra
+**/dist/
+**/.terraform/
+
+# Logs & local tools
+*.log
+.mcp-auth/
+bin/
+
+# Pipeline runtime artifacts
+backend/agents/pipeline/.logs/
+backend/agents/pipeline/runs/
+
+# OS
 .DS_Store
+Thumbs.db

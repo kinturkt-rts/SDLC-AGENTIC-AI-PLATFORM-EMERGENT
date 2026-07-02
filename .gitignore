@@ -1,44 +1,49 @@
+# Secrets & environment (.env.example files are committed with placeholders only)
 .env
 .env.local
 .env.*.local
-# .env.example is committed under backend/ (placeholders only)
+
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
-backend/.venv/
-backend/venv/
-bin/gitlab-mcp-server.exe
-bin/gitlab-mcp-server
-node_modules/
-dist/
-# Next.js frontend build/runtime artifacts (control plane UI)
-frontend/.next/
-frontend/out/
-frontend/next-env.d.ts
-frontend/data/
 .mypy_cache/
 .pytest_cache/
 .coverage
 htmlcov/
-*.egg-info/
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
+
+# Node / frontend (control-plane UI)
+node_modules/
+dist/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+frontend/data/
+
+# Logs & auth caches
 *.log
 .mcp-auth/
 
-# Orchestrator subprocess logs (per-feature stdout/stderr from /api/v1/runs/start)
-backend/agents/pipeline/.logs/
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 
-# Misplaced pipeline handoff / temp artifacts at backend root (use target-apps/ or agents/pipeline/runs/)
+# Local MCP binary (GitLab MCP is ECS HTTP; see backend/deploy/gitlab-mcp-server/)
+bin/
+
+# Pipeline runtime (orchestrator subprocess logs, misplaced handoff snapshots)
+backend/agents/pipeline/.logs/
+backend/agents/pipeline/runs/
 backend/*/context.json
 backend/.tmp/
 backend/demo-api/
 backend/$null
 
-# Local-only target apps (not pushed to GitLab)
+# Local-only target apps (experimental; not pushed to GitLab)
 backend/target-apps/standup-tracker/
 backend/target-apps/release-notes-bot/
 backend/target-apps/finops-web-app/
@@ -51,7 +56,6 @@ backend/target-apps/template/
 backend/target-apps/test-dev/
 backend/target-apps/test-medium-app/
 
-# Pipeline handoffs for excluded apps
 backend/agents/pipeline/standup-tracker.*
 backend/agents/pipeline/release-notes-bot.*
 backend/agents/pipeline/finops-web-app.*
@@ -63,7 +67,6 @@ backend/agents/pipeline/rag-pdf-system.*
 backend/agents/pipeline/test-dev.*
 backend/agents/pipeline/test-medium-app.*
 
-# PRD/design docs for excluded apps
 backend/docs/PRD/standup-tracker.md
 backend/docs/PRD/release-notes-bot.md
 backend/docs/PRD/finops-web-app.md
@@ -76,6 +79,7 @@ backend/docs/PRD/test-dev.md
 backend/docs/PRD/test-medium-app.md
 backend/docs/PRD/store-checkout.md
 backend/docs/PRD/aws-bedrock-agent-ops-assistant.md
+
 backend/docs/design/standup-tracker.md
 backend/docs/design/release-notes-bot.md
 backend/docs/design/bedrock-lambda-app.md
