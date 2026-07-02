@@ -94,12 +94,12 @@ function Import-GitLabMcpEndpointsFromConfig {
         return
     }
     $config = Get-Content $configPath -Raw | ConvertFrom-Json
-    if (-not $env:GITLAB_MCP_HTTP_DIRECT_URL -and $config.directMcpUrl) {
-        [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_DIRECT_URL", $config.directMcpUrl.Trim(), "Process")
-    }
-    if (-not $env:GITLAB_MCP_URL -and $config.cloudFront.mcpUrl) {
+    if ($config.cloudFront.mcpUrl) {
         [Environment]::SetEnvironmentVariable("GITLAB_MCP_URL", $config.cloudFront.mcpUrl.Trim(), "Process")
         Write-Host "Using GITLAB_MCP_URL (CloudFront) from config/agentcore/gitlab-mcp-endpoints.json" -ForegroundColor DarkGray
+    }
+    if ($config.directMcpUrl) {
+        [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_DIRECT_URL", $config.directMcpUrl.Trim(), "Process")
     }
     if (-not $env:GITLAB_MCP_HTTP_BATCH_SIZE) {
         [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_BATCH_SIZE", "1", "Process")
