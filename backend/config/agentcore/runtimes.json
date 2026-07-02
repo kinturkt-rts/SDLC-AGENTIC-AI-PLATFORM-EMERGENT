@@ -80,9 +80,18 @@
       "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/gitlab_agent-qgx3u2CWtC",
       "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fgitlab_agent-qgx3u2CWtC/invocations",
       "env": {
-        "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+        "GITLAB_MCP_URL": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
+        "GITLAB_MCP_HTTP_DIRECT_URL": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
+        "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
       },
-      "notes": "Requires GITLAB_PERSONAL_ACCESS_TOKEN, GITLAB_API_URL, GITLAB_PROJECT_PATH on runtime"
+      "gitlabMcp": {
+        "configFile": "config/agentcore/gitlab-mcp-endpoints.json",
+        "canonicalUrl": "cloudFront.mcpUrl",
+        "fallbackUrl": "directMcpUrl",
+        "wafFixScript": "scripts/update-gitlab-mcp-waf.ps1"
+      },
+      "notes": "Canonical MCP URL is CloudFront (GITLAB_MCP_URL). Run update-gitlab-mcp-waf.ps1 once so publish POSTs are not blocked by GenericLFI_BODY. ALB direct URL is automatic fallback on 403."
     },
     "qa-agent": {
       "deployed": false,

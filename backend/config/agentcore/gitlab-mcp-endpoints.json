@@ -1,0 +1,36 @@
+{
+  "description": "Shared GitLab MCP HTTP endpoints for the Juno SDLC platform (no secrets). CloudFront is the canonical URL for agents, IDE, and AgentCore Gateway.",
+  "region": "us-east-2",
+  "accountId": "061836593297",
+  "ecs": {
+    "cluster": "sdlc-agentic-ai",
+    "service": "gitlab-mcp-server",
+    "albName": "gitlab-mcp-alb",
+    "albDnsName": "gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com"
+  },
+  "cloudFront": {
+    "distributionId": "E1O1IIBQEY4Y2Q",
+    "domain": "d1cvmpnnohwpj8.cloudfront.net",
+    "mcpUrl": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
+    "webAclName": "CreatedByCloudFront-0a676d76"
+  },
+  "directMcpUrl": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
+  "waf": {
+    "blockedRuleExample": "AWSManagedRulesCommonRuleSet/GenericLFI_BODY",
+    "symptom": "403 on POST /mcp when CommonRuleSet inspects publish bodies",
+    "fixScript": "backend/scripts/update-gitlab-mcp-waf.ps1",
+    "fixDescription": "Excludes GenericLFI_BODY from AWSManagedRulesCommonRuleSet on the CloudFront Web ACL"
+  },
+  "usage": {
+    "gitlabAgentPublish": "cloudFront.mcpUrl",
+    "qaAgentGitLabTools": "cloudFront.mcpUrl",
+    "cursorIdeMcp": "cloudFront.mcpUrl",
+    "agentcoreGatewayTarget": "cloudFront.mcpUrl",
+    "albFallback": "directMcpUrl"
+  },
+  "runtimeEnv": {
+    "GITLAB_MCP_URL": "cloudFront.mcpUrl",
+    "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl (optional fallback if WAF not updated)",
+    "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
+  }
+}

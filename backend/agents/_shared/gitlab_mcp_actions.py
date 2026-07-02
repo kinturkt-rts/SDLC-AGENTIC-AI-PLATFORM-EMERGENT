@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,8 +13,11 @@ from .gitlab_mcp_client import (
     _list_repository_tree_async,
     call_gitlab_mcp_tool,
     gitlab_mcp_session,
+    gitlab_mcp_url_candidates,
+    gitlab_mcp_uses_cloudfront,
     list_existing_blob_paths,
     use_gitlab_mcp_http,
+    using_gitlab_mcp_url,
 )
 
 _DEFAULT_API_URL = "https://code.junodev.net/api/v4"
@@ -21,10 +25,23 @@ _DEFAULT_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platf
 _DEFAULT_APPS_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps"
 _BATCH_SIZE = 20
 _HTTP_FILE_API_HINT = (
-    "CloudFront/WAF returned 403 on the MCP POST body. Common causes: AWS WAF managed "
-    "rules blocking URLs like http://localhost or large batched commits. Allow /mcp POST "
-    "bodies in your WAF or set GITLAB_MCP_HTTP_BATCH_SIZE=1 (default for HTTP)."
+    "CloudFront/WAF returned 403 on the MCP POST body. Run backend/scripts/update-gitlab-mcp-waf.ps1 "
+    "to scope AWSManagedRulesCommonRuleSet away from /mcp, or set GITLAB_MCP_HTTP_DIRECT_URL (ALB fallback)."
 )
+
+_WAF_LOCALHOST_HTTP = re.compile(r"https?://localhost(?=[:/])", re.IGNORECASE)
+
+
+def sanitize_publish_content_for_waf(content: str) -> str:
+    """Replace substrings that commonly trigger CloudFront/WAF on MCP POST bodies."""
+    if not gitlab_mcp_uses_cloudfront():
+        return content
+
+    def _replace(match: re.Match[str]) -> str:
+        scheme = match.group(0).split("://", 1)[0].lower()
+        return f"{scheme}://127.0.0.1"
+
+    return _WAF_LOCALHOST_HTTP.sub(_replace, content)
 
 
 def _publish_batch_size() -> int:
@@ -290,7 +307,7 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
 
             content = base64.b64encode(data).decode("ascii")
         elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = data.decode("utf-8")
+            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
         else:
             import base64
 
@@ -316,7 +333,7 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
 
             content = base64.b64encode(data).decode("ascii")
         elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = data.decode("utf-8")
+            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
         else:
             import base64
 
@@ -639,6 +656,11 @@ def _publish_error(
     }
 
 
+def _is_cloudfront_waf_403(exc: BaseException) -> bool:
+    message = _mcp_error_message(exc).lower()
+    return "403 forbidden" in message and "cloudfront.net/mcp" in message
+
+
 async def publish_feature_async(
     feature: str,
     *,
@@ -676,62 +698,84 @@ async def publish_feature_async(
     project_web_url: str | None = None
     mr_result: dict[str, Any] = {}
 
-    try:
-        async with gitlab_mcp_session() as session:
-            project_info = await call_gitlab_mcp_tool(
-                session,
-                "gitlab_project_get",
-                {"project_id": project_id},
-            )
-            project_web_url = str(project_info.get("web_url") or "").strip() or None
+    async def _run_publish(session: Any) -> None:
+        nonlocal project_web_url, mr_result
+        project_info = await call_gitlab_mcp_tool(
+            session,
+            "gitlab_project_get",
+            {"project_id": project_id},
+        )
+        project_web_url = str(project_info.get("web_url") or "").strip() or None
 
-            existing_paths = await _ensure_publish_branch(
+        existing_paths = await _ensure_publish_branch(
+            session,
+            project_id=project_id,
+            branch=publish_branch,
+            base_branch=cfg["base"],
+        )
+
+        text_files, binary_files = _split_publish_files(files)
+        commits.extend(
+            await _publish_text_file_batches(
                 session,
                 project_id=project_id,
                 branch=publish_branch,
-                base_branch=cfg["base"],
+                slug=slug,
+                text_files=text_files,
+                existing_paths=existing_paths,
+            )
+        )
+
+        commits.extend(
+            await _publish_binary_files(
+                session,
+                project_id=project_id,
+                branch=publish_branch,
+                slug=slug,
+                binary_files=binary_files,
+                existing_paths=existing_paths,
+            )
+        )
+
+        if open_mr:
+            title = f"feat({slug}): SDLC pipeline output"
+            if draft_mr:
+                title = f"Draft: {title}"
+            mr_result = await call_gitlab_mcp_tool(
+                session,
+                "gitlab_mr_create",
+                {
+                    "project_id": project_id,
+                    "source_branch": publish_branch,
+                    "target_branch": cfg["base"],
+                    "title": title,
+                    "description": _mr_body(slug, [f["path"] for f in files]),
+                },
             )
 
-            text_files, binary_files = _split_publish_files(files)
-            commits.extend(
-                await _publish_text_file_batches(
-                    session,
-                    project_id=project_id,
-                    branch=publish_branch,
-                    slug=slug,
-                    text_files=text_files,
-                    existing_paths=existing_paths,
-                )
-            )
+    mcp_urls = gitlab_mcp_url_candidates() if use_gitlab_mcp_http() else []
+    attempt_urls: list[str | None] = mcp_urls if mcp_urls else [None]
+    last_exc: BaseException | None = None
 
-            commits.extend(
-                await _publish_binary_files(
-                    session,
-                    project_id=project_id,
-                    branch=publish_branch,
-                    slug=slug,
-                    binary_files=binary_files,
-                    existing_paths=existing_paths,
-                )
-            )
-
-            if open_mr:
-                title = f"feat({slug}): SDLC pipeline output"
-                if draft_mr:
-                    title = f"Draft: {title}"
-                mr_result = await call_gitlab_mcp_tool(
-                    session,
-                    "gitlab_mr_create",
-                    {
-                        "project_id": project_id,
-                        "source_branch": publish_branch,
-                        "target_branch": cfg["base"],
-                        "title": title,
-                        "description": _mr_body(slug, [f["path"] for f in files]),
-                    },
-                )
-    except (GitLabMcpError, BaseExceptionGroup) as exc:
-        return _publish_error(slug, publish_branch, cfg, exc)
+    for index, mcp_url in enumerate(attempt_urls):
+        try:
+            if mcp_url:
+                async with using_gitlab_mcp_url(mcp_url):
+                    async with gitlab_mcp_session() as session:
+                        await _run_publish(session)
+            else:
+                async with gitlab_mcp_session() as session:
+                    await _run_publish(session)
+            break
+        except (GitLabMcpError, BaseExceptionGroup) as exc:
+            last_exc = exc
+            has_fallback = index < len(attempt_urls) - 1
+            if not (_is_cloudfront_waf_403(exc) and has_fallback):
+                return _publish_error(slug, publish_branch, cfg, exc)
+    else:
+        if last_exc is not None:
+            return _publish_error(slug, publish_branch, cfg, last_exc)
+        return _publish_error(slug, publish_branch, cfg, GitLabMcpError("GitLab MCP publish failed"))
 
     mr_url = str(mr_result.get("web_url") or "")
     branch_url = _branch_tree_url(project_web_url, publish_branch) if project_web_url else None

@@ -286,10 +286,8 @@ Write-Host "=== Next steps ===" -ForegroundColor Cyan
 Write-Host "1. Wait for ECS tasks healthy in target group (ECS console -> cluster $Cluster)"
 Write-Host "2. Create CloudFront distribution (see deploy/gitlab-mcp-server/README.md)"
 Write-Host "   Origin: ALB $albDns (HTTP only)"
-Write-Host "3. Set in backend/.env.local:"
-Write-Host "   GITLAB_MCP_HTTP_URL=https://<cloudfront-domain>/mcp"
-Write-Host "4. AgentCore Gateway target: https://<cloudfront-domain>/mcp"
-Write-Host "5. Redeploy gitlab-agent: .\scripts\deploy-agentcore-agents.ps1 -Agents gitlab_agent -SkipConfigure"
+Write-Host "3. Update config/agentcore/gitlab-mcp-endpoints.json (albDnsName, directMcpUrl)"
+Write-Host "4. Redeploy gitlab-agent: .\scripts\deploy-agentcore-agents.ps1 -Agents gitlab_agent -SkipConfigure"
 Write-Host ""
-Write-Host "ALB DNS (pre-CloudFront smoke test):" -ForegroundColor Yellow
+Write-Host "ALB DNS (gitlab-agent publish / GITLAB_MCP_HTTP_DIRECT_URL):" -ForegroundColor Yellow
 Write-Host "  http://$albDns/mcp"

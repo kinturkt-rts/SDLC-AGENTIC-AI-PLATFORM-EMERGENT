@@ -75,9 +75,10 @@
         "GITLAB_PROJECT_PATH": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
         "GITLAB_BASE_BRANCH": "main",
         "GITLAB_MCP_URL": "Optional Streamable HTTP endpoint (ECS/CloudFront). Alias: GITLAB_MCP_HTTP_URL.",
-        "GITLAB_MCP_HTTP_URL": "Same as GITLAB_MCP_URL — used in AgentCore/ECS deploy docs."
+        "GITLAB_MCP_HTTP_URL": "Same as GITLAB_MCP_URL — used in AgentCore/ECS deploy docs.",
+        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp URL for gitlab-agent publish (bypasses CloudFront WAF). Takes priority over GITLAB_MCP_URL."
       },
-      "notes": "jmrplens uses REST API v4 on GitLab Free. Native https://host/api/v4/mcp needs Duo Premium. Local: bin/gitlab-mcp-server via install script. AgentCore/AWS: set GITLAB_MCP_URL or GITLAB_MCP_HTTP_URL to deployed HTTP MCP (PRIVATE-TOKEN + GITLAB-URL headers per request). Shared ECS image: bedrock-agentcore-gitlab_agent:gitlab_mcp.",
+      "notes": "jmrplens uses REST API v4 on GitLab Free. Native https://host/api/v4/mcp needs Duo Premium. Local: bin/gitlab-mcp-server via install script. AgentCore/AWS: set GITLAB_MCP_HTTP_DIRECT_URL to the ECS ALB /mcp endpoint for publish; GITLAB_MCP_URL (CloudFront) is OK for IDE read MCP. PRIVATE-TOKEN + GITLAB-URL headers per request. Shared ECS image: bedrock-agentcore-gitlab_agent:gitlab_mcp.",
       "ecrImage": "061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent:gitlab_mcp",
       "usedBy": ["cursor", "gitlab-agent", "devops-agent", "qa-agent (optional MR comments)"]
     },
@@ -93,10 +94,11 @@
       },
       "env": {
         "GITLAB_MCP_URL": "Streamable HTTP MCP base URL (e.g. https://xxx.cloudfront.net/mcp)",
+        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp for publish (preferred by gitlab-agent)",
         "GITLAB_TOKEN": "GitLab PAT with api scope",
         "GITLAB_URL": "https://code.junodev.net"
       },
-      "notes": "Same jmrplens tools as stdio GitLab MCP. Used by gitlab-agent on AgentCore when GITLAB_MCP_URL is set.",
+      "notes": "Same jmrplens tools as stdio GitLab MCP. gitlab-agent prefers GITLAB_MCP_HTTP_DIRECT_URL (ALB) over CloudFront for commit/publish.",
       "usedBy": ["gitlab-agent", "qa-agent (optional MR comments)"]
     },
     "Playwright": {

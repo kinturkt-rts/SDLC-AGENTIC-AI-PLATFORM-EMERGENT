@@ -37,6 +37,7 @@ $DotenvForwardedKeys = @(
     "GITLAB_PROJECT_PATH",
     "GITLAB_MCP_URL",
     "GITLAB_MCP_HTTP_URL",
+    "GITLAB_MCP_HTTP_DIRECT_URL",
     "GITLAB_MCP_HTTP_BATCH_SIZE",
     "POSTGRES_MCP_DEPLOYMENT",
     "POSTGRES_MCP_CONNECTION_METHOD",
@@ -85,6 +86,27 @@ function Import-ArtifactEnvFromDotenv {
 }
 
 Import-ArtifactEnvFromDotenv
+
+function Import-GitLabMcpEndpointsFromConfig {
+    $configPath = Join-Path $RepoRoot "config\agentcore\gitlab-mcp-endpoints.json"
+    if (-not (Test-Path $configPath)) {
+        Write-Warning "GitLab MCP endpoints config not found: $configPath"
+        return
+    }
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    if ($config.cloudFront.mcpUrl) {
+        [Environment]::SetEnvironmentVariable("GITLAB_MCP_URL", $config.cloudFront.mcpUrl.Trim(), "Process")
+        Write-Host "Using GITLAB_MCP_URL (CloudFront) from config/agentcore/gitlab-mcp-endpoints.json" -ForegroundColor DarkGray
+    }
+    if ($config.directMcpUrl) {
+        [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_DIRECT_URL", $config.directMcpUrl.Trim(), "Process")
+    }
+    if (-not $env:GITLAB_MCP_HTTP_BATCH_SIZE) {
+        [Environment]::SetEnvironmentVariable("GITLAB_MCP_HTTP_BATCH_SIZE", "1", "Process")
+    }
+}
+
+Import-GitLabMcpEndpointsFromConfig
 
 function Test-AgentRegisteredInYaml {
     param([string] $AwsName)
@@ -149,11 +171,11 @@ $AgentSecretKeys = @{
     architect_agent        = @()
     database_agent         = @()
     developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
-    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
+    gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
     orchestrator_agent     = @()
     orchestrator_agent_vpc = @()
     security_agent         = @()
-    qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
+    qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
 }
 
 # Orchestrator runs apply_sql_to_rds after database-agent - pass RDS creds on orchestrator runtime only.
