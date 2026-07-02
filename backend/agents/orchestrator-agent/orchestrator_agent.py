@@ -18,6 +18,7 @@ from _shared.env import load_repo_env
 from _shared.runner import build_agent
 from _shared.sdlc_pipeline import (
     PipelineOptions,
+    _safe_print,
     parse_pipeline_request,
     planned_steps,
     run_sdlc_pipeline,
@@ -367,8 +368,8 @@ def main() -> None:
         if args.plan_only:
             return
         result = run_sdlc_pipeline(options)
-        print("\n" + "=" * 60)
-        print(result.summary())
+        _safe_print("\n" + "=" * 60)
+        _safe_print(result.summary())
         if not result.success:
             sys.exit(1)
         return
@@ -383,13 +384,13 @@ def main() -> None:
         if args.input_file:
             context["inputFile"] = args.input_file
 
-    print(f"[{AGENT_NAME}] Delegating task...")
+    _safe_print(f"[{AGENT_NAME}] Delegating task...")
     message = args.task
     if context:
         message = f"{args.task}\n\nContext:\n{json.dumps(context, indent=2)}"
     output = str(agent(message))
-    print("\n" + "=" * 60)
-    print(output)
+    _safe_print("\n" + "=" * 60)
+    _safe_print(output)
 
 
 if __name__ == "__main__":

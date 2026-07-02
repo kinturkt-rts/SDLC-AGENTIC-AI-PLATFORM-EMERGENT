@@ -5,12 +5,14 @@ Used by orchestrator-agent as the master coordinator for local CLI and AgentCore
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,6 +48,24 @@ logger = logging.getLogger(__name__)
 
 # Specialists that write artifacts directly to S3 (runId in context) — no local sync.
 _S3_DIRECT_WRITE_AGENTS = frozenset({"product-agent", "database-agent", "developer-agent"})
+
+
+def _safe_print(text: str, *, file: Any = None) -> None:
+    """Print text replacing chars the console cannot encode (Windows cp1252)."""
+    target = file or sys.stdout
+    try:
+        target.write(text)
+        if not text.endswith("\n"):
+            target.write("\n")
+        target.flush()
+    except UnicodeEncodeError:
+        safe = text.encode(target.encoding or "utf-8", errors="replace").decode(
+            target.encoding or "utf-8", errors="replace"
+        )
+        target.write(safe)
+        if not safe.endswith("\n"):
+            target.write("\n")
+        target.flush()
 
 TransportMode = Literal["local", "a2a", "auto"]
 
@@ -258,11 +278,13 @@ class SdlcPipelineRunner:
 
             if self.run_id and is_s3_store():
                 update_pipeline_run(self.run_id, status="completed", last_agent="orchestrator-agent")
+            self._update_run_json(status="completed", finished=True)
             self._write_telemetry()
         except PipelineStepError as exc:
             self.errors.append(str(exc))
             if self.run_id and is_s3_store():
                 update_pipeline_run(self.run_id, status="failed")
+            self._update_run_json(status="failed", error=str(exc), finished=True)
             return self._result(success=False)
 
         return self._result(success=True)
@@ -276,6 +298,66 @@ class SdlcPipelineRunner:
             errors=list(self.errors),
             artifacts=dict(self.artifacts),
         )
+
+    # ── run.json persistence ───────────────────────────────────
+
+    def _run_json_path(self) -> Path | None:
+        if not self.run_id:
+            return None
+        return self.root / "agents" / "pipeline" / "runs" / self.run_id / "run.json"
+
+    def _update_run_json(
+        self,
+        *,
+        status: str | None = None,
+        current_step: str | None = None,
+        error: str | None = None,
+        finished: bool = False,
+    ) -> None:
+        """Update local run.json so the frontend can track progress."""
+        rj = self._run_json_path()
+        if not rj:
+            return
+        try:
+            data: dict[str, Any] = {}
+            if rj.is_file():
+                data = json.loads(rj.read_text(encoding="utf-8-sig"))
+            data.setdefault("runId", self.run_id)
+            data.setdefault("feature", self.feature)
+            data.setdefault("targetApp", self.feature)
+            if status:
+                data["status"] = status
+            if current_step is not None:
+                data["currentStep"] = current_step
+            if error is not None:
+                data["error"] = error
+            if finished:
+                data["finishedAt"] = datetime.now(timezone.utc).isoformat()
+            if data.get("steps"):
+                agent_order = [s["name"] for s in data["steps"]]
+                current = current_step or data.get("currentStep")
+                current_idx = agent_order.index(current) if current and current in agent_order else -1
+                for i, step in enumerate(data["steps"]):
+                    if step.get("status") == "skipped":
+                        continue
+                    if finished and status == "completed":
+                        step["status"] = "completed"
+                    elif finished and status == "failed":
+                        if i == current_idx:
+                            step["status"] = "failed"
+                        elif i > current_idx:
+                            step["status"] = "queued"
+                    elif current_idx >= 0:
+                        if i < current_idx:
+                            step["status"] = "completed"
+                        elif i == current_idx:
+                            step["status"] = "running"
+            rj.parent.mkdir(parents=True, exist_ok=True)
+            rj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Could not update run.json: %s", exc)
+
+    # ── pipeline lifecycle ───────────────────────────────────
 
     def _begin_run(self) -> None:
         """Orchestrator: allocate runId, register DynamoDB index, export env for specialists."""
@@ -364,6 +446,7 @@ class SdlcPipelineRunner:
         normalize_handoff_paths(self.context)
 
     def _run_python(self, args: list[str], *, step: str) -> None:
+        self._update_run_json(current_step=step)
         cmd = [sys.executable, *args]
         logger.info("[%s] %s", step, " ".join(args))
         proc = subprocess.run(
@@ -371,16 +454,18 @@ class SdlcPipelineRunner:
             cwd=self.root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if proc.stdout:
-            print(proc.stdout, end="")
+            _safe_print(proc.stdout)
         if proc.stderr:
-            print(proc.stderr, end="", file=sys.stderr)
+            _safe_print(proc.stderr, file=sys.stderr)
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or "").strip()
             if len(tail) > 800:
-                tail = "…" + tail[-800:]
+                tail = "\u2026" + tail[-800:]
             detail = f"{step} failed (exit {proc.returncode})"
             if tail:
                 detail = f"{detail}: {tail}"
@@ -404,13 +489,14 @@ class SdlcPipelineRunner:
         return app_dir
 
     def _invoke_a2a(self, agent_name: str, task: str, *, step: str, include_db_paths: bool = False) -> None:
+        self._update_run_json(current_step=step)
         result = invoke_agent(
             agent_name,
             task,
             context=self._context_for_agent(include_db_paths=include_db_paths),
         )
         text = response_text(result)
-        print(f"[{step}] {text}")
+        _safe_print(f"[{step}] {text}")
         invoke_error = a2a_invoke_error(result)
         if invoke_error:
             raise PipelineStepError(f"{step} A2A failed: {invoke_error}")
@@ -743,12 +829,15 @@ class SdlcPipelineRunner:
             raise PipelineStepError("app import failed during verify")
 
         pytest_cmd = [python, "-m", "pytest", "tests/", "-q", "--tb=line"]
-        proc = subprocess.run(pytest_cmd, cwd=app_dir, env=env, capture_output=True, text=True)
+        proc = subprocess.run(
+            pytest_cmd, cwd=app_dir, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
         if proc.stdout:
-            print(proc.stdout)
+            _safe_print(proc.stdout)
         if proc.returncode != 0:
             if proc.stderr:
-                print(proc.stderr, file=sys.stderr)
+                _safe_print(proc.stderr, file=sys.stderr)
             raise PipelineStepError("pytest failed during verify")
 
         self._delivery_check("app")

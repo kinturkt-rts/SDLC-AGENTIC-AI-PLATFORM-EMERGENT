@@ -1,256 +1,201 @@
 # PR Diff Summarizer
 
-AI-powered pull request diff analysis service that generates summaries and risk scores using AWS Bedrock Claude. Provides REST API endpoints and a Streamlit UI for interactive analysis.
+AI-powered PR diff summarization and risk scoring service. Submit raw PR diffs, get structured summaries and risk assessments powered by AWS Bedrock (Claude Sonnet).
 
 ## Features
 
-- 🤖 **AI Analysis**: Uses AWS Bedrock Claude Sonnet for intelligent diff summarization
-- 📊 **Risk Scoring**: Combines AI assessment with code-based heuristics (0-100 scale)
-- 🎯 **Risk Bands**: Categorizes PRs as low (0-30), medium (31-70), or high (71-100) risk
-- 📈 **Analytics**: Track review patterns and risk distribution over time
-- 🔐 **API Authentication**: Secure access via X-API-Key headers
-- 💾 **PostgreSQL Storage**: Persistent review history and analysis data
-- 🖥️ **Streamlit UI**: Interactive web interface for demo and testing
-
-## API Endpoints
-
-| Method | Path | Description | Auth |
-|--------|------|-------------|------|
-| POST | `/reviews/` | Analyze PR diff and create review | ✅ |
-| GET | `/reviews/` | List reviews (paginated, filterable) | ✅ |
-| GET | `/reviews/{id}` | Get specific review by ID | ✅ |
-| GET | `/stats` | Get 30-day statistics | ✅ |
-| GET | `/health` | Health check | ❌ |
-
-## Local Development
-
-### Prerequisites
-- Python 3.12+
-- PostgreSQL 13+ (or use SQLite for tests)
-- AWS credentials with Bedrock access
-
-### Setup
-
-**Terminal 1 (API) - from repo root:**
-
-```bash
-cd target-apps/pr-diff-summarizer
-
-# Create and activate virtual environment
-# Windows:
-python -m venv .venv
-.venv\Scripts\activate
-# Bash/Linux/macOS:
-python -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Environment configuration
-# Windows:
-copy .env.example .env
-# Bash:
-cp .env.example .env
-
-# Edit .env with your values (see Environment Variables section)
-```
-
-**Important**: Every line in `.env` needs the variable name — paste `DATABASE_URL=postgresql+psycopg://...`, not a bare URL.
-
-```bash
-# Start API server
-uvicorn app.main:app --reload --port 8000 --reload-exclude '.venv'
-
-# API available at: http://localhost:8000
-# Swagger docs: http://localhost:8000/docs
-```
-
-**Terminal 2 (UI) - from repo root:**
-
-```bash
-cd target-apps/pr-diff-summarizer
-# Activate same venv as Terminal 1
-# Windows: .venv\Scripts\activate
-# Bash: source .venv/bin/activate
-
-cd ui
-pip install -r requirements.txt
-
-# Start Streamlit UI
-streamlit run streamlit_app.py --server.port 8501
-
-# UI available at: http://localhost:8501
-```
-
-### Environment Variables
-
-| Variable | Example | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+psycopg://user:pass%23word@localhost:5432/dbname?sslmode=require` | Postgres connection (URL-encode passwords: # → %23) |
-| `POSTGRES_SCHEMA` | `pr_diff_summarizer` | Database schema name |
-| `API_KEY` | `your-secret-api-key-here` | Authentication key for API access |
-| `AWS_REGION` | `us-east-2` | AWS region for Bedrock |
-| `BEDROCK_REGION` | `us-east-2` | Specific Bedrock region |
-| `BEDROCK_MODEL_ID` | `us.anthropic.claude-sonnet-4-20250514-v1:0` | Claude model identifier |
-| `MAX_DIFF_SIZE_MB` | `10` | Maximum diff size limit |
-| `MAX_TITLE_LENGTH` | `500` | Maximum PR title length |
-
-### Testing
-
-```bash
-# Run tests (uses SQLite in-memory)
-python -m pytest tests/ -v
-
-# Note: Passing tests ≠ RDS proof. Always test against real Postgres after .env setup.
-```
-
-## Manual API Testing
-
-### Swagger UI
-1. Open http://localhost:8000/docs
-2. Click "Authorize" button
-3. Enter your API key in the "X-API-Key" field
-4. Test endpoints directly in browser
-
-### curl Examples
-
-```bash
-# Health check (no auth)
-curl http://localhost:8000/health
-
-# Create review
-curl -X POST http://localhost:8000/reviews/ \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-secret-api-key-here" \
-  -d '{
-    "title": "Add user authentication",
-    "diff_text": "diff --git a/auth.py b/auth.py\nnew file mode 100644\nindex 0000000..abc123\n--- /dev/null\n+++ b/auth.py\n@@ -0,0 +1,5 @@\n+def authenticate(token):\n+    if not token:\n+        return False\n+    return validate_token(token)"
-  }'
-
-# List reviews
-curl -H "X-API-Key: your-secret-api-key-here" \
-  "http://localhost:8000/reviews/?limit=10&risk_band=medium"
-
-# Get statistics  
-curl -H "X-API-Key: your-secret-api-key-here" \
-  http://localhost:8000/stats
-```
-
-### PowerShell Examples
-
-```powershell
-# Create review
-$headers = @{ "X-API-Key" = "your-secret-api-key-here" }
-$body = @{
-    title = "Fix authentication bug"
-    diff_text = "diff --git a/auth.py b/auth.py`n--- a/auth.py`n+++ b/auth.py`n@@ -10,1 +10,1 @@`n-    return token == 'admin'`n+    return bcrypt.checkpw(token, stored_hash)"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:8000/reviews/" -Method POST -Headers $headers -Body $body -ContentType "application/json"
-```
-
-## RDS Smoke Test
-
-After setting up `.env` with real PostgreSQL credentials:
-
-1. **Health check with database:**
-   ```bash
-   curl http://localhost:8000/health
-   # Should return: {"status": "ok", "checks": {"api": "ok", "database": "ok"}}
-   ```
-
-2. **Test with seeded data** (use seed UUIDs from `db/sql/004_seed.sql`):
-   ```bash
-   curl -H "X-API-Key: your-secret-api-key-here" \
-     http://localhost:8000/reviews/550e8400-e29b-41d4-a716-446655440001
-   ```
-
-3. **Create new review:**
-   ```bash
-   curl -X POST http://localhost:8000/reviews/ \
-     -H "X-API-Key: your-secret-api-key-here" \
-     -H "Content-Type: application/json" \
-     -d '{"title": "Test PR", "diff_text": "diff --git a/test.py b/test.py\n+print(\"hello\")"}'
-   ```
-
-## Risk Scoring Algorithm
-
-### Base AI Score (0-100)
-- AWS Bedrock Claude analyzes diff content and complexity
-- Considers file types, change scope, and potential impact
-
-### Heuristic Adjustments
-- **+15 points**: Changes in `migrations/` directory
-- **+10 points**: Contains security-related terms (secret, password, key, auth)
-- **-10 points**: Small changes (<30 total lines)
-- **Final score**: Clamped to 0-100 range
-
-### Risk Bands
-- **Low (0-30)**: Documentation, typos, minor config
-- **Medium (31-70)**: Feature additions, moderate refactoring  
-- **High (71-100)**: Database changes, security updates, major refactoring
-
-## Deployment (AWS dev - devops-agent)
-
-```bash
-# Production settings
-PORT=8000
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-
-# Health probe: GET /health
-# Environment: Load from AWS Secrets Manager
-# Required secrets: DATABASE_URL, API_KEY, AWS credentials
-```
+- **Submit PR diffs** — AI generates 2–4 sentence summaries with risk scoring
+- **Heuristic risk adjustment** — deterministic rules for infrastructure, secrets, and small diffs
+- **Risk classification** — low (0–30), medium (31–70), high (71–100)
+- **Review history** — paginated, filterable by risk band
+- **30-day statistics** — aggregate risk distribution
+- **Streamlit dashboard** — three-tab UI for Submit, History, and Stats
 
 ## Architecture
 
+- **API**: FastAPI (Python 3.12+)
+- **Database**: PostgreSQL (RDS) with SQLAlchemy 2.x
+- **LLM**: AWS Bedrock Claude Sonnet
+- **UI**: Streamlit (calls API over HTTP only)
+- **Auth**: API Key (`X-API-Key` header)
+
+---
+
+## Local Development
+
+### Terminal 1 — API Server
+
+**PowerShell (Windows):**
+```powershell
+cd target-apps/pr-diff-summarizer
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# Edit .env — fill in DATABASE_URL, API_KEY, etc.
+uvicorn app.main:app --reload --reload-dir app --reload-dir schemas --port 8000
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Streamlit UI  │────│   FastAPI API    │────│   PostgreSQL    │
-│  (Port 8501)    │    │   (Port 8000)    │    │  (pr_diff_...)  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                │
-                         ┌─────────────────┐
-                         │  AWS Bedrock    │
-                         │  Claude Sonnet  │
-                         └─────────────────┘
+
+**Bash (Linux/macOS):**
+```bash
+cd target-apps/pr-diff-summarizer
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env — fill in DATABASE_URL, API_KEY, etc.
+uvicorn app.main:app --reload --reload-dir app --reload-dir schemas --port 8000
 ```
 
-## Troubleshooting
+> ⚠️ **Important:** Do not paste a bare URL — always include the variable name `DATABASE_URL=postgresql+psycopg://...`.
 
-### Common Issues
+> ⚠️ **Reload note:** Use `--reload-dir app --reload-dir schemas` instead of bare `--reload` to avoid watching `.venv/` which causes reload storms and Streamlit API timeouts.
 
-1. **Import errors on startup**: Check that all `app/*/` directories have `__init__.py` files
+### Terminal 2 — Streamlit UI
 
-2. **Database connection fails**: 
-   - Verify `DATABASE_URL` format: `postgresql+psycopg://user:password@host:port/database?sslmode=require`
-   - URL-encode special characters in password (# → %23)
-   - Check `POSTGRES_SCHEMA` matches database setup
+**PowerShell (Windows):**
+```powershell
+cd target-apps/pr-diff-summarizer
+.\.venv\Scripts\Activate.ps1
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
 
-3. **Bedrock errors**:
-   - Verify AWS credentials and region (`us-east-2`)
-   - Check IAM permissions for Bedrock access
-   - Confirm model ID is correct for your region
+**Bash (Linux/macOS):**
+```bash
+cd target-apps/pr-diff-summarizer
+source .venv/bin/activate
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
 
-4. **API key authentication fails**:
-   - Ensure `X-API-Key` header is set correctly
-   - Check that `API_KEY` environment variable matches request header
+The Streamlit app reads `API_KEY` and `API_BASE_URL` from the project `.env` file.
+Open **http://localhost:8501** in your browser.
 
-5. **Streamlit connection errors**:
-   - Verify API is running on port 8000
-   - Check `API_BASE_URL` environment variable
-   - Ensure both services use same API key
+---
 
-### Debug Mode
+## Environment Variables
 
-Set `APP_ENV=development` in `.env` to get detailed error messages in API responses.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | *(required)* |
+| `POSTGRES_SCHEMA` | Database schema name | `pr_diff_summarizer` |
+| `API_KEY` | API authentication key | *(required)* |
+| `AWS_REGION` | AWS region for Bedrock | `us-east-2` |
+| `BEDROCK_MODEL_ID` | Bedrock model identifier | `us.anthropic.claude-sonnet-4-20250514-v1:0` |
+| `MAX_DIFF_BYTES` | Max diff size in bytes | `102400` |
+| `APP_ENV` | Environment (development/production) | `development` |
+| `PORT` | Server port | `8000` |
+| `API_BASE_URL` | API URL for Streamlit | `http://localhost:8000` |
 
-## Development Notes
+> Passwords containing special characters (e.g. `#`) must be URL-encoded in `DATABASE_URL` (e.g. `#` → `%23`).
 
-- Uses SQLAlchemy 2.x with synchronous sessions
-- Pydantic v2 for request/response validation  
-- pytest with SQLite for fast testing
-- Bedrock client mocked in tests (no live AWS calls)
-- Follows FastAPI best practices for dependency injection
+---
+
+## Database Setup
+
+SQL migrations are in `db/sql/`. Apply them in order to your Postgres instance:
+
+1. `001_create_enum_risk_band.sql` — creates `risk_band_enum` type
+2. `002_create_reviews.sql` — creates `reviews` table with indexes
+3. `011_seed.sql` (optional) — 7 dev fixture rows covering all risk bands
+
+---
+
+## API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/reviews` | ✅ `X-API-Key` | Submit diff for AI review (201) |
+| `GET` | `/reviews` | ✅ `X-API-Key` | List reviews — `?limit=20&offset=0&risk_band=low` |
+| `GET` | `/reviews/{id}` | ✅ `X-API-Key` | Get single review (200 / 404) |
+| `GET` | `/stats` | ✅ `X-API-Key` | Risk distribution stats (30 days) |
+| `GET` | `/health` | ❌ | Health check (DB + Bedrock client) |
+
+---
+
+## Manual API Test (Swagger)
+
+Open **http://localhost:8000/docs** → click **Authorize** → enter your API key in the `X-API-Key` field.
+
+**curl example — submit a review:**
+```bash
+curl -X POST http://localhost:8000/reviews \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
+  -d '{"title": "Test PR", "diff_text": "diff --git a/f.py b/f.py\n+hello"}'
+```
+
+**PowerShell example:**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/reviews" -Method Post `
+  -Headers @{"X-API-Key"="your-api-key-here"; "Content-Type"="application/json"} `
+  -Body '{"title": "Test PR", "diff_text": "diff --git a/f.py b/f.py\n+hello"}'
+```
+
+**curl example — list reviews:**
+```bash
+curl http://localhost:8000/reviews?limit=10 \
+  -H "X-API-Key: your-api-key-here"
+```
+
+**curl example — get stats:**
+```bash
+curl http://localhost:8000/stats \
+  -H "X-API-Key: your-api-key-here"
+```
+
+---
+
+## Testing
+
+Run the test suite (no AWS credentials required — Bedrock is mocked):
+
+```bash
+cd target-apps/pr-diff-summarizer
+pytest -q
+```
+
+All tests run with SQLite in-memory and mocked Bedrock client. Passing tests ≠ proof that RDS works — always run the RDS smoke test below with a live Postgres connection.
+
+---
+
+## RDS Smoke Test
+
+After configuring `.env` with a real RDS connection:
+
+```bash
+# 1. Verify health
+curl http://localhost:8000/health
+
+# 2. Submit a review (needs Bedrock access)
+curl -X POST http://localhost:8000/reviews \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key-here" \
+  -d '{"title": "Smoke test PR", "diff_text": "diff --git a/f.py b/f.py\n+hello"}'
+
+# 3. List reviews
+curl http://localhost:8000/reviews \
+  -H "X-API-Key: your-api-key-here"
+
+# 4. Get stats
+curl http://localhost:8000/stats \
+  -H "X-API-Key: your-api-key-here"
+```
+
+Seed data IDs (from `011_seed.sql`):
+- `a1b2c3d4-0001-4000-8000-000000000001` — low risk (25)
+- `a1b2c3d4-0003-4000-8000-000000000003` — high risk (80)
+- `a1b2c3d4-0005-4000-8000-000000000005` — medium risk (65)
+
+---
+
+## Deployment (AWS dev — devops-agent)
+
+- Port: `8000`
+- Health: `GET /health`
+- Entry: `uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}`
+- Env: loaded from AWS Secrets Manager / SSM
+- Region: `us-east-2`

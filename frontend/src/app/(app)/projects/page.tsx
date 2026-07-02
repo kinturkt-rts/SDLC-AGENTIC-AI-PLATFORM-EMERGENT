@@ -53,10 +53,6 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      <p className="rounded-lg border border-dashed border-white/[0.08] bg-card/30 px-4 py-3 text-xs text-muted-foreground">
-        New projects appear automatically when an SDLC pipeline run creates{' '}
-        <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-foreground">agents/pipeline/&lt;slug&gt;.context.json</code>.
-      </p>
     </>
   );
 }

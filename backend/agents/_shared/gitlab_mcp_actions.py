@@ -13,12 +13,29 @@ from .gitlab_mcp_client import (
     call_gitlab_mcp_tool,
     gitlab_mcp_session,
     list_existing_blob_paths,
+    use_gitlab_mcp_http,
 )
 
 _DEFAULT_API_URL = "https://code.junodev.net/api/v4"
 _DEFAULT_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform"
 _DEFAULT_APPS_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps"
 _BATCH_SIZE = 20
+_HTTP_FILE_API_HINT = (
+    "CloudFront/WAF returned 403 on the MCP POST body. Common causes: AWS WAF managed "
+    "rules blocking URLs like http://localhost or large batched commits. Allow /mcp POST "
+    "bodies in your WAF or set GITLAB_MCP_HTTP_BATCH_SIZE=1 (default for HTTP)."
+)
+
+
+def _publish_batch_size() -> int:
+    """HTTP MCP behind CloudFront/WAF: one file per request avoids body-size and content rules."""
+    if use_gitlab_mcp_http():
+        raw = os.getenv("GITLAB_MCP_HTTP_BATCH_SIZE", "1").strip()
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return 1
+    return _BATCH_SIZE
 
 PublishLayout = Literal["monorepo", "apps"]
 
@@ -129,7 +146,10 @@ def _mcp_error_message(exc: BaseException) -> str:
             msg = _mcp_error_message(nested)
             if msg and msg != str(exc):
                 return msg
-    return str(exc)
+    message = str(exc)
+    if "403 Forbidden" in message and "cloudfront.net/mcp" in message.lower():
+        return f"{message}\n\n{_HTTP_FILE_API_HINT}"
+    return message
 
 
 def _is_branch_not_found(exc: BaseException) -> bool:
@@ -169,8 +189,9 @@ def gitlab_repo_config(
     }
 
 
-def _batch_files(files: list[dict[str, str]], batch_size: int = _BATCH_SIZE) -> list[list[dict[str, str]]]:
-    return [files[i : i + batch_size] for i in range(0, len(files), batch_size)]
+def _batch_files(files: list[dict[str, str]], batch_size: int | None = None) -> list[list[dict[str, str]]]:
+    size = batch_size if batch_size is not None else _publish_batch_size()
+    return [files[i : i + size] for i in range(0, len(files), size)]
 
 
 def _mr_body(slug: str, paths: list[str]) -> str:
@@ -266,6 +287,80 @@ def _commit_actions(
             }
         )
     return actions
+
+
+async def _publish_files_via_file_api(
+    session: Any,
+    *,
+    project_id: str,
+    branch: str,
+    slug: str,
+    files: list[dict[str, str]],
+    existing_paths: set[str],
+) -> list[str]:
+    """Upload one file per MCP call (required for HTTP MCP behind restrictive WAF)."""
+    commit_ids: list[str] = []
+    for item in files:
+        path = item["path"].lstrip("/")
+        tool = "gitlab_file_update" if path in existing_paths else "gitlab_file_create"
+        payload: dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": path,
+            "branch": branch,
+            "commit_message": _publish_commit_message(slug),
+        }
+        if item.get("binary"):
+            payload["content"] = item["content"]
+            payload["encoding"] = "base64"
+        else:
+            payload["content"] = item["content"]
+        result = await call_gitlab_mcp_tool(session, tool, payload)
+        existing_paths.add(path)
+        commit_id = result.get("id") or result.get("short_id") or result.get("commit_id")
+        if commit_id:
+            commit_ids.append(str(commit_id))
+    return commit_ids
+
+
+async def _publish_text_file_batches(
+    session: Any,
+    *,
+    project_id: str,
+    branch: str,
+    slug: str,
+    text_files: list[dict[str, str]],
+    existing_paths: set[str],
+) -> list[str]:
+    if use_gitlab_mcp_http():
+        return await _publish_files_via_file_api(
+            session,
+            project_id=project_id,
+            branch=branch,
+            slug=slug,
+            files=text_files,
+            existing_paths=existing_paths,
+        )
+
+    commit_ids: list[str] = []
+    batches = _batch_files(text_files)
+    for index, batch in enumerate(batches, start=1):
+        message = _publish_commit_message(slug, batch=index, total=len(batches))
+        commit_result = await call_gitlab_mcp_tool(
+            session,
+            "gitlab_commit_create",
+            {
+                "project_id": project_id,
+                "branch": branch,
+                "commit_message": message,
+                "actions": _commit_actions(batch, existing_paths),
+            },
+        )
+        for item in batch:
+            existing_paths.add(item["path"].lstrip("/"))
+        commit_id = commit_result.get("id") or commit_result.get("short_id")
+        if commit_id:
+            commit_ids.append(str(commit_id))
+    return commit_ids
 
 
 # --- MCP tool actions (projects, branch files, MR notes) ---
@@ -425,27 +520,14 @@ async def _publish_binary_files(
     existing_paths: set[str],
 ) -> list[str]:
     """jmrplens commit_create schema has no per-action encoding; use file_create/update."""
-    commit_ids: list[str] = []
-    for item in binary_files:
-        path = item["path"].lstrip("/")
-        tool = "gitlab_file_update" if path in existing_paths else "gitlab_file_create"
-        result = await call_gitlab_mcp_tool(
-            session,
-            tool,
-            {
-                "project_id": project_id,
-                "file_path": path,
-                "branch": branch,
-                "content": item["content"],
-                "encoding": "base64",
-                "commit_message": _publish_commit_message(slug),
-            },
-        )
-        existing_paths.add(path)
-        commit_id = result.get("id") or result.get("short_id") or result.get("commit_id")
-        if commit_id:
-            commit_ids.append(str(commit_id))
-    return commit_ids
+    return await _publish_files_via_file_api(
+        session,
+        project_id=project_id,
+        branch=branch,
+        slug=slug,
+        files=binary_files,
+        existing_paths=existing_paths,
+    )
 
 
 async def _ensure_publish_branch(
@@ -542,24 +624,16 @@ async def publish_feature_async(
             )
 
             text_files, binary_files = _split_publish_files(files)
-            batches = _batch_files(text_files)
-            for index, batch in enumerate(batches, start=1):
-                message = _publish_commit_message(slug, batch=index, total=len(batches))
-                commit_result = await call_gitlab_mcp_tool(
+            commits.extend(
+                await _publish_text_file_batches(
                     session,
-                    "gitlab_commit_create",
-                    {
-                        "project_id": project_id,
-                        "branch": publish_branch,
-                        "commit_message": message,
-                        "actions": _commit_actions(batch, existing_paths),
-                    },
+                    project_id=project_id,
+                    branch=publish_branch,
+                    slug=slug,
+                    text_files=text_files,
+                    existing_paths=existing_paths,
                 )
-                for item in batch:
-                    existing_paths.add(item["path"].lstrip("/"))
-                commit_id = commit_result.get("id") or commit_result.get("short_id")
-                if commit_id:
-                    commits.append(str(commit_id))
+            )
 
             commits.extend(
                 await _publish_binary_files(

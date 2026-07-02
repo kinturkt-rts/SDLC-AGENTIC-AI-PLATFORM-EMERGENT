@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, GitBranch, FileBox, Clock, ExternalLink } from 'lucide-react';
+import { ArrowLeft, GitBranch, FileBox, Clock, ExternalLink, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -17,6 +17,7 @@ import {
   useContextItems,
   usePipelines,
 } from '@/src/lib/queries';
+import { phaseDisplayLabel } from '@/src/lib/pipeline-phases';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import type { PipelineRun, Artifact, ContextItem } from '@/src/types';
 
@@ -123,8 +124,13 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
               <div className="mt-4 flex flex-wrap items-stretch gap-2">
                 {p.phases.map((ph, i) => (
                   <span key={i} className="inline-flex items-center gap-1.5">
-                    <span className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 text-xs capitalize text-foreground">{ph.phase}{ph.hitl ? ' \u2691' : ''}</span>
-                    {i < p.phases.length - 1 ? <span className="text-muted-foreground/40">\u2192</span> : null}
+                    <span className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 text-xs text-foreground">
+                      {phaseDisplayLabel(ph.phase)}
+                      {ph.hitl ? <span className="ml-1 text-amber-400">HITL</span> : null}
+                    </span>
+                    {i < p.phases.length - 1 ? (
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" aria-hidden />
+                    ) : null}
                   </span>
                 ))}
               </div>

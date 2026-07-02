@@ -38,6 +38,7 @@ from _shared.artifact_store import (
     resolve_run_id,
     write_repo_artifact,
 )
+from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.runner import coding_model_id
 from _shared.pipeline_context import (

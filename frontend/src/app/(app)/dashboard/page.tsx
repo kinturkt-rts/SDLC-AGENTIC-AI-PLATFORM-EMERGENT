@@ -48,6 +48,7 @@ import {
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
+import type { PipelineRun } from '@/src/types';
 import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
@@ -65,10 +66,10 @@ const PIPELINE_STEPS: {
   accent: string;
   iconBg: string;
 }[] = [
-  { id: 'product', label: 'Product', agent: 'Product Agent', agentId: 'product-agent', icon: FileText, phase: 'requirements', accent: 'text-blue-400', iconBg: 'bg-blue-500/10 ring-blue-500/20' },
-  { id: 'architecture', label: 'Architecture', agent: 'Architect Agent', agentId: 'architect-agent', icon: Building2, phase: 'architecture', accent: 'text-violet-400', iconBg: 'bg-violet-500/10 ring-violet-500/20' },
+  { id: 'product', label: 'PRD', agent: 'Product Agent', agentId: 'product-agent', icon: FileText, phase: 'requirements', accent: 'text-blue-400', iconBg: 'bg-blue-500/10 ring-blue-500/20' },
+  { id: 'architecture', label: 'Architecture Diagram', agent: 'Architect Agent', agentId: 'architect-agent', icon: Building2, phase: 'architecture', accent: 'text-violet-400', iconBg: 'bg-violet-500/10 ring-violet-500/20' },
   { id: 'database', label: 'Database', agent: 'Database Agent', agentId: 'database-agent', icon: Database, phase: 'data', accent: 'text-emerald-400', iconBg: 'bg-emerald-500/10 ring-emerald-500/20' },
-  { id: 'development', label: 'Development', agent: 'Developer Agent', agentId: 'developer-agent', icon: Code2, phase: 'implementation', accent: 'text-amber-400', iconBg: 'bg-amber-500/10 ring-amber-500/20' },
+  { id: 'development', label: 'Application', agent: 'Developer Agent', agentId: 'developer-agent', icon: Code2, phase: 'implementation', accent: 'text-amber-400', iconBg: 'bg-amber-500/10 ring-amber-500/20' },
   { id: 'gitlab', label: 'Publish', agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'deploy', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
 ];
 
@@ -166,14 +167,38 @@ function SectionHeader({ title, href, icon: Icon, count }: { title: string; href
 }
 
 /* ── SDLC Pipeline ───────────────────────────────── */
-function PipelineVisualization({ currentPhase }: { currentPhase: string | null }) {
+function pipelineStepVisualState(
+  stepPhase: string,
+  run: PipelineRun | undefined,
+): 'completed' | 'active' | 'pending' {
+  if (!run || (run.status !== 'running' && run.status !== 'paused')) return 'pending';
+
+  const pipelineStep = run.steps?.find((s) => s.phase === stepPhase);
+  if (pipelineStep?.status === 'completed') return 'completed';
+  if (
+    pipelineStep?.status === 'running' ||
+    pipelineStep?.status === 'waiting_for_human' ||
+    run.currentPhase === stepPhase
+  ) {
+    return 'active';
+  }
+
+  const order = PIPELINE_STEPS.map((s) => s.phase);
+  const currentIdx = run.currentPhase ? order.indexOf(run.currentPhase) : -1;
+  const stepIdx = order.indexOf(stepPhase);
+  if (currentIdx >= 0 && stepIdx >= 0 && stepIdx < currentIdx) return 'completed';
+
+  return 'pending';
+}
+
+function PipelineVisualization({ run }: { run: PipelineRun | undefined }) {
   return (
     <div className="relative overflow-x-auto">
       <div className="flex items-center justify-between gap-2 min-w-[600px] px-2 py-4">
         {PIPELINE_STEPS.map((step, idx) => {
-          const isActive = currentPhase === step.phase;
-          const completedPhases = ['requirements', 'architecture', 'data'];
-          const isCompleted = currentPhase ? completedPhases.indexOf(step.phase) < completedPhases.indexOf(currentPhase) || (completedPhases.includes(step.phase) && step.phase !== currentPhase) : false;
+          const visualState = pipelineStepVisualState(step.phase, run);
+          const isActive = visualState === 'active';
+          const isCompleted = visualState === 'completed';
 
           return (
             <div key={step.id} className="flex flex-1 items-center">
@@ -388,8 +413,8 @@ function InputRequirementsCard() {
             <sc.icon className="h-3 w-3" /> {sc.label}
           </span>
         </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Each <strong className="font-medium text-foreground">Submit</strong> starts the orchestrator agent.
+        <p className="mt-1 text-sm text-muted-foreground">
+          Each <strong className="font-semibold text-foreground">Submit</strong> starts the orchestrator agent.
         </p>
       </div>
 
@@ -544,8 +569,7 @@ export default function DashboardPage() {
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     .slice(0, 6);
 
-  const runningRun = (runs ?? []).find((r) => r.status === 'running');
-  const currentPhase = runningRun?.currentPhase ?? null;
+  const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
 
   return (
     <div className="space-y-5">
@@ -589,7 +613,7 @@ export default function DashboardPage() {
       {/* ── 3. SDLC Pipeline ────────────────────────── */}
       <Card className="overflow-hidden border-white/[0.06] bg-card/80">
         <SectionHeader title="Current SDLC Pipeline" href="/pipelines" icon={Activity} />
-        <PipelineVisualization currentPhase={currentPhase} />
+        <PipelineVisualization run={runningRun} />
       </Card>
 
       {/* ── 4. Active Runs + Live Activity (side by side) */}

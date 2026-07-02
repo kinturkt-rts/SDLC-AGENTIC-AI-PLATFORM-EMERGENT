@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { PipelineFlow } from '@/src/components/flow/PipelineFlow';
 import { usePipelines } from '@/src/lib/queries';
+import { phaseDisplayLabel } from '@/src/lib/pipeline-phases';
 
 export default function PipelineDetailPage({ params }: { params: { id: string } }) {
   const { data: pipelines, isLoading } = usePipelines();
@@ -59,7 +60,7 @@ export default function PipelineDetailPage({ params }: { params: { id: string } 
                 <div key={i} className="flex items-center gap-3 px-4 py-3">
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{i + 1}</span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold capitalize text-foreground">{ph.phase}</p>
+                    <p className="text-sm font-semibold text-foreground">{phaseDisplayLabel(ph.phase)}</p>
                     <p className="font-mono text-xs text-muted-foreground">{ph.agent}</p>
                   </div>
                   {ph.hitl ? (

@@ -1,44 +1,52 @@
-"""Stats router for review analytics."""
+"""Stats endpoint."""
+from datetime import datetime, timedelta, timezone
 
-from datetime import datetime, timedelta
-from fastapi import APIRouter
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import select, func, case
 
-from app.dependencies import DbSession, ApiKeyDep
-from app.models.review import Review, RiskBandEnum
-from schemas.review import StatsOut
-
+from app.database import get_db
+from app.dependencies import require_api_key
+from app.models.review import Review
+from schemas.review import StatsResponse, Last30Days
 
 router = APIRouter()
 
 
-@router.get("", response_model=StatsOut)
+@router.get("/stats", response_model=StatsResponse)
 def get_stats(
-    db: DbSession,
-    api_key: ApiKeyDep,
+    api_key: str = Depends(require_api_key),
+    db: Session = Depends(get_db),
 ):
-    """Get review statistics for last 30 days."""
-    # Calculate 30 days ago
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    
-    # Query for counts by risk band in last 30 days
-    risk_band_counts = {}
-    for risk_band in RiskBandEnum:
-        count = db.scalar(
-            select(func.count(Review.id))
-            .where(Review.submitted_at >= thirty_days_ago)
-            .where(Review.risk_band == risk_band)
-        ) or 0
-        risk_band_counts[risk_band.value] = count
-    
-    # Calculate average risk score for last 30 days
-    avg_result = db.scalar(
-        select(func.avg(Review.risk_score))
-        .where(Review.submitted_at >= thirty_days_ago)
-    )
-    avg_risk_score = float(avg_result) if avg_result is not None else 0.0
-    
-    return StatsOut(
-        last_30_days=risk_band_counts,
-        avg_risk_score=round(avg_risk_score, 2)
+    """Return risk distribution stats for the last 30 days."""
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+
+    query = select(
+        func.count(
+            case(
+                (Review.risk_band == "low", 1),
+            )
+        ).label("low"),
+        func.count(
+            case(
+                (Review.risk_band == "medium", 1),
+            )
+        ).label("medium"),
+        func.count(
+            case(
+                (Review.risk_band == "high", 1),
+            )
+        ).label("high"),
+        func.coalesce(func.avg(Review.risk_score), 0).label("avg_score"),
+    ).where(Review.submitted_at >= thirty_days_ago)
+
+    result = db.execute(query).one()
+
+    return StatsResponse(
+        last_30_days=Last30Days(
+            low=result.low,
+            medium=result.medium,
+            high=result.high,
+        ),
+        avg_risk_score=round(float(result.avg_score), 1),
     )

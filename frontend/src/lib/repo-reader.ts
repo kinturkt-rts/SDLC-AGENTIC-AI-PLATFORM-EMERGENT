@@ -12,6 +12,7 @@ import {
   countS3RunArtifacts,
   getS3RunLastModified,
 } from './artifact-store';
+import { MVP_TIMELINE_PHASES } from './pipeline-phases';
 import type {
   Agent,
   AgentAvailability,
@@ -566,9 +567,15 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
 
-  const ctx = await readContextFile(slug);
-  const phaseDone = await phaseCompletion(slug, ctx);
-  if (enriched.steps?.length) {
+  const ctx = isS3Store()
+    ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
+    : await readContextFile(slug);
+
+  const isActive = enriched.status === 'running' || enriched.status === 'queued';
+  const phaseDone = await phaseCompletionForRun(runId, slug, ctx);
+
+  // While a run is active, trust run.json step state (do not mark complete from slug-level artifacts).
+  if (!isActive && enriched.steps?.length) {
     enriched = {
       ...enriched,
       steps: mergeStepProgressFromPhases(enriched, phaseDone, enriched.status as RunStatus),
@@ -586,9 +593,10 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const currentPhase =
     currentAgentName && currentAgentName in agentPhase ? agentPhase[currentAgentName] : null;
 
-  const steps = enriched.steps?.length
+  const steps = (enriched.steps?.length
     ? buildStepsFromLive(runId, enriched)
-    : buildSteps(runId, phaseDone, enriched.status as RunStatus);
+    : buildSteps(runId, phaseDone, enriched.status as RunStatus)
+  ).filter((step) => MVP_TIMELINE_PHASES.includes(step.phase));
 
   return {
     id: runId,
@@ -941,6 +949,67 @@ async function phaseCompletion(slug: string, ctx: PipelineContextFile | null): P
     security: await handoffExists(slug, 'security-handoff.json'),
     deploy: await handoffExists(slug, 'gitlab-handoff.json'),
   };
+}
+
+/** Per-run artifact checks — avoids marking a new run complete from older slug-level files. */
+async function phaseCompletionForRun(
+  runId: string,
+  slug: string,
+  ctx: PipelineContextFile | null,
+): Promise<Record<SdlcPhase, boolean>> {
+  if (isS3Store()) {
+    const prefix = runS3Prefix(runId);
+    const files = await listS3RunArtifacts(runId);
+    const rels = files.map((f) =>
+      f.key.startsWith(prefix) ? f.key.slice(prefix.length) : f.key,
+    );
+    const has = (pred: (rel: string) => boolean) => rels.some(pred);
+    return {
+      requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
+      architecture:
+        has((r) => r.includes('/design/') && r.endsWith('.md')) ||
+        has((r) => r.includes('/diagrams/') && (r.endsWith('.png') || r.endsWith('.svg'))),
+      data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
+      implementation:
+        has((r) => r.includes('/app/') && r.endsWith('.py')) ||
+        has((r) => r.endsWith('/requirements.txt')),
+      qa: has((r) => r.includes('qa-handoff')),
+      security: has((r) => r.toLowerCase().includes('security-handoff')),
+      deploy: has((r) => r.toLowerCase().includes('gitlab-handoff')),
+    };
+  }
+
+  const runRoot = repoPath('agents', 'pipeline', 'runs', runId);
+  if (await fileExists(runRoot)) {
+    const walk = async (dir: string, base = ''): Promise<string[]> => {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      const out: string[] = [];
+      for (const entry of entries) {
+        const rel = base ? `${base}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          out.push(...(await walk(path.join(dir, entry.name), rel)));
+        } else {
+          out.push(rel.replace(/\\/g, '/'));
+        }
+      }
+      return out;
+    };
+    const rels = await walk(runRoot);
+    const has = (pred: (rel: string) => boolean) => rels.some(pred);
+    return {
+      requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
+      architecture:
+        has((r) => r.includes('/design/') && r.endsWith('.md')) ||
+        has((r) => r.includes('/diagrams/')),
+      data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
+      implementation: has((r) => r.includes('/app/') && r.endsWith('.py')),
+      qa: has((r) => r.includes('qa-handoff')),
+      security: has((r) => r.toLowerCase().includes('security-handoff')),
+      deploy: has((r) => r.toLowerCase().includes('gitlab-handoff')),
+    };
+  }
+
+  return phaseCompletion(slug, ctx);
 }
 
 function buildSteps(runId: string, completed: Record<SdlcPhase, boolean>, status: RunStatus): PipelineStep[] {

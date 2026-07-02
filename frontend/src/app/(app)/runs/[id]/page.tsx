@@ -31,6 +31,7 @@ import { EmptyState } from '@/src/components/common/EmptyState';
 import { useRun, useRunEvents, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
+import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
 
 const STEP_ICON: Record<StepStatus, typeof Clock> = {
@@ -207,7 +208,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">
-                  <span className="font-mono">{run.currentAgent}</span> is executing the <span className="capitalize">{run.currentPhase}</span> phase
+                  <span className="font-mono">{run.currentAgent}</span> is executing the{' '}
+                  <span>{phaseDisplayLabel(run.currentPhase)}</span> phase
                 </p>
                 <p className="text-[11px] text-muted-foreground">Live status from the platform \u2014 the control plane does not run the agent.</p>
               </div>
@@ -248,9 +250,11 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Workflow className="h-4 w-4 text-teal-400" /> SDLC Phase Timeline</h2>
               </div>
               <ol className="p-4">
-                {run.steps.map((step: PipelineStep, i: number) => {
+                {run.steps
+                  .filter((step) => MVP_TIMELINE_PHASES.includes(step.phase))
+                  .map((step: PipelineStep, i: number, arr) => {
                   const Icon = STEP_ICON[step.status];
-                  const last = i === run.steps.length - 1;
+                  const last = i === arr.length - 1;
                   const active = step.status === 'running' || step.status === 'waiting_for_human';
                   return (
                     <li key={step.id} className="relative flex gap-4 pb-6 last:pb-0">
@@ -266,12 +270,12 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                       </span>
                       <div className={cn('min-w-0 flex-1 rounded-lg border p-3 transition-all', STEP_BG[step.status])}>
                         <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-semibold capitalize text-foreground">{step.phase}</p>
+                          <p className="text-sm font-semibold text-foreground">{phaseDisplayLabel(step.phase)}</p>
                           <StatusBadge status={step.status} size="sm" />
                         </div>
                         <p className="font-mono text-xs text-muted-foreground">{step.agent}</p>
                         <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                          {step.startedAt ? <span>started {formatRelative(step.startedAt)}</span> : <span>not started</span>}
+                          <span>{stepStatusHint(step)}</span>
                           {step.durationSec != null ? <span>\u00b7 {formatDuration(step.durationSec)}</span> : null}
                         </div>
                       </div>

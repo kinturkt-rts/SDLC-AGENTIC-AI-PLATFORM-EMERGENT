@@ -1,11 +1,12 @@
 'use client';
 
-import { GitBranch, Flag } from 'lucide-react';
+import { GitBranch, Flag, ChevronRight, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { usePipelines } from '@/src/lib/queries';
+import { phaseDisplayLabel } from '@/src/lib/pipeline-phases';
 
 export default function PipelinesPage() {
   const { data: pipelines, isLoading } = usePipelines();
@@ -35,7 +36,9 @@ export default function PipelinesPage() {
                     <p className="text-sm text-muted-foreground">{p.description}</p>
                   </div>
                 </div>
-                <span className="shrink-0 text-xs font-medium text-teal-400">View graph \u2192</span>
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-teal-400">
+                  View graph <ArrowRight className="h-3.5 w-3.5" />
+                </span>
               </div>
 
               <div className="mt-5 flex flex-wrap items-stretch gap-2">
@@ -48,10 +51,12 @@ export default function PipelinesPage() {
                           <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400"><Flag className="h-2.5 w-2.5" /> HITL</span>
                         ) : null}
                       </div>
-                      <p className="mt-1 text-sm font-semibold capitalize text-foreground">{ph.phase}</p>
+                      <p className="mt-1 text-sm font-semibold text-foreground">{phaseDisplayLabel(ph.phase)}</p>
                       <p className="font-mono text-xs text-muted-foreground">{ph.agent}</p>
                     </div>
-                    {i < p.phases.length - 1 ? <span className="text-lg text-muted-foreground/30">\u2192</span> : null}
+                    {i < p.phases.length - 1 ? (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/30" aria-hidden />
+                    ) : null}
                   </div>
                 ))}
               </div>

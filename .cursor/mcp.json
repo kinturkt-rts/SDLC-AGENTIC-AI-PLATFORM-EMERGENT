@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "GitLab": {
-      "disabled": false,
+      "disabled": true,
       "timeout": 60,
       "type": "stdio",
       "command": "python",

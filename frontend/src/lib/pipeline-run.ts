@@ -204,6 +204,7 @@ export async function startPipeline(options: {
     env: {
       ...process.env,
       PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8',
       PIPELINE_RUN_ID: runId,
       ARTIFACT_STORE: process.env.ARTIFACT_STORE ?? 's3',
     },

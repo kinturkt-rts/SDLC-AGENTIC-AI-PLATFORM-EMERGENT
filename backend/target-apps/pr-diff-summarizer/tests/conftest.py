@@ -1,33 +1,33 @@
-"""Test configuration and fixtures for PR Diff Summarizer tests."""
-
-from __future__ import annotations
-
+"""Test configuration and fixtures."""
 import os
 import uuid
-from collections.abc import Generator
-from typing import Any
+from datetime import datetime, timezone
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import String, create_engine, event
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import TypeDecorator
-
-# ── 1. Environment BEFORE any app import ─────────────────────────────────────
+# Set env BEFORE any app imports
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("SKIP_STARTUP_CHECKS", "1")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("POSTGRES_SCHEMA", "pr_diff_summarizer")
-os.environ.setdefault("API_KEY", "test-key")
+os.environ.setdefault("API_KEY", "test-api-key-12345")
 os.environ.setdefault("AWS_REGION", "us-east-2")
-os.environ.setdefault("BEDROCK_REGION", "us-east-2")
-os.environ.setdefault("BEDROCK_MODEL_ID", "test-model")
+os.environ.setdefault("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+os.environ.setdefault("MAX_DIFF_BYTES", "102400")
 
-# ── 2. UUID TypeDecorator for SQLite ─────────────────────────────────────────
+import pytest
+from unittest.mock import MagicMock, patch
+from sqlalchemy import create_engine, event, String
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.types import TypeDecorator
+from fastapi.testclient import TestClient
+from typing import Any
+
+SCHEMA_NAME = "pr_diff_summarizer"
+
+
+# ── UUID TypeDecorator for SQLite ─────────────────────────────────────────
 class _UUIDStr(TypeDecorator):
-    """Stores UUID as 36-char string in SQLite; returns str (not uuid.UUID)."""
+    """Stores UUID as 36-char string in SQLite; round-trips to str."""
     impl = String(36)
     cache_ok = True
 
@@ -39,7 +39,7 @@ class _UUIDStr(TypeDecorator):
     def process_result_value(self, value: Any, dialect: Any) -> str | None:
         if value is None:
             return None
-        return str(value)  # Return str, not UUID, for JSON serialization
+        return str(value)
 
 
 def _patch_uuid_columns_for_sqlite(metadata: Any) -> None:
@@ -50,123 +50,115 @@ def _patch_uuid_columns_for_sqlite(metadata: Any) -> None:
             if isinstance(col.type, PG_UUID):
                 col.type = _UUIDStr()
 
-# ── 3. Now import app (AFTER env is set + shims applied) ────────────────────
-from app import database as _db_module  # noqa: E402
+
+# ── Import app AFTER env is set ───────────────────────────────────────────
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
-
-# ── 4. Engine + session fixtures ────────────────────────────────────────────
-
-def _build_test_engine() -> Engine:
-    """In-memory SQLite with schema attach and FK support."""
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-
-    schema = os.environ.get("POSTGRES_SCHEMA", "public")
-
-    @event.listens_for(eng, "connect")
-    def _on_connect(dbapi_conn, _record):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        if schema and schema != "public":
-            try:
-                cur.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
-            except Exception:
-                pass  # already attached
-        cur.close()
-
-    return eng
+import app.database as _db_module  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def engine() -> Engine:
-    eng = _build_test_engine()
-    if eng.dialect.name == "sqlite":
-        _patch_uuid_columns_for_sqlite(Base.metadata)
-    Base.metadata.create_all(eng)
-    return eng
+# ── Engine + session fixtures ─────────────────────────────────────────────
+_test_engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+    future=True,
+)
+
+
+@event.listens_for(_test_engine, "connect")
+def _on_connect(dbapi_conn, _record):
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA foreign_keys=ON")
+    try:
+        cur.execute(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA_NAME}\"")
+    except Exception:
+        pass  # already attached
+    cur.close()
+
+
+# Patch UUID columns before creating tables
+_patch_uuid_columns_for_sqlite(Base.metadata)
+Base.metadata.create_all(bind=_test_engine)
+
+TestSessionLocal = sessionmaker(bind=_test_engine, autoflush=False, autocommit=False)
 
 
 @pytest.fixture()
-def db_session(engine: Engine) -> Generator[Session, None, None]:
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    session = TestingSession()
+def db_session():
+    session = TestSessionLocal()
     try:
         yield session
     finally:
         session.close()
-        with engine.begin() as conn:
+        # Clean up all tables after each test
+        with _test_engine.begin() as conn:
             for table in reversed(Base.metadata.sorted_tables):
                 conn.exec_driver_sql(f"DELETE FROM {table.name}")
 
 
 @pytest.fixture()
-def client(engine: Engine, db_session: Session) -> Generator[TestClient, None, None]:
-    _db_module.engine = engine
-    _db_module.SessionLocal.configure(bind=engine)
+def client(db_session):
+    _db_module.engine = _test_engine
+    _db_module.SessionLocal = TestSessionLocal
 
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-    def _override():
-        sess = TestingSession()
+    def _override_get_db():
+        sess = TestSessionLocal()
         try:
             yield sess
         finally:
             sess.close()
 
-    app.dependency_overrides[get_db] = _override
-    with TestClient(app) as c:
-        yield c
+    app.dependency_overrides[get_db] = _override_get_db
+    with TestClient(app) as tc:
+        yield tc
     app.dependency_overrides.clear()
 
 
-# ── 5. Auth fixtures ─────────────────────────────────────────────────────────
-
 @pytest.fixture()
 def api_headers():
-    """Headers for API-key auth apps."""
-    return {"X-API-Key": os.environ["API_KEY"]}
+    return {"X-API-Key": "test-api-key-12345"}
 
-
-# ── 6. Mock Bedrock client ───────────────────────────────────────────────────
 
 @pytest.fixture()
-def mock_bedrock(monkeypatch):
-    """Mock Bedrock client for testing."""
-    from unittest.mock import MagicMock
-    
-    fake = MagicMock()
-    fake.invoke_text.return_value = '{"summary": "Test AI summary of diff changes", "risk_score": 45}'
-    
-    # Patch at the import site where routers use it
-    monkeypatch.setattr("app.routers.reviews.get_bedrock_client", lambda: fake)
-    return fake
+def mock_bedrock():
+    """Mock invoke_summarize at the router import site."""
+    fake_result = {
+        "summary": "Test summary of the changes.",
+        "risk_factors": ["test-factor"],
+        "risk_score": 50,
+    }
+    with patch("app.routers.reviews.invoke_summarize", return_value=fake_result) as mock:
+        yield mock
 
-
-# ── 7. Seed data fixtures ────────────────────────────────────────────────────
 
 @pytest.fixture()
-def seeded_review(db_session):
-    """Create a sample review for testing."""
-    from app.models.review import Review, RiskBandEnum
-    
-    review_id = str(uuid.uuid4())
+def mock_bedrock_for_health():
+    """Mock get_bedrock_client for health checks."""
+    fake_client = MagicMock()
+    with patch("app.routers.health.get_bedrock_client", return_value=fake_client):
+        yield fake_client
+
+
+@pytest.fixture()
+def sample_review(db_session):
+    """Seed a review in the test DB."""
+    from app.models.review import Review
+
     review = Review(
-        id=review_id,
-        title="Test PR: Add feature",
-        diff_text="diff --git a/test.py b/test.py\n+def new_function():\n+    return True",
+        id=str(uuid.uuid4()),
+        title="Test review",
+        diff_text="diff --git a/test.py b/test.py\n+hello\n-world",
         file_count=1,
-        lines_added=2,
-        lines_removed=0,
-        summary="Adds a new test function",
+        lines_added=1,
+        lines_removed=1,
+        summary="A test change.",
+        risk_factors=["test"],
         risk_score=25,
-        risk_band=RiskBandEnum.LOW,
+        risk_band="low",
         model_id="test-model",
-        created_by="test-key"
+        created_by="test",
+        submitted_at=datetime.now(timezone.utc),
     )
     db_session.add(review)
     db_session.commit()
