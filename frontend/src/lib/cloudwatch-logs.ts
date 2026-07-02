@@ -19,8 +19,9 @@ interface CloudWatchLogsResponse {
   error?: string;
 }
 
-const CACHE_TTL_MS = 8_000;
+const CACHE_TTL_MS = 20_000;
 let logCache: { key: string; expiresAt: number; logs: LogEntry[] } | null = null;
+const inflight = new Map<string, Promise<LogEntry[]>>();
 
 function cacheKey(options: CloudWatchLogsOptions): string {
   return JSON.stringify({
@@ -45,6 +46,23 @@ export async function listCloudWatchLogs(
     return logCache.logs;
   }
 
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const promise = fetchCloudWatchLogs(options, key, now);
+  inflight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    inflight.delete(key);
+  }
+}
+
+async function fetchCloudWatchLogs(
+  options: CloudWatchLogsOptions,
+  key: string,
+  now: number,
+): Promise<LogEntry[]> {
   loadBackendEnv();
   const repoRoot = getBackendRoot();
   const script = path.join(repoRoot, 'scripts', 'fetch-cloudwatch-logs.py');

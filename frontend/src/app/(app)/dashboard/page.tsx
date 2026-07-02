@@ -310,6 +310,7 @@ function InputRequirementsCard() {
   const [savedRunId, setSavedRunId] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [submitPhase, setSubmitPhase] = React.useState<'idle' | 'upload' | 'start'>('idle');
   const [starting, setStarting] = React.useState(false);
   const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -366,6 +367,23 @@ function InputRequirementsCard() {
     }
   };
 
+  const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error(
+          `Request timed out after ${timeoutMs / 1000}s — the dev server may be busy. Retry or restart \`npm run dev\`.`,
+        );
+      }
+      throw err;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!content.trim()) {
       toast.error('Cannot submit empty requirements');
@@ -376,28 +394,53 @@ function InputRequirementsCard() {
       return;
     }
     setSubmitting(true);
+    setSubmitPhase('upload');
     try {
-      const res = await fetch('/api/v1/runs/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetApp: feature, content }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const uploadRes = await fetchWithTimeout(
+        '/api/v1/inputs',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ feature, content }),
+        },
+        45_000,
+      );
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.error || `HTTP ${uploadRes.status}`);
+
+      setSubmitPhase('start');
+      const startRes = await fetchWithTimeout(
+        '/api/v1/runs/start',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetApp: feature,
+            runId: uploadData.runId,
+            inputFile: uploadData.inputPath ?? uploadData.inputFile,
+          }),
+        },
+        30_000,
+      );
+      const data = await startRes.json();
+      if (!startRes.ok) throw new Error(data.error || `HTTP ${startRes.status}`);
+
       setStatus('saved');
       setSavedRunId(data.runId);
-      setSavedPath(data.inputFile);
+      setSavedPath(data.inputFile ?? uploadData.inputFile);
       setStartedRunId(data.runId);
       setLastSaved(new Date().toLocaleTimeString());
       toast.success('Pipeline submitted', {
-        description: `run ${data.runId} → ${data.runPrefix ?? `runs/${data.runId}/`}`,
+        description: `run ${data.runId} → ${uploadData.runPrefix ?? `runs/${data.runId}/`}`,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
     } catch (err) {
       toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
       setSubmitting(false);
+      setSubmitPhase('idle');
     }
   };
 
@@ -527,7 +570,12 @@ function InputRequirementsCard() {
               onClick={handleSubmit}
               disabled={!content.trim() || !feature || !featureValid || submitting}
             >
-              <PlayCircle className="h-3.5 w-3.5" /> {submitting ? 'Starting...' : 'Submit & Run Pipeline'}
+              <PlayCircle className="h-3.5 w-3.5" />{' '}
+              {submitting
+                ? submitPhase === 'upload'
+                  ? 'Uploading…'
+                  : 'Starting pipeline…'
+                : 'Submit & Run Pipeline'}
             </Button>
           </div>
         </div>
@@ -595,7 +643,6 @@ function TokenUsageSection() {
    Main Dashboard
    ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const queryClient = useQueryClient();
   const { data: summary } = useDashboardSummary();
   const { data: runs } = useRuns();
   const { data: checkpoints } = useCheckpoints();
@@ -605,23 +652,12 @@ export default function DashboardPage() {
   const activeRuns = (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused');
   const hasActive = activeRuns.length > 0;
 
-  // Live-refresh while a pipeline is running so the dashboard updates without a manual reload.
-  React.useEffect(() => {
-    if (!hasActive) return;
-    const id = window.setInterval(() => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.runs });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.artifacts });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.activity });
-    }, 4000);
-    return () => window.clearInterval(id);
-  }, [hasActive, queryClient]);
+  const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
+
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
   const recentArtifacts = [...(artifacts ?? [])]
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     .slice(0, 6);
-
-  const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
 
   return (
     <div className="space-y-5">
@@ -696,7 +732,7 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <LiveActivityFeed poll={hasActive || activeRuns.length > 0 || (runs?.length ?? 0) > 0} />
+        <LiveActivityFeed poll={hasActive} />
       </div>
 
       {/* ── 5. Recent Artifacts + HITL Approvals (side by side) */}

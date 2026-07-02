@@ -1,5 +1,8 @@
 import { PutObjectCommand, S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { loadBackendEnv } from './backend-env';
+
+let _s3Client: S3Client | null = null;
 
 export function artifactStoreMode(): 's3' | 'local' {
   loadBackendEnv();
@@ -38,6 +41,7 @@ export function runInputS3Uri(runId: string, feature: string): string {
 }
 
 export function s3Client(): S3Client {
+  if (_s3Client) return _s3Client;
   loadBackendEnv();
   const region = process.env.AWS_REGION?.trim() || 'us-east-2';
   const profile = process.env.AWS_PROFILE?.trim();
@@ -45,7 +49,15 @@ export function s3Client(): S3Client {
     // Default AWS SDK chain reads AWS_PROFILE from the environment at request time.
     process.env.AWS_PROFILE = profile;
   }
-  return new S3Client({ region });
+  _s3Client = new S3Client({
+    region,
+    maxAttempts: 2,
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: 5000,
+      requestTimeout: 20000,
+    }),
+  });
+  return _s3Client;
 }
 
 export async function putRunArtifact(

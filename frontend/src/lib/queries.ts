@@ -40,7 +40,7 @@ export const useRuns = () =>
     queryFn: api.getRuns,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 4000;
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 8000;
       return false;
     },
   });
@@ -109,7 +109,7 @@ export const useRecentActivity = (poll = true) =>
   useQuery({
     queryKey: queryKeys.activity,
     queryFn: () => api.getRecentActivity(),
-    refetchInterval: poll ? 4000 : false,
+    refetchInterval: poll ? 8000 : false,
   });
 
 export const usePlatformSettings = () =>

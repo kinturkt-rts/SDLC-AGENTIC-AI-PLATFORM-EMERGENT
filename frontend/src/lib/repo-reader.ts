@@ -14,7 +14,8 @@ import {
   getS3RunLastModifiedMs,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
-import { parseLogTerminalStatus, reconcileRunStatus } from './run-reconcile';
+import { parseLogTerminalStatus, reconcileRunStatus, RUN_LIVE_IDLE_MS } from './run-reconcile';
+import { cachedAsync, invalidateCacheKey } from './request-cache';
 import {
   buildRunEvents,
   runEventToActivityFeed,
@@ -52,6 +53,42 @@ import type {
   StepStatus,
 } from '@/src/types';
 import { mockPipelines } from '@/src/mocks/projects';
+
+const LIST_RUNS_CACHE_KEY = 'listRuns';
+const LIST_RUNS_TTL_MS = 5000;
+const UUID_RUN_BUILD_BATCH = 4;
+
+function emptyPhaseDone(): Record<SdlcPhase, boolean> {
+  return {
+    requirements: false,
+    architecture: false,
+    data: false,
+    implementation: false,
+    qa: false,
+    security: false,
+    deploy: false,
+  };
+}
+
+/** Skip per-run S3 scans for terminal or idle stale runs — keeps listRuns fast. */
+function runNeedsHeavyProbe(live: LiveRunState, log: string | null): boolean {
+  if (live.status === 'completed' || live.status === 'failed' || live.status === 'cancelled') {
+    return false;
+  }
+  if (log && parseLogTerminalStatus(log)) return false;
+
+  const startedAt = live.startedAt;
+  if (!startedAt) return live.status === 'running' || live.status === 'queued';
+
+  const ageMs = Date.now() - Date.parse(startedAt);
+  if (ageMs > RUN_LIVE_IDLE_MS) return false;
+
+  return live.status === 'running' || live.status === 'queued';
+}
+
+export function invalidateRunsCache(): void {
+  invalidateCacheKey(LIST_RUNS_CACHE_KEY);
+}
 
 const SKIP_APPS = new Set(['_template']);
 
@@ -577,15 +614,27 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
 
-  const ctx = isS3Store()
-    ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
-    : await readContextFile(slug);
+  const needsHeavy = runNeedsHeavyProbe(enriched, log);
+  let ctx: PipelineContextFile | null = null;
+  let phaseDone = emptyPhaseDone();
+  let s3MtimeMs = 0;
 
-  const phaseDone = await phaseCompletionForRun(runId, slug, ctx);
+  if (needsHeavy) {
+    ctx = isS3Store()
+      ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
+      : await readContextFile(slug);
+    phaseDone = await phaseCompletionForRun(runId, slug, ctx);
+    s3MtimeMs = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
+  } else if (!isS3Store()) {
+    ctx = await readContextFile(slug);
+    if (enriched.status === 'completed' || enriched.status === 'failed') {
+      phaseDone = await phaseCompletionForRun(runId, slug, ctx);
+    }
+  }
+
   const startedAt =
     enriched.startedAt ?? (UUID_RE.test(runId) ? await latestUuidRunMtime(runId) : await latestPipelineMtime(slug));
   const logMtimeMs = await pipelineLogMtime(runId);
-  const s3MtimeMs = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
 
   const reconciled = reconcileRunStatus({
     status: enriched.status as RunStatus,
@@ -662,12 +711,18 @@ async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
   const runIds = await listUuidRunIds();
   const runs: PipelineRun[] = [];
 
-  for (const runId of runIds) {
-    const live = await readUuidRunState(runId);
-    if (!live) continue;
-    const slug = featureSlugFromLive(live);
-    if (!slug) continue;
-    runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
+  for (let i = 0; i < runIds.length; i += UUID_RUN_BUILD_BATCH) {
+    const batch = runIds.slice(i, i + UUID_RUN_BUILD_BATCH);
+    const batchRuns = await Promise.all(
+      batch.map(async (runId) => {
+        const live = await readUuidRunState(runId);
+        if (!live) return null;
+        const slug = featureSlugFromLive(live);
+        if (!slug) return null;
+        return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId });
+      }),
+    );
+    runs.push(...batchRuns.filter((r): r is PipelineRun => r !== null));
   }
 
   return runs;
@@ -1119,7 +1174,7 @@ function buildStepsFromLive(runId: string, live: LiveRunState): PipelineStep[] {
   });
 }
 
-export async function listRuns(): Promise<PipelineRun[]> {
+async function listRunsUncached(): Promise<PipelineRun[]> {
   const [uuidRuns, slugs] = await Promise.all([listUuidPipelineRuns(), listPipelineSlugs()]);
   const coveredSlugs = new Set(uuidRuns.map((r) => r.projectId));
   const coveredRunIds = new Set(uuidRuns.map((r) => r.id));
@@ -1170,6 +1225,10 @@ export async function listRuns(): Promise<PipelineRun[]> {
   }
 
   return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+export async function listRuns(): Promise<PipelineRun[]> {
+  return cachedAsync(LIST_RUNS_CACHE_KEY, LIST_RUNS_TTL_MS, listRunsUncached);
 }
 
 export async function getRun(id: string): Promise<PipelineRun | undefined> {

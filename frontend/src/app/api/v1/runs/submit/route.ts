@@ -9,6 +9,9 @@ function formatSubmitError(err: unknown): string {
     const profile = process.env.AWS_PROFILE?.trim() || 'your-aws-profile';
     return `AWS SSO session expired for profile "${profile}". Run: aws sso login --profile ${profile}, then retry.`;
   }
+  if (/timed out/i.test(message)) {
+    return `${message}. If using S3, run: aws sso login --profile ${process.env.AWS_PROFILE?.trim() || 'your-aws-profile'}`;
+  }
   return message;
 }
 
