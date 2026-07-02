@@ -1,17 +1,15 @@
-"""Call jmrplens/gitlab-mcp-server from agents (stdio locally or HTTP on AWS)."""
+"""Call jmrplens/gitlab-mcp-server via ECS HTTP MCP (CloudFront or ALB)."""
 
 from __future__ import annotations
 
 import os
-import sys
-from contextlib import asynccontextmanager
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import urljoin, urlparse
 
-from mcp import ClientSession, StdioServerParameters, stdio_client
+from mcp import ClientSession
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -165,18 +163,10 @@ def dynamic_action_for_individual_tool(tool_name: str) -> str | None:
     return _INDIVIDUAL_TOOL_TO_DYNAMIC_ACTION.get(tool_name)
 
 
-def _mcp_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env.setdefault("TOOL_SURFACE", "individual")
-    return env
-
-
-def _server_params() -> StdioServerParameters:
-    python = os.environ.get("GITLAB_MCP_PYTHON", sys.executable)
-    return StdioServerParameters(
-        command=python,
-        args=[str(_REPO_ROOT / "scripts" / "gitlab_mcp_server.py")],
-        env=_mcp_env(),
+def _mcp_http_required_error() -> GitLabMcpError:
+    return GitLabMcpError(
+        "Set GITLAB_MCP_URL or GITLAB_MCP_HTTP_DIRECT_URL in .env.local "
+        "(see config/agentcore/gitlab-mcp-endpoints.json)."
     )
 
 
@@ -196,14 +186,6 @@ def _parse_tool_result(result: Any) -> dict[str, Any]:
         if text:
             return {"raw": text}
     return {}
-
-
-@asynccontextmanager
-async def _stdio_gitlab_mcp_session() -> AsyncIterator[ClientSession]:
-    async with stdio_client(_server_params()) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
 
 
 @asynccontextmanager
@@ -233,29 +215,14 @@ async def _configure_tool_surface(session: ClientSession) -> None:
 
 @asynccontextmanager
 async def gitlab_mcp_session() -> AsyncIterator[ClientSession]:
-    """One MCP session per publish run (stdio locally, HTTP when MCP URL env is set)."""
+    """One MCP session per publish run (ECS HTTP MCP)."""
     token = _use_dynamic_actions.set(False)
     try:
-        if use_gitlab_mcp_http():
-            async with _http_gitlab_mcp_session() as session:
-                await _configure_tool_surface(session)
-                yield session
-        else:
-            if not (_REPO_ROOT / "scripts" / "gitlab_mcp_server.py").is_file():
-                raise GitLabMcpError("scripts/gitlab_mcp_server.py not found.")
-            binary_candidates = (
-                _REPO_ROOT / "bin" / "gitlab-mcp-server.exe",
-                _REPO_ROOT / "bin" / "gitlab-mcp-server",
-            )
-            if not any(path.is_file() for path in binary_candidates):
-                raise GitLabMcpError(
-                    "Local GitLab MCP binary not found and GITLAB_MCP_URL is unset. "
-                    "Add GITLAB_MCP_URL to .env.local for the ECS HTTP MCP, or run "
-                    ".\\scripts\\install-jmrplens-gitlab-mcp.ps1 for local stdio."
-                )
-            async with _stdio_gitlab_mcp_session() as session:
-                await _configure_tool_surface(session)
-                yield session
+        if not use_gitlab_mcp_http():
+            raise _mcp_http_required_error()
+        async with _http_gitlab_mcp_session() as session:
+            await _configure_tool_surface(session)
+            yield session
     finally:
         _use_dynamic_actions.reset(token)
 

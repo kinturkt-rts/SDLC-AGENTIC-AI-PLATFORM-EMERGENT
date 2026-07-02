@@ -55,6 +55,29 @@ export function parseLogTerminalStatus(
   return null;
 }
 
+/** Parse skip_* flags from the orchestrator invocation JSON in the log header. */
+export function parseLogSkipFlags(
+  log: string | null,
+): Partial<Record<SdlcPhase, boolean>> {
+  if (!log) return {};
+  const match = log.match(/\{[\s\S]*?"skip_[a-z]+"[\s\S]*?\}/);
+  if (!match) return {};
+
+  try {
+    const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    return {
+      requirements: parsed.skip_product === true,
+      architecture: parsed.skip_architect === true,
+      data: parsed.skip_db === true,
+      implementation: parsed.skip_developer === true,
+      deploy: parsed.skip_gitlab === true,
+      qa: parsed.skip_verify === true,
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function lastRunActivityMs(input: {
   startedAt: string;
   logMtimeMs: number;

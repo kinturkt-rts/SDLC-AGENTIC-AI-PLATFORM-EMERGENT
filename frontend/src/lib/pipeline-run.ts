@@ -186,7 +186,7 @@ export async function startPipeline(options: {
   const skipDeveloper =
     (process.env.SDLC_PIPELINE_SKIP_DEVELOPER ?? 'false').trim().toLowerCase() !== 'false';
   const skipGitlab =
-    (process.env.SDLC_PIPELINE_SKIP_GITLAB ?? 'true').trim().toLowerCase() !== 'false';
+    (process.env.SDLC_PIPELINE_SKIP_GITLAB ?? 'false').trim().toLowerCase() === 'true';
   const skipVerify =
     (process.env.SDLC_PIPELINE_SKIP_VERIFY ?? 'true').trim().toLowerCase() !== 'false';
 

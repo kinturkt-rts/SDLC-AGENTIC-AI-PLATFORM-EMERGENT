@@ -85,6 +85,24 @@ def test_extract_scrape_queries_dedupes() -> None:
     assert queries == ["finops benchmarks"]
 
 
+def test_scraped_output_rel_defaults_to_prd_scraped_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    rel = _mod._scraped_output_rel("inventory-app", None)
+    assert rel == "docs/PRD/scraped/inventory-app"
+
+
+def test_scraped_output_rel_cloud_uses_target_app_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    rel = _mod._scraped_output_rel("inventory-app", None)
+    assert rel == "inventory-app/docs/PRD/scraped"
+
+
+def test_artifact_rel_path_prefixes_target_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    rel = _mod._artifact_rel_path("docs/PRD/scraped/page.md", "inventory-app")
+    assert rel == "inventory-app/docs/PRD/scraped/page.md"
+
+
 def test_firecrawl_api_key_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in ("FIRECRAWL_API_KEY", "Firecrawl_API_Key", "FIRECRAWL_APIKEY"):
         monkeypatch.delenv(key, raising=False)

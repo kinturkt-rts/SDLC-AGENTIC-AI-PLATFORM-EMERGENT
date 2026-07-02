@@ -20,7 +20,7 @@ Uses **jmrplens/gitlab-mcp-server** in Cursor (GitLab Free via REST API v4).
 |------|----------|
 | CLI publish | `agents/gitlab-agent/gitlab_agent.py` → `gitlab_mcp_actions.publish_feature` |
 | MCP client | `agents/_shared/gitlab_mcp_client.py` |
-| MCP server | `scripts/gitlab_mcp_server.py` → `bin/gitlab-mcp-server.exe` |
+| MCP server | ECS HTTP (`GITLAB_MCP_URL`) — see `config/agentcore/gitlab-mcp-endpoints.json` |
 | MCP actions | `agents/_shared/gitlab_mcp_actions.py` (env, publish, MR notes) |
 | A2A port | 9110 |
 | Handoff | `agents/pipeline/<app>.gitlab-handoff.json` |
@@ -34,9 +34,11 @@ GITLAB_URL=https://code.junodev.net
 GITLAB_API_URL=https://code.junodev.net/api/v4
 GITLAB_PROJECT_PATH=junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform
 GITLAB_BASE_BRANCH=main
+GITLAB_MCP_URL=https://....cloudfront.net/mcp          # ECS HTTP MCP (preferred)
+# GITLAB_MCP_HTTP_DIRECT_URL=http://gitlab-mcp-alb-.../mcp  # ALB direct (publish)
 ```
 
-Install MCP binary once: `.\scripts\install-jmrplens-gitlab-mcp.ps1`
+Deploy ECS MCP: `backend/scripts/push-gitlab-mcp-ecr.ps1` + `deploy-gitlab-mcp-ecs.ps1`
 
 ## Pipeline
 

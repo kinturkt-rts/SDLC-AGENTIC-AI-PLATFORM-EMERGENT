@@ -92,10 +92,21 @@ def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def _read_optional(repo_root: Path, rel_or_abs: str | None) -> str:
+def _read_optional(repo_root: Path, rel_or_abs: str | None, *, run_id: str | None = None) -> str:
     if not rel_or_abs or not str(rel_or_abs).strip():
         return ""
-    path = Path(str(rel_or_abs).strip())
+    rel = str(rel_or_abs).strip().lstrip("/").replace("\\", "/")
+
+    # S3-aware read when run_id is available (cloud containers don't have local artifacts)
+    if run_id:
+        try:
+            from .artifact_store import get_artifact
+            return get_artifact(run_id, rel).decode("utf-8", errors="replace")
+        except Exception:
+            pass
+
+    # Local filesystem fallback
+    path = Path(rel_or_abs.strip())
     if not path.is_absolute():
         path = (repo_root / path).resolve()
     if not path.is_file():
@@ -108,11 +119,12 @@ def build_delivery_profile_from_paths(
     *,
     prd_path: str | None = None,
     input_path: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Build delivery profile from input brief and/or PRD file paths."""
     profiles: list[dict[str, Any]] = []
-    input_text = _read_optional(repo_root, input_path)
-    prd_text = _read_optional(repo_root, prd_path)
+    input_text = _read_optional(repo_root, input_path, run_id=run_id)
+    prd_text = _read_optional(repo_root, prd_path, run_id=run_id)
     if input_text:
         profiles.append(scan_delivery_text(input_text))
     if prd_text:
@@ -138,13 +150,12 @@ def verify_design_doc(repo_root: Path, context: dict[str, Any]) -> list[str]:
     if not design_rel:
         return ["deliveryProfile requires Streamlit but designDocPath is missing from context"]
 
-    design_path = Path(str(design_rel))
-    if not design_path.is_absolute():
-        design_path = (repo_root / design_path).resolve()
-    if not design_path.is_file():
+    run_id = context.get("runId") or context.get("run_id") or None
+    design_text = _read_optional(repo_root, str(design_rel), run_id=run_id)
+    if not design_text:
         return [f"deliveryProfile requires Streamlit but design doc not found: {design_rel}"]
 
-    if design_doc_includes_streamlit(design_path.read_text(encoding="utf-8")):
+    if design_doc_includes_streamlit(design_text):
         return []
     return [
         f"deliveryProfile.requiresStreamlit is true but {design_rel} does not include "
@@ -184,10 +195,12 @@ def sync_context_delivery_profile(
 ) -> dict[str, Any]:
     """Merge deliveryProfile into pipeline context from PRD + input brief."""
     context = load_context(context_path)
+    run_id = context.get("runId") or context.get("run_id") or None
     profile = build_delivery_profile_from_paths(
         repo_root,
         prd_path=context.get("prdPath") or context.get("prd_path"),
         input_path=input_path or context.get("inputPath") or context.get("input_path"),
+        run_id=run_id,
     )
     context["deliveryProfile"] = profile
     if input_path:

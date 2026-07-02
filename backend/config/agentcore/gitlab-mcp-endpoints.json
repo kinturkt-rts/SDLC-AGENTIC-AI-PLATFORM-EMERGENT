@@ -16,10 +16,8 @@
   },
   "directMcpUrl": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
   "waf": {
-    "blockedRuleExample": "AWSManagedRulesCommonRuleSet/GenericLFI_BODY",
-    "symptom": "403 on POST /mcp when CommonRuleSet inspects publish bodies",
-    "fixScript": "backend/scripts/update-gitlab-mcp-waf.ps1",
-    "fixDescription": "Excludes GenericLFI_BODY from AWSManagedRulesCommonRuleSet on the CloudFront Web ACL"
+    "status": "fixed",
+    "note": "GenericLFI_BODY excluded on CloudFront Web ACL CreatedByCloudFront-0a676d76 (one-time AWS console/CLI change)."
   },
   "usage": {
     "gitlabAgentPublish": "cloudFront.mcpUrl",

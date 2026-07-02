@@ -15,18 +15,21 @@ from urllib.parse import urlparse
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
-_DEFAULT_SCRAPED_REL = "docs/scraped"
+_DEFAULT_SCRAPED_REL = "docs/PRD/scraped"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.mcp_clients import firecrawl_mcp_client, postgres_mcp_client, postgres_mcp_tool_params
+from _shared.artifact_store import is_s3_store, put_artifact, resolve_run_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     design_doc_rel_for_app,
     enrich_handoff_context,
     resolve_design_doc_path,
     resolve_target_app,
+    slugify,
+    target_app_root_rel,
 )
 
 load_repo_env()
@@ -88,10 +91,12 @@ _READ_PREFIXES = (
 
 _WRITE_PREFIXES = (
     _REPO_ROOT / "docs" / "scraped",
+    _REPO_ROOT / "docs" / "PRD" / "scraped",
     _REPO_ROOT / "inputs" / "scraped",
 )
 
 _written_files: list[str] = []
+_run_context: dict[str, Any] | None = None
 
 SCRAPED_CONTENT_DDL = """\
 CREATE TABLE IF NOT EXISTS scraped_web_content (
@@ -186,6 +191,7 @@ Escape single quotes in SQL strings by doubling them (`'` → `''`).
 Truncate content_markdown to 500000 chars if needed.
 
 ## File output
+- When the user message includes Context JSON, call `wc_set_handoff_context` once with that JSON before writing (required for S3 artifact store / runId).
 - Write normalized markdown via `wc_write_markdown` under `scrapedOutputDir`.
 - Filename pattern: `<slug-from-url>.md` with YAML front matter (url, title, scraped_at).
 
@@ -300,7 +306,7 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     if write:
         allowed = any(str(candidate).startswith(str(prefix.resolve())) for prefix in _WRITE_PREFIXES)
         if not allowed:
-            raise ValueError("writes only allowed under docs/scraped/ or inputs/scraped/")
+            raise ValueError("writes only allowed under docs/scraped/, docs/PRD/scraped/, or inputs/scraped/")
         return candidate
     allowed = any(str(candidate).startswith(str(prefix.resolve())) for prefix in _READ_PREFIXES)
     if not allowed:
@@ -344,15 +350,35 @@ def _resolve_target_app(name: str | None, context: dict[str, Any] | None) -> str
     return resolve_target_app(name, context, env_var="WEB_CRAWLER_TARGET_APP")
 
 
-def _scraped_output_dir(target_app: str, context: dict[str, Any] | None) -> Path:
+def _scraped_output_rel(target_app: str, context: dict[str, Any] | None) -> str:
+    """Repo-relative scraped output directory (local or S3 artifact prefix)."""
     ctx = context or {}
     raw = str(ctx.get("scrapedOutputDir") or os.getenv("WEB_CRAWLER_OUTPUT_DIR", "")).strip()
     if raw:
-        path = Path(raw)
-        if not path.is_absolute():
-            path = (_REPO_ROOT / path).resolve()
-    else:
-        path = (_REPO_ROOT / _DEFAULT_SCRAPED_REL / _slugify(target_app)).resolve()
+        return raw.replace("\\", "/").lstrip("/")
+    slug = slugify(target_app)
+    if is_s3_store():
+        return f"{target_app_root_rel(slug)}/{_DEFAULT_SCRAPED_REL}"
+    return f"{_DEFAULT_SCRAPED_REL}/{slug}"
+
+
+def _artifact_rel_path(path: str, target_app: str) -> str:
+    """Map repo-relative write path to run-scoped artifact key suffix."""
+    raw = path.strip().replace("\\", "/").lstrip("/")
+    slug = slugify(target_app)
+    root = target_app_root_rel(slug)
+    if raw.startswith(f"{root}/"):
+        return raw
+    if raw.startswith("docs/") or raw.startswith("inputs/"):
+        return f"{root}/{raw}"
+    return f"{root}/{raw}"
+
+
+def _scraped_output_dir(target_app: str, context: dict[str, Any] | None) -> Path:
+    rel = _scraped_output_rel(target_app, context)
+    if is_s3_store():
+        return Path(rel)
+    path = (_REPO_ROOT / rel).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -363,10 +389,11 @@ def _build_context(
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     out_dir = _scraped_output_dir(target_app, extra)
+    scraped_rel = _scraped_output_rel(target_app, extra)
     ctx: dict[str, Any] = {
         "targetApp": target_app,
         "designDocPath": design_doc_rel_for_app(target_app),
-        "scrapedOutputDir": _repo_rel(out_dir),
+        "scrapedOutputDir": scraped_rel if is_s3_store() else _repo_rel(out_dir),
         "postgresMcpParams": postgres_mcp_tool_params(),
         "webScrapeRequired": True,
     }
@@ -400,8 +427,39 @@ def wc_read_file(path: str) -> str:
 
 
 @tool
+def wc_set_handoff_context(context_json: str) -> str:
+    """Bind runId/targetApp from handoff JSON for S3 artifact writes (call once per request)."""
+    global _run_context
+    try:
+        parsed = json.loads(context_json)
+    except json.JSONDecodeError as exc:
+        return f"Error: invalid JSON: {exc}"
+    if not isinstance(parsed, dict):
+        return "Error: context must be a JSON object"
+    _run_context = parsed
+    run_id = resolve_run_id(parsed) or "missing"
+    target = parsed.get("targetApp", "n/a")
+    return f"Bound handoff context (runId={run_id}, targetApp={target})"
+
+
+@tool
 def wc_write_markdown(path: str, content: str) -> str:
-    """Write scraped markdown under docs/scraped/ or inputs/scraped/."""
+    """Write scraped markdown under docs/PRD/scraped/ (or S3 artifact store when configured)."""
+    ctx = _run_context or {}
+    target_app = str(ctx.get("targetApp") or os.getenv("WEB_CRAWLER_TARGET_APP", "scraped"))
+    run_id = resolve_run_id(ctx)
+
+    if is_s3_store():
+        if not run_id:
+            return "Error: runId or PIPELINE_RUN_ID required when ARTIFACT_STORE=s3"
+        raw = path.strip().replace("\\", "/").lstrip("/")
+        if not raw.endswith(".md"):
+            return "Error: path must end with .md"
+        rel = _artifact_rel_path(raw, target_app)
+        stored = put_artifact(run_id, rel, content, content_type="text/markdown; charset=utf-8")
+        _written_files.append(stored)
+        return f"Wrote s3://{os.getenv('ARTIFACT_S3_BUCKET', '')}/runs/{run_id}/{stored} ({len(content)} bytes)"
+
     try:
         file_path = _resolve_repo_path(path, write=True)
     except ValueError as exc:
@@ -458,7 +516,13 @@ def _build_agent(tools: list[Any]) -> Agent:
 
 
 def _file_tools() -> list[Any]:
-    return [wc_read_file, wc_write_markdown, wc_get_postgres_params, wc_scraped_content_ddl]
+    return [
+        wc_read_file,
+        wc_set_handoff_context,
+        wc_write_markdown,
+        wc_get_postgres_params,
+        wc_scraped_content_ddl,
+    ]
 
 
 def _firecrawl_mcp_tools(stack: ExitStack) -> list[Any]:
@@ -493,16 +557,22 @@ def run_task(
     use_firecrawl: bool = True,
     use_postgres: bool = False,
 ) -> tuple[str, list[str]]:
-    global _written_files
+    global _written_files, _run_context
     _written_files = []
 
     app = _resolve_target_app(target_app, context)
     ctx = context if context is not None else _build_context(target_app=app)
+    _run_context = ctx
     ctx.setdefault("targetApp", app)
     ctx.setdefault("designDocPath", resolve_design_doc_path(ctx))
     ctx.setdefault("postgresMcpParams", postgres_mcp_tool_params())
     out_dir = _scraped_output_dir(app, ctx)
-    ctx.setdefault("scrapedOutputDir", _repo_rel(out_dir))
+    ctx.setdefault(
+        "scrapedOutputDir",
+        _scraped_output_rel(app, ctx) if is_s3_store() else _repo_rel(out_dir),
+    )
+    if is_s3_store() and not resolve_run_id(ctx):
+        ctx.setdefault("runId", os.getenv("PIPELINE_RUN_ID", "").strip() or None)
     urls = extract_scrape_urls(task, ctx)
     if urls:
         ctx["scrapeUrls"] = urls

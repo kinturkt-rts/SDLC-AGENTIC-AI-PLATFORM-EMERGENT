@@ -86,6 +86,9 @@ function Import-ArtifactEnvFromDotenv {
 }
 
 Import-ArtifactEnvFromDotenv
+if (-not $env:FIRECRAWL_API_KEY -and $env:Firecrawl_API_Key) {
+    [Environment]::SetEnvironmentVariable("FIRECRAWL_API_KEY", $env:Firecrawl_API_Key, "Process")
+}
 
 function Import-GitLabMcpEndpointsFromConfig {
     $configPath = Join-Path $RepoRoot "config\agentcore\gitlab-mcp-endpoints.json"
@@ -139,7 +142,12 @@ $OptionalAgents = @(
         subnets = "subnet-0c0e7c749de659e32,subnet-07651619f77b51d7f,subnet-044c04012037ca457"
         securityGroups = "sg-077b416683295dd42"
     } },
-    @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() }
+    @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
+    @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @(
+        "AGENTCORE_WEBCRAWLER_WITH_POSTGRES=false",
+        "FIRECRAWL_MCP_COMMAND=firecrawl-mcp",
+        "FIRECRAWL_MCP_ARGS="
+    ) }
 )
 
 $AllAgents = $PipelineAgents + $OptionalAgents
@@ -180,6 +188,7 @@ $AgentSecretKeys = @{
     orchestrator_agent_vpc = @()
     security_agent         = @()
     qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
+    web_crawler_agent      = @("FIRECRAWL_API_KEY")
 }
 
 # Orchestrator runs apply_sql_to_rds after database-agent - pass RDS creds on orchestrator runtime only.
@@ -232,6 +241,16 @@ foreach ($agent in $TargetAgents) {
     }
 
     if ($ConfigureOnly) { continue }
+
+    if ($agent.node) {
+        & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null
+        $agentDockerfile = Join-Path $RepoRoot ".bedrock_agentcore\$awsName\Dockerfile"
+        $rootDockerfile = Join-Path $RepoRoot "Dockerfile"
+        if (Test-Path $agentDockerfile) {
+            Copy-Item -Path $agentDockerfile -Destination $rootDockerfile -Force
+            Write-Host "Using agent Dockerfile for CodeBuild: $agentDockerfile" -ForegroundColor DarkGray
+        }
+    }
 
     if ($SkipConfigure -and -not (Test-AgentRegisteredInYaml -AwsName $awsName)) {
         Write-Warning "Skipping $awsName - not registered in .bedrock_agentcore.yaml. First-time setup:`n  .\scripts\deploy-agentcore-agents.ps1 -Agents $awsName -Configure`nThen verify source_path is 'backend' (not deploy/agentcore) before redeploying with -SkipConfigure."

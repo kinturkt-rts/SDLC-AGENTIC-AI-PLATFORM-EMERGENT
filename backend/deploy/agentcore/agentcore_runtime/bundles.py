@@ -240,14 +240,14 @@ def database_agent_bundle() -> BundleFactory:
 
 def web_crawler_agent_bundle() -> BundleFactory:
     mod = import_agent_module("web-crawler-agent")
-    use_postgres = env_flag("AGENTCORE_WEBCRAWLER_WITH_POSTGRES", default=True)
+    use_postgres = env_flag("AGENTCORE_WEBCRAWLER_WITH_POSTGRES", default=False)
 
     skills = [
         AgentSkill(
             id="web_scrape_and_persist",
             name="web_scrape_and_persist",
-            description="Scrape URLs via Firecrawl, store markdown and Postgres rows for downstream agents.",
-            tags=["web", "scrape", "firecrawl", "postgres", "ingestion"],
+            description="Scrape URLs via Firecrawl MCP and persist markdown (S3 or local). Postgres optional.",
+            tags=["web", "scrape", "firecrawl", "ingestion"],
         )
     ]
 

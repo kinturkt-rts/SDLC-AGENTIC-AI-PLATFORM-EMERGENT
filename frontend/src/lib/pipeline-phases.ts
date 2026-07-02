@@ -49,6 +49,7 @@ export const MVP_TIMELINE_PHASES: SdlcPhase[] = [
   'architecture',
   'data',
   'implementation',
+  'deploy',
 ];
 
 export function phaseDisplayLabel(phase: SdlcPhase | string | null | undefined): string {

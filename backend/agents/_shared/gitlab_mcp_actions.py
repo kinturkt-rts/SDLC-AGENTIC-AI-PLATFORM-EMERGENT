@@ -25,8 +25,8 @@ _DEFAULT_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platf
 _DEFAULT_APPS_PROJECT_PATH = "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps"
 _BATCH_SIZE = 20
 _HTTP_FILE_API_HINT = (
-    "CloudFront/WAF returned 403 on the MCP POST body. Run backend/scripts/update-gitlab-mcp-waf.ps1 "
-    "to scope AWSManagedRulesCommonRuleSet away from /mcp, or set GITLAB_MCP_HTTP_DIRECT_URL (ALB fallback)."
+    "CloudFront/WAF returned 403 on the MCP POST body. "
+    "Set GITLAB_MCP_HTTP_DIRECT_URL to the ALB /mcp URL (see config/agentcore/gitlab-mcp-endpoints.json)."
 )
 
 _WAF_LOCALHOST_HTTP = re.compile(r"https?://localhost(?=[:/])", re.IGNORECASE)

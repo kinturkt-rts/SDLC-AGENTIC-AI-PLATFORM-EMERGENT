@@ -19,19 +19,11 @@ gitlab-agent / qa-agent / Cursor / Gateway
 | Client | Env var | URL |
 |--------|---------|-----|
 | **All agents + IDE** (primary) | `GITLAB_MCP_URL` | `https://d1cvmpnnohwpj8.cloudfront.net/mcp` |
-| **Fallback** (403 before WAF fix) | `GITLAB_MCP_HTTP_DIRECT_URL` | ALB `/mcp` |
+| **Fallback** (403 from CloudFront) | `GITLAB_MCP_HTTP_DIRECT_URL` | ALB `/mcp` |
 
-## One-time WAF fix (required for CloudFront publish)
+## CloudFront WAF
 
-CloudFront ships with managed WAF. `GenericLFI_BODY` blocks MCP publish POST bodies (e.g. `http://localhost` in README).
-
-```powershell
-cd backend
-aws sso login --profile "Juno Developers"
-.\scripts\update-gitlab-mcp-waf.ps1
-```
-
-This scopes `AWSManagedRulesCommonRuleSet` away from URI `/mcp` only. IP reputation and known-bad-inputs rules still apply.
+WAF is configured on the CloudFront distribution: `GenericLFI_BODY` is excluded so MCP publish POST bodies are not blocked. If you recreate the distribution, exclude that rule on Web ACL `CreatedByCloudFront-0a676d76` or rely on `GITLAB_MCP_HTTP_DIRECT_URL` (ALB fallback; gitlab-agent retries automatically on 403).
 
 ## Deploy ECS + ALB
 

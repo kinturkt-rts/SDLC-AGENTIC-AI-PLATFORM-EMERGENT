@@ -32,6 +32,11 @@
       "logGroup": "/aws/bedrock-agentcore/runtimes/gitlab_agent-qgx3u2CWtC-DEFAULT",
       "awsName": "gitlab_agent",
       "runtimeId": "qgx3u2CWtC"
+    },
+    "web-crawler-agent": {
+      "logGroup": "/aws/bedrock-agentcore/runtimes/web_crawler_agent-2Hj8IPGMJ7-DEFAULT",
+      "awsName": "web_crawler_agent",
+      "runtimeId": "2Hj8IPGMJ7"
     }
   }
 }

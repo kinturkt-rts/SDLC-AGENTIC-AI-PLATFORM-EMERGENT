@@ -53,8 +53,21 @@ def test_enrich_developer_context_sets_db_backend_postgres() -> None:
     assert ctx["dbBackend"] == "postgres"
 
 
-def test_enrich_developer_context_discovers_handoff_md() -> None:
+def test_enrich_developer_context_discovers_handoff_md(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     mod = _load_agent_module()
+    handoff_dir = tmp_path / "target-apps" / "meeting-assistant" / "db"
+    handoff_dir.mkdir(parents=True)
+    (handoff_dir / "HANDOFF.md").write_text("# DB handoff\n", encoding="utf-8")
+    template = tmp_path / "target-apps" / "_template"
+    template.mkdir(parents=True)
+    (template / "README.md").write_text("template\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_TARGET_APPS", tmp_path / "target-apps")
+    monkeypatch.setattr(mod, "_TEMPLATE_DIR", template)
+
     ctx: dict[str, Any] = {"targetApp": "meeting-assistant"}
     mod._enrich_developer_context(ctx)
     assert ctx.get("databaseHandoffPath") == "target-apps/meeting-assistant/db/HANDOFF.md"
@@ -85,8 +98,11 @@ def test_resolve_repo_path_allows_inputs_read() -> None:
     assert path.name == "team-faq-bot.txt"
 
 
-def test_resolve_repo_path_blocks_writes_outside_target_apps() -> None:
+def test_resolve_repo_path_blocks_writes_outside_target_apps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     mod = _load_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
     with pytest.raises(ValueError, match="writes only allowed"):
         mod._resolve_repo_path("docs/design/foo.md", write=True)
 

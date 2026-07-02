@@ -14,7 +14,7 @@ import {
   getS3RunLastModifiedMs,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
-import { parseLogTerminalStatus, reconcileRunStatus, RUN_LIVE_IDLE_MS } from './run-reconcile';
+import { parseLogTerminalStatus, reconcileRunStatus, RUN_LIVE_IDLE_MS, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
 import {
   buildRunEvents,
@@ -590,6 +590,7 @@ function mergeStepProgressFromPhases(
   live: LiveRunState,
   completed: Record<SdlcPhase, boolean>,
   status: RunStatus,
+  skipFlags?: Partial<Record<SdlcPhase, boolean>>,
 ): LiveStepState[] | undefined {
   if (!live.steps?.length) return live.steps;
   let firstOpen = false;
@@ -597,6 +598,7 @@ function mergeStepProgressFromPhases(
     const phase = agentPhase[step.name];
     if (!phase) return step;
     if (step.status === 'skipped') return step;
+    if (skipFlags?.[phase]) return { ...step, status: 'skipped' };
     if (completed[phase]) return { ...step, status: 'completed' };
     if (!firstOpen) {
       firstOpen = true;
@@ -632,6 +634,14 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     }
   }
 
+  // Mark skipped phases as done so reconciler doesn't wait for them (e.g. skip_gitlab=true on old runs).
+  const skipFlags = parseLogSkipFlags(log);
+  for (const key of Object.keys(skipFlags) as SdlcPhase[]) {
+    if (skipFlags[key] && !phaseDone[key]) {
+      phaseDone = { ...phaseDone, [key]: true };
+    }
+  }
+
   const startedAt =
     enriched.startedAt ?? (UUID_RE.test(runId) ? await latestUuidRunMtime(runId) : await latestPipelineMtime(slug));
   const logMtimeMs = await pipelineLogMtime(runId);
@@ -656,7 +666,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   if (enriched.steps?.length) {
     enriched = {
       ...enriched,
-      steps: mergeStepProgressFromPhases(enriched, phaseDone, reconciled.status),
+      steps: mergeStepProgressFromPhases(enriched, phaseDone, reconciled.status, skipFlags),
     };
   }
 
@@ -1160,7 +1170,7 @@ function buildStepsFromLive(runId: string, live: LiveRunState): PipelineStep[] {
           : ls.status === 'failed'
             ? 'failed'
             : ls.status === 'skipped'
-              ? 'completed'
+              ? 'skipped'
               : 'queued';
     return {
       id: `${runId}-step-${idx}`,

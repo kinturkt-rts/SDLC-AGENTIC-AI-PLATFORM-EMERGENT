@@ -36,6 +36,7 @@ ENV AGENTCORE_A2A_HOST=0.0.0.0
 ENV AGENTCORE_A2A_PORT=9000
 ENV AGENTCORE_AGENT=${AGENTCORE_AGENT}
 
+ARG CACHE_BUST=1
 COPY deploy/agentcore /app/deploy/agentcore
 RUN pip install --no-cache-dir -r /app/deploy/agentcore/requirements.txt
 

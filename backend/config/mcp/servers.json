@@ -61,28 +61,6 @@
       "usedBy": ["web-crawler-agent"]
     },
     "GitLab": {
-      "name": "GitLab MCP",
-      "package": "jmrplens/gitlab-mcp-server",
-      "repository": "https://github.com/jmrplens/gitlab-mcp-server",
-      "transport": "stdio",
-      "install": ".\\scripts\\install-jmrplens-gitlab-mcp.ps1",
-      "env": {
-        "GITLAB_TOKEN": "GitLab PAT with api scope (or GITLAB_PERSONAL_ACCESS_TOKEN in .env)",
-        "GITLAB_URL": "https://code.junodev.net",
-        "GITLAB_ENTERPRISE": "false",
-        "GITLAB_PERSONAL_ACCESS_TOKEN": "Used by gitlab-agent CLI; wrapper maps to GITLAB_TOKEN for MCP",
-        "GITLAB_API_URL": "https://code.junodev.net/api/v4",
-        "GITLAB_PROJECT_PATH": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
-        "GITLAB_BASE_BRANCH": "main",
-        "GITLAB_MCP_URL": "Optional Streamable HTTP endpoint (ECS/CloudFront). Alias: GITLAB_MCP_HTTP_URL.",
-        "GITLAB_MCP_HTTP_URL": "Same as GITLAB_MCP_URL — used in AgentCore/ECS deploy docs.",
-        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp URL for gitlab-agent publish (bypasses CloudFront WAF). Takes priority over GITLAB_MCP_URL."
-      },
-      "notes": "jmrplens uses REST API v4 on GitLab Free. Native https://host/api/v4/mcp needs Duo Premium. Local: bin/gitlab-mcp-server via install script. AgentCore/AWS: set GITLAB_MCP_HTTP_DIRECT_URL to the ECS ALB /mcp endpoint for publish; GITLAB_MCP_URL (CloudFront) is OK for IDE read MCP. PRIVATE-TOKEN + GITLAB-URL headers per request. Shared ECS image: bedrock-agentcore-gitlab_agent:gitlab_mcp.",
-      "ecrImage": "061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent:gitlab_mcp",
-      "usedBy": ["cursor", "gitlab-agent", "devops-agent", "qa-agent (optional MR comments)"]
-    },
-    "GitLab-HTTP": {
       "name": "GitLab MCP (HTTP / ECS)",
       "package": "jmrplens/gitlab-mcp-server",
       "repository": "https://github.com/jmrplens/gitlab-mcp-server",
@@ -93,12 +71,16 @@
         "GITLAB-URL": "${GITLAB_URL}"
       },
       "env": {
-        "GITLAB_MCP_URL": "Streamable HTTP MCP base URL (e.g. https://xxx.cloudfront.net/mcp)",
-        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp for publish (preferred by gitlab-agent)",
-        "GITLAB_TOKEN": "GitLab PAT with api scope",
-        "GITLAB_URL": "https://code.junodev.net"
+        "GITLAB_TOKEN": "GitLab PAT with api scope (or GITLAB_PERSONAL_ACCESS_TOKEN in .env)",
+        "GITLAB_URL": "https://code.junodev.net",
+        "GITLAB_API_URL": "https://code.junodev.net/api/v4",
+        "GITLAB_PROJECT_PATH": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
+        "GITLAB_BASE_BRANCH": "main",
+        "GITLAB_MCP_URL": "Streamable HTTP MCP (CloudFront). See config/agentcore/gitlab-mcp-endpoints.json.",
+        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp for gitlab-agent publish (preferred over CloudFront)."
       },
-      "notes": "Same jmrplens tools as stdio GitLab MCP. gitlab-agent prefers GITLAB_MCP_HTTP_DIRECT_URL (ALB) over CloudFront for commit/publish.",
+      "notes": "ECS HTTP MCP only (no local stdio binary). gitlab-agent prefers GITLAB_MCP_HTTP_DIRECT_URL for publish; CloudFront for read/IDE. WAF GenericLFI_BODY excluded on CloudFront Web ACL.",
+      "ecrImage": "061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent:gitlab_mcp",
       "usedBy": ["gitlab-agent", "qa-agent (optional MR comments)"]
     },
     "Playwright": {

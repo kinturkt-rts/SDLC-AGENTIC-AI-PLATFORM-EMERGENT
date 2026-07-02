@@ -1,19 +1,5 @@
 {
   "mcpServers": {
-    "GitLab": {
-      "disabled": true,
-      "timeout": 60,
-      "type": "stdio",
-      "command": "python",
-      "args": [
-        "${workspaceFolder}/backend/scripts/gitlab_mcp_server.py"
-      ],
-      "envFile": "${workspaceFolder}/backend/.env.local",
-      "env": {
-        "GITLAB_URL": "https://code.junodev.net",
-        "GITLAB_ENTERPRISE": "false"
-      }
-    },
     "AWS-Postgres-MCP-Server": {
       "disabled": false,
       "timeout": 90,

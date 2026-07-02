@@ -116,7 +116,7 @@ def _build_task(
     skip_db: bool = True,
     skip_postgres: bool = True,
     skip_developer: bool = True,
-    skip_gitlab: bool = True,
+    skip_gitlab: bool = False,
     skip_verify: bool = True,
 ) -> str:
     payload = {
@@ -172,7 +172,7 @@ def main() -> None:
     parser.add_argument("--no-apply-rds-local", action="store_false", dest="apply_rds_local")
     parser.add_argument("--skip-developer", action="store_true", default=True)
     parser.add_argument("--no-skip-developer", action="store_false", dest="skip_developer")
-    parser.add_argument("--skip-gitlab", action="store_true", default=True)
+    parser.add_argument("--skip-gitlab", action="store_true", default=False)
     parser.add_argument("--no-skip-gitlab", action="store_false", dest="skip_gitlab")
     parser.add_argument("--skip-verify", action="store_true", default=True)
     parser.add_argument("--no-skip-verify", action="store_false", dest="skip_verify")

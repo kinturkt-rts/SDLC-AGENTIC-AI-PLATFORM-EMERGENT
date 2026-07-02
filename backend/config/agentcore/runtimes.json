@@ -88,10 +88,9 @@
       "gitlabMcp": {
         "configFile": "config/agentcore/gitlab-mcp-endpoints.json",
         "canonicalUrl": "cloudFront.mcpUrl",
-        "fallbackUrl": "directMcpUrl",
-        "wafFixScript": "scripts/update-gitlab-mcp-waf.ps1"
+        "fallbackUrl": "directMcpUrl"
       },
-      "notes": "Canonical MCP URL is CloudFront (GITLAB_MCP_URL). Run update-gitlab-mcp-waf.ps1 once so publish POSTs are not blocked by GenericLFI_BODY. ALB direct URL is automatic fallback on 403."
+      "notes": "Canonical MCP URL is CloudFront (GITLAB_MCP_URL). ALB direct URL is automatic fallback on 403."
     },
     "qa-agent": {
       "deployed": false,
@@ -99,12 +98,17 @@
       "invokeUrl": ""
     },
     "web-crawler-agent": {
-      "deployed": false,
-      "runtimeArn": "",
-      "invokeUrl": "",
+      "deployed": true,
+      "awsName": "web_crawler_agent",
+      "runtimeId": "web_crawler_agent-2Hj8IPGMJ7",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/web_crawler_agent-2Hj8IPGMJ7",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fweb_crawler_agent-2Hj8IPGMJ7/invocations",
       "env": {
-        "INSTALL_NODE": "true"
-      }
+        "AGENTCORE_WEBCRAWLER_WITH_POSTGRES": "false",
+        "FIRECRAWL_MCP_COMMAND": "firecrawl-mcp",
+        "FIRECRAWL_MCP_ARGS": ""
+      },
+      "notes": "Standalone Firecrawl MCP runtime (not wired to orchestrator MVP chain). Requires Node in image (INSTALL_NODE=true). Scraped markdown stored under runs/<runId>/<app>/docs/PRD/scraped/ in ARTIFACT_S3_BUCKET."
     },
     "devops-agent": {
       "deployed": false,

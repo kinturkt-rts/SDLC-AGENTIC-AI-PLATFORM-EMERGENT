@@ -10,14 +10,17 @@ python -m pytest tests/ -q
 
 | Area | Module |
 |------|--------|
+| Pipeline orchestration + RDS apply | `test_sdlc_pipeline.py` |
+| Artifact store (local + S3) | `test_artifact_store.py`, `test_*_s3*.py` |
+| GitLab publish | `test_gitlab_agent.py`, `test_gitlab_mcp_actions.py`, `test_gitlab_mcp_client.py` |
+| AgentCore deploy / invoke | `test_agentcore_deploy.py`, `test_agentcore_invoke.py`, `test_agentcore_dockerfile.py` |
+| CloudWatch log parsing | `test_cloudwatch_logs.py` |
 | RDS SQL apply | `test_apply_sql_to_rds.py` |
 | RDS / ORM parity checks | `test_validate_rds_parity.py` |
 | UI / API surface parity | `test_validate_ui_parity.py` |
-| Seed credential parsing | `test_seed_credentials.py` |
-| Developer agent helpers | `test_developer_agent.py` |
-| Database agent context | `test_database_agent_postgres_context.py` |
-| Web crawler utilities | `test_web_crawler_*.py` |
-| Other `_shared` helpers | `test_*.py` |
+| Seed credential parsing | `test_seed_credentials.py`, `test_verify_seed_bcrypt.py` |
+| Developer / database / product / QA agents | `test_*_agent*.py` |
+| Other `_shared` helpers | `test_pipeline_context.py`, `test_db_handoff.py`, `test_telemetry.py`, … |
 
 Integration tests that need a real RDS instance or MCP are **not** in this folder. Use manual scripts instead:
 

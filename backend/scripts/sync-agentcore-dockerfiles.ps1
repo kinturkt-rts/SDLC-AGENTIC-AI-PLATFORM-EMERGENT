@@ -16,6 +16,8 @@ function Get-AgentCoreBundleFromFolder {
     return ($FolderName -replace '_', '-')
 }
 
+$NodeInstallAgents = @("web_crawler_agent")
+
 function Set-DockerfileAgentArg {
     param(
         [string] $DockerfilePath,
@@ -26,15 +28,46 @@ function Set-DockerfileAgentArg {
     Set-Content -Path $DockerfilePath -Value $content -Encoding UTF8 -NoNewline
 }
 
+function Set-DockerfileInstallNode {
+    param(
+        [string] $DockerfilePath,
+        [bool] $InstallNode
+    )
+    $content = Get-Content -Path $DockerfilePath -Raw -Encoding UTF8
+    $conditionalBlock = @'
+RUN if [ "$INSTALL_NODE" = "true" ]; then \
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+      && apt-get install -y --no-install-recommends nodejs \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+'@
+    $unconditionalBlock = @'
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g firecrawl-mcp \
+    && rm -rf /var/lib/apt/lists/*
+'@
+    if ($InstallNode) {
+        $content = $content -replace [regex]::Escape($conditionalBlock), $unconditionalBlock
+        $content = $content -replace 'ARG INSTALL_NODE=false', 'ARG INSTALL_NODE=true'
+    } else {
+        $content = $content -replace [regex]::Escape($unconditionalBlock), $conditionalBlock
+        $content = $content -replace 'ARG INSTALL_NODE=true', 'ARG INSTALL_NODE=false'
+    }
+    Set-Content -Path $DockerfilePath -Value $content -Encoding UTF8 -NoNewline
+}
+
 $targets = @(
-    @{ Path = (Join-Path $BackendRoot "Dockerfile"); Bundle = "orchestrator-agent" }
+    @{ Path = (Join-Path $BackendRoot "Dockerfile"); Bundle = "orchestrator-agent"; InstallNode = $false }
 )
 $agentcoreDir = Join-Path $BackendRoot ".bedrock_agentcore"
 if (Test-Path $agentcoreDir) {
     Get-ChildItem -Path $agentcoreDir -Directory | ForEach-Object {
+        $folderName = $_.Name
         $targets += @{
             Path = Join-Path $_.FullName "Dockerfile"
-            Bundle = Get-AgentCoreBundleFromFolder $_.Name
+            Bundle = Get-AgentCoreBundleFromFolder $folderName
+            InstallNode = ($NodeInstallAgents -contains $folderName)
         }
     }
 }
@@ -42,7 +75,11 @@ if (Test-Path $agentcoreDir) {
 foreach ($target in $targets) {
     Copy-Item -Path $Canonical -Destination $target.Path -Force
     Set-DockerfileAgentArg -DockerfilePath $target.Path -Bundle $target.Bundle
-    Write-Host "Synced $($target.Path) (AGENTCORE_AGENT=$($target.Bundle))"
+    if ($null -ne $target.InstallNode) {
+        Set-DockerfileInstallNode -DockerfilePath $target.Path -InstallNode ([bool]$target.InstallNode)
+    }
+    $nodeLabel = if ($target.InstallNode) { ", INSTALL_NODE=true" } else { "" }
+    Write-Host "Synced $($target.Path) (AGENTCORE_AGENT=$($target.Bundle)$nodeLabel)"
 }
 
 Write-Host "Done. Agent images: no gitlab-mcp binary unless INSTALL_GITLAB_MCP_BINARY=true."

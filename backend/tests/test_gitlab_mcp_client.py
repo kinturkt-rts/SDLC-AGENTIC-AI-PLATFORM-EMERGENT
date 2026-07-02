@@ -128,6 +128,19 @@ def test_publish_batch_size_smaller_for_http(monkeypatch: pytest.MonkeyPatch) ->
     assert len(_batch_files([{"path": "a"}] * 5)) == 5
 
 
+def test_gitlab_mcp_endpoints_config_has_direct_and_cloudfront_urls() -> None:
+    import json
+
+    path = Path(__file__).resolve().parents[1] / "config" / "agentcore" / "gitlab-mcp-endpoints.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    direct = data["directMcpUrl"]
+    cloudfront = data["cloudFront"]["mcpUrl"]
+    assert direct.endswith("/mcp")
+    assert cloudfront.endswith("/mcp")
+    assert "cloudfront.net" in cloudfront
+    assert data["usage"]["gitlabAgentPublish"] == "cloudFront.mcpUrl"
+
+
 def test_gitlab_mcp_uses_cloudfront(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITLAB_MCP_URL", "https://d123.cloudfront.net/mcp")
     monkeypatch.delenv("GITLAB_MCP_HTTP_DIRECT_URL", raising=False)

@@ -149,7 +149,7 @@ def test_run_task_uses_provided_tools_without_spawning_mcp(
 
     with patch.object(mod, "_build_agent", return_value=FakeAgent()) as build_agent:
         with patch.object(mod, "_skip_design_generation", return_value=True):
-            with patch.object(mod, "aws_diagram_mcp_client") as mcp_client:
+            with patch.object(mod, "local_diagram_tools") as diagram_tools:
                 summary, saved, design = mod.run_task(
                     "draw diagram",
                     {"targetApp": "demo-api"},
@@ -158,7 +158,7 @@ def test_run_task_uses_provided_tools_without_spawning_mcp(
 
     build_agent.assert_called_once()
     assert build_agent.call_args.args[0] == [fake_tool]
-    mcp_client.assert_not_called()
+    diagram_tools.assert_not_called()
     assert summary == "ok"
     assert saved == []
     assert design is None

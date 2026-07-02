@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { ExternalLink, GitBranch, Package, Terminal } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
@@ -50,25 +49,13 @@ export function PipelineHandoffsCard({ handoffs }: { handoffs: RunHandoffs }) {
   const hasAnything = Boolean(gitlab || developer || mrUrl || branch);
 
   if (!hasAnything) {
-    return (
-      <Card className="border-white/[0.06] bg-card/80">
-        <div className="border-b border-white/[0.06] px-4 py-3">
-          <h2 className="text-sm font-semibold text-foreground">Pipeline metadata</h2>
-        </div>
-        <p className="px-4 py-6 text-sm text-muted-foreground">
-          No agent handoffs yet. GitLab publish and developer contracts appear here after those steps complete.
-        </p>
-      </Card>
-    );
+    return null;
   }
 
   return (
     <Card className="border-white/[0.06] bg-card/80">
       <div className="border-b border-white/[0.06] px-4 py-3">
         <h2 className="text-sm font-semibold text-foreground">Pipeline metadata</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Agent handoff contracts (internal) — branch links, test commands, publish status
-        </p>
       </div>
 
       {gitlab ? (
@@ -88,20 +75,16 @@ export function PipelineHandoffsCard({ handoffs }: { handoffs: RunHandoffs }) {
           <div className="flex flex-col gap-1.5 pt-1">
             {branchUrl ? <MetaLink href={branchUrl} label="View branch on GitLab" /> : null}
             {mrUrl ? <MetaLink href={mrUrl} label="Open merge request" /> : null}
-            {!mrUrl && gitlab.status === 'published' ? (
-              <p className="text-xs text-muted-foreground">Branch-only publish (no MR opened).</p>
-            ) : null}
             {gitlab.pathsPublishedCount > 0 ? (
               <p className="text-xs text-muted-foreground">{gitlab.pathsPublishedCount} paths published</p>
             ) : null}
             {gitlab.error ? <p className="text-xs text-red-400">{gitlab.error}</p> : null}
           </div>
-          <p className="font-mono text-[11px] text-muted-foreground">{gitlab.path}</p>
         </HandoffSection>
       ) : developer ? (
         <HandoffSection title="GitLab publish" icon={GitBranch}>
           <p className="text-sm text-muted-foreground">
-            Developer finished but GitLab handoff not found for this run. Re-run publish or check orchestrator logs.
+            Skipped — no GitLab handoff for this run.
           </p>
         </HandoffSection>
       ) : null}
@@ -122,18 +105,8 @@ export function PipelineHandoffsCard({ handoffs }: { handoffs: RunHandoffs }) {
           {developer.runCommand ? (
             <p className="font-mono text-[11px] text-muted-foreground">Run: {developer.runCommand}</p>
           ) : null}
-          <p className="font-mono text-[11px] text-muted-foreground">{developer.path}</p>
         </HandoffSection>
       ) : null}
-
-      <div className="px-4 py-3 text-xs text-muted-foreground">
-        QA agent is optional (<code className="rounded bg-muted/50 px-1">-WithQa</code>). It reads{' '}
-        <code className="rounded bg-muted/50 px-1">developer-handoff.json</code> and shared{' '}
-        <Link href="/context" className="text-teal-400 hover:underline">
-          context.json
-        </Link>
-        — no separate gitlab context file is required.
-      </div>
     </Card>
   );
 }

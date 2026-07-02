@@ -238,8 +238,8 @@ def firecrawl_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
     api_key = firecrawl_api_key()
     workdir = str(cwd) if cwd else os.getcwd()
     args = shlex.split(FIRECRAWL_MCP_ARGS)
-    if not args:
-        raise ValueError("FIRECRAWL_MCP_ARGS must provide at least one arg")
+    if not args and FIRECRAWL_MCP_COMMAND.strip().lower() in {"npx", "npx.cmd"}:
+        raise ValueError("FIRECRAWL_MCP_ARGS must provide at least one arg when using npx")
 
     def transport() -> object:
         return stdio_client(

@@ -207,7 +207,7 @@ The control-plane **Artifacts** page lists all objects under `runs/<runId>/` whe
 
 Catalog and env reference: `backend/config/mcp/servers.json`.
 
-**GitLab (Juno):** use jmrplens MCP via `backend/scripts/gitlab_mcp_server.py` (install: `.\backend\scripts\install-jmrplens-gitlab-mcp.ps1`). Set `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_URL` in `.env`. Native `https://code.junodev.net/api/v4/mcp` needs GitLab Duo Premium (404 until enabled).
+**GitLab (Juno):** gitlab-agent and Cursor use the **ECS HTTP MCP** — set `GITLAB_MCP_URL` or `GITLAB_MCP_HTTP_DIRECT_URL` in `.env.local` (see `backend/config/agentcore/gitlab-mcp-endpoints.json`). Also set `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_URL`. Native `https://code.junodev.net/api/v4/mcp` needs GitLab Duo Premium (404 until enabled).
 
 ```bash
 cp backend/.env.example backend/.env   # or use monorepo-root .env
