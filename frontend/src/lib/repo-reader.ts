@@ -21,6 +21,14 @@ import {
   type ActivityFeedItem,
   type S3ArtifactRef,
 } from './run-events';
+import { listCloudWatchLogs } from './cloudwatch-logs';
+import {
+  buildCloudWatchRunEvents,
+  cloudWatchLogToRunEvent,
+  dedupeActivityFeed,
+  matchCloudWatchLogToRun,
+  minutesSince,
+} from './cloudwatch-activity';
 import type {
   Agent,
   AgentAvailability,
@@ -1375,7 +1383,28 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
   return mockPipelines;
 }
 
-export async function listRunEvents(runId: string, cachedRun?: PipelineRun): Promise<RunEvent[]> {
+async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> {
+  const minutes = Math.min(minutesSince(run.startedAt), 240);
+  const withRunFilter = await listCloudWatchLogs({
+    runId: run.id,
+    minutes,
+    limit: 80,
+  });
+  if (withRunFilter.length > 0) return withRunFilter;
+
+  if (run.status !== 'running' && run.status !== 'paused') {
+    return [];
+  }
+
+  const broad = await listCloudWatchLogs({ minutes, limit: 120 });
+  return broad.filter((log) => matchCloudWatchLogToRun(log, [run])?.id === run.id);
+}
+
+export async function listRunEvents(
+  runId: string,
+  cachedRun?: PipelineRun,
+  includeCloudWatch = true,
+): Promise<RunEvent[]> {
   const run = cachedRun ?? (await getRun(runId));
   if (!run) return [];
 
@@ -1397,7 +1426,7 @@ export async function listRunEvents(runId: string, cachedRun?: PipelineRun): Pro
     }
   }
 
-  return buildRunEvents({
+  const platformEvents = buildRunEvents({
     run,
     log,
     s3Artifacts,
@@ -1409,10 +1438,27 @@ export async function listRunEvents(runId: string, cachedRun?: PipelineRun): Pro
       ),
     ).toISOString(),
   });
+
+  if (!includeCloudWatch) return platformEvents;
+
+  const cwLogs = await fetchCloudWatchLogsForRun(run);
+  const cwEvents = buildCloudWatchRunEvents(cwLogs, run.id);
+
+  return mergeRunEventsFromLists(platformEvents, cwEvents);
 }
 
-/** Recent pipeline activity for the dashboard — S3 artifacts + run lifecycle (cloud-aware). */
-export async function listRecentActivity(limit = 8): Promise<ActivityFeedItem[]> {
+function mergeRunEventsFromLists(...groups: RunEvent[][]): RunEvent[] {
+  const byId = new Map<string, RunEvent>();
+  for (const group of groups) {
+    for (const event of group) {
+      byId.set(event.id, event);
+    }
+  }
+  return [...byId.values()].sort((a, b) => b.ts.localeCompare(a.ts));
+}
+
+/** Recent pipeline activity — S3 milestones + live CloudWatch agent stdout. */
+export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]> {
   const runs = await listRuns();
   const ranked = [...runs].sort((a, b) => {
     const aLive = a.status === 'running' || a.status === 'paused' ? 1 : 0;
@@ -1422,16 +1468,34 @@ export async function listRecentActivity(limit = 8): Promise<ActivityFeedItem[]>
   });
 
   const scan = ranked.slice(0, 8);
+  const liveRuns = runs.filter((r) => r.status === 'running' || r.status === 'paused');
   const feed: ActivityFeedItem[] = [];
 
   for (const run of scan) {
-    const events = await listRunEvents(run.id, run);
-    for (const event of events.slice(0, 12)) {
-      feed.push(runEventToActivityFeed(run, event));
+    const events = await listRunEvents(run.id, run, false);
+    for (const event of events.slice(0, 6)) {
+      feed.push(runEventToActivityFeed(run, event, { stream: 'platform' }));
     }
   }
 
-  return feed
+  if (liveRuns.length > 0) {
+    const minutes = Math.min(
+      Math.max(...liveRuns.map((r) => minutesSince(r.startedAt)), 15),
+      240,
+    );
+    const cwLogs = await listCloudWatchLogs({ minutes, limit: 160 });
+    for (const log of cwLogs) {
+      const run = matchCloudWatchLogToRun(log, liveRuns);
+      if (!run) continue;
+      const event = cloudWatchLogToRunEvent(log);
+      if (!event) continue;
+      feed.push(
+        runEventToActivityFeed(run, { ...event, runId: run.id }, { stream: 'cloudwatch' }),
+      );
+    }
+  }
+
+  return dedupeActivityFeed(feed)
     .sort((a, b) => b.ts.localeCompare(a.ts))
     .slice(0, limit);
 }

@@ -19,6 +19,18 @@ interface CloudWatchLogsResponse {
   error?: string;
 }
 
+const CACHE_TTL_MS = 8_000;
+let logCache: { key: string; expiresAt: number; logs: LogEntry[] } | null = null;
+
+function cacheKey(options: CloudWatchLogsOptions): string {
+  return JSON.stringify({
+    runId: options.runId ?? '',
+    agent: options.agent ?? '',
+    minutes: options.minutes ?? 60,
+    limit: options.limit ?? 500,
+  });
+}
+
 /**
  * Calls backend/scripts/fetch-cloudwatch-logs.py which uses boto3 to read
  * Bedrock AgentCore runtime logs from CloudWatch. Falls back to an empty
@@ -27,6 +39,12 @@ interface CloudWatchLogsResponse {
 export async function listCloudWatchLogs(
   options: CloudWatchLogsOptions = {},
 ): Promise<LogEntry[]> {
+  const key = cacheKey(options);
+  const now = Date.now();
+  if (logCache && logCache.key === key && logCache.expiresAt > now) {
+    return logCache.logs;
+  }
+
   loadBackendEnv();
   const repoRoot = getBackendRoot();
   const script = path.join(repoRoot, 'scripts', 'fetch-cloudwatch-logs.py');
@@ -62,17 +80,22 @@ export async function listCloudWatchLogs(
     child.on('exit', () => {
       const raw = Buffer.concat(stdoutChunks).toString('utf-8').trim();
       if (!raw) {
+        logCache = { key, expiresAt: now + CACHE_TTL_MS, logs: [] };
         resolve([]);
         return;
       }
       try {
         const parsed = JSON.parse(raw) as CloudWatchLogsResponse;
         if (parsed.error) {
+          logCache = { key, expiresAt: now + CACHE_TTL_MS, logs: [] };
           resolve([]);
           return;
         }
-        resolve(Array.isArray(parsed.logs) ? parsed.logs : []);
+        const logs = Array.isArray(parsed.logs) ? parsed.logs : [];
+        logCache = { key, expiresAt: now + CACHE_TTL_MS, logs };
+        resolve(logs);
       } catch {
+        logCache = { key, expiresAt: now + CACHE_TTL_MS, logs: [] };
         resolve([]);
       }
     });

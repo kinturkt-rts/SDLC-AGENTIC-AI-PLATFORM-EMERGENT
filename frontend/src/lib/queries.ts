@@ -13,6 +13,7 @@ export const queryKeys = {
   run: (id: string) => ['runs', id] as const,
   runLogs: (id: string) => ['runs', id, 'logs'] as const,
   runEvents: (id: string) => ['runs', id, 'events'] as const,
+  runHandoffs: (id: string) => ['runs', id, 'handoffs'] as const,
   messages: (correlationId?: string) => ['messages', correlationId ?? 'all'] as const,
   artifacts: ['artifacts'] as const,
   checkpoints: ['checkpoints'] as const,
@@ -59,6 +60,13 @@ export const useRunEvents = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runEvents(id),
     queryFn: () => api.getRunEvents(id),
+    enabled: !!id,
+    refetchInterval: live ? 4000 : false,
+  });
+export const useRunHandoffs = (id: string, live = false) =>
+  useQuery({
+    queryKey: queryKeys.runHandoffs(id),
+    queryFn: () => api.getRunHandoffs(id),
     enabled: !!id,
     refetchInterval: live ? 4000 : false,
   });

@@ -21,8 +21,8 @@ from _shared.artifact_store import (
     write_repo_artifact,
 )
 from _shared.context_cli import load_context_extra, parse_context_args
+from _shared.diagram_tools import local_diagram_tools
 from _shared.env import load_repo_env
-from _shared.mcp_clients import aws_diagram_mcp_client
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     design_doc_rel_for_app,
@@ -45,7 +45,6 @@ from strands.models import BedrockModel
 from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.mcp import MCPClient
-from strands.types.exceptions import MCPClientInitializationError
 
 AGENT_NAME = "architect-agent"
 A2A_PORT = 9102
@@ -518,13 +517,9 @@ def run_task(
     target_app = str(context.get("targetApp") or context.get("diagramBaseName") or "").strip() or None
     telemetry = RunTelemetry(AGENT_NAME, target_app=target_app, model_id=_model_id())
     try:
-        if tools is not None:
-            agent = _build_agent(tools, telemetry=telemetry)
-            summary = str(agent(_user_message(task, context)))
-        else:
-            with aws_diagram_mcp_client(cwd=_REPO_ROOT) as mcp:
-                agent = _build_agent(mcp.list_tools_sync(), telemetry=telemetry)
-                summary = str(agent(_user_message(task, context)))
+        effective_tools = tools if tools is not None else local_diagram_tools()
+        agent = _build_agent(effective_tools, telemetry=telemetry)
+        summary = str(agent(_user_message(task, context)))
         base = context.get("diagramBaseName", DEFAULT_DIAGRAM_BASE_NAME)
         saved = _normalize_diagram_outputs(out_dir, str(base), scan_start)
 
@@ -546,12 +541,8 @@ def run_task(
         }
         telemetry.finalize()
         return summary, saved, design_path
-    except MCPClientInitializationError as exc:
-        raise SystemExit(
-            "AWS Diagram MCP failed to start.\n"
-            "Ensure `uv` is installed and on PATH.\n"
-            f"Details: {exc}"
-        ) from exc
+    except Exception as exc:
+        raise
 
 
 def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:
@@ -800,9 +791,8 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
             tags=["architecture", "aws-diagram", "design"],
         )
     ]
-    with aws_diagram_mcp_client(cwd=_REPO_ROOT) as mcp:
-        agent = _build_agent(mcp.list_tools_sync())
-        A2AServer(agent, host=host, port=port, skills=skills).serve()
+    agent = _build_agent(local_diagram_tools())
+    A2AServer(agent, host=host, port=port, skills=skills).serve()
 
 
 def main() -> None:

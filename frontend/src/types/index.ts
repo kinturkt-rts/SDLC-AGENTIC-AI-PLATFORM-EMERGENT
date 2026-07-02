@@ -102,6 +102,41 @@ export interface PipelineRun {
   steps: PipelineStep[];
 }
 
+/** GitLab publish result from gitlab-agent (handoffs/gitlab.json or legacy slug file). */
+export interface GitlabHandoffInfo {
+  status: string;
+  branch?: string | null;
+  branchUrl?: string | null;
+  mergeRequestUrl?: string | null;
+  mergeRequestIid?: number | null;
+  gitlabProject?: string | null;
+  pathsPublishedCount: number;
+  error?: string | null;
+  source: 's3' | 'local';
+  path: string;
+}
+
+/** Developer contract written after implementation (for QA / GitLab publish). */
+export interface DeveloperHandoffInfo {
+  targetApp: string;
+  writtenFilesCount: number;
+  testCommand?: string | null;
+  runCommand?: string | null;
+  source: 's3' | 'local';
+  path: string;
+}
+
+/** Agent handoff metadata for a pipeline run (not shown on Artifacts page). */
+export interface RunHandoffs {
+  runId: string;
+  projectSlug: string;
+  gitlab: GitlabHandoffInfo | null;
+  developer: DeveloperHandoffInfo | null;
+  /** From shared context.json when gitlab handoff is missing. */
+  contextMergeRequestUrl?: string | null;
+  contextFeatureBranch?: string | null;
+}
+
 export interface Artifact {
   id: string;
   name: string;

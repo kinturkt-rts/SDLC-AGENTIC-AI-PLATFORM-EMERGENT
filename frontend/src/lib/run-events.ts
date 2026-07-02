@@ -25,6 +25,8 @@ export interface ActivityFeedItem {
   ts: string;
   href: string;
   accent: string;
+  /** cloudwatch = live AgentCore stdout; platform = S3 / run lifecycle */
+  stream?: 'cloudwatch' | 'platform';
 }
 
 const AGENT_LABEL: Record<string, string> = {
@@ -267,7 +269,11 @@ export function mergeRunEvents(...groups: RunEvent[][]): RunEvent[] {
   return [...byKey.values()].sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
-export function runEventToActivityFeed(run: PipelineRun, event: RunEvent): ActivityFeedItem {
+export function runEventToActivityFeed(
+  run: PipelineRun,
+  event: RunEvent,
+  options?: { stream?: ActivityFeedItem['stream'] },
+): ActivityFeedItem {
   const agentId =
     event.kind === 'agent.message'
       ? event.from
@@ -302,12 +308,13 @@ export function runEventToActivityFeed(run: PipelineRun, event: RunEvent): Activ
       description = 'Pipeline event';
   }
 
-  const href =
-    event.kind === 'artifact.created'
+  const isToolLog =
+    event.kind === 'log' && event.message.toLowerCase().startsWith('tool call —');
+  const href = isToolLog
+    ? `/logs?agent=${encodeURIComponent(agentId)}`
+    : event.kind === 'artifact.created'
       ? '/artifacts'
-      : event.kind === 'log' && event.message.toLowerCase().includes('pipeline')
-        ? `/runs/${run.id}`
-        : `/runs/${run.id}`;
+      : `/runs/${run.id}`;
 
   return {
     id: event.id,
@@ -319,6 +326,7 @@ export function runEventToActivityFeed(run: PipelineRun, event: RunEvent): Activ
     ts: event.ts,
     href,
     accent: AGENT_ACTIVITY_ACCENT[agentId] ?? 'text-muted-foreground',
+    stream: options?.stream ?? 'platform',
   };
 }
 

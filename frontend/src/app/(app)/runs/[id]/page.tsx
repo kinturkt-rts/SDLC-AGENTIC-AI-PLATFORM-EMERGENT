@@ -28,10 +28,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
-import { useRun, useRunEvents, useArtifacts, useCheckpoints } from '@/src/lib/queries';
+import { useRun, useRunEvents, useRunHandoffs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
+import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
 
 const STEP_ICON: Record<StepStatus, typeof Clock> = {
@@ -120,6 +121,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: run, isLoading } = useRun(params.id);
   const isLive = run?.status === 'running' || run?.status === 'paused';
   const { data: events } = useRunEvents(params.id, isLive);
+  const { data: handoffs } = useRunHandoffs(params.id, isLive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
 
@@ -307,6 +309,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </div>
             </Card>
           </div>
+
+          {handoffs ? <PipelineHandoffsCard handoffs={handoffs} /> : null}
 
           {/* Artifacts for this run */}
           <Card className="border-white/[0.06] bg-card/80">

@@ -26,6 +26,7 @@ import type {
   RunEvent,
   McpConfig,
   McpServerConfig,
+  RunHandoffs,
 } from '@/src/types';
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
@@ -90,6 +91,13 @@ export const api = {
       `/api/v1/runs/${encodeURIComponent(runId)}/events`,
     );
     return data.events;
+  },
+  async getRunHandoffs(runId: string): Promise<RunHandoffs | undefined> {
+    try {
+      return await httpGet<RunHandoffs>(`/api/v1/runs/${encodeURIComponent(runId)}/handoffs`);
+    } catch {
+      return undefined;
+    }
   },
   async getRecentActivity(): Promise<ActivityFeedItem[]> {
     const data = await httpGet<{ activity: ActivityFeedItem[] }>('/api/v1/activity');

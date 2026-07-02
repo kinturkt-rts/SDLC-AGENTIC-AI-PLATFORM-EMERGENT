@@ -152,6 +152,11 @@ function LiveActivityFeed({ poll }: { poll: boolean }) {
                 <div className="min-w-0 flex-1 pt-0.5">
                   <div className="flex items-center gap-2">
                     <span className={cn('text-[11px] font-semibold', event.accent)}>{event.agent}</span>
+                    {event.stream === 'cloudwatch' ? (
+                      <span className="rounded bg-blue-500/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-blue-400/90">
+                        live
+                      </span>
+                    ) : null}
                     <span className="text-[10px] text-muted-foreground/60">{formatRelative(event.ts)}</span>
                   </div>
                   <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">

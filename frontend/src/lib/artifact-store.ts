@@ -299,3 +299,40 @@ export async function getS3ArtifactPreview(key: string): Promise<string | undefi
   }
 }
 
+/** Read a JSON artifact under runs/<runId>/ (S3 or local run folder). */
+export async function getRunArtifactJson(
+  runId: string,
+  relPath: string,
+): Promise<Record<string, unknown> | null> {
+  const rel = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (isS3Store()) {
+    try {
+      const response = await s3Client().send(
+        new GetObjectCommand({
+          Bucket: s3Bucket(),
+          Key: `${runS3Prefix(runId)}${rel}`,
+        }),
+      );
+      const raw = await response.Body?.transformToString('utf-8');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const { promises: fs } = await import('fs');
+  const pathMod = await import('path');
+  const { getBackendRoot } = await import('./repo-root');
+  const filePath = pathMod.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, rel);
+  try {
+    let raw = await fs.readFile(filePath, 'utf-8');
+    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
