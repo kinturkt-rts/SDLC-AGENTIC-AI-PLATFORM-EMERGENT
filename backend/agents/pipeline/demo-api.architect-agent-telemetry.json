@@ -1,0 +1,15 @@
+{
+  "agent": "architect-agent",
+  "targetApp": "demo-api",
+  "modelId": "us.anthropic.claude-sonnet-4-6",
+  "modelLabel": "sonnet-4-6",
+  "toolCount": 0,
+  "toolNames": [],
+  "inputTokens": 0,
+  "outputTokens": 0,
+  "cacheReadInputTokens": 0,
+  "cacheWriteInputTokens": 0,
+  "totalTokens": 0,
+  "cacheHitRatio": 0.0,
+  "elapsedSec": 0.0
+}

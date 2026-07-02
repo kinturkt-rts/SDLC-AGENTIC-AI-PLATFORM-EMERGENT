@@ -1,0 +1,25 @@
+{
+  "targetApp": "pr-diff-summarizer",
+  "runId": "92099e5f-be02-4894-9276-67f2e5a72343",
+  "targetAppDir": "pr-diff-summarizer",
+  "dbOutputDir": "pr-diff-summarizer/db",
+  "preferredSqlPath": "pr-diff-summarizer/db/sql",
+  "preferredNoSqlPath": "pr-diff-summarizer/db/nosql",
+  "prdPath": "pr-diff-summarizer/docs/PRD/pr-diff-summarizer.md",
+  "designDocPath": "pr-diff-summarizer/docs/design/pr-diff-summarizer.md",
+  "diagramPaths": [
+    "pr-diff-summarizer/docs/diagrams/pr-diff-summarizer.png"
+  ],
+  "inputFile": "pr-diff-summarizer/inputs/pr-diff-summarizer.txt",
+  "inputPath": "pr-diff-summarizer/inputs/pr-diff-summarizer.txt",
+  "deliveryProfile": {
+    "uiRequired": false,
+    "requiresStreamlit": false,
+    "requiresReact": false,
+    "uiPattern": null,
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "productAgentOutput": "See prdPath for pr-diff-summarizer MVP requirements.",
+  "databaseHandoffPath": "pr-diff-summarizer/db/HANDOFF.md"
+}
