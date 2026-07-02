@@ -32,6 +32,12 @@ Thumbs.db
 # Orchestrator subprocess logs (per-feature stdout/stderr from /api/v1/runs/start)
 backend/agents/pipeline/.logs/
 
+# Misplaced pipeline handoff / temp artifacts at backend root (use target-apps/ or agents/pipeline/runs/)
+backend/*/context.json
+backend/.tmp/
+backend/demo-api/
+backend/$null
+
 # Local-only target apps (not pushed to GitLab)
 backend/target-apps/standup-tracker/
 backend/target-apps/release-notes-bot/
