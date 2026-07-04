@@ -1,0 +1,153 @@
+import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
+import path from 'path';
+import { getBackendRoot } from './repo-root';
+import { getRunArtifactJson } from './artifact-store';
+import { invokeAgentRuntimeA2a } from './agentcore-invoke';
+
+export interface PipelineTaskOptions {
+  targetApp: string;
+  runId: string;
+  inputFile: string;
+  skipProduct?: boolean;
+  skipArchitect?: boolean;
+  skipDb?: boolean;
+  skipPostgres?: boolean;
+  skipDeveloper?: boolean;
+  skipGitlab?: boolean;
+  skipVerify?: boolean;
+}
+
+export function buildOrchestratorTask(options: PipelineTaskOptions): string {
+  const payload = {
+    target_app: options.targetApp,
+    run_id: options.runId,
+    input_file: options.inputFile,
+    transport: 'a2a',
+    skip_product: options.skipProduct ?? false,
+    skip_architect: options.skipArchitect ?? false,
+    skip_db: options.skipDb ?? false,
+    skip_postgres: options.skipPostgres ?? false,
+    skip_developer: options.skipDeveloper ?? false,
+    skip_gitlab: options.skipGitlab ?? false,
+    skip_verify: options.skipVerify ?? true,
+  };
+  return `Run run_sdlc_pipeline with:\n\n${JSON.stringify(payload, null, 2)}`;
+}
+
+async function appendLog(logPath: string, chunk: string): Promise<void> {
+  await appendFile(logPath, chunk, 'utf-8');
+}
+
+async function updateRunJson(
+  runId: string,
+  patch: { status?: string; currentStep?: string; error?: string | null; finished?: boolean },
+): Promise<void> {
+  const file = path.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, 'run.json');
+  try {
+    const data = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
+    if (patch.status) {
+      data.status = patch.status;
+      if (['completed', 'failed', 'cancelled'].includes(patch.status)) {
+        data.finishedAt = new Date().toISOString();
+      }
+    }
+    if (patch.currentStep) {
+      data.currentStep = patch.currentStep;
+      const steps = data.steps as Array<{ name: string; status?: string }> | undefined;
+      if (steps) {
+        for (const step of steps) {
+          if (step.name === patch.currentStep) step.status = 'running';
+          else if (step.status === 'running') step.status = 'completed';
+        }
+      }
+    }
+    if (patch.error !== undefined) data.error = patch.error;
+    else if (patch.status === 'completed') data.error = null;
+    await writeFile(file, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+  } catch {
+    // run.json is best-effort for UI
+  }
+}
+
+async function gitlabHandoffExists(runId: string, app: string): Promise<boolean> {
+  for (const rel of [`handoffs/gitlab.json`, `${app}/handoffs/gitlab-handoff.json`]) {
+    const doc = await getRunArtifactJson(runId, rel);
+    if (doc) return true;
+  }
+  return false;
+}
+
+export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
+  logPath: string;
+  timeoutSec: number;
+}
+
+/**
+ * Invoke orchestrator-agent on AgentCore (AWS SDK) and optional cloud gitlab-agent fallback.
+ * No local Python subprocess — only the AgentCore runtimes execute the pipeline.
+ */
+export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions): Promise<void> {
+  const { logPath, timeoutSec, ...taskOpts } = options;
+  const app = taskOpts.targetApp;
+  const runId = taskOpts.runId;
+
+  await mkdir(path.dirname(logPath), { recursive: true });
+
+  const task = buildOrchestratorTask(taskOpts);
+  await appendLog(logPath, `Invoking orchestrator-agent (AgentCore SDK, no local Python)...\n${task}\n`);
+  if (!taskOpts.skipPostgres && !taskOpts.skipDb) {
+    await appendLog(
+      logPath,
+      'Note: skip_postgres=false — orchestrator applies RDS in-cloud after database-agent.\n---\n',
+    );
+  }
+
+  if (!taskOpts.skipGitlab) {
+    await updateRunJson(runId, { status: 'running', currentStep: 'product-agent' });
+  }
+
+  const result = await invokeAgentRuntimeA2a('orchestrator-agent', task, { timeoutSec });
+  await appendLog(logPath, `status: ${result.status}\n`);
+  if (result.error) await appendLog(logPath, `error: ${result.error}\n`);
+  const text = result.text ?? '';
+  await appendLog(logPath, `--- response ---\n${text.slice(0, 8000)}\n`);
+
+  if (!taskOpts.skipGitlab) {
+    await appendLog(logPath, '--- gitlab ---\n');
+    if (await gitlabHandoffExists(runId, app)) {
+      await appendLog(logPath, '[gitlab] Handoff already exists — orchestrator published. Skipping fallback.\n');
+    } else {
+      await updateRunJson(runId, { currentStep: 'gitlab-agent' });
+      const glTask =
+        `Publish SDLC artifacts for ${app} to GitLab branch sdlc/${app}.\n\n` +
+        `Context:\n${JSON.stringify({ targetApp: app, runId }, null, 2)}`;
+      await appendLog(logPath, '[gitlab-fallback] Invoking gitlab-agent on AgentCore...\n');
+      const glResult = await invokeAgentRuntimeA2a('gitlab-agent', glTask, { timeoutSec });
+      await appendLog(logPath, `[gitlab-fallback] cloud status: ${glResult.status}\n`);
+      if (glResult.error) await appendLog(logPath, `[gitlab-fallback] cloud error: ${glResult.error}\n`);
+      if (glResult.text) {
+        await appendLog(logPath, `[gitlab-fallback] cloud response: ${glResult.text.slice(0, 1500)}\n`);
+      }
+      if (glResult.status === 'success' && (await gitlabHandoffExists(runId, app))) {
+        await appendLog(logPath, '[gitlab-fallback] Cloud gitlab-agent succeeded.\n');
+      } else {
+        await appendLog(
+          logPath,
+          '[gitlab-fallback] Cloud gitlab-agent failed or no handoff — artifacts remain in S3.\n',
+        );
+      }
+    }
+  }
+
+  const textLower = text.toLowerCase();
+  if (result.status === 'success' && !textLower.includes('pipeline failed')) {
+    await updateRunJson(runId, { status: 'completed' });
+  } else if ((await gitlabHandoffExists(runId, app)) || !taskOpts.skipGitlab) {
+    await updateRunJson(runId, { status: 'completed' });
+  } else {
+    await updateRunJson(runId, {
+      status: 'failed',
+      error: 'orchestrator did not complete — check CloudWatch logs',
+    });
+  }
+}

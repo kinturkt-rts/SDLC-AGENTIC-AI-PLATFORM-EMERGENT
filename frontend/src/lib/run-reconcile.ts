@@ -36,6 +36,10 @@ export function parseLogTerminalStatus(
     return { status: 'completed' };
   }
 
+  if (/\[cloud-invoke\]\s+failed/i.test(log)) {
+    return { status: 'failed', error: 'Cloud orchestrator invoke failed' };
+  }
+
   const errLine = log
     .split('\n')
     .map((l) => l.trim())

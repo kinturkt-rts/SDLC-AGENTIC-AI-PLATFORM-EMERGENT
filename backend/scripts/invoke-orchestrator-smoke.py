@@ -4,6 +4,9 @@ Default: full cloud chain (product → architect → database → RDS apply in o
 → developer → gitlab). Brief is uploaded to S3 from this machine; all agent work runs
 on AgentCore.
 
+The Next.js dashboard (ARTIFACT_STORE=s3) invokes orchestrator via AgentCore SDK
+directly — no local Python subprocess. This script remains for CLI/manual use.
+
 DB + RDS only (skips developer/gitlab):
   python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --full
 

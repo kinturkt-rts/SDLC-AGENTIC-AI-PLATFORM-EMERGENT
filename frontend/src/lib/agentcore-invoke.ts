@@ -1,0 +1,198 @@
+import { readFile } from 'fs/promises';
+import path from 'path';
+import { randomUUID } from 'crypto';
+import {
+  BedrockAgentCoreClient,
+  InvokeAgentRuntimeCommand,
+} from '@aws-sdk/client-bedrock-agentcore';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { loadBackendEnv } from './backend-env';
+import { getBackendRoot } from './repo-root';
+
+export interface AgentCoreInvokeResult {
+  status: 'success' | 'error';
+  text?: string;
+  error?: string;
+  agentName: string;
+  runtimeArn?: string;
+  response?: unknown;
+}
+
+function a2aMessageSendPayload(messageText: string): Uint8Array {
+  const body = {
+    jsonrpc: '2.0',
+    id: randomUUID().replace(/-/g, ''),
+    method: 'message/send',
+    params: {
+      message: {
+        role: 'user',
+        messageId: randomUUID().replace(/-/g, ''),
+        parts: [{ kind: 'text', text: messageText }],
+      },
+    },
+  };
+  return new TextEncoder().encode(JSON.stringify(body));
+}
+
+export function extractTextFromA2aJsonrpc(data: unknown): string {
+  if (!data || typeof data !== 'object') return JSON.stringify(data, null, 2);
+  const record = data as Record<string, unknown>;
+
+  if (record.error) {
+    const err = record.error;
+    if (err && typeof err === 'object') {
+      const e = err as Record<string, unknown>;
+      return `A2A error ${e.code}: ${e.message}`;
+    }
+    return `A2A error: ${String(err)}`;
+  }
+
+  const result = record.result;
+  if (!result || typeof result !== 'object') return JSON.stringify(data, null, 2);
+
+  const texts: string[] = [];
+  const res = result as Record<string, unknown>;
+
+  for (const artifact of (res.artifacts as unknown[]) ?? []) {
+    if (!artifact || typeof artifact !== 'object') continue;
+    for (const part of ((artifact as Record<string, unknown>).parts as unknown[]) ?? []) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as Record<string, unknown>;
+      if (p.kind === 'text' && p.text) texts.push(String(p.text));
+    }
+  }
+
+  const message = res.message;
+  if (message && typeof message === 'object') {
+    for (const part of ((message as Record<string, unknown>).parts as unknown[]) ?? []) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as Record<string, unknown>;
+      if (p.kind === 'text' && p.text) texts.push(String(p.text));
+    }
+  }
+
+  return texts.length ? texts.join('\n') : JSON.stringify(result, null, 2);
+}
+
+let _client: BedrockAgentCoreClient | null = null;
+let _clientTimeoutMs = 0;
+
+function agentCoreClient(readTimeoutMs: number): BedrockAgentCoreClient {
+  loadBackendEnv();
+  if (_client && _clientTimeoutMs >= readTimeoutMs) return _client;
+
+  const region = process.env.AWS_REGION?.trim() || 'us-east-2';
+  const profile = process.env.AWS_PROFILE?.trim();
+  if (profile) process.env.AWS_PROFILE = profile;
+
+  _clientTimeoutMs = readTimeoutMs;
+  _client = new BedrockAgentCoreClient({
+    region,
+    maxAttempts: 2,
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: 60_000,
+      requestTimeout: readTimeoutMs,
+    }),
+  });
+  return _client;
+}
+
+export async function loadRuntimeArn(agentName: string): Promise<string | null> {
+  const file = path.join(getBackendRoot(), 'config', 'agentcore', 'runtimes.json');
+  try {
+    const data = JSON.parse(await readFile(file, 'utf-8')) as {
+      agents?: Record<string, { runtimeArn?: string }>;
+    };
+    const arn = data.agents?.[agentName]?.runtimeArn?.trim();
+    return arn || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Invoke a deployed AgentCore runtime via boto3-compatible SDK (A2A message/send). */
+export async function invokeAgentRuntimeA2a(
+  agentName: string,
+  messageText: string,
+  options?: { timeoutSec?: number },
+): Promise<AgentCoreInvokeResult> {
+  const timeoutSec = options?.timeoutSec ?? 900;
+  const readTimeoutMs = Math.max(timeoutSec * 1000, 60_000);
+
+  const arn = await loadRuntimeArn(agentName);
+  if (!arn) {
+    return {
+      status: 'error',
+      agentName,
+      error: `No runtimeArn for ${agentName} in config/agentcore/runtimes.json`,
+    };
+  }
+
+  const sessionId = `${randomUUID().replace(/-/g, '')}0`;
+  const client = agentCoreClient(readTimeoutMs);
+
+  try {
+    const response = await client.send(
+      new InvokeAgentRuntimeCommand({
+        agentRuntimeArn: arn,
+        runtimeSessionId: sessionId,
+        payload: a2aMessageSendPayload(messageText),
+        contentType: 'application/json',
+        accept: 'application/json',
+      }),
+    );
+
+    const statusCode = response.statusCode ?? 200;
+    let bodyText = '';
+    if (response.response) {
+      const raw = response.response;
+      if (typeof raw === 'string') {
+        bodyText = raw;
+      } else if (raw instanceof Uint8Array) {
+        bodyText = new TextDecoder().decode(raw);
+      } else if (typeof (raw as { transformToString?: () => Promise<string> }).transformToString === 'function') {
+        bodyText = await (raw as { transformToString: () => Promise<string> }).transformToString();
+      }
+    }
+
+    if (statusCode >= 400) {
+      return {
+        status: 'error',
+        agentName,
+        runtimeArn: arn,
+        error: `HTTP ${statusCode}: ${bodyText.slice(0, 500)}`,
+      };
+    }
+
+    let parsed: unknown = {};
+    if (bodyText.trim()) {
+      try {
+        parsed = JSON.parse(bodyText);
+      } catch {
+        return {
+          status: 'success',
+          agentName,
+          runtimeArn: arn,
+          text: bodyText,
+          response: { raw: bodyText },
+        };
+      }
+    }
+
+    return {
+      status: 'success',
+      agentName,
+      runtimeArn: arn,
+      text: extractTextFromA2aJsonrpc(parsed),
+      response: parsed,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      status: 'error',
+      agentName,
+      runtimeArn: arn,
+      error: message,
+    };
+  }
+}

@@ -6,6 +6,7 @@ import { getBackendRoot } from './repo-root';
 import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './artifact-store';
 import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
+import { runOrchestratorCloud } from './orchestrator-cloud-run';
 
 const RUNS_CACHE_KEYS = [
   'listRuns',
@@ -191,38 +192,74 @@ export async function startPipeline(options: {
     'utf-8',
   );
 
-  const python = await resolvePythonExecutable(repoRoot);
   const skipDeveloper =
     (process.env.SDLC_PIPELINE_SKIP_DEVELOPER ?? 'false').trim().toLowerCase() !== 'false';
   const skipGitlab =
     (process.env.SDLC_PIPELINE_SKIP_GITLAB ?? 'false').trim().toLowerCase() === 'true';
   const skipVerify =
     (process.env.SDLC_PIPELINE_SKIP_VERIFY ?? 'true').trim().toLowerCase() !== 'false';
-
-  // Cloud orchestrator runs the full chain including apply_sql_to_rds.py (POSTGRES_MCP_* on runtime).
-  // Brief upload + invoke script run locally; agents, RDS apply, and GitLab publish run on AgentCore.
-  const smokeScript = path.join(repoRoot, 'scripts', 'invoke-orchestrator-smoke.py');
-  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '1800', 10);
   const applyRdsLocal =
     (process.env.SDLC_PIPELINE_APPLY_RDS_LOCAL ?? 'false').trim().toLowerCase() === 'true';
+  const useLocalPythonInvoke =
+    (process.env.SDLC_PIPELINE_INVOKE_LOCAL ?? 'false').trim().toLowerCase() === 'true';
+
+  const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');
+  await fs.mkdir(logsDir, { recursive: true });
+  const logPath = path.join(logsDir, `${runId}.log`);
+  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '1800', 10);
+
+  const taskOptions = {
+    targetApp: feature,
+    runId,
+    inputFile: inputRel,
+    skipDb: false,
+    skipPostgres: applyRdsLocal,
+    skipDeveloper,
+    skipGitlab,
+    skipVerify,
+  };
+
+  // S3 mode: invoke orchestrator via AgentCore SDK (no local Python subprocess).
+  if (isS3Store() && !useLocalPythonInvoke) {
+    void runOrchestratorCloud({
+      ...taskOptions,
+      logPath,
+      timeoutSec,
+    }).catch(async (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      await fs.appendFile(logPath, `\n[cloud-invoke] FAILED: ${message}\n`, 'utf-8');
+    });
+
+    invalidateCacheKeys(...RUNS_CACHE_KEYS);
+
+    return {
+      runId,
+      targetApp: feature,
+      inputFile: inputRel,
+      logPath: path.relative(repoRoot, logPath).replace(/\\/g, '/'),
+      runStatePath: path.relative(repoRoot, runStatePath).replace(/\\/g, '/'),
+      orchestratorCommand: `AgentCore SDK invoke orchestrator-agent (timeout=${timeoutSec}s)`,
+      startedAt: new Date().toISOString(),
+    };
+  }
+
+  // Local / legacy: spawn invoke-orchestrator-smoke.py
+  const smokeScript = path.join(repoRoot, 'scripts', 'invoke-orchestrator-smoke.py');
+  const python = await resolvePythonExecutable(repoRoot);
   const args = [
     smokeScript,
     '--app', feature,
     '--run-id', runId,
     '--input-file', inputRel,
     '--no-skip-db',
-    '--no-skip-postgres',
-    '--no-apply-rds-local',
+    ...(applyRdsLocal
+      ? ['--skip-postgres', '--apply-rds-local']
+      : ['--no-skip-postgres', '--no-apply-rds-local']),
     '--timeout', String(timeoutSec),
-    ...(applyRdsLocal ? ['--skip-postgres', '--apply-rds-local'] : []),
     ...(skipDeveloper ? ['--skip-developer'] : ['--no-skip-developer']),
     ...(skipGitlab ? ['--skip-gitlab'] : ['--no-skip-gitlab']),
     ...(skipVerify ? ['--skip-verify'] : ['--no-skip-verify']),
   ];
-
-  const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');
-  await fs.mkdir(logsDir, { recursive: true });
-  const logPath = path.join(logsDir, `${runId}.log`);
 
   const child = spawn(python, args, {
     cwd: repoRoot,
