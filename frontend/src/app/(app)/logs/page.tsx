@@ -16,8 +16,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
-import { useLogs, useRuns, type LogsFilter } from '@/src/lib/queries';
+import { useLogs, useProjects, useRuns, type LogsFilter } from '@/src/lib/queries';
 import { filterLogRows } from '@/src/lib/log-filters';
+import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
 import type { AgentName, LogEntry } from '@/src/types';
 
@@ -45,6 +46,8 @@ const MVP_AGENTS: { id: AgentName; label: string }[] = [
 
 export default function LogsPage() {
   const { data: runs } = useRuns();
+  const { data: projects } = useProjects();
+  const currentProjectId = useUiStore((s) => s.currentProjectId);
   const [source, setSource] = React.useState<LogSource>('cloudwatch');
   const [level, setLevel] = React.useState<LogEntry['level'] | 'all'>('all');
   const [q, setQ] = React.useState('');
@@ -63,11 +66,21 @@ export default function LogsPage() {
 
   const { data: logs, isLoading, isFetching } = useLogs(filters);
 
-  const rows = filterLogRows(logs ?? [], { q, level }).sort(
-    (a, b) => +new Date(b.ts) - +new Date(a.ts),
-  );
+  const projectRuns = (runs ?? []).filter((r) => r.projectId === currentProjectId);
+  const projectRunIds = new Set(projectRuns.map((r) => r.id));
+  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
 
-  const runOptions = [...(runs ?? [])]
+  React.useEffect(() => {
+    if (runId === 'all') return;
+    const belongs = projectRuns.some((r) => r.id === runId);
+    if (!belongs) setRunId('all');
+  }, [currentProjectId, runId, projectRuns]);
+
+  const rows = filterLogRows(logs ?? [], { q, level })
+    .filter((l) => !l.runId || projectRunIds.has(l.runId))
+    .sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
+
+  const runOptions = [...projectRuns]
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
     .slice(0, 20);
 
@@ -78,6 +91,7 @@ export default function LogsPage() {
       <PageHeader
         eyebrow="Observe"
         title="Pipeline logs"
+        description={`Agent and orchestrator output for ${projectName}.`}
         actions={
           <Tabs value={source} onValueChange={(v) => setSource(v as LogSource)}>
             <TabsList className="h-9">

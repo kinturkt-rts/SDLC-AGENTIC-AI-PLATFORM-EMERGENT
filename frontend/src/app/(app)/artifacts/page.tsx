@@ -82,6 +82,8 @@ export default function ArtifactsPage() {
 
   const currentProjectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
 
+  const kindLabel = FILTER_OPTIONS.find((o) => o.value === kind)?.label ?? 'All kinds';
+
   const rows = (artifacts ?? [])
     .filter((a) => a.projectId === currentProjectId)
     .filter((a) => kind === 'all' || a.kind === kind);
@@ -93,16 +95,19 @@ export default function ArtifactsPage() {
         title="Artifacts"
         description={`Deliverables for ${currentProjectName} — PRDs, design docs, architecture diagrams, SQL, code, and CI/CD.`}
         actions={
-          <Select value={kind} onValueChange={(v) => setKind(v as ArtifactKind | 'all')}>
-            <SelectTrigger className="h-9 w-[190px] border-white/[0.08] bg-white/[0.02]">
-              <SelectValue placeholder="All kinds" />
-            </SelectTrigger>
-            <SelectContent>
-              {FILTER_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Kind</span>
+            <Select value={kind} onValueChange={(v) => setKind(v as ArtifactKind | 'all')}>
+              <SelectTrigger className="h-9 w-auto min-w-[7.5rem] border-white/[0.08] bg-white/[0.02] px-2.5">
+                <SelectValue>{kindLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {FILTER_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         }
       />
 

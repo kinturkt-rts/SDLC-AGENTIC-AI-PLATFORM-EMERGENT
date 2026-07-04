@@ -317,9 +317,6 @@ def discover_agents_with_telemetry(target_app: str) -> list[str]:
         if middle:
             found.add(middle)
     ordered = [a for a in DEFAULT_PIPELINE_AGENTS if a in found]
-    for name in sorted(found):
-        if name not in ordered:
-            ordered.append(name)
     return ordered
 
 

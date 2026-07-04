@@ -35,6 +35,7 @@ from _shared.pipeline_context import (
     resolve_design_doc_path,
     slugify as pipeline_slugify,
 )
+from _shared.prd_architecture_brief import extract_architecture_brief_from_prd
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
 load_repo_env()
@@ -106,6 +107,7 @@ Return **only**:
 4. **Do not** duplicate content or repeat the same summary twice.
 
 ## General
+- Use the **Architecture brief (from PRD)** block in the user message as the primary scope for nodes and clusters.
 - Align with `prdPath` / `productAgentOutput` in context when present.
 - Do not invent Jira keys. Jira is not required for architecture.
 - FastAPI services under `target-apps/` when the PRD implies an app tier.
@@ -409,10 +411,42 @@ def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> 
     )
 
 
-def _user_message(task: str, context: dict[str, Any] | None) -> str:
+def _load_architecture_brief(context: dict[str, Any] | None) -> str:
+    """Read PRD from context path and return a short deterministic architecture brief."""
     if not context:
-        return task
-    return f"{task}\n\nContext:\n{json.dumps(context, indent=2)}"
+        return ""
+    prd_path = context.get("prdPath") or context.get("prd_path")
+    if not prd_path:
+        return ""
+    try:
+        prd_text = _read_repo_text(str(prd_path), context=context)
+    except OSError:
+        return ""
+    brief = extract_architecture_brief_from_prd(prd_text)
+    if brief:
+        context["architectBrief"] = brief
+    return brief
+
+
+def _diagram_user_message(task: str, context: dict[str, Any] | None) -> str:
+    """Task + PRD architecture brief + pipeline context for the diagram LLM step."""
+    parts = [task.strip()]
+    if context:
+        brief = _load_architecture_brief(context)
+        if brief:
+            parts.append(
+                "## Architecture brief (from PRD — use for diagram scope)\n"
+                f"{brief}\n"
+            )
+        product_out = context.get("productAgentOutput") or context.get("product_agent_output") or ""
+        if product_out and str(product_out).strip():
+            parts.append(f"## Product summary\n{str(product_out).strip()}\n")
+        parts.append(f"Context:\n{json.dumps(context, indent=2)}")
+    return "\n\n".join(parts)
+
+
+def _user_message(task: str, context: dict[str, Any] | None) -> str:
+    return _diagram_user_message(task, context)
 
 
 def _slugify(text: str, *, max_len: int = 60) -> str:

@@ -14,7 +14,7 @@ import {
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
-import { useRuns } from '@/src/lib/queries';
+import { useProjects, useRuns } from '@/src/lib/queries';
 import { filterRunsByQuery } from '@/src/lib/log-filters';
 import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative, formatDuration } from '@/src/lib/format';
@@ -24,13 +24,19 @@ const STATUS_OPTIONS: (RunStatus | 'all')[] = ['all', 'running', 'paused', 'queu
 
 export default function RunsPage() {
   const { data: runs, isLoading } = useRuns();
+  const { data: projects } = useProjects();
+  const currentProjectId = useUiStore((s) => s.currentProjectId);
   const filter = useUiStore((s) => s.runStatusFilter);
   const setFilter = useUiStore((s) => s.setRunStatusFilter);
   const router = useRouter();
   const [q, setQ] = React.useState('');
 
+  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+
   const rows = filterRunsByQuery(
-    (runs ?? []).filter((r) => filter === 'all' || r.status === filter),
+    (runs ?? [])
+      .filter((r) => r.projectId === currentProjectId)
+      .filter((r) => filter === 'all' || r.status === filter),
     q,
   );
 
@@ -50,7 +56,7 @@ export default function RunsPage() {
       <PageHeader
         eyebrow="Operate"
         title="Pipeline Runs"
-        description="Every SDLC pipeline execution across projects. Click a run to open its detail view."
+        description={`Pipeline executions for ${projectName}. Click a run to open its detail view.`}
         toolbar={
           <>
             <Input

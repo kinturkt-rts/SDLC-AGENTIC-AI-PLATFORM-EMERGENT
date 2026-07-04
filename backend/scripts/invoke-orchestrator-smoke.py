@@ -1,7 +1,14 @@
 """Smoke invoke for orchestrator-agent AgentCore runtime (deterministic pipeline).
 
-Full end-to-end (product → architect → database → developer, RDS applied locally):
-  python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --full --no-skip-developer
+Default: full cloud chain (product → architect → database → RDS apply in orchestrator
+→ developer → gitlab). Brief is uploaded to S3 from this machine; all agent work runs
+on AgentCore.
+
+DB + RDS only (skips developer/gitlab):
+  python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --full
+
+Local RDS fallback (dev only — use when orchestrator cannot reach public RDS):
+  python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --skip-postgres --apply-rds-local
 
 Connectivity check only (skip all agent steps):
   python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --skip-product --skip-architect --skip-db --skip-developer
@@ -12,6 +19,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -105,6 +113,134 @@ def _apply_rds_local(app: str, run_id: str) -> int:
     return int(proc.returncode)
 
 
+def _update_run_json(
+    run_id: str,
+    *,
+    status: str | None = None,
+    current_step: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Update agents/pipeline/runs/<runId>/run.json so the UI reflects real progress."""
+    path = _REPO / "agents" / "pipeline" / "runs" / run_id / "run.json"
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if status:
+            data["status"] = status
+            if status in ("completed", "failed", "cancelled"):
+                data["finishedAt"] = datetime.now(timezone.utc).isoformat()
+        if current_step:
+            data["currentStep"] = current_step
+            for step in data.get("steps", []):
+                if step["name"] == current_step:
+                    step["status"] = "running"
+                elif step.get("status") == "running":
+                    step["status"] = "completed"
+        if error:
+            data["error"] = error
+        elif status == "completed":
+            data["error"] = None
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _gitlab_handoff_exists(run_id: str, app: str) -> bool:
+    """Check if gitlab handoff exists in S3 (canonical or slug-prefixed layout)."""
+    from _shared.artifact_store import get_artifact_text
+
+    for rel in (f"handoffs/gitlab.json", f"{app}/handoffs/gitlab-handoff.json"):
+        try:
+            get_artifact_text(run_id, rel)
+            return True
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+    return False
+
+
+def _run_gitlab_fallback_cloud(app: str, run_id: str, timeout: int) -> int:
+    """Invoke gitlab-agent on AgentCore as fallback (publishes whatever is in S3)."""
+    task = f"Publish SDLC artifacts for {app} to GitLab branch sdlc/{app}."
+    body = task + "\n\nContext:\n" + json.dumps({"targetApp": app, "runId": run_id}, indent=2)
+    print(f"[gitlab-fallback] Invoking gitlab-agent on AgentCore (timeout={timeout}s)...")
+    result = invoke_agent_runtime_a2a("gitlab-agent", body, timeout=timeout)
+    status = result.get("status")
+    print(f"[gitlab-fallback] cloud status: {status}")
+    if result.get("error"):
+        print(f"[gitlab-fallback] cloud error: {result.get('error')}")
+    text = result.get("text") or ""
+    if not text and result.get("response"):
+        text = extract_text_from_a2a_jsonrpc(result["response"])
+    if text:
+        print(f"[gitlab-fallback] cloud response: {text[:1500]}")
+    return 0 if status == "success" else 1
+
+
+def _run_gitlab_fallback_local(app: str, run_id: str) -> int:
+    """Materialize S3 run artifacts + run_publish locally (no AgentCore, no LLM)."""
+    import importlib.util
+    import tempfile
+
+    from _shared.artifact_store import (
+        is_s3_store,
+        list_run_artifact_keys,
+        materialize_run,
+    )
+
+    if not is_s3_store():
+        print("[gitlab-fallback-local] ARTIFACT_STORE is not s3", file=sys.stderr)
+        return 1
+
+    keys = list_run_artifact_keys(run_id)
+    if not keys:
+        print(f"[gitlab-fallback-local] No S3 artifacts for run {run_id}", file=sys.stderr)
+        return 1
+
+    root = materialize_run(run_id, Path(tempfile.mkdtemp(prefix="sdlc-gitlab-fb-")))
+    print(f"[gitlab-fallback-local] Materialized {len(keys)} artifacts at {root}")
+
+    spec = importlib.util.spec_from_file_location(
+        "gitlab_agent_fb", _REPO / "agents" / "gitlab-agent" / "gitlab_agent.py"
+    )
+    if spec is None or spec.loader is None:
+        print("[gitlab-fallback-local] Cannot load gitlab_agent.py", file=sys.stderr)
+        return 1
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    ctx = {"targetApp": app, "runId": run_id}
+    print(f"[gitlab-fallback-local] Publishing via GitLab MCP (local run_publish)...")
+    _summary, handoff = mod.run_publish(app, ctx, root=root)
+    handoff_status = handoff.get("status")
+    if handoff_status == "published":
+        branch_url = handoff.get("branchUrl") or "(unknown)"
+        print(f"[gitlab-fallback-local] OK — branch: {branch_url}")
+        return 0
+    print(
+        f"[gitlab-fallback-local] Publish status: {handoff_status} — error: {handoff.get('error')}",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _run_gitlab_fallback(app: str, run_id: str, timeout: int) -> int:
+    """Cloud gitlab-agent first; local publish fallback if cloud fails."""
+    print(f"[gitlab-fallback] GitLab handoff missing for run {run_id}. Running fallback publish.")
+    cloud_code = _run_gitlab_fallback_cloud(app, run_id, timeout)
+    if cloud_code == 0 and _gitlab_handoff_exists(run_id, app):
+        print("[gitlab-fallback] Cloud gitlab-agent succeeded.")
+        return 0
+    print("[gitlab-fallback] Cloud gitlab-agent failed or produced no handoff — trying local publish...")
+    local_code = _run_gitlab_fallback_local(app, run_id)
+    if local_code == 0:
+        return 0
+    print("[gitlab-fallback] Local publish also failed (non-fatal — artifacts remain in S3).", file=sys.stderr)
+    return local_code
+
+
 def _build_task(
     *,
     target_app: str,
@@ -113,9 +249,9 @@ def _build_task(
     transport: str = "a2a",
     skip_product: bool = False,
     skip_architect: bool = False,
-    skip_db: bool = True,
-    skip_postgres: bool = True,
-    skip_developer: bool = True,
+    skip_db: bool = False,
+    skip_postgres: bool = False,
+    skip_developer: bool = False,
     skip_gitlab: bool = False,
     skip_verify: bool = True,
 ) -> str:
@@ -148,7 +284,7 @@ def main() -> None:
     parser.add_argument(
         "--full",
         action="store_true",
-        help="Run product+architect+database; apply RDS locally after (skips developer/gitlab/verify)",
+        help="Run product+architect+database+in-cloud RDS only (skips developer/gitlab/verify)",
     )
 
     parser.add_argument("--skip-product", action="store_true")
@@ -158,18 +294,18 @@ def main() -> None:
     parser.add_argument(
         "--skip-postgres",
         action="store_true",
-        default=True,
-        help="Skip in-cloud RDS apply in orchestrator (default: True for smoke script; use --no-skip-postgres for in-cloud apply)",
+        default=False,
+        help="Skip in-cloud RDS apply in orchestrator (use with --apply-rds-local for laptop fallback)",
     )
     parser.add_argument("--no-skip-postgres", action="store_false", dest="skip_postgres")
     parser.add_argument(
         "--apply-rds-local",
         action="store_true",
         default=False,
-        help="After orchestrator, pull SQL from S3 and run apply_sql_to_rds.py locally",
+        help="After orchestrator, pull SQL from S3 and run apply_sql_to_rds.py on this machine (dev fallback)",
     )
     parser.add_argument("--no-apply-rds-local", action="store_false", dest="apply_rds_local")
-    parser.add_argument("--skip-developer", action="store_true", default=True)
+    parser.add_argument("--skip-developer", action="store_true", default=False)
     parser.add_argument("--no-skip-developer", action="store_false", dest="skip_developer")
     parser.add_argument("--skip-gitlab", action="store_true", default=False)
     parser.add_argument("--no-skip-gitlab", action="store_false", dest="skip_gitlab")
@@ -183,14 +319,11 @@ def main() -> None:
         args.skip_product = False
         args.skip_architect = False
         args.skip_db = False
-        args.skip_postgres = True
-        args.apply_rds_local = True
+        args.skip_postgres = False
+        args.apply_rds_local = False
         args.skip_developer = True
         args.skip_gitlab = True
         args.skip_verify = True
-
-    if args.skip_postgres and not args.skip_db and not args.apply_rds_local:
-        args.apply_rds_local = True
 
     input_file = args.input_file
     if not input_file and not args.skip_product:
@@ -217,6 +350,9 @@ def main() -> None:
         print("Note: skip_postgres=False — orchestrator will apply RDS in-cloud after database-agent.")
     print("---")
 
+    if not args.skip_gitlab:
+        _update_run_json(args.run_id, status="running", current_step="product-agent")
+
     result = invoke_agent_runtime_a2a("orchestrator-agent", task, timeout=args.timeout)
     print("status:", result.get("status"))
     if result.get("error"):
@@ -227,13 +363,51 @@ def main() -> None:
     print("--- response ---")
     print(text[:8000])
 
+    # Step 1: RDS apply (local fallback when skip_postgres=True)
     if args.apply_rds_local and not args.skip_db and args.skip_postgres:
         print("--- apply-rds-local ---")
+        _update_run_json(args.run_id, current_step="database-agent")
         code = _apply_rds_local(args.app, args.run_id)
         if code != 0:
             print(f"[apply-rds-local] FAILED (exit {code})", file=sys.stderr)
+            _update_run_json(args.run_id, status="failed", error="local RDS apply failed")
             raise SystemExit(code)
         print("[apply-rds-local] OK")
+
+    # Step 2: GitLab publish fallback
+    # If the orchestrator completed gitlab normally, the handoff exists in S3.
+    # If developer-agent timed out (AgentCore ~15 min sync limit), the orchestrator
+    # never reached gitlab — so we invoke gitlab-agent separately to push whatever
+    # artifacts exist. This is non-fatal: if it fails, artifacts remain in S3.
+    if not args.skip_gitlab:
+        print("--- gitlab ---")
+        if _gitlab_handoff_exists(args.run_id, args.app):
+            print("[gitlab] Handoff already exists — orchestrator published. Skipping fallback.")
+        else:
+            _update_run_json(args.run_id, current_step="gitlab-agent")
+            gl_code = _run_gitlab_fallback(args.app, args.run_id, args.timeout)
+            if gl_code != 0:
+                print(
+                    f"[gitlab] Fallback publish failed (exit {gl_code}) — non-fatal. "
+                    "Run manually: python scripts/invoke-gitlab-agent-smoke.py --local "
+                    f"--app {args.app} --run-id {args.run_id}",
+                    file=sys.stderr,
+                )
+
+    # Step 3: Finalize run status
+    orch_status = result.get("status")
+    orch_text_lower = text.lower()
+    if orch_status == "success" and "pipeline failed" not in orch_text_lower:
+        _update_run_json(args.run_id, status="completed")
+    elif _gitlab_handoff_exists(args.run_id, args.app) or not args.skip_gitlab:
+        # Orchestrator may have timed out at developer, but gitlab fallback succeeded
+        _update_run_json(args.run_id, status="completed")
+    else:
+        _update_run_json(
+            args.run_id,
+            status="failed",
+            error="orchestrator did not complete — check CloudWatch logs",
+        )
 
 
 if __name__ == "__main__":

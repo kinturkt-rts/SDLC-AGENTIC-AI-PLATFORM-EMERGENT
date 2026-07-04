@@ -133,6 +133,45 @@ def test_run_architect_from_context_clears_diagram_paths_when_no_png(
     assert "diagramPaths" not in run_ctx
 
 
+def test_run_task_injects_prd_architecture_brief(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import put_artifact
+
+    run_id = "run-brief-test"
+    prd_rel = "docs/PRD/demo-api.md"
+    put_artifact(
+        run_id,
+        prd_rel,
+        "# Demo API\n\n## 1. Overview\nFastAPI on Postgres.\n\n"
+        "## 3. Non-Goals\nNo Cognito.\n\n"
+        "## 7. Data & Integrations\nPostgreSQL only.\n",
+    )
+    mod = _load_agent_module()
+    captured: dict[str, str] = {}
+
+    class FakeAgent:
+        def __call__(self, message: str) -> str:
+            captured["message"] = message
+            return "ok"
+
+    with patch.object(mod, "_build_agent", return_value=FakeAgent()):
+        with patch.object(mod, "_skip_design_generation", return_value=True):
+            mod.run_task(
+                "draw diagram",
+                {"targetApp": "demo-api", "runId": run_id, "prdPath": prd_rel},
+                tools=[object()],
+            )
+
+    message = captured["message"]
+    assert "## Architecture brief (from PRD" in message
+    assert "FastAPI on Postgres" in message
+    assert "No Cognito" in message
+    assert "PostgreSQL only" in message
+
+
 def test_run_task_uses_provided_tools_without_spawning_mcp(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,

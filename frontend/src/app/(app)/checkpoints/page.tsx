@@ -9,13 +9,18 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
-import { useCheckpoints } from '@/src/lib/queries';
+import { useCheckpoints, useProjects } from '@/src/lib/queries';
+import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
 import type { HITLCheckpoint } from '@/src/types';
 
 export default function CheckpointsPage() {
   const { data: checkpoints, isLoading } = useCheckpoints();
+  const { data: projects } = useProjects();
+  const currentProjectId = useUiStore((s) => s.currentProjectId);
   const [overrides, setOverrides] = React.useState<Record<string, HITLCheckpoint['status']>>({});
+
+  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
 
   const resolve = (c: HITLCheckpoint, status: 'approved' | 'rejected') => {
     setOverrides((o) => ({ ...o, [c.id]: status }));
@@ -24,7 +29,9 @@ export default function CheckpointsPage() {
     });
   };
 
-  const items = (checkpoints ?? []).map((c) => ({ ...c, status: overrides[c.id] ?? c.status }));
+  const items = (checkpoints ?? [])
+    .filter((c) => c.projectId === currentProjectId)
+    .map((c) => ({ ...c, status: overrides[c.id] ?? c.status }));
   const pending = items.filter((c) => c.status === 'pending');
   const resolved = items.filter((c) => c.status !== 'pending');
 
@@ -33,7 +40,7 @@ export default function CheckpointsPage() {
       <PageHeader
         eyebrow="Operate"
         title="HITL Checkpoints"
-        description="Human-in-the-loop gates where the pipeline pauses for a person to approve, reject, or clarify."
+        description={`Human-in-the-loop gates for ${projectName} — approve, reject, or clarify before the pipeline continues.`}
       />
 
       {isLoading ? (

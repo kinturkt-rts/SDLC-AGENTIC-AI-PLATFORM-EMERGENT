@@ -19,8 +19,6 @@ import {
   Zap,
   ChevronRight,
   Sparkles,
-  Coins,
-  TrendingUp,
   Upload,
   Save,
   PlayCircle,
@@ -41,14 +39,10 @@ import {
   useDashboardSummary,
   useRuns,
   useCheckpoints,
-  useArtifacts,
-  useAgents,
-  useMcpServers,
   useRecentActivity,
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
-import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PipelineRun } from '@/src/types';
 import { cn } from '@/lib/utils';
@@ -84,34 +78,6 @@ const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
   'gitlab-agent': GitBranch,
   'qa-agent': Shield,
 };
-
-/* ─────────────────────────────────────────────────────
-   Token Usage (corrected Claude model mapping)
-   Only LLM-using agents — GitLab Agent excluded
-   ───────────────────────────────────────────────────── */
-interface TokenUsageEntry {
-  agentId: string;
-  agentName: string;
-  icon: LucideIcon;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cost: number;
-  model: string;
-  accent: string;
-}
-
-const MOCK_TOKEN_USAGE: TokenUsageEntry[] = [
-  { agentId: 'product-agent', agentName: 'Product Agent', icon: FileText, inputTokens: 124800, outputTokens: 89200, totalTokens: 214000, cost: 3.42, model: 'Claude Sonnet 4.6', accent: 'bg-blue-400' },
-  { agentId: 'architect-agent', agentName: 'Architect Agent', icon: Building2, inputTokens: 98400, outputTokens: 156300, totalTokens: 254700, cost: 4.18, model: 'Claude Sonnet 4.6', accent: 'bg-violet-400' },
-  { agentId: 'database-agent', agentName: 'Database Agent', icon: Database, inputTokens: 67200, outputTokens: 42100, totalTokens: 109300, cost: 1.74, model: 'Claude Opus 4.6', accent: 'bg-emerald-400' },
-  { agentId: 'developer-agent', agentName: 'Developer Agent', icon: Code2, inputTokens: 189600, outputTokens: 231400, totalTokens: 421000, cost: 6.92, model: 'Claude Opus 4.6', accent: 'bg-amber-400' },
-];
-
-const TOTAL_TOKENS = MOCK_TOKEN_USAGE.reduce((s, t) => s + t.totalTokens, 0);
-const TOTAL_COST = MOCK_TOKEN_USAGE.reduce((s, t) => s + t.cost, 0);
-const MAX_AGENT_TOKENS = Math.max(...MOCK_TOKEN_USAGE.map((t) => t.totalTokens));
-const ACTIVE_MODELS = new Set(MOCK_TOKEN_USAGE.map((t) => t.model)).size; // 2
 
 function LiveActivityFeed({ poll }: { poll: boolean }) {
   const { data: activity, isLoading, isFetching } = useRecentActivity(poll);
@@ -431,7 +397,7 @@ function InputRequirementsCard() {
       setStartedRunId(data.runId);
       setLastSaved(new Date().toLocaleTimeString());
       toast.success('Pipeline submitted', {
-        description: `run ${data.runId} → ${uploadData.runPrefix ?? `runs/${data.runId}/`}`,
+        description: `${feature} · ${data.runId.slice(0, 8)}…`,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -584,61 +550,6 @@ function InputRequirementsCard() {
   );
 }
 
-/* ── Token Usage ─────────────────────────────────── */
-function TokenUsageSection() {
-  return (
-    <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-      <SectionHeader title="Token Usage" icon={Coins} />
-      <div className="p-4">
-        {/* Summary row */}
-        <div className="mb-4 flex flex-wrap items-center gap-4 sm:gap-6">
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total Tokens</p>
-            <p className="text-xl font-bold text-foreground">{(TOTAL_TOKENS / 1000).toFixed(0)}K</p>
-          </div>
-          <div className="h-8 w-px bg-white/[0.06]" />
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Est. Cost</p>
-            <p className="text-xl font-bold text-foreground">${TOTAL_COST.toFixed(2)}</p>
-          </div>
-          <div className="h-8 w-px bg-white/[0.06]" />
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Active Models</p>
-            <p className="text-xl font-bold text-foreground">{ACTIVE_MODELS}</p>
-          </div>
-          <div className="ml-auto hidden items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-400 sm:flex">
-            <TrendingUp className="h-3 w-3" /> 12% less than last week
-          </div>
-        </div>
-
-        {/* Per-agent breakdown */}
-        <div className="space-y-2.5">
-          {MOCK_TOKEN_USAGE.map((entry) => (
-            <Link key={entry.agentId} href={`/agents/${entry.agentId}`} className="group flex items-center gap-3 rounded-lg -mx-1 px-1 py-0.5 transition-colors hover:bg-white/[0.02]">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/40">
-                <entry.icon className="h-3.5 w-3.5 text-muted-foreground" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-medium text-foreground">{entry.agentName}</p>
-                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                    <span className="hidden sm:inline">{entry.model}</span>
-                    <span className="font-mono">{(entry.totalTokens / 1000).toFixed(0)}K</span>
-                    <span className="font-medium text-foreground">${entry.cost.toFixed(2)}</span>
-                  </div>
-                </div>
-                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
-                  <div className={cn('h-full rounded-full transition-all duration-500', entry.accent)} style={{ width: `${(entry.totalTokens / MAX_AGENT_TOKENS) * 100}%` }} />
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 /* ─────────────────────────────────────────────────────
    Main Dashboard
    ───────────────────────────────────────────────────── */
@@ -646,8 +557,6 @@ export default function DashboardPage() {
   const { data: summary } = useDashboardSummary();
   const { data: runs } = useRuns();
   const { data: checkpoints } = useCheckpoints();
-  const { data: artifacts } = useArtifacts();
-  const { data: mcp } = useMcpServers();
 
   const activeRuns = (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused');
   const hasActive = activeRuns.length > 0;
@@ -655,9 +564,6 @@ export default function DashboardPage() {
   const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
-  const recentArtifacts = [...(artifacts ?? [])]
-    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-    .slice(0, 6);
 
   return (
     <div className="space-y-5">
@@ -683,7 +589,7 @@ export default function DashboardPage() {
           <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
             {summary ? (
               <>
-                <HeroStatCard icon={Activity} label="Active Runs" value={summary.activeRuns} sub="currently executing" accent="glow-blue-sm" iconAccent="bg-blue-500/10 text-blue-400 ring-blue-500/20" href="/runs" />
+                <HeroStatCard icon={Activity} label="Active Runs" value={activeRuns.length} sub="currently executing" accent="glow-blue-sm" iconAccent="bg-blue-500/10 text-blue-400 ring-blue-500/20" href="/runs" />
                 <HeroStatCard icon={UserCheck} label="Pending Approvals" value={summary.pendingApprovals} sub="awaiting human review" accent="" iconAccent="bg-amber-500/10 text-amber-400 ring-amber-500/20" href="/checkpoints" />
                 <HeroStatCard icon={Bot} label="Agents Online" value={`${summary.agentsOnline}/8`} sub="specialist agents" accent="" iconAccent="bg-emerald-500/10 text-emerald-400 ring-emerald-500/20" href="/agents" />
                 <HeroStatCard icon={Plug} label="MCP Healthy" value={`${summary.mcpHealthy}/${summary.mcpTotal}`} sub="integration servers" accent="" iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20" href="/mcp" />
@@ -735,25 +641,17 @@ export default function DashboardPage() {
         <LiveActivityFeed poll={hasActive} />
       </div>
 
-      {/* ── 5. Recent Artifacts + HITL Approvals (side by side) */}
+      {/* ── 5. Artifacts + HITL Approvals (side by side) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="overflow-hidden border-white/[0.06] bg-card/80 lg:col-span-2">
-          <SectionHeader title="Recent Artifacts" href="/artifacts" icon={FileBox} count={recentArtifacts.length} />
-          <div className="divide-y divide-white/[0.04]">
-            {recentArtifacts.map((a) => (
-              <Link key={a.id} href="/artifacts" className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-white/[0.02]">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/50">
-                  <FileBox className="h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-mono text-sm text-foreground">{a.name}</p>
-                  <p className="truncate text-[11px] text-muted-foreground">{a.projectName} · {a.producedBy.replace('-agent', '')}</p>
-                </div>
-                <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{artifactKindLabel(a.kind)}</span>
-                <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">{formatRelative(a.createdAt)}</span>
-              </Link>
-            ))}
-          </div>
+          <SectionHeader title="Artifacts" href="/artifacts" icon={FileBox} />
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            Browse PRDs, diagrams, SQL, and code on the{' '}
+            <Link href="/artifacts" className="text-teal-400 hover:underline">
+              Artifacts
+            </Link>{' '}
+            page.
+          </p>
         </Card>
 
         <Card className="overflow-hidden border-white/[0.06] bg-card/80">
@@ -772,9 +670,6 @@ export default function DashboardPage() {
           </div>
         </Card>
       </div>
-
-      {/* ── 6. Token Usage ── */}
-      <TokenUsageSection />
     </div>
   );
 }

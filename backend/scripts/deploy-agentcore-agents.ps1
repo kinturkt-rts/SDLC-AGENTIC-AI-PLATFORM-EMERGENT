@@ -127,7 +127,7 @@ $PipelineAgents = @(
     @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true") },
     @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
     @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @() },
-    @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @() },
+    @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
     @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = @() },
     @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() }
 )

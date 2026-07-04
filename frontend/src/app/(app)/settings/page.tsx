@@ -4,13 +4,13 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useTheme } from 'next-themes';
 import {
-  Server,
   Palette,
   Lock,
-  Info,
-  Database,
+  Settings2,
   Workflow,
+  HardDrive,
   ExternalLink,
+  Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
@@ -24,103 +24,65 @@ import type { PlatformSettings } from '@/src/lib/platform-settings';
 function SettingRow({
   label,
   value,
-  mono = false,
 }: {
   label: string;
   value: React.ReactNode;
-  mono?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1 border-b border-white/[0.04] py-3 last:border-0 last:pb-0 first:pt-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd
-        className={cn(
-          'text-sm font-medium text-foreground sm:text-right',
-          mono && 'font-mono text-xs break-all',
-        )}
-      >
-        {value}
-      </dd>
+      <dd className="text-sm font-medium text-foreground sm:text-right">{value}</dd>
     </div>
   );
 }
 
-function ModeBadge({ ok, label }: { ok?: boolean; label: string }) {
+function StatusPill({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'success' | 'muted' }) {
   return (
     <span
       className={cn(
-        'inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
-        ok
-          ? 'bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20'
-          : 'bg-muted/50 text-muted-foreground ring-1 ring-white/[0.06]',
+        'inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1',
+        tone === 'success' && 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20',
+        tone === 'muted' && 'bg-muted/40 text-muted-foreground ring-white/[0.06]',
+        tone === 'neutral' && 'bg-teal-500/10 text-teal-400 ring-teal-500/20',
       )}
     >
-      {label}
+      {children}
     </span>
   );
 }
 
-function PlatformSection({ settings }: { settings: PlatformSettings }) {
-  const { connection, storage, pipeline } = settings;
+function PlatformSettingsCards({ settings }: { settings: PlatformSettings }) {
+  const { general, storage, pipeline } = settings;
 
   return (
     <>
       <Card className="border-white/[0.06] bg-card/80 p-5">
         <div className="flex items-center gap-2">
-          <Server className="h-4 w-4 text-teal-400" />
-          <h3 className="text-sm font-semibold text-foreground">Connection</h3>
+          <Settings2 className="h-4 w-4 text-teal-400" />
+          <h3 className="text-sm font-semibold text-foreground">General</h3>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          How this control plane reads platform state. Configured via environment variables — restart{' '}
-          <code className="rounded bg-muted/40 px-1 font-mono text-xs">npm run dev</code> after changes.
+          Platform identity and where pipeline artifacts are stored.
         </p>
         <dl className="mt-4">
+          <SettingRow label="Platform" value={general.platformName} />
           <SettingRow
-            label="Data mode"
+            label="Environment"
             value={
-              <ModeBadge
-                ok={connection.mode === 'local'}
-                label={connection.mode === 'local' ? 'Local bridge' : 'Remote API'}
-              />
+              <StatusPill tone={general.environment === 'production' ? 'success' : 'neutral'}>
+                {general.environmentLabel}
+              </StatusPill>
             }
           />
           <SettingRow
-            label="API base URL"
-            value={connection.apiBaseUrl ?? '— (uses /api/v1)'}
-            mono
-          />
-          <SettingRow label="Summary" value={connection.description} />
-        </dl>
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-white/[0.06] bg-muted/20 p-3 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <p>
-            Set <code className="font-mono">NEXT_PUBLIC_API_BASE_URL</code> in{' '}
-            <code className="font-mono">frontend/.env.local</code> to point at a deployed platform API.
-            Leave unset for local development (current default).
-          </p>
-        </div>
-      </Card>
-
-      <Card className="border-white/[0.06] bg-card/80 p-5">
-        <div className="flex items-center gap-2">
-          <Database className="h-4 w-4 text-teal-400" />
-          <h3 className="text-sm font-semibold text-foreground">Artifacts &amp; cloud</h3>
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Where pipeline outputs and run context are stored. Loaded from {settings.envSource}.
-        </p>
-        <dl className="mt-4">
-          <SettingRow
-            label="Artifact store"
+            label="Artifact storage"
             value={
-              <ModeBadge ok={storage.artifactStore === 's3'} label={storage.artifactStore} />
+              <span className="inline-flex items-center gap-1.5">
+                <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+                {storage.label}
+              </span>
             }
           />
-          {storage.s3Bucket ? (
-            <SettingRow label="S3 bucket" value={storage.s3Bucket} mono />
-          ) : null}
-          <SettingRow label="AWS region" value={storage.awsRegion ?? '—'} mono />
-          <SettingRow label="AWS profile" value={storage.awsProfile ?? '— (default credential chain)'} mono />
         </dl>
       </Card>
 
@@ -132,30 +94,23 @@ function PlatformSection({ settings }: { settings: PlatformSettings }) {
           </div>
           <Button asChild variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground">
             <Link href="/agents">
-              Agents <ExternalLink className="h-3 w-3" />
+              View agents <ExternalLink className="h-3 w-3" />
             </Link>
           </Button>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          How runs invoke specialist agents when you submit from the dashboard.
+          Specialist agents that run when you submit a brief from the dashboard.
         </p>
         <dl className="mt-4">
           <SettingRow
-            label="Transport"
-            value={<ModeBadge ok={pipeline.transport === 'a2a'} label={pipeline.transport} />}
+            label="Agents available"
+            value={`${pipeline.deployedAgentCount} of ${pipeline.totalMvpAgents} deployed`}
           />
-          <SettingRow label="AgentCore region" value={pipeline.agentcoreRegion ?? '—'} mono />
           <SettingRow
-            label="Deployed MVP agents"
-            value={`${pipeline.deployedAgentCount} online`}
+            label="Default flow"
+            value="Product → Architect → Database → Developer → GitLab"
           />
         </dl>
-        <p className="mt-4 text-xs text-muted-foreground">
-          <code className="font-mono">SDLC_PIPELINE_TRANSPORT</code> —{' '}
-          <span className="font-mono">local</span>, <span className="font-mono">a2a</span>, or{' '}
-          <span className="font-mono">auto</span>. AgentCore runtimes are tracked in{' '}
-          <code className="font-mono">backend/config/agentcore/runtimes.json</code>.
-        </p>
       </Card>
     </>
   );
@@ -173,22 +128,22 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Admin"
         title="Settings"
-        description="Read-only platform configuration and personal preferences. Environment values are loaded at server start — not editable in the UI yet."
+        description="Platform preferences and account options for this control plane."
       />
 
       {isLoading ? (
         <div className="grid max-w-2xl gap-4">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-44 w-full rounded-xl" />
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Skeleton key={i} className="h-40 w-full rounded-xl" />
           ))}
         </div>
       ) : isError || !settings ? (
         <Card className="max-w-2xl border-red-500/20 bg-card/80 p-5 text-sm text-muted-foreground">
-          Could not load platform settings. Ensure the dev server can read backend env files.
+          Could not load platform settings. Restart the dev server if you recently changed environment files.
         </Card>
       ) : (
         <div className="grid max-w-2xl gap-4">
-          <PlatformSection settings={settings} />
+          <PlatformSettingsCards settings={settings} />
         </div>
       )}
 
@@ -198,10 +153,7 @@ export default function SettingsPage() {
           <h3 className="text-sm font-semibold text-foreground">Appearance</h3>
         </div>
         <div className="mt-4 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-foreground">Dark mode</p>
-            <p className="text-xs text-muted-foreground">Saved in your browser for this device.</p>
-          </div>
+          <p className="text-sm font-medium text-foreground">Dark mode</p>
           <Switch
             checked={mounted ? theme === 'dark' : true}
             onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
@@ -209,7 +161,7 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      <Card className="max-w-2xl border-white/[0.06] bg-card/60 p-5 opacity-70">
+      <Card className="max-w-2xl border-white/[0.06] bg-card/60 p-5 opacity-80">
         <div className="flex items-center gap-2">
           <Lock className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold text-foreground">Authentication</h3>
@@ -217,11 +169,20 @@ export default function SettingsPage() {
             Coming soon
           </span>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          SSO / OIDC sign-in will be configured here once the platform API is available.
-        </p>
+        <div className="mt-3 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 ring-1 ring-orange-500/20">
+            <Shield className="h-4 w-4 text-orange-400" />
+          </div>
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm font-medium text-foreground">Amazon Cognito</p>
+            <p className="text-sm text-muted-foreground">
+              Sign-in with a Cognito user pool — SSO-friendly for enterprise teams. Role-based access
+              to runs, artifacts, and pipeline controls will be enforced here.
+            </p>
+          </div>
+        </div>
         <Button className="mt-4" variant="outline" disabled>
-          Configure provider
+          Configure Cognito
         </Button>
       </Card>
     </div>

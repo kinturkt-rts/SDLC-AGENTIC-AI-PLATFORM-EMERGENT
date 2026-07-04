@@ -12,9 +12,10 @@ import {
   countS3RunArtifacts,
   getS3RunLastModified,
   getS3RunLastModifiedMs,
+  getS3RunArtifactIndex,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
-import { parseLogTerminalStatus, reconcileRunStatus, RUN_LIVE_IDLE_MS, parseLogSkipFlags } from './run-reconcile';
+import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
 import {
   buildRunEvents,
@@ -55,7 +56,12 @@ import type {
 import { mockPipelines } from '@/src/mocks/projects';
 
 const LIST_RUNS_CACHE_KEY = 'listRuns';
-const LIST_RUNS_TTL_MS = 5000;
+const LIST_RUNS_TTL_MS = 30_000;
+const ACTIVITY_CACHE_KEY = 'listRecentActivity';
+const ARTIFACTS_CACHE_KEY = 'listArtifacts';
+const PROJECTS_CACHE_KEY = 'listProjects';
+const DASHBOARD_CACHE_KEY = 'getDashboardSummary';
+const HEAVY_LIST_TTL_MS = 30_000;
 const UUID_RUN_BUILD_BATCH = 4;
 
 function emptyPhaseDone(): Record<SdlcPhase, boolean> {
@@ -70,19 +76,12 @@ function emptyPhaseDone(): Record<SdlcPhase, boolean> {
   };
 }
 
-/** Skip per-run S3 scans for terminal or idle stale runs — keeps listRuns fast. */
+/** Load S3/local phase artifacts unless run.json is already terminal or log has a terminal line. */
 function runNeedsHeavyProbe(live: LiveRunState, log: string | null): boolean {
   if (live.status === 'completed' || live.status === 'failed' || live.status === 'cancelled') {
     return false;
   }
   if (log && parseLogTerminalStatus(log)) return false;
-
-  const startedAt = live.startedAt;
-  if (!startedAt) return live.status === 'running' || live.status === 'queued';
-
-  const ageMs = Date.now() - Date.parse(startedAt);
-  if (ageMs > RUN_LIVE_IDLE_MS) return false;
-
   return live.status === 'running' || live.status === 'queued';
 }
 
@@ -719,6 +718,9 @@ function lastRunActivityMsFromParts(
 
 async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
   const runIds = await listUuidRunIds();
+  if (isS3Store()) {
+    await getS3RunArtifactIndex();
+  }
   const runs: PipelineRun[] = [];
 
   for (let i = 0; i < runIds.length; i += UUID_RUN_BUILD_BATCH) {
@@ -861,6 +863,10 @@ function repoAssetUrl(repoRelative: string): string {
 }
 
 export async function listProjects(): Promise<Project[]> {
+  return cachedAsync(PROJECTS_CACHE_KEY, HEAVY_LIST_TTL_MS, listProjectsUncached);
+}
+
+async function listProjectsUncached(): Promise<Project[]> {
   if (isS3Store()) {
     const s3RunByApp = await buildS3RunIdByApp();
     const projects: Project[] = [];
@@ -925,6 +931,10 @@ export async function getProject(id: string): Promise<Project | undefined> {
 }
 
 export async function listArtifacts(): Promise<Artifact[]> {
+  return cachedAsync(ARTIFACTS_CACHE_KEY, HEAVY_LIST_TTL_MS, listArtifactsUncached);
+}
+
+async function listArtifactsUncached(): Promise<Artifact[]> {
   if (isS3Store()) {
     const s3RunByApp = await buildS3RunIdByApp();
     const artifacts: Artifact[] = [];
@@ -1436,10 +1446,14 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
-  const [runs, agents, mcp] = await Promise.all([listRuns(), listAgents(), listMcpServersFromCatalog()]);
+  return cachedAsync(DASHBOARD_CACHE_KEY, HEAVY_LIST_TTL_MS, getDashboardSummaryUncached);
+}
+
+async function getDashboardSummaryUncached(): Promise<DashboardSummary> {
+  const [agents, mcp] = await Promise.all([listAgents(), listMcpServersFromCatalog()]);
   const specialists = agents.filter((a) => a.id !== 'orchestrator-agent' && a.id !== 'web-crawler-agent');
   return {
-    activeRuns: runs.filter((r) => r.status === 'running').length,
+    activeRuns: 0,
     pendingApprovals: 0,
     agentsOnline: specialists.filter((a) => a.availability === 'online').length,
     agentsTotal: 8,
@@ -1528,7 +1542,14 @@ function mergeRunEventsFromLists(...groups: RunEvent[][]): RunEvent[] {
 
 /** Recent pipeline activity — S3 milestones + live CloudWatch agent stdout. */
 export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]> {
+  return cachedAsync(`${ACTIVITY_CACHE_KEY}:${limit}`, HEAVY_LIST_TTL_MS, () =>
+    listRecentActivityUncached(limit),
+  );
+}
+
+async function listRecentActivityUncached(limit = 12): Promise<ActivityFeedItem[]> {
   const runs = await listRuns();
+  const liveRuns = runs.filter((r) => r.status === 'running' || r.status === 'paused');
   const ranked = [...runs].sort((a, b) => {
     const aLive = a.status === 'running' || a.status === 'paused' ? 1 : 0;
     const bLive = b.status === 'running' || b.status === 'paused' ? 1 : 0;
@@ -1536,13 +1557,12 @@ export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]
     return b.startedAt.localeCompare(a.startedAt);
   });
 
-  const scan = ranked.slice(0, 8);
-  const liveRuns = runs.filter((r) => r.status === 'running' || r.status === 'paused');
+  const scan = ranked.slice(0, liveRuns.length > 0 ? 4 : 2);
   const feed: ActivityFeedItem[] = [];
 
   for (const run of scan) {
     const events = await listRunEvents(run.id, run, false);
-    for (const event of events.slice(0, 6)) {
+    for (const event of events.slice(0, 4)) {
       feed.push(runEventToActivityFeed(run, event, { stream: 'platform' }));
     }
   }

@@ -29,7 +29,9 @@ export function parseLogTerminalStatus(
   if (
     lower.includes('sdlc pipeline completed') ||
     /\bstatus:\s*success\b/.test(lower) ||
-    /\[apply-rds-local\]\s+ok\b/i.test(log)
+    /\[apply-rds-local\]\s+ok\b/i.test(log) ||
+    /\[gitlab\]\s+handoff already exists/i.test(log) ||
+    /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log)
   ) {
     return { status: 'completed' };
   }

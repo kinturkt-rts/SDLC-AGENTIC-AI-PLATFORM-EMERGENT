@@ -29,3 +29,7 @@ export function invalidateCacheKey(key: string): void {
   cache.delete(key);
   inflight.delete(key);
 }
+
+export function invalidateCacheKeys(...keys: string[]): void {
+  for (const key of keys) invalidateCacheKey(key);
+}

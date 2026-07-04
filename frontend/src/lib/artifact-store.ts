@@ -1,6 +1,10 @@
 import { PutObjectCommand, S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { loadBackendEnv } from './backend-env';
+import { cachedAsync, invalidateCacheKey } from './request-cache';
+
+const S3_INDEX_CACHE_KEY = 's3RunArtifactIndex';
+const S3_INDEX_TTL_MS = 30_000;
 
 let _s3Client: S3Client | null = null;
 
@@ -79,6 +83,7 @@ export async function putRunArtifact(
         ...(contentType ? { ContentType: contentType } : {}),
       }),
     );
+    invalidateCacheKey(S3_INDEX_CACHE_KEY);
     return rel;
   }
 
@@ -196,8 +201,19 @@ export async function inferTargetAppFromS3Run(runId: string): Promise<string | n
   return null;
 }
 
-async function s3RunLatestModifiedMs(runId: string): Promise<number> {
-  const files = await listS3RunArtifacts(runId);
+function inferAppFromRunFiles(runId: string, files: S3ArtifactFile[]): string | null {
+  const prefix = runS3Prefix(runId);
+  for (const file of files) {
+    const rel = file.key.startsWith(prefix) ? file.key.slice(prefix.length) : file.key;
+    const nested = rel.match(/^([^/]+)\/inputs\/([^/]+)\.txt$/);
+    if (nested && nested[1] === nested[2]) return slugifyApp(nested[1]);
+    const legacy = rel.match(/^inputs\/([^/]+)\.txt$/);
+    if (legacy) return slugifyApp(legacy[1]);
+  }
+  return null;
+}
+
+function latestModifiedMs(files: S3ArtifactFile[]): number {
   let max = 0;
   for (const file of files) {
     const ms = Date.parse(file.lastModified);
@@ -206,17 +222,61 @@ async function s3RunLatestModifiedMs(runId: string): Promise<number> {
   return max;
 }
 
-/** Build targetApp -> newest runId map with one pass over S3 run folders. */
-export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
-  const latest = new Map<string, { runId: string; time: number }>();
+/** One paginated S3 list for all runs/<runId>/ keys — cached 30s. */
+export async function getS3RunArtifactIndex(): Promise<Map<string, S3ArtifactFile[]>> {
   if (!isS3Store()) return new Map();
 
-  const runIds = await listS3RunIds();
-  for (const runId of runIds) {
-    const app = await inferTargetAppFromS3Run(runId);
-    if (!app) continue;
+  return cachedAsync(S3_INDEX_CACHE_KEY, S3_INDEX_TTL_MS, async () => {
+    const byRunId = new Map<string, S3ArtifactFile[]>();
+    let continuationToken: string | undefined;
 
-    const stamp = await s3RunLatestModifiedMs(runId);
+    do {
+      const response = await s3Client().send(
+        new ListObjectsV2Command({
+          Bucket: s3Bucket(),
+          Prefix: 'runs/',
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      for (const item of response.Contents ?? []) {
+        if (!item.Key || item.Key.endsWith('/')) continue;
+        const rel = item.Key.slice('runs/'.length);
+        const slash = rel.indexOf('/');
+        if (slash <= 0) continue;
+        const runId = rel.slice(0, slash);
+        const list = byRunId.get(runId) ?? [];
+        list.push({
+          key: item.Key,
+          sizeKb: Math.round((item.Size ?? 0) / 102.4) / 10,
+          lastModified: item.LastModified?.toISOString() ?? new Date().toISOString(),
+        });
+        byRunId.set(runId, list);
+      }
+
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    return byRunId;
+  });
+}
+
+async function s3RunLatestModifiedMs(runId: string): Promise<number> {
+  const files = await listS3RunArtifacts(runId);
+  return latestModifiedMs(files);
+}
+
+/** Build targetApp -> newest runId map with one pass over the cached S3 index. */
+export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
+  if (!isS3Store()) return new Map();
+
+  const index = await getS3RunArtifactIndex();
+  const latest = new Map<string, { runId: string; time: number }>();
+
+  for (const [runId, files] of index) {
+    const app = inferAppFromRunFiles(runId, files);
+    if (!app) continue;
+    const stamp = latestModifiedMs(files);
     const current = latest.get(app);
     if (!current || stamp >= current.time) {
       latest.set(app, { runId, time: stamp });
@@ -259,34 +319,14 @@ export async function findLatestS3RunIdForApp(
 
 export async function listS3RunArtifacts(runId: string): Promise<S3ArtifactFile[]> {
   if (!isS3Store()) return [];
-  
-  const prefix = runS3Prefix(runId);
-  const artifacts: S3ArtifactFile[] = [];
-  
+
   try {
-    const response = await s3Client().send(
-      new ListObjectsV2Command({
-        Bucket: s3Bucket(),
-        Prefix: prefix,
-      })
-    );
-    
-    if (response.Contents) {
-      for (const item of response.Contents) {
-        if (!item.Key || item.Key.endsWith('/')) continue; // Skip directories
-        
-        artifacts.push({
-          key: item.Key,
-          sizeKb: Math.round((item.Size ?? 0) / 102.4) / 10,
-          lastModified: item.LastModified?.toISOString() ?? new Date().toISOString(),
-        });
-      }
-    }
+    const index = await getS3RunArtifactIndex();
+    return index.get(runId.trim()) ?? [];
   } catch (error) {
     console.error(`Failed to list S3 artifacts for run ${runId}:`, error);
+    return [];
   }
-  
-  return artifacts;
 }
 
 export async function getS3ArtifactPreview(key: string): Promise<string | undefined> {

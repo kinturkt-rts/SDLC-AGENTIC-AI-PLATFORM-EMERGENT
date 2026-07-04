@@ -24,7 +24,6 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TARGET_APPS = _REPO_ROOT / "target-apps"
-_TEMPLATE_DIR = _TARGET_APPS / "_template"
 _DEV_AGENT_DIR = Path(__file__).resolve().parent
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
@@ -38,6 +37,7 @@ from _shared.artifact_store import (
     resolve_run_id,
     write_repo_artifact,
 )
+from _shared import template_store
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
 from _shared.runner import coding_model_id
@@ -68,6 +68,17 @@ from strands.tools.decorator import tool
 
 AGENT_NAME = "developer-agent"
 A2A_PORT = 9103
+
+
+def _resolve_template_dir() -> Path:
+    """Local repo copy wins for local dev; else fetch from S3 (cloud runtime)."""
+    try:
+        return template_store.get_template_dir()
+    except Exception:  # noqa: BLE001 - keep import safe; tools surface errors on use
+        return _TARGET_APPS / "_template"
+
+
+_TEMPLATE_DIR = _resolve_template_dir()
 
 # DEFAULT PIPELINE
 
@@ -2214,7 +2225,10 @@ def _enrich_developer_context(ctx: dict[str, Any]) -> None:
             ctx["dbBackend"] = "postgres"
 
     if not ctx.get("templateDir") and _TEMPLATE_DIR.is_dir() and any(_TEMPLATE_DIR.iterdir()):
-        ctx["templateDir"] = _TEMPLATE_DIR.relative_to(_REPO_ROOT).as_posix()
+        try:
+            ctx["templateDir"] = _TEMPLATE_DIR.relative_to(_REPO_ROOT).as_posix()
+        except ValueError:
+            ctx["templateDir"] = "target-apps/_template"
 
 
 def _build_context(

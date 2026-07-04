@@ -11,6 +11,7 @@ import {
   Plug,
   ScrollText,
   Settings,
+  Coins,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -56,7 +57,10 @@ export const navSections: NavSection[] = [
   },
   {
     title: 'Observe',
-    items: [{ label: 'Logs', href: '/logs', icon: ScrollText }],
+    items: [
+      { label: 'Token usage', href: '/tokens', icon: Coins },
+      { label: 'Logs', href: '/logs', icon: ScrollText },
+    ],
   },
   {
     title: 'Admin',

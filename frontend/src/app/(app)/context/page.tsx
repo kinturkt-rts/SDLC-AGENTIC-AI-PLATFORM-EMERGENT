@@ -2,13 +2,6 @@
 
 import * as React from 'react';
 import { useSearchParams } from 'next/navigation';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { ContextView } from '@/src/features/context/ContextView';
@@ -27,47 +20,24 @@ function ContextInner() {
   const searchParams = useSearchParams();
   const { data: projects } = useProjects();
   const currentProjectId = useUiStore((s) => s.currentProjectId);
+  const setCurrentProject = useUiStore((s) => s.setCurrentProject);
 
   const paramProject = searchParams.get('project');
-  const [selected, setSelected] = React.useState<string>(paramProject ?? currentProjectId);
 
   React.useEffect(() => {
-    if (!paramProject) setSelected(currentProjectId);
-  }, [currentProjectId, paramProject]);
+    if (paramProject) setCurrentProject(paramProject);
+  }, [paramProject, setCurrentProject]);
 
-  React.useEffect(() => {
-    if (paramProject) setSelected(paramProject);
-  }, [paramProject]);
-
-  const projectName = projects?.find((p) => p.id === selected)?.name;
-  const subtitle =
-    selected === 'all'
-      ? 'Shared context across all projects.'
-      : `Context for ${projectName ?? selected}`;
+  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
 
   return (
     <>
       <PageHeader
         eyebrow="Assets"
         title="Context"
-        description={subtitle}
-        actions={
-          <Select value={selected} onValueChange={setSelected}>
-            <SelectTrigger className="h-9 w-auto min-w-[9rem] max-w-[11rem] border-white/[0.08] bg-white/[0.02] px-2.5 [&>span]:truncate">
-              <SelectValue placeholder="All projects" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All projects</SelectItem>
-              {projects?.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        }
+        description={`Shared pipeline context for ${projectName} — PRD summaries, schema notes, and design decisions.`}
       />
-      <ContextView projectSlug={selected} />
+      <ContextView projectSlug={currentProjectId} />
     </>
   );
 }

@@ -25,6 +25,8 @@ export const queryKeys = {
   dashboard: ['dashboard'] as const,
   activity: ['activity'] as const,
   settings: ['settings'] as const,
+  telemetry: (projectId: string) => ['telemetry', projectId] as const,
+  telemetryOverview: ['telemetryOverview'] as const,
 };
 
 export const useAgents = () => useQuery({ queryKey: queryKeys.agents, queryFn: api.getAgents });
@@ -38,9 +40,10 @@ export const useRuns = () =>
   useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.getRuns,
+    staleTime: 30_000,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 8000;
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 15_000;
       return false;
     },
   });
@@ -72,7 +75,12 @@ export const useRunHandoffs = (id: string, live = false) =>
   });
 export const useAgentMessages = (correlationId?: string) =>
   useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
-export const useArtifacts = () => useQuery({ queryKey: queryKeys.artifacts, queryFn: api.getArtifacts });
+export const useArtifacts = () =>
+  useQuery({
+    queryKey: queryKeys.artifacts,
+    queryFn: api.getArtifacts,
+    staleTime: 120_000,
+  });
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });
 export const useMcpServers = () => useQuery({ queryKey: queryKeys.mcp, queryFn: api.getMcpServers });
@@ -103,14 +111,35 @@ export const useLogs = (filters?: LogsFilter) =>
           : 30_000,
   });
 export const useDashboardSummary = () =>
-  useQuery({ queryKey: queryKeys.dashboard, queryFn: api.getDashboardSummary });
+  useQuery({
+    queryKey: queryKeys.dashboard,
+    queryFn: api.getDashboardSummary,
+    staleTime: 120_000,
+  });
 
 export const useRecentActivity = (poll = true) =>
   useQuery({
     queryKey: queryKeys.activity,
     queryFn: () => api.getRecentActivity(),
-    refetchInterval: poll ? 8000 : false,
+    staleTime: 30_000,
+    refetchInterval: poll ? 15_000 : false,
   });
 
 export const usePlatformSettings = () =>
   useQuery({ queryKey: queryKeys.settings, queryFn: () => api.getPlatformSettings() });
+
+export const usePipelineTelemetry = (projectId: string | null, poll = false) =>
+  useQuery({
+    queryKey: queryKeys.telemetry(projectId ?? ''),
+    queryFn: () => api.getPipelineTelemetry(projectId!),
+    enabled: Boolean(projectId),
+    staleTime: 15_000,
+    refetchInterval: poll ? 15_000 : false,
+  });
+
+export const useTelemetryOverview = () =>
+  useQuery({
+    queryKey: queryKeys.telemetryOverview,
+    queryFn: () => api.getTelemetryOverview(),
+    staleTime: 30_000,
+  });

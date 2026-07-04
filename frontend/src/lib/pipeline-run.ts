@@ -5,7 +5,16 @@ import { spawn } from 'child_process';
 import { getBackendRoot } from './repo-root';
 import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './artifact-store';
 import { withTimeout } from './async-utils';
-import { invalidateCacheKey } from './request-cache';
+import { invalidateCacheKeys } from './request-cache';
+
+const RUNS_CACHE_KEYS = [
+  'listRuns',
+  's3RunArtifactIndex',
+  'getDashboardSummary',
+  'listProjects',
+  'listArtifacts',
+  'listRecentActivity:12',
+];
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
 const UUID_RE =
@@ -94,7 +103,7 @@ export async function uploadBrief(
     await putPromise;
   }
 
-  invalidateCacheKey('listRuns');
+  invalidateCacheKeys(...RUNS_CACHE_KEYS);
 
   return {
     runId: id,
@@ -190,11 +199,12 @@ export async function startPipeline(options: {
   const skipVerify =
     (process.env.SDLC_PIPELINE_SKIP_VERIFY ?? 'true').trim().toLowerCase() !== 'false';
 
-  // Use the smoke script to invoke the cloud orchestrator end-to-end.
-  // --no-skip-postgres: cloud orchestrator runs apply_sql_to_rds.py itself (has scripts/, _shared/, POSTGRES_MCP_* env).
-  // --no-skip-developer: run developer-agent by default (skip with SDLC_PIPELINE_SKIP_DEVELOPER=true in .env.local).
+  // Cloud orchestrator runs the full chain including apply_sql_to_rds.py (POSTGRES_MCP_* on runtime).
+  // Brief upload + invoke script run locally; agents, RDS apply, and GitLab publish run on AgentCore.
   const smokeScript = path.join(repoRoot, 'scripts', 'invoke-orchestrator-smoke.py');
   const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '1800', 10);
+  const applyRdsLocal =
+    (process.env.SDLC_PIPELINE_APPLY_RDS_LOCAL ?? 'false').trim().toLowerCase() === 'true';
   const args = [
     smokeScript,
     '--app', feature,
@@ -202,7 +212,9 @@ export async function startPipeline(options: {
     '--input-file', inputRel,
     '--no-skip-db',
     '--no-skip-postgres',
+    '--no-apply-rds-local',
     '--timeout', String(timeoutSec),
+    ...(applyRdsLocal ? ['--skip-postgres', '--apply-rds-local'] : []),
     ...(skipDeveloper ? ['--skip-developer'] : ['--no-skip-developer']),
     ...(skipGitlab ? ['--skip-gitlab'] : ['--no-skip-gitlab']),
     ...(skipVerify ? ['--skip-verify'] : ['--no-skip-verify']),
@@ -237,7 +249,7 @@ export async function startPipeline(options: {
   });
   child.unref();
 
-  invalidateCacheKey('listRuns');
+  invalidateCacheKeys(...RUNS_CACHE_KEYS);
 
   return {
     runId,

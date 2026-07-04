@@ -11,6 +11,10 @@ interface UiState {
   currentProjectId: string;
   setCurrentProject: (id: string) => void;
 
+  /** Tokens page only — null until user picks a project with runs. */
+  tokensProjectId: string | null;
+  setTokensProjectId: (id: string | null) => void;
+
   environment: Environment;
   setEnvironment: (env: Environment) => void;
 
@@ -31,6 +35,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   currentProjectId: 'finops-web-app',
   setCurrentProject: (id) => set({ currentProjectId: id }),
+
+  tokensProjectId: null,
+  setTokensProjectId: (id) => set({ tokensProjectId: id }),
 
   environment: 'dev',
   setEnvironment: (env) => set({ environment: env }),

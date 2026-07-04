@@ -9,6 +9,7 @@
 import { mockAgentMessages } from '@/src/mocks';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PlatformSettings } from '@/src/lib/platform-settings';
+import type { PipelineTelemetrySummary, TelemetryOverviewRow } from '@/src/lib/pipeline-telemetry';
 import type {
   Agent,
   Project,
@@ -179,5 +180,14 @@ export const api = {
   },
   async getPlatformSettings(): Promise<PlatformSettings> {
     return httpGet<PlatformSettings>('/api/v1/settings');
+  },
+  async getPipelineTelemetry(projectId: string): Promise<PipelineTelemetrySummary> {
+    return httpGet<PipelineTelemetrySummary>(
+      `/api/v1/telemetry?project=${encodeURIComponent(projectId)}`,
+    );
+  },
+  async getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
+    const data = await httpGet<{ projects: TelemetryOverviewRow[] }>('/api/v1/telemetry/overview');
+    return data.projects;
   },
 };
