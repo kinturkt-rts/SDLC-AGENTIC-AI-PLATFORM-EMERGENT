@@ -49,7 +49,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
 
   return {
     general: {
-      platformName: 'SDLC Agentic AI Control Plane',
+      platformName: 'SDLC Agentic AI Platform',
       environment: remoteApi ? 'production' : 'development',
       environmentLabel: remoteApi ? 'Production' : 'Development',
     },

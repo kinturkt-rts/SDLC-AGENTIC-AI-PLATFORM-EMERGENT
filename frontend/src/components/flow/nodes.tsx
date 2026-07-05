@@ -1,7 +1,7 @@
 'use client';
 
 import { Handle, Position } from '@xyflow/react';
-import { Bot, UserCheck, Hexagon } from 'lucide-react';
+import { Bot, Network, UserCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const edgeHandle = '!h-2 !w-2 !border !border-border !bg-muted-foreground/50';
@@ -67,7 +67,7 @@ export function OrchestratorNode({ data }: { data: { label: string; sub: string 
       <Handle type="source" position={Position.Right} style={centerHandleStyle} />
       <div className="flex items-center justify-center gap-2">
         <span className="flex h-8 w-8 items-center justify-center rounded-md bg-teal-500 text-white">
-          <Hexagon className="h-4 w-4" />
+          <Network className="h-4 w-4" strokeWidth={2.25} />
         </span>
         <div className="min-w-0 text-left">
           <p className="truncate text-sm font-bold text-foreground">{data.label}</p>
