@@ -24,6 +24,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "agents"))
@@ -149,19 +150,82 @@ def _update_run_json(
         pass
 
 
+def _get_handoff_safe(run_id: str) -> dict[str, Any] | None:
+    from _shared.artifact_store import get_handoff
+
+    return get_handoff(run_id, "gitlab")
+
+
 def _gitlab_handoff_exists(run_id: str, app: str) -> bool:
     """Check if gitlab handoff exists in S3 (canonical or slug-prefixed layout)."""
-    from _shared.artifact_store import get_artifact_text
+    from _shared.artifact_store import get_handoff
 
-    for rel in (f"handoffs/gitlab.json", f"{app}/handoffs/gitlab-handoff.json"):
-        try:
-            get_artifact_text(run_id, rel)
-            return True
-        except FileNotFoundError:
-            continue
-        except Exception:
-            continue
-    return False
+    return get_handoff(run_id, "gitlab") is not None
+
+
+def _gitlab_handoff_status(run_id: str) -> str | None:
+    """Return 'published', 'failed', or None if no handoff."""
+    from _shared.artifact_store import get_handoff
+
+    handoff = get_handoff(run_id, "gitlab")
+    if not handoff:
+        return None
+    return str(handoff.get("status") or "").strip().lower() or None
+
+
+def _reconcile_run_steps(run_id: str, app: str, skip_gitlab: bool) -> None:
+    """Update run.json step statuses based on S3 artifacts (cloud runs don't update step-by-step)."""
+    from _shared.artifact_store import get_handoff, list_run_artifact_keys
+
+    path = _REPO / "agents" / "pipeline" / "runs" / run_id / "run.json"
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return
+
+    keys = set(list_run_artifact_keys(run_id))
+    keys_lower = {k.lower() for k in keys}
+    slug = app
+
+    def has(pattern: str) -> bool:
+        return any(pattern in k for k in keys_lower)
+
+    # Detect which agent artifacts exist in S3
+    has_prd = has(f"{slug}/docs/prd/") or has("docs/prd/")
+    has_design = has(f"{slug}/docs/design/") or has("docs/design/")
+    has_diagram = has(f"{slug}/docs/diagrams/") or has("docs/diagrams/")
+    has_sql = has(f"{slug}/db/sql/") or has("db/sql/")
+    has_code = has(f"{slug}/app/") or has(f"{slug}/main.py")
+    gitlab_status = _gitlab_handoff_status(run_id)
+
+    for step in data.get("steps", []):
+        name = step["name"]
+        if name == "product-agent":
+            if has_prd:
+                step["status"] = "completed"
+        elif name == "architect-agent":
+            if has_design or has_diagram:
+                step["status"] = "completed"
+        elif name == "database-agent":
+            if has_sql:
+                step["status"] = "completed"
+        elif name == "developer-agent":
+            if has_code:
+                step["status"] = "completed"
+        elif name == "gitlab-agent":
+            if gitlab_status == "published":
+                step["status"] = "completed"
+            elif gitlab_status == "failed":
+                step["status"] = "failed"
+            elif not skip_gitlab and has_code:
+                step["status"] = "running"
+        elif name == "qa-agent":
+            step["status"] = "skipped"
+
+    data["error"] = None
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _run_gitlab_fallback_cloud(app: str, run_id: str, timeout: int) -> int:
@@ -392,19 +456,36 @@ def main() -> None:
             if gl_code != 0:
                 print(
                     f"[gitlab] Fallback publish failed (exit {gl_code}) — non-fatal. "
-                    "Run manually: python scripts/invoke-gitlab-agent-smoke.py --local "
-                    f"--app {args.app} --run-id {args.run_id}",
+                    f"Run manually: python scripts/invoke-orchestrator-smoke.py "
+                    f"--app {args.app} --run-id {args.run_id} --skip-product --skip-architect "
+                    f"--skip-db --skip-developer",
                     file=sys.stderr,
                 )
 
-    # Step 3: Finalize run status
+    # Step 3: Reconcile step statuses from S3 artifacts
+    _reconcile_run_steps(args.run_id, args.app, args.skip_gitlab)
+
+    # Step 4: Finalize run status based on gitlab handoff STATUS (not just existence)
+    gitlab_status = _gitlab_handoff_status(args.run_id)
     orch_status = result.get("status")
     orch_text_lower = text.lower()
-    if orch_status == "success" and "pipeline failed" not in orch_text_lower:
+
+    if gitlab_status == "published":
         _update_run_json(args.run_id, status="completed")
-    elif _gitlab_handoff_exists(args.run_id, args.app) or not args.skip_gitlab:
-        # Orchestrator may have timed out at developer, but gitlab fallback succeeded
-        _update_run_json(args.run_id, status="completed")
+    elif gitlab_status == "failed":
+        gl_handoff = _get_handoff_safe(args.run_id) or {}
+        gl_error = gl_handoff.get("error") or "gitlab publish failed"
+        _update_run_json(args.run_id, status="failed", error=gl_error)
+    elif orch_status == "success" and "pipeline failed" not in orch_text_lower:
+        if not args.skip_gitlab:
+            # Orchestrator succeeded but no gitlab handoff — fallback should have run
+            _update_run_json(
+                args.run_id,
+                status="failed",
+                error="gitlab handoff missing after orchestrator + fallback",
+            )
+        else:
+            _update_run_json(args.run_id, status="completed")
     else:
         _update_run_json(
             args.run_id,

@@ -43,6 +43,7 @@ import {
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
+import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PipelineRun } from '@/src/types';
 import { cn } from '@/lib/utils';
@@ -62,11 +63,11 @@ const PIPELINE_STEPS: {
   accent: string;
   iconBg: string;
 }[] = [
-  { id: 'product', label: 'PRD', agent: 'Product Agent', agentId: 'product-agent', icon: FileText, phase: 'requirements', accent: 'text-blue-400', iconBg: 'bg-blue-500/10 ring-blue-500/20' },
-  { id: 'architecture', label: 'Architecture Diagram', agent: 'Architect Agent', agentId: 'architect-agent', icon: Building2, phase: 'architecture', accent: 'text-violet-400', iconBg: 'bg-violet-500/10 ring-violet-500/20' },
-  { id: 'database', label: 'Database', agent: 'Database Agent', agentId: 'database-agent', icon: Database, phase: 'data', accent: 'text-emerald-400', iconBg: 'bg-emerald-500/10 ring-emerald-500/20' },
-  { id: 'development', label: 'Application', agent: 'Developer Agent', agentId: 'developer-agent', icon: Code2, phase: 'implementation', accent: 'text-amber-400', iconBg: 'bg-amber-500/10 ring-amber-500/20' },
-  { id: 'gitlab', label: 'Publish', agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'deploy', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
+  { id: 'product', label: PHASE_DISPLAY_LABEL.requirements, agent: 'Product Agent', agentId: 'product-agent', icon: FileText, phase: 'requirements', accent: 'text-blue-400', iconBg: 'bg-blue-500/10 ring-blue-500/20' },
+  { id: 'architecture', label: PHASE_DISPLAY_LABEL.architecture, agent: 'Architect Agent', agentId: 'architect-agent', icon: Building2, phase: 'architecture', accent: 'text-violet-400', iconBg: 'bg-violet-500/10 ring-violet-500/20' },
+  { id: 'database', label: PHASE_DISPLAY_LABEL.data, agent: 'Database Agent', agentId: 'database-agent', icon: Database, phase: 'data', accent: 'text-emerald-400', iconBg: 'bg-emerald-500/10 ring-emerald-500/20' },
+  { id: 'development', label: PHASE_DISPLAY_LABEL.implementation, agent: 'Developer Agent', agentId: 'developer-agent', icon: Code2, phase: 'implementation', accent: 'text-amber-400', iconBg: 'bg-amber-500/10 ring-amber-500/20' },
+  { id: 'gitlab', label: PHASE_DISPLAY_LABEL.deploy, agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'deploy', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
 ];
 
 const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
@@ -268,6 +269,7 @@ type InputStatus = 'missing' | 'ready' | 'saved';
 
 function InputRequirementsCard() {
   const queryClient = useQueryClient();
+  const { data: runs } = useRuns();
   const [feature, setFeature] = React.useState('');
   const [content, setContent] = React.useState('');
   const [status, setStatus] = React.useState<InputStatus>('missing');
@@ -427,7 +429,7 @@ function InputRequirementsCard() {
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setStartedRunId(data.runId);
       toast.success('Pipeline started', {
-        description: `${data.runId} (PID ${data.pid}). Watch progress below or open the run.`,
+        description: `${titleCase(feature)} · run ${data.runId.slice(0, 8)}…`,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -462,6 +464,8 @@ function InputRequirementsCard() {
     saved: { label: 'Saved', color: 'text-emerald-400 bg-emerald-500/10', icon: CheckCircle2 },
   };
   const sc = statusConfig[status];
+  const submittedRun = startedRunId ? runs?.find((r) => r.id === startedRunId) : undefined;
+  const runStatus = submittedRun?.status ?? (startedRunId ? 'running' : null);
 
   return (
     <Card className="overflow-hidden border-white/[0.06] bg-card/80">
@@ -507,17 +511,41 @@ function InputRequirementsCard() {
           >
             <Upload className="h-4 w-4" /> Upload File
           </Button>
-          <div className="space-y-1 text-[11px] text-muted-foreground">
-            {savedRunId && <p className="font-mono text-teal-400/90">runId: {savedRunId}</p>}
-            {savedPath && <p className="font-mono">{savedPath}</p>}
+          <div className="space-y-2 text-[11px] text-muted-foreground">
             {lastSaved && <p>Saved {lastSaved}</p>}
             {content && <p>{content.split('\n').length} lines · {(content.length / 1024).toFixed(1)} KB</p>}
-            {startedRunId && (
-              <p className="font-mono text-teal-400">
-                <Link href={`/runs/${startedRunId}`} className="underline">{startedRunId}</Link> running
-              </p>
+            {savedPath && !startedRunId && (
+              <p className="font-mono text-[10px]">{savedPath}</p>
             )}
           </div>
+          {startedRunId && feature && (
+            <div className="rounded-lg border border-teal-500/25 bg-teal-500/[0.05] p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-foreground">{titleCase(feature)}</p>
+                  <p className="font-mono text-[10px] text-muted-foreground">{feature}</p>
+                </div>
+                {runStatus ? <StatusBadge status={runStatus} size="sm" /> : null}
+              </div>
+              {submittedRun?.currentAgent ? (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Current:{' '}
+                  <span className="text-foreground">
+                    {titleCase(submittedRun.currentAgent.replace('-agent', ''))}
+                  </span>
+                </p>
+              ) : null}
+              <p className="mt-1 font-mono text-[10px] text-muted-foreground" title={startedRunId}>
+                Run {startedRunId.slice(0, 8)}…
+              </p>
+              <Link
+                href={`/runs/${startedRunId}`}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-teal-400 hover:underline"
+              >
+                View run progress <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Right: Textarea & Actions */}
@@ -607,6 +635,21 @@ export default function DashboardPage() {
       {/* ── 3. SDLC Pipeline ────────────────────────── */}
       <Card className="overflow-hidden border-white/[0.06] bg-card/80">
         <SectionHeader title="Current SDLC Pipeline" href="/pipelines" icon={Activity} />
+        {runningRun ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2 text-[11px] text-muted-foreground">
+            <span>
+              Tracking{' '}
+              <span className="font-medium text-foreground">{runningRun.projectName}</span>
+              <span className="font-mono" title={runningRun.id}>
+                {' '}
+                · {runningRun.id.slice(0, 8)}…
+              </span>
+            </span>
+            <Link href={`/runs/${runningRun.id}`} className="font-medium text-teal-400 hover:underline">
+              Open run
+            </Link>
+          </div>
+        ) : null}
         <PipelineVisualization run={runningRun} />
       </Card>
 

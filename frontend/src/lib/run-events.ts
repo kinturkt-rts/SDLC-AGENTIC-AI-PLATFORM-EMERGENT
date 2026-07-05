@@ -95,7 +95,7 @@ function artifactDescription(kind: ArtifactKind, name: string): string {
     case 'migration':
       return `SQL migration generated — ${name}`;
     case 'code':
-      return `Application artifact — ${name}`;
+      return `Application code — ${name}`;
     default:
       return `Artifact created — ${name}`;
   }

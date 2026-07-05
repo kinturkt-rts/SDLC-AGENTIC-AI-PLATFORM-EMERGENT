@@ -5,6 +5,11 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET() {
-  const projects = await listProjects();
-  return NextResponse.json({ projects });
+  try {
+    const projects = await listProjects();
+    return NextResponse.json({ projects });
+  } catch (err) {
+    console.error('[projects]', err);
+    return NextResponse.json({ error: 'Failed to load projects' }, { status: 500 });
+  }
 }

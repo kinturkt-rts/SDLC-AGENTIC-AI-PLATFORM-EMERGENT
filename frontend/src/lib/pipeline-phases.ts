@@ -37,7 +37,7 @@ export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
   requirements: 'PRD',
   architecture: 'Architecture Diagram',
   data: 'Database',
-  implementation: 'Application',
+  implementation: 'Application Code',
   qa: 'QA',
   security: 'Security',
   deploy: 'Publish',

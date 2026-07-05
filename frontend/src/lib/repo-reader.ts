@@ -779,13 +779,13 @@ async function inferPipelineStatus(slug: string, runId?: string): Promise<RunSta
     }
   }
   if (await handoffExists(slug, 'gitlab-handoff.json')) return 'completed';
-  if (await handoffExists(slug, 'developer-handoff.json')) return 'running';
+  if (await handoffExists(slug, 'developer-handoff.json')) return 'completed';
   if (
     (await handoffExists(slug, 'database-handoff.json')) ||
     (await handoffExists(slug, 'security-handoff.json')) ||
     (await handoffExists(slug, 'qa-handoff.json'))
   ) {
-    return 'running';
+    return 'completed';
   }
   if (isS3Store()) {
     if (runId) return 'queued';
@@ -866,36 +866,7 @@ export async function listProjects(): Promise<Project[]> {
   return cachedAsync(PROJECTS_CACHE_KEY, HEAVY_LIST_TTL_MS, listProjectsUncached);
 }
 
-async function listProjectsUncached(): Promise<Project[]> {
-  if (isS3Store()) {
-    const s3RunByApp = await buildS3RunIdByApp();
-    const projects: Project[] = [];
-
-    for (const [slug, runId] of s3RunByApp) {
-      const ctx = (await getS3RunContext(runId)) as PipelineContextFile | null;
-      const [status, lastRunAt, artifactCount, description] = await Promise.all([
-        inferPipelineStatus(slug, runId),
-        getS3RunLastModified(runId),
-        countS3RunArtifacts(runId),
-        extractDescription(slug, ctx),
-      ]);
-
-      projects.push({
-        id: slug,
-        name: slugToTitle(slug),
-        slug,
-        description,
-        pipelineStatus: status,
-        artifactCount,
-        lastRunAt,
-        repo: `runs/${runId}`,
-        environment: 'dev' as Environment,
-      });
-    }
-
-    return projects.sort((a, b) => a.slug.localeCompare(b.slug));
-  }
-
+async function listProjectsFromLocal(): Promise<Project[]> {
   const [apps, pipelineSlugs] = await Promise.all([listTargetAppSlugs(), listPipelineSlugs()]);
   const slugs = [...new Set([...apps, ...pipelineSlugs])].sort();
   const projects: Project[] = [];
@@ -923,6 +894,48 @@ async function listProjectsUncached(): Promise<Project[]> {
   }
 
   return projects;
+}
+
+async function listProjectsFromS3(): Promise<Project[]> {
+  const s3RunByApp = await buildS3RunIdByApp();
+  const projects: Project[] = [];
+
+  for (const [slug, runId] of s3RunByApp) {
+    const ctx = (await getS3RunContext(runId)) as PipelineContextFile | null;
+    const [status, lastRunAt, artifactCount, description] = await Promise.all([
+      inferPipelineStatus(slug, runId),
+      getS3RunLastModified(runId),
+      countS3RunArtifacts(runId),
+      extractDescription(slug, ctx),
+    ]);
+
+    projects.push({
+      id: slug,
+      name: slugToTitle(slug),
+      slug,
+      description,
+      pipelineStatus: status,
+      artifactCount,
+      lastRunAt,
+      repo: `runs/${runId}`,
+      environment: 'dev' as Environment,
+    });
+  }
+
+  return projects.sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+async function listProjectsUncached(): Promise<Project[]> {
+  if (isS3Store()) {
+    try {
+      return await listProjectsFromS3();
+    } catch (err) {
+      console.warn('[listProjects] S3 read failed, using local monorepo data:', err);
+      return listProjectsFromLocal();
+    }
+  }
+
+  return listProjectsFromLocal();
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
@@ -1216,7 +1229,11 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     const status = await inferPipelineStatus(slug);
     const completed = await phaseCompletion(slug, ctx);
     const startedAt = await latestPipelineMtime(slug);
-    const elapsedSec = Math.max(60, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+    const finishedAt =
+      status === 'completed' || status === 'failed' || status === 'cancelled' ? startedAt : null;
+    const elapsedSec = finishedAt
+      ? Math.max(1, Math.floor((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000))
+      : Math.max(60, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
 
     let currentPhase: SdlcPhase | null = null;
     let currentAgent: AgentName | null = null;
@@ -1237,7 +1254,7 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
       currentPhase: status === 'completed' ? null : currentPhase,
       currentAgent: status === 'completed' ? null : currentAgent,
       startedAt,
-      finishedAt: status === 'completed' ? startedAt : null,
+      finishedAt,
       elapsedSec,
       triggeredBy: 'orchestrator-agent',
       steps: buildSteps(runId, completed, status),

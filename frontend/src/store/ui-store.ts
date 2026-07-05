@@ -11,6 +11,10 @@ interface UiState {
   currentProjectId: string;
   setCurrentProject: (id: string) => void;
 
+  /** Runs page only — null means show all projects. */
+  runsProjectId: string | null;
+  setRunsProject: (id: string | null) => void;
+
   /** Tokens page only — null until user picks a project with runs. */
   tokensProjectId: string | null;
   setTokensProjectId: (id: string | null) => void;
@@ -35,6 +39,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   currentProjectId: 'finops-web-app',
   setCurrentProject: (id) => set({ currentProjectId: id }),
+
+  runsProjectId: null,
+  setRunsProject: (id) => set({ runsProjectId: id }),
 
   tokensProjectId: null,
   setTokensProjectId: (id) => set({ tokensProjectId: id }),

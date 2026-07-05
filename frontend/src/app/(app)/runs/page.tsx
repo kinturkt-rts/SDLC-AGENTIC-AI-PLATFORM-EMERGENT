@@ -25,23 +25,25 @@ const STATUS_OPTIONS: (RunStatus | 'all')[] = ['all', 'running', 'paused', 'queu
 export default function RunsPage() {
   const { data: runs, isLoading } = useRuns();
   const { data: projects } = useProjects();
-  const currentProjectId = useUiStore((s) => s.currentProjectId);
+  const runsProjectId = useUiStore((s) => s.runsProjectId);
   const filter = useUiStore((s) => s.runStatusFilter);
   const setFilter = useUiStore((s) => s.setRunStatusFilter);
   const router = useRouter();
   const [q, setQ] = React.useState('');
 
-  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+  const projectName = runsProjectId
+    ? projects?.find((p) => p.id === runsProjectId)?.name ?? runsProjectId
+    : 'all projects';
 
   const rows = filterRunsByQuery(
     (runs ?? [])
-      .filter((r) => r.projectId === currentProjectId)
+      .filter((r) => !runsProjectId || r.projectId === runsProjectId)
       .filter((r) => filter === 'all' || r.status === filter),
     q,
   );
 
   const columns: Column<PipelineRun>[] = [
-    { key: 'id', header: 'Run', render: (r) => <span className="font-mono text-xs text-foreground">{r.id}</span> },
+    { key: 'id', header: 'Run', render: (r) => <span className="font-mono text-xs text-foreground" title={r.id}>{r.id.slice(0, 8)}…</span> },
     { key: 'projectName', header: 'Project', render: (r) => <span className="font-medium text-foreground">{r.projectName}</span> },
     { key: 'pipeline', header: 'Pipeline', render: (r) => <span className="text-muted-foreground">{r.pipeline}</span> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
@@ -56,7 +58,7 @@ export default function RunsPage() {
       <PageHeader
         eyebrow="Operate"
         title="Pipeline Runs"
-        description={`Pipeline executions for ${projectName}. Click a run to open its detail view.`}
+        description={`Pipeline executions for ${projectName}. Use the Project filter to focus on one app, then open a run for live progress.`}
         toolbar={
           <>
             <Input

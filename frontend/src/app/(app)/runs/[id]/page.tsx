@@ -183,6 +183,14 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     </div>
   );
 
+  const runDescription = run
+    ? status === 'running' || status === 'paused'
+      ? `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)}`
+      : `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)}${
+          run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
+        }`
+    : undefined;
+
   return (
     <>
       <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 gap-1.5 text-muted-foreground hover:text-foreground">
@@ -192,7 +200,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
       <PageHeader
         eyebrow={run ? `${run.id} \u00b7 ${run.pipeline}` : params.id}
         title={run?.projectName ?? params.id}
-        description={run ? `Triggered by ${run.triggeredBy} \u00b7 started ${formatRelative(run.startedAt)} \u00b7 elapsed ${formatDuration(run.elapsedSec)}` : undefined}
+        description={runDescription}
         actions={isLoading ? null : controls}
       />
 
@@ -214,7 +222,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                   <span className="font-mono">{run.currentAgent}</span> is executing the{' '}
                   <span>{phaseDisplayLabel(run.currentPhase)}</span> phase
                 </p>
-                <p className="text-[11px] text-muted-foreground">Live status from the platform \u2014 the control plane does not run the agent.</p>
+                <p className="text-[11px] text-muted-foreground">Live status from the platform - the control plane does not run the agent.</p>
               </div>
               <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
             </Card>

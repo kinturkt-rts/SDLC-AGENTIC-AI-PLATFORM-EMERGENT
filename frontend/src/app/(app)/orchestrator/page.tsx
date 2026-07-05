@@ -88,7 +88,7 @@ export default function OrchestratorPage() {
         </ol>
       </Card>
 
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Bot className="h-3.5 w-3.5" /> The control plane visualizes delegation only \u2014 it never executes agents.</p>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Bot className="h-3.5 w-3.5" /> The control plane visualizes delegation only - it never executes agents.</p>
     </>
   );
 }
