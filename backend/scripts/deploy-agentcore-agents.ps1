@@ -26,8 +26,13 @@ $DotenvForwardedKeys = @(
     "ARTIFACT_S3_BUCKET",
     "ARTIFACT_DYNAMODB_TABLE",
     "AWS_PROFILE",
+    "BEDROCK_READ_TIMEOUT",
     "CODING_MODEL_ID",
+    "DEVELOPER_AGENT_AUTO_VALIDATE",
+    "DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST",
     "MODEL_ID",
+    "SDLC_AGENT_TIMEOUT_SEC",
+    "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC",
     "ATLASSIAN_MCP_TOKEN",
     "ATLASSIAN_MCP_URL",
     "GITLAB_PERSONAL_ACCESS_TOKEN",
@@ -88,6 +93,27 @@ function Import-ArtifactEnvFromDotenv {
 Import-ArtifactEnvFromDotenv
 if (-not $env:FIRECRAWL_API_KEY -and $env:Firecrawl_API_Key) {
     [Environment]::SetEnvironmentVariable("FIRECRAWL_API_KEY", $env:Firecrawl_API_Key, "Process")
+}
+
+function Set-MinNumericEnv {
+    param(
+        [string] $Name,
+        [int] $Minimum
+    )
+    $raw = [Environment]::GetEnvironmentVariable($Name)
+    $value = 0
+    if (-not [int]::TryParse($raw, [ref] $value) -or $value -lt $Minimum) {
+        [Environment]::SetEnvironmentVariable($Name, "$Minimum", "Process")
+    }
+}
+
+Set-MinNumericEnv -Name "BEDROCK_READ_TIMEOUT" -Minimum 1200
+Set-MinNumericEnv -Name "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC" -Minimum 1200
+if (-not $env:DEVELOPER_AGENT_AUTO_VALIDATE) {
+    [Environment]::SetEnvironmentVariable("DEVELOPER_AGENT_AUTO_VALIDATE", "true", "Process")
+}
+if (-not $env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST) {
+    [Environment]::SetEnvironmentVariable("DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST", "true", "Process")
 }
 
 function Import-GitLabMcpEndpointsFromConfig {
@@ -176,6 +202,11 @@ if (-not $env:ARTIFACT_S3_BUCKET) {
 }
 
 if ($env:CODING_MODEL_ID) { $CommonEnv += "CODING_MODEL_ID=$($env:CODING_MODEL_ID)" }
+if ($env:BEDROCK_READ_TIMEOUT) { $CommonEnv += "BEDROCK_READ_TIMEOUT=$($env:BEDROCK_READ_TIMEOUT)" }
+if ($env:SDLC_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_AGENT_TIMEOUT_SEC=$($env:SDLC_AGENT_TIMEOUT_SEC)" }
+if ($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC=$($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC)" }
+if ($env:DEVELOPER_AGENT_AUTO_VALIDATE) { $CommonEnv += "DEVELOPER_AGENT_AUTO_VALIDATE=$($env:DEVELOPER_AGENT_AUTO_VALIDATE)" }
+if ($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST) { $CommonEnv += "DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST=$($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST)" }
 
 # Per-agent secrets forwarded from .env.local (never commit these values).
 $AgentSecretKeys = @{

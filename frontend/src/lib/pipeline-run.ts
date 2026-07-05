@@ -206,7 +206,7 @@ export async function startPipeline(options: {
   const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');
   await fs.mkdir(logsDir, { recursive: true });
   const logPath = path.join(logsDir, `${runId}.log`);
-  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '1800', 10);
+  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '2700', 10);
 
   const taskOptions = {
     targetApp: feature,

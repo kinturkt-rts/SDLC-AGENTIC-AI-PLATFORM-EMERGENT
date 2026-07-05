@@ -109,6 +109,9 @@ PIPELINE_STEPS: tuple[str, ...] = (
     "qa-agent",
 )
 
+DEFAULT_A2A_TIMEOUT_SEC = 600
+DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC = 1200
+
 
 @dataclass
 class PipelineOptions:
@@ -493,10 +496,22 @@ class SdlcPipelineRunner:
 
     def _invoke_a2a(self, agent_name: str, task: str, *, step: str, include_db_paths: bool = False) -> None:
         self._update_run_json(current_step=step)
+        timeout = (
+            DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC
+            if agent_name == "developer-agent"
+            else DEFAULT_A2A_TIMEOUT_SEC
+        )
+        env_key = (
+            "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC"
+            if agent_name == "developer-agent"
+            else "SDLC_AGENT_TIMEOUT_SEC"
+        )
+        timeout = int(os.getenv(env_key, str(timeout)))
         result = invoke_agent(
             agent_name,
             task,
             context=self._context_for_agent(include_db_paths=include_db_paths),
+            timeout=timeout,
         )
         text = response_text(result)
         _safe_print(f"[{step}] {text}")

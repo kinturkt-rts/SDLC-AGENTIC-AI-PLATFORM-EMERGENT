@@ -2026,6 +2026,43 @@ def dev_validate_app(service: str, run_pytest: bool = True) -> str:
     return report + "\n\nVALIDATION FAILED — fix all errors above and call dev_validate_app again."
 
 
+def _auto_validate_enabled() -> bool:
+    return os.getenv("DEVELOPER_AGENT_AUTO_VALIDATE", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _auto_validate_run_pytest() -> bool:
+    return os.getenv("DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _summary_has_validation_passed(summary: str) -> bool:
+    return "VALIDATION PASSED" in summary and "VALIDATION FAILED" not in summary
+
+
+def _append_required_validation(summary: str, app: str) -> str:
+    """Final safety net when the model did not call dev_validate_app itself."""
+    if not _auto_validate_enabled() or _summary_has_validation_passed(summary):
+        return summary
+
+    passed, report = run_service_validation(app, run_pytest=_auto_validate_run_pytest())
+    marker = "VALIDATION PASSED — safe to hand off." if passed else (
+        "VALIDATION FAILED — fix all errors above and call dev_validate_app again."
+    )
+    validation = f"{report}\n\n{marker}"
+    if not passed:
+        raise RuntimeError(f"developer-agent validation failed:\n{validation}")
+    return f"{summary}\n\n## Auto Validation\n{validation}"
+
+
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
@@ -2283,6 +2320,7 @@ def run_task(
         telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=_coding_model_id())
         agent = _build_agent(ctx, telemetry=telemetry)
         summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
+        summary = _append_required_validation(summary, app)
     finally:
         _run_context = None
 
