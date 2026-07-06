@@ -29,7 +29,13 @@ export const queryKeys = {
   telemetryOverview: ['telemetryOverview'] as const,
 };
 
-export const useAgents = () => useQuery({ queryKey: queryKeys.agents, queryFn: api.getAgents });
+export const useAgents = () =>
+  useQuery({
+    queryKey: queryKeys.agents,
+    queryFn: api.getAgents,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
 export const useAgent = (id: string) =>
   useQuery({ queryKey: queryKeys.agent(id), queryFn: () => api.getAgent(id), enabled: !!id });
 export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryFn: api.getProjects });

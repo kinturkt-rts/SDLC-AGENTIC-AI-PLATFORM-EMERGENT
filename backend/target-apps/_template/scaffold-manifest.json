@@ -16,6 +16,8 @@
         "schemas/common.py",
         "requirements.txt",
         ".gitignore",
+        ".env.example",
+        "README.md",
         "tests/test_health.py"
       ],
       "copy_as": {
@@ -24,8 +26,7 @@
       },
       "seed_from_template": [
         "app/config.py",
-        "app/main.py",
-        ".env.example"
+        "app/main.py"
       ]
     },
     "B+": {
@@ -57,6 +58,7 @@
     "app/dependencies.py",
     "tests/conftest.py",
     ".env.example",
+    "README.md",
     "requirements.txt",
     "ui/streamlit_app.py"
   ]

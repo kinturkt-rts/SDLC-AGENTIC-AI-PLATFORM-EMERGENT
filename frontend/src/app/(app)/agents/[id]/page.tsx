@@ -15,7 +15,7 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { useAgent, useRuns } from '@/src/lib/queries';
-import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
+import { formatRelative, formatDuration } from '@/src/lib/format';
 import type { PipelineStep } from '@/src/types';
 
 interface HistoryRow {
@@ -26,6 +26,21 @@ interface HistoryRow {
   status: PipelineStep['status'];
   duration: number | null;
   when: string | null;
+}
+
+function agentLastRunFromRuns(
+  agentId: string,
+  runs: { id: string; startedAt: string; finishedAt: string | null; steps: PipelineStep[] }[],
+): string | null {
+  let latest: string | null = null;
+  for (const run of runs) {
+    for (const step of run.steps) {
+      if (step.agent !== agentId || step.status === 'queued') continue;
+      const when = step.finishedAt ?? step.startedAt ?? run.finishedAt ?? run.startedAt;
+      if (when && (!latest || when > latest)) latest = when;
+    }
+  }
+  return latest;
 }
 
 export default function AgentDetailPage({ params }: { params: { id: string } }) {
@@ -51,12 +66,24 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
         phase: s.phase,
         status: s.status,
         duration: s.durationSec,
-        when: s.startedAt,
+        when: s.finishedAt ?? s.startedAt ?? run.finishedAt ?? run.startedAt,
       })),
   );
 
+  const lastRunAt = agentLastRunFromRuns(params.id, runs ?? []) ?? agent?.lastRunAt ?? null;
+  const hasMcpServers = (agent?.mcpServers.length ?? 0) > 0;
+  const hasBuiltinTools = (agent?.mcpTools.length ?? 0) > 0;
+
   const columns: Column<HistoryRow>[] = [
-    { key: 'runId', header: 'Run', render: (r) => <span className="font-mono text-xs text-foreground">{r.runId}</span> },
+    {
+      key: 'runId',
+      header: 'Run',
+      render: (r) => (
+        <Link href={`/runs/${r.runId}`} className="font-mono text-xs text-teal-400 hover:underline">
+          {r.runId.slice(0, 8)}…
+        </Link>
+      ),
+    },
     { key: 'projectName', header: 'Project', render: (r) => <span className="text-foreground">{r.projectName}</span> },
     { key: 'phase', header: 'Phase', render: (r) => <span className="capitalize text-muted-foreground">{r.phase}</span> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
@@ -81,10 +108,14 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span tabIndex={0}>
-                    <Button disabled className="gap-1.5"><PlayCircle className="h-4 w-4" /> Test agent</Button>
+                    <Button disabled variant="outline" className="gap-1.5 border-white/[0.08] text-muted-foreground">
+                      <PlayCircle className="h-4 w-4" /> Test agent
+                    </Button>
                   </span>
                 </TooltipTrigger>
-                <TooltipContent>Requires platform API</TooltipContent>
+                <TooltipContent className="max-w-xs">
+                  Not available yet. A future health check will ping the AgentCore runtime without running a full pipeline task.
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           </div>
@@ -97,22 +128,34 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
           <div className="mt-3 flex flex-wrap gap-1.5">
             {agent?.skills.map((s) => <Badge key={s} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">{s}</Badge>)}
           </div>
-          <h4 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">MCP Tools</h4>
+          <h4 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+            {hasBuiltinTools ? 'Built-in tools' : 'MCP tools'}
+          </h4>
           <div className="mt-2 space-y-1">
-            {agent?.mcpTools.map((t) => (
-              <code key={t} className="block rounded-md border border-white/[0.04] bg-muted/40 px-2.5 py-1.5 font-mono text-xs text-foreground">{t}</code>
-            ))}
+            {hasBuiltinTools ? (
+              agent?.mcpTools.map((t) => (
+                <code key={t} className="block rounded-md border border-white/[0.04] bg-muted/40 px-2.5 py-1.5 font-mono text-xs text-foreground">{t}</code>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">Uses MCP server tools listed on the right.</p>
+            )}
           </div>
         </Card>
 
         <Card className="border-white/[0.06] bg-card/80 p-5">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Plug className="h-4 w-4 text-teal-400" /> MCP Servers Attached</h3>
           <div className="mt-3 space-y-2">
-            {agent?.mcpServers.map((s) => (
-              <div key={s} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.01] px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-white/[0.03]">
-                <Plug className="h-3.5 w-3.5 text-muted-foreground" /> {s}
-              </div>
-            ))}
+            {hasMcpServers ? (
+              agent?.mcpServers.map((s) => (
+                <div key={s} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.01] px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-white/[0.03]">
+                  <Plug className="h-3.5 w-3.5 text-muted-foreground" /> {s}
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No external MCP servers — this agent uses built-in Strands tools only.
+              </p>
+            )}
           </div>
         </Card>
 
@@ -122,7 +165,7 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
             <div className="flex items-center justify-between"><dt className="text-muted-foreground">Port</dt><dd className="font-mono text-foreground">:{agent?.port}</dd></div>
             <div className="flex items-center justify-between"><dt className="text-muted-foreground">Availability</dt><dd>{agent ? <StatusBadge status={agent.availability} size="sm" /> : null}</dd></div>
             <div className="flex items-center justify-between"><dt className="text-muted-foreground">Default phase</dt><dd className="capitalize text-foreground">{agent?.phase ?? 'orchestration'}</dd></div>
-            <div className="flex items-center justify-between"><dt className="text-muted-foreground">Last run</dt><dd className="text-foreground">{formatRelative(agent?.lastRunAt ?? null)}</dd></div>
+            <div className="flex items-center justify-between"><dt className="text-muted-foreground">Last run</dt><dd className="text-foreground">{formatRelative(lastRunAt)}</dd></div>
           </dl>
         </Card>
       </div>

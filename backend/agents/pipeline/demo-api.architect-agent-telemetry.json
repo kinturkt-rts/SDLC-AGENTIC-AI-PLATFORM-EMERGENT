@@ -1,6 +1,7 @@
 {
   "agent": "architect-agent",
   "targetApp": "demo-api",
+  "runId": null,
   "modelId": "us.anthropic.claude-sonnet-4-6",
   "modelLabel": "sonnet-4-6",
   "toolCount": 0,

@@ -1,8 +1,0 @@
-{
-  "targetApp": "agent-ops-assistant",
-  "runId": "10032dfd-5c7b-4535-a978-2689847c3635",
-  "prdPath": "target-apps/agent-ops-assistant/docs/PRD/agent-ops-assistant.md",
-  "inputFile": "inputs/agent-ops-assistant.txt",
-  "inputPath": "inputs/agent-ops-assistant.txt",
-  "designDocPath": "target-apps/agent-ops-assistant/docs/design/agent-ops-assistant.md"
-}

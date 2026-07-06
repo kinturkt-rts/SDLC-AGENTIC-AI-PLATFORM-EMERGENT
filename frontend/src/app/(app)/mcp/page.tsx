@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plug, Plus, Pencil, Trash2, Terminal } from 'lucide-react';
+import { Plug, Plus, Pencil, Trash2, Terminal, KeyRound, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,7 @@ import {
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { api } from '@/src/lib/api';
+import { formatEnvVarDisplay, formatMcpCommand } from '@/src/lib/mcp-display';
 import { useMcpConfig, queryKeys } from '@/src/lib/queries';
 import type { McpServerConfig } from '@/src/types';
 
@@ -192,19 +193,32 @@ export default function McpPage() {
                 </div>
 
                 <div className="mt-3 space-y-2 text-xs">
-                  {cfg.url ? (
-                    <p className="flex items-center gap-1.5 font-mono text-muted-foreground"><Terminal className="h-3 w-3" /> {cfg.url}</p>
-                  ) : (
-                    <p className="flex items-start gap-1.5 font-mono text-muted-foreground">
-                      <Terminal className="mt-0.5 h-3 w-3 shrink-0" />
-                      <span className="break-all">{cfg.command} {(cfg.args ?? []).join(' ')}</span>
-                    </p>
-                  )}
+                  <p className="flex items-start gap-1.5 text-muted-foreground">
+                    <Terminal className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span className="break-all font-mono">{formatMcpCommand(cfg)}</span>
+                  </p>
                   {cfg.env && Object.keys(cfg.env).length ? (
-                    <div className="flex flex-wrap gap-1">
-                      {Object.entries(cfg.env).map(([k, v]) => (
-                        <span key={k} className="rounded-md bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{k}={v}</span>
-                      ))}
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        Secrets &amp; config
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.entries(cfg.env).map(([k, v]) => {
+                          const display = formatEnvVarDisplay(k, v);
+                          const Icon = display.kind === 'secret' ? KeyRound : Settings2;
+                          return (
+                            <span
+                              key={k}
+                              title={`${k}=${v}`}
+                              className="inline-flex items-center gap-1 rounded-md border border-white/[0.06] bg-muted/40 px-2 py-1 text-[11px] text-foreground"
+                            >
+                              <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              <span className="font-medium">{display.label}</span>
+                              <span className="text-muted-foreground">· {display.detail}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -246,7 +260,11 @@ export default function McpPage() {
               <Textarea id="m-args" rows={3} value={form.args} onChange={(e) => set('args', e.target.value)} placeholder={'-y\n@modelcontextprotocol/server-gitlab'} className="border-white/[0.08] bg-white/[0.02] font-mono text-xs" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="m-env">env (KEY=${'{'}env:KEY{'}'}, one per line)</Label>
+              <Label htmlFor="m-env">Environment variables</Label>
+              <p className="text-[11px] text-muted-foreground">
+                One per line. Reference secrets from <code className="rounded bg-muted/50 px-1">.env</code> with{' '}
+                <code className="rounded bg-muted/50 px-1">${'{'}env:VAR_NAME{'}'}</code> — do not paste raw tokens.
+              </p>
               <Textarea id="m-env" rows={3} value={form.env} onChange={(e) => set('env', e.target.value)} placeholder={'GITLAB_PERSONAL_ACCESS_TOKEN=${env:GITLAB_PERSONAL_ACCESS_TOKEN}'} className="border-white/[0.08] bg-white/[0.02] font-mono text-xs" />
             </div>
             <div className="grid grid-cols-2 gap-3">

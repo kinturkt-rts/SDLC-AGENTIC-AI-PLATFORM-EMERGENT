@@ -417,7 +417,7 @@ class SdlcPipelineRunner:
         if not prd.startswith("docs/PRD/"):
             return
         self.context["designDocPath"] = f"docs/design/{slug}.md"
-        self.context["diagramPaths"] = [f"docs/diagrams/generated-diagrams/{slug}.png"]
+        self.context["diagramPaths"] = [f"docs/generated-diagrams/{slug}.png"]
 
     def _save_context(self) -> None:
         self.ctx_path.parent.mkdir(parents=True, exist_ok=True)
@@ -826,6 +826,23 @@ class SdlcPipelineRunner:
         self.artifacts["App"] = f"{target_app_root_rel(self.feature)}/"
         self._after_agent_step("developer-agent")
 
+    def _wait_for_developer_handoff(self) -> None:
+        """Block gitlab until developer-handoff.json lands in S3 (AgentCore can return early)."""
+        if not self.run_id or not is_s3_store() or self.options.skip_developer:
+            return
+        from .artifact_store import wait_for_run_artifact
+        from .pipeline_context import developer_handoff_rel_for_app
+
+        rel = developer_handoff_rel_for_app(self.feature)
+        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "300"))
+        logger.info("[pipeline] waiting for developer handoff: runs/%s/%s", self.run_id, rel)
+        try:
+            wait_for_run_artifact(self.run_id, rel, timeout_sec=timeout)
+        except TimeoutError as exc:
+            raise PipelineStepError(
+                f"developer-agent handoff not ready before gitlab-agent: {exc}"
+            ) from exc
+
     def _step_verify(self) -> None:
         app_root = target_app_root_rel(self.feature)
         app_dir = self.root / app_root.replace("/", os.sep)
@@ -880,6 +897,7 @@ class SdlcPipelineRunner:
         return None
 
     def _step_gitlab(self) -> None:
+        self._wait_for_developer_handoff()
         apps_repo = os.getenv("GITLAB_APPS_REPO", "").strip().lower() in {"1", "true", "yes", "on"}
         if self.transport == "local":
             args = [

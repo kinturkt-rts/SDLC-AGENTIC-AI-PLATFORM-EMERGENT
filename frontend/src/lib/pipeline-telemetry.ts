@@ -28,6 +28,7 @@ export const DEFAULT_PIPELINE_AGENTS = [
 export interface AgentTelemetrySnapshot {
   agent: string;
   targetApp?: string;
+  runId?: string | null;
   modelId?: string;
   modelLabel?: string;
   inputTokens: number;
@@ -87,6 +88,22 @@ export function billedTokens(snap: AgentTelemetrySnapshot): number {
   return snap.totalTokens ?? 0;
 }
 
+/** Ignore stale local snapshots from a different dashboard run. */
+export function telemetryMatchesRun(
+  snap: AgentTelemetrySnapshot,
+  runId: string | null,
+  options?: { runScoped?: boolean; allowLegacyLocal?: boolean },
+): boolean {
+  if (!runId) return true;
+  const snapRunId = typeof snap.runId === 'string' ? snap.runId.trim() : '';
+  if (!snapRunId) {
+    if (options?.runScoped) return true;
+    if (options?.allowLegacyLocal) return true;
+    return !isS3Store();
+  }
+  return snapRunId === runId;
+}
+
 function agentDisplayName(agentId: string): string {
   return (
     agentId
@@ -120,7 +137,7 @@ async function discoverLocalAgentsWithTelemetry(targetApp: string): Promise<stri
   return MVP_AGENT_IDS.filter((a) => found.has(a));
 }
 
-/** Per-agent telemetry mirrored under runs/<runId>/<slug>/handoffs/ on AgentCore. */
+/** Per-agent telemetry mirrored under runs/<runId>/<slug>/telemetry/ on AgentCore. */
 async function discoverS3AgentsWithTelemetry(
   targetApp: string,
   runId: string,
@@ -128,13 +145,14 @@ async function discoverS3AgentsWithTelemetry(
   if (!isS3Store()) return [];
   const prefix = runS3Prefix(runId);
   const files = await listS3RunArtifacts(runId);
-  const handoffPrefix = `${targetApp}/handoffs/`;
+  const relPrefixes = [`${targetApp}/telemetry/`, `${targetApp}/handoffs/`];
   const found = new Set<string>();
 
   for (const file of files) {
     const rel = file.key.startsWith(prefix) ? file.key.slice(prefix.length) : file.key;
-    if (!rel.startsWith(handoffPrefix) || !rel.endsWith('-telemetry.json')) continue;
-    const agent = rel.slice(handoffPrefix.length, -'-telemetry.json'.length);
+    const matchedPrefix = relPrefixes.find((p) => rel.startsWith(p) && rel.endsWith('-telemetry.json'));
+    if (!matchedPrefix) continue;
+    const agent = rel.slice(matchedPrefix.length, -'-telemetry.json'.length);
     if (isMvpAgentId(agent)) found.add(agent);
   }
 
@@ -147,8 +165,7 @@ export async function discoverAgentsWithTelemetry(
 ): Promise<string[]> {
   const rid = runId ?? (await resolveTelemetryRunId(targetApp));
   if (rid && isS3Store()) {
-    const s3 = await discoverS3AgentsWithTelemetry(targetApp, rid);
-    if (s3.length > 0) return s3;
+    return discoverS3AgentsWithTelemetry(targetApp, rid);
   }
   const local = await discoverLocalAgentsWithTelemetry(targetApp);
   if (local.length > 0) return local;
@@ -186,13 +203,19 @@ async function loadAgentTelemetryFromS3(
   runId: string,
 ): Promise<{ snap: AgentTelemetrySnapshot; mtimeMs: number; source: 'local' | 's3' } | null> {
   if (!isS3Store()) return null;
-  const relPath = `${targetApp}/handoffs/${agentName}-telemetry.json`;
-  const doc = await getRunArtifactJson(runId, relPath);
-  if (!doc) return null;
-  const snap = doc as unknown as AgentTelemetrySnapshot;
-  const mtimeMs =
-    typeof doc.updatedAt === 'string' ? Date.parse(doc.updatedAt) || Date.now() : Date.now();
-  return { snap, mtimeMs: Number.isFinite(mtimeMs) ? mtimeMs : Date.now(), source: 's3' };
+  const candidates = [
+    `${targetApp}/telemetry/${agentName}-telemetry.json`,
+    `${targetApp}/handoffs/${agentName}-telemetry.json`,
+  ];
+  for (const relPath of candidates) {
+    const doc = await getRunArtifactJson(runId, relPath);
+    if (!doc) continue;
+    const snap = doc as unknown as AgentTelemetrySnapshot;
+    const mtimeMs =
+      typeof doc.updatedAt === 'string' ? Date.parse(doc.updatedAt) || Date.now() : Date.now();
+    return { snap, mtimeMs: Number.isFinite(mtimeMs) ? mtimeMs : Date.now(), source: 's3' };
+  }
+  return null;
 }
 
 async function loadAgentTelemetry(
@@ -200,14 +223,29 @@ async function loadAgentTelemetry(
   agentName: string,
   runId: string | null,
 ): Promise<{ snap: AgentTelemetrySnapshot; mtimeMs: number; source: 'local' | 's3' } | null> {
+  let s3Row: { snap: AgentTelemetrySnapshot; mtimeMs: number; source: 'local' | 's3' } | null = null;
+
   if (runId && isS3Store()) {
-    const s3 = await loadAgentTelemetryFromS3(targetApp, agentName, runId);
-    if (s3) return s3;
+    s3Row = await loadAgentTelemetryFromS3(targetApp, agentName, runId);
+    if (s3Row && telemetryMatchesRun(s3Row.snap, runId, { runScoped: true })) {
+      return s3Row;
+    }
   }
+
   const local = await loadAgentTelemetryFile(targetApp, agentName);
-  if (local) return local;
-  if (!runId || isS3Store()) return null;
-  return loadAgentTelemetryFromS3(targetApp, agentName, runId);
+  if (local && telemetryMatchesRun(local.snap, runId, { allowLegacyLocal: true })) {
+    const s3Usable =
+      s3Row !== null && telemetryMatchesRun(s3Row.snap, runId, { runScoped: true });
+    if (!s3Usable) return local;
+  }
+
+  if (!runId) return null;
+  if (!s3Row && isS3Store()) {
+    s3Row = await loadAgentTelemetryFromS3(targetApp, agentName, runId);
+    if (s3Row && telemetryMatchesRun(s3Row.snap, runId, { runScoped: true })) return s3Row;
+  }
+
+  return null;
 }
 
 export function aggregateTelemetrySnapshots(
@@ -217,9 +255,16 @@ export function aggregateTelemetrySnapshots(
 ): PipelineTelemetrySummary {
   const byAgent = new Map<string, { snap: AgentTelemetrySnapshot; mtimeMs: number; source?: 'local' | 's3' }>();
   for (const row of rows) {
-    if (isMvpAgentId(row.snap.agent)) {
-      byAgent.set(row.snap.agent, row);
+    if (!isMvpAgentId(row.snap.agent)) continue;
+    if (
+      !telemetryMatchesRun(row.snap, runId, {
+        runScoped: row.source === 's3',
+        allowLegacyLocal: row.source === 'local',
+      })
+    ) {
+      continue;
     }
+    byAgent.set(row.snap.agent, row);
   }
 
   const agents: AgentTelemetryRow[] = MVP_AGENT_IDS.map((agentId) => {
@@ -320,39 +365,13 @@ export function aggregateTelemetrySnapshots(
   };
 }
 
-function emptyTelemetrySummary(projectId: string, runId: string | null): PipelineTelemetrySummary {
-  return {
-    projectId,
-    projectName: projectTitle(projectId),
-    runId,
-    agents: [],
-    totals: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      cacheReadInputTokens: 0,
-      cacheWriteInputTokens: 0,
-      cacheHitRatio: 0,
-      costUsd: 0,
-      elapsedSec: 0,
-      toolCount: 0,
-      modelCount: 0,
-    },
-    source: isS3Store() ? 's3' : 'local',
-    updatedAt: null,
-  };
-}
-
 async function loadPipelineTelemetryUncached(projectId: string): Promise<PipelineTelemetrySummary> {
   const runId = await resolveTelemetryRunId(projectId);
-  const agentNames = await discoverAgentsWithTelemetry(projectId, runId);
-  const toLoad = agentNames.length > 0 ? agentNames : [...MVP_AGENT_IDS];
-  const loaded = await Promise.all(toLoad.map((name) => loadAgentTelemetry(projectId, name, runId)));
+  // Always load all MVP slots — S3 discovery may omit agents whose telemetry only exists locally.
+  const loaded = await Promise.all(
+    MVP_AGENT_IDS.map((name) => loadAgentTelemetry(projectId, name, runId)),
+  );
   const rows = loaded.filter((r): r is NonNullable<typeof r> => r !== null);
-
-  if (rows.length === 0) {
-    return emptyTelemetrySummary(projectId, runId);
-  }
 
   return aggregateTelemetrySnapshots(projectId, rows, runId);
 }

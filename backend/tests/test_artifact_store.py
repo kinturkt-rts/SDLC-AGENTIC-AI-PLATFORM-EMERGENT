@@ -243,3 +243,14 @@ def test_get_artifact_s3_missing_key_raises_file_not_found(monkeypatch: pytest.M
         mock_client.return_value.get_object.side_effect = _raise_no_such_key
         with pytest.raises(FileNotFoundError, match="S3 artifact not found"):
             get_artifact("smoke-006", "docs/design/field-service-dispatch.md")
+
+
+def test_wait_for_run_artifact_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import put_artifact, run_artifact_exists, wait_for_run_artifact
+
+    run_id = "wait-run-001"
+    assert run_artifact_exists(run_id, "demo-app/handoffs/developer-handoff.json") is False
+    put_artifact(run_id, "demo-app/handoffs/developer-handoff.json", '{"writtenFiles": []}\n')
+    wait_for_run_artifact(run_id, "demo-app/handoffs/developer-handoff.json", timeout_sec=1.0)
+    assert run_artifact_exists(run_id, "demo-app/handoffs/developer-handoff.json") is True

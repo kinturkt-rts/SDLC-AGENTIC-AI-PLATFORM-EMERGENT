@@ -16,12 +16,17 @@ from _shared.pipeline_context import (  # noqa: E402
     resolve_cli_context,
     resolve_target_app,
     slugify,
+    slugify_feature,
 )
 
 
 def test_slugify_rejects_empty() -> None:
     with pytest.raises(ValueError, match="cannot derive app slug"):
         slugify("   ")
+
+
+def test_slugify_feature_matches_slugify() -> None:
+    assert slugify_feature("Bug Deduper") == slugify("Bug Deduper") == "bug-deduper"
 
 
 def test_infer_target_app_from_context_target_app() -> None:
@@ -74,7 +79,7 @@ def test_consolidated_artifact_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     assert prd_rel_path_for_app(slug) == f"{base}/docs/PRD/{slug}.md"
     assert design_doc_rel_for_app(slug) == f"{base}/docs/design/{slug}.md"
     assert diagram_path_for_app(slug) == (
-        f"{base}/docs/diagrams/generated-diagrams/{slug}.png"
+        f"{base}/docs/generated-diagrams/{slug}.png"
     )
     assert pipeline_context_rel_for_app(slug) == (
         f"{base}/agents/pipeline/{slug}.context.json"
@@ -139,7 +144,7 @@ def test_merge_run_handoff_context_loads_run_store(
     assert merged["prdPath"] == "docs/PRD/expense-tracker.md"
     assert merged["designDocPath"] == "docs/design/expense-tracker.md"
     assert merged["inputFile"] == "inputs/expense-tracker.txt"
-    assert merged["diagramPaths"] == ["docs/diagrams/generated-diagrams/expense-tracker.png"]
+    assert merged["diagramPaths"] == ["docs/generated-diagrams/expense-tracker.png"]
 
 
 def test_normalize_handoff_paths_cloud_layout(monkeypatch: pytest.MonkeyPatch) -> None:

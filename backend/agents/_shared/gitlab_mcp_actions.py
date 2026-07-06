@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from pathlib import Path
@@ -78,6 +79,68 @@ def should_include_file(path: Path) -> bool:
     return not any(part in _EXCLUDE_DIR_NAMES for part in path.parts)
 
 
+def _load_developer_handoff_written_paths(slug: str, root: Path) -> list[str]:
+    """Return monorepo-relative paths listed in developer-handoff.json."""
+    candidates = (
+        root / slug / "handoffs" / "developer-handoff.json",
+        root / "agents" / "pipeline" / f"{slug}.developer-handoff.json",
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        written = data.get("writtenFiles") or []
+        return [item for item in written if isinstance(item, str) and item.strip()]
+    return []
+
+
+def _workspace_source_for_repo_rel(slug: str, root: Path, repo_rel: str) -> Path | None:
+    """Resolve a materialized workspace file for a monorepo-relative target-apps path."""
+    normalized = repo_rel.replace("\\", "/").lstrip("/")
+    prefix = f"target-apps/{slug}/"
+    candidates: list[Path] = []
+    if normalized.startswith(prefix):
+        tail = normalized[len(prefix) :]
+        candidates.append(root / slug / tail)
+    candidates.append(root / normalized)
+    for candidate in candidates:
+        if candidate.is_file() and should_include_file(candidate):
+            return candidate
+    return None
+
+
+def _entry_for_workspace_file(slug: str, root: Path, source: Path) -> tuple[str, str] | None:
+    """Map a workspace file to (source_rel, gitlab_dest_rel)."""
+    try:
+        workspace_rel = source.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    if is_cloud_materialized_workspace(root, slug):
+        dest = cloud_workspace_to_gitlab_dest(slug, workspace_rel)
+        if not dest:
+            return None
+        return workspace_rel, dest
+    return workspace_rel, workspace_rel
+
+
+def _merge_developer_handoff_entries(
+    slug: str,
+    root: Path,
+    entries: set[tuple[str, str]],
+) -> None:
+    """Include developer-handoff writtenFiles so late S3 writes are not dropped."""
+    for repo_rel in _load_developer_handoff_written_paths(slug, root):
+        source = _workspace_source_for_repo_rel(slug, root, repo_rel)
+        if source is None:
+            continue
+        mapped = _entry_for_workspace_file(slug, root, source)
+        if mapped:
+            entries.add(mapped)
+
+
 def is_cloud_materialized_workspace(root: Path, slug: str) -> bool:
     """True when *root* is a materialized S3 run dir (``<slug>/...``), not local monorepo."""
     if (root / "target-apps" / slug).is_dir():
@@ -92,7 +155,7 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
     if not normalized.startswith(prefix):
         return None
     tail = normalized[len(prefix) :]
-    if not tail or tail.startswith("inputs/"):
+    if not tail or tail.startswith("inputs/") or tail.startswith("telemetry/"):
         return None
 
     if tail == "context.json":
@@ -110,8 +173,11 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
     if tail.startswith("docs/PRD/") or tail.startswith("docs/design/"):
         return tail
 
+    if tail.startswith("docs/generated-diagrams/"):
+        return tail
+
     if tail.startswith("docs/diagrams/"):
-        return f"docs/diagrams/generated-diagrams/{Path(tail).name}"
+        return f"docs/generated-diagrams/{Path(tail).name}"
 
     return f"target-apps/{slug}/{tail}"
 
@@ -135,16 +201,20 @@ def collect_feature_artifact_entries(
             dest = cloud_workspace_to_gitlab_dest(slug, source)
             if dest:
                 entries.add((source, dest))
+        _merge_developer_handoff_entries(slug, root, entries)
         return sorted(entries, key=lambda item: item[1])
 
-    return [(rel, rel) for rel in collect_feature_artifact_paths(feature, root=root)]
+    entries = {
+        (rel, rel)
+        for rel in _collect_local_monorepo_artifact_paths(feature, root=root)
+    }
+    _merge_developer_handoff_entries(slug, root, entries)
+    return sorted(entries, key=lambda item: item[1])
 
 
 def collect_feature_artifact_paths(feature: str, *, root: Path | None = None) -> list[str]:
     """Return repo-relative GitLab destination paths for one SDLC feature."""
-    if is_cloud_materialized_workspace(root or repo_root(), slugify_feature(feature)):
-        return [dest for _, dest in collect_feature_artifact_entries(feature, root=root)]
-    return _collect_local_monorepo_artifact_paths(feature, root=root)
+    return [dest for _, dest in collect_feature_artifact_entries(feature, root=root)]
 
 
 def _collect_local_monorepo_artifact_paths(feature: str, *, root: Path | None = None) -> list[str]:
@@ -162,6 +232,7 @@ def _collect_local_monorepo_artifact_paths(feature: str, *, root: Path | None = 
     for candidate in (
         root / "docs" / "PRD" / f"{slug}.md",
         root / "docs" / "design" / f"{slug}.md",
+        root / "docs" / "generated-diagrams" / f"{slug}.png",
         root / "docs" / "diagrams" / "generated-diagrams" / f"{slug}.png",
         root / "agents" / "pipeline" / f"{slug}.context.json",
         root / "agents" / "pipeline" / f"{slug}.developer-handoff.json",

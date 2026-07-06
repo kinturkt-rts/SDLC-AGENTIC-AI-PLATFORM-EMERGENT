@@ -60,9 +60,11 @@ class RunTelemetry:
         target_app: str | None = None,
         *,
         model_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.agent_name = agent_name
         self.target_app = target_app
+        self.run_id = (run_id or "").strip() or None
         self.model_id = (
             model_id
             or os.getenv("CODING_MODEL_ID", "").strip()
@@ -126,7 +128,7 @@ class RunTelemetry:
         return {
             "agent": self.agent_name,
             "targetApp": self.target_app,
-            "runId": os.getenv("PIPELINE_RUN_ID", "").strip() or None,
+            "runId": self._run_id(),
             "modelId": self.model_id,
             "modelLabel": short_model_label(self.model_id),
             "toolCount": self.tool_count,
@@ -148,6 +150,18 @@ class RunTelemetry:
         _PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
         return _PIPELINE_DIR / f"{self.target_app}.{self.agent_name}-telemetry.json"
 
+    def _run_id(self) -> str | None:
+        return self.run_id or os.getenv("PIPELINE_RUN_ID", "").strip() or None
+
+    def ensure_run_id(self, context: dict[str, Any] | None = None) -> None:
+        """Bind run id from handoff context when AgentCore child runtimes lack PIPELINE_RUN_ID."""
+        if self.run_id:
+            return
+        if context:
+            rid = str(context.get("runId") or context.get("run_id") or "").strip()
+            if rid:
+                self.run_id = rid
+
     def load_previous(self) -> dict[str, Any] | None:
         """Read the last persisted snapshot for this (agent, app) pair, or None."""
         path = self._path()
@@ -162,7 +176,7 @@ class RunTelemetry:
         """Write current snapshot for the next run to compare against. Silent on failure.
 
         Also mirrors the snapshot to the run's S3 prefix under
-        ``<slug>/handoffs/<agent>-telemetry.json`` so the control-plane UI can surface
+        ``<slug>/telemetry/<agent>-telemetry.json`` so the control-plane UI can surface
         per-agent tokens for cloud runs (local disk isn't shared with the frontend).
         """
         path = self._path()
@@ -183,11 +197,15 @@ class RunTelemetry:
             return
         if not is_s3_store():
             return
-        run_id = resolve_run_id({"targetApp": self.target_app})
+        run_id = self._run_id() or resolve_run_id({"targetApp": self.target_app})
         if not run_id:
             return
-        rel_path = f"{self.target_app}/handoffs/{self.agent_name}-telemetry.json"
+        rel_path = f"{self.target_app}/telemetry/{self.agent_name}-telemetry.json"
         try:
+            data = json.loads(payload)
+            if isinstance(data, dict):
+                data["runId"] = run_id
+                payload = json.dumps(data, indent=2) + "\n"
             put_artifact(run_id, rel_path, payload, content_type="application/json")
         except Exception:
             # Telemetry mirroring must never break an agent run.
@@ -245,8 +263,14 @@ class RunTelemetry:
         lines.append("=" * 64)
         print("\n".join(lines), file=stream)
 
-    def finalize(self, *, stream: Any = sys.stderr) -> None:
+    def finalize(
+        self,
+        *,
+        stream: Any = sys.stderr,
+        context: dict[str, Any] | None = None,
+    ) -> None:
         """Persist snapshot; compact line by default; full block when PIPELINE_TELEMETRY_VERBOSE=1."""
+        self.ensure_run_id(context)
         if _telemetry_verbose():
             self.print_summary(stream=stream)
         elif not _telemetry_silent():
@@ -469,7 +493,7 @@ def print_pipeline_summary(
 
 
 def _mirror_pipeline_rollup_to_run_artifacts(target_app: str, rollup: dict[str, Any]) -> None:
-    """Upload pipeline rollup to runs/<runId>/<app>/handoffs/ for the control-plane UI."""
+    """Upload pipeline rollup to runs/<runId>/<app>/telemetry/ for the control-plane UI."""
     try:
         from .artifact_store import is_s3_store, put_artifact, resolve_run_id
     except ImportError:
@@ -480,7 +504,7 @@ def _mirror_pipeline_rollup_to_run_artifacts(target_app: str, rollup: dict[str, 
     if not run_id:
         return
     payload = json.dumps(rollup, indent=2) + "\n"
-    rel_path = f"{target_app}/handoffs/pipeline-telemetry.json"
+    rel_path = f"{target_app}/telemetry/pipeline-telemetry.json"
     try:
         put_artifact(run_id, rel_path, payload, content_type="application/json")
     except Exception:

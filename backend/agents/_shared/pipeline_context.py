@@ -11,7 +11,12 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
 LEGACY_DESIGN_REL = "docs/design/design.md"
-LEGACY_DIAGRAM_REL_DIR = "docs/diagrams/generated-diagrams"
+# Canonical PNG folder (S3 + local). Legacy runs used docs/diagrams/generated-diagrams/.
+DIAGRAM_REL_DIR = "docs/generated-diagrams"
+LEGACY_DIAGRAM_REL_DIRS = (
+    "docs/diagrams/generated-diagrams",
+    "docs/diagrams",
+)
 
 
 class TargetAppRequiredError(ValueError):
@@ -71,10 +76,8 @@ def diagram_path_for_app(target_app: str) -> str:
     slug = slugify(target_app)
     layout = artifact_layout()
     if layout in {"docs", "target-app"}:
-        return f"{LEGACY_DIAGRAM_REL_DIR}/{slug}.png"
-    if _is_cloud_store():
-        return f"{target_app_root_rel(slug)}/docs/diagrams/{slug}.png"
-    return f"{target_app_root_rel(slug)}/docs/diagrams/generated-diagrams/{slug}.png"
+        return f"{DIAGRAM_REL_DIR}/{slug}.png"
+    return f"{target_app_root_rel(slug)}/{DIAGRAM_REL_DIR}/{slug}.png"
 
 
 def diagram_dir_rel_for_app(target_app: str) -> str:
@@ -335,6 +338,11 @@ def slugify(text: str) -> str:
     return slug
 
 
+def slugify_feature(text: str) -> str:
+    """Alias used by gitlab-agent and gitlab_mcp_actions."""
+    return slugify(text)
+
+
 def infer_target_app_from_context(context: dict[str, Any] | None) -> str | None:
     """Derive targetApp from context fields written by product-agent or pipeline JSON."""
     if not context:
@@ -486,10 +494,17 @@ def discover_diagram_paths(target_app: str) -> list[str]:
     slug = slugify(target_app)
     candidates = [
         diagram_path_for_app(slug),
-        f"{LEGACY_DIAGRAM_REL_DIR}/{slug}.png",
-        f"target-apps/{slug}/docs/diagrams/generated-diagrams/{slug}.png",
-        f"target-apps/{slug}/docs/diagrams/{slug}.png",
+        f"{DIAGRAM_REL_DIR}/{slug}.png",
+        f"target-apps/{slug}/{DIAGRAM_REL_DIR}/{slug}.png",
     ]
+    for legacy_dir in LEGACY_DIAGRAM_REL_DIRS:
+        candidates.extend(
+            [
+                f"{legacy_dir}/{slug}.png",
+                f"target-apps/{slug}/{legacy_dir}/{slug}.png",
+                f"{slug}/{legacy_dir}/{slug}.png",
+            ]
+        )
     seen: set[str] = set()
     found: list[str] = []
     for rel in candidates:

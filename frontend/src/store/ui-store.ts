@@ -15,7 +15,7 @@ interface UiState {
   runsProjectId: string | null;
   setRunsProject: (id: string | null) => void;
 
-  /** Tokens page only — null until user picks a project with runs. */
+  /** Tokens page only — null = all-projects overview. */
   tokensProjectId: string | null;
   setTokensProjectId: (id: string | null) => void;
 

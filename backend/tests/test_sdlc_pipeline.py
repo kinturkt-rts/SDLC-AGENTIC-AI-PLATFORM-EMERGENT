@@ -196,7 +196,7 @@ def test_hydrate_run_context_uses_docs_layout_from_s3(
     assert runner.context["inputFile"] == "inputs/expense-tracker.txt"
     assert runner.context["designDocPath"] == "docs/design/expense-tracker.md"
     assert runner.context["diagramPaths"] == [
-        "docs/diagrams/generated-diagrams/expense-tracker.png"
+        "docs/generated-diagrams/expense-tracker.png"
     ]
 
 

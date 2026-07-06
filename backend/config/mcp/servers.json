@@ -20,7 +20,7 @@
       "version": "1.0.23",
       "transport": "stdio",
       "install": "uv tool run --from awslabs.aws-diagram-mcp-server==1.0.23 awslabs.aws-diagram-mcp-server",
-      "notes": "Requires Graphviz (dot on PATH). Use 1.0.23+ on Windows (1.0.8 SIGALRM fails). PNGs go to ARCHITECT_DIAGRAM_OUTPUT_DIR (default docs/diagrams). Relative filenames land in generated-diagrams/ — architect agent uses absolute diagramOutputFile to avoid that.",
+      "notes": "Requires Graphviz (dot on PATH). Use 1.0.23+ on Windows (1.0.8 SIGALRM fails). PNGs go to ARCHITECT_DIAGRAM_OUTPUT_DIR (default docs/generated-diagrams). Relative filenames land in generated-diagrams/ — architect agent uses absolute diagramOutputFile to avoid that.",
       "usedBy": ["architect-agent"]
     },
     "aws-postgres": {
@@ -119,7 +119,7 @@
         "TFE_TOKEN": "HCP Terraform / TFE API token (optional)",
         "TFE_HOSTNAME": "app.terraform.io"
       },
-      "usedBy": ["devops-agent", "architect-agent"]
+      "usedBy": ["devops-agent"]
     }
   }
 }

@@ -50,11 +50,17 @@ export function AgentCard({ agent }: { agent: Agent }) {
         <p className="mt-3 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{agent.role}</p>
 
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {agent.mcpServers.slice(0, 3).filter((s) => s !== 'Atlassian' && s !== 'AWS Diagram').map((s) => (
-            <Badge key={s} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">
-              {s}
-            </Badge>
-          ))}
+          {agent.mcpServers.length > 0
+            ? agent.mcpServers.slice(0, 3).map((s) => (
+                <Badge key={s} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">
+                  {s}
+                </Badge>
+              ))
+            : agent.mcpTools.slice(0, 2).map((t) => (
+                <Badge key={t} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">
+                  {t}
+                </Badge>
+              ))}
         </div>
 
         <div className="mt-4 flex items-center justify-between border-t border-white/[0.06] pt-3 text-xs text-muted-foreground">

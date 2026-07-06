@@ -161,7 +161,35 @@ def test_cloud_materialized_workspace_maps_to_monorepo_paths(tmp_path: Path) -> 
 
 def test_cloud_workspace_to_gitlab_dest_diagram() -> None:
     dest = cloud_workspace_to_gitlab_dest("demo-app", "demo-app/docs/diagrams/demo-app.png")
-    assert dest == "docs/diagrams/generated-diagrams/demo-app.png"
+    assert dest == "docs/generated-diagrams/demo-app.png"
+
+    dest_new = cloud_workspace_to_gitlab_dest("demo-app", "demo-app/docs/generated-diagrams/demo-app.png")
+    assert dest_new == "docs/generated-diagrams/demo-app.png"
+
+
+def test_cloud_handoff_merge_includes_env_example_and_readme(tmp_path: Path) -> None:
+    feature = "demo-app"
+    cloud_root = tmp_path / feature
+    (cloud_root / "app").mkdir(parents=True)
+    (cloud_root / "app" / "main.py").write_text("# main", encoding="utf-8")
+    (cloud_root / ".env.example").write_text("APP_ENV=test\n", encoding="utf-8")
+    (cloud_root / "README.md").write_text("# Demo\n", encoding="utf-8")
+    handoff = {
+        "writtenFiles": [
+            f"target-apps/{feature}/app/main.py",
+            f"target-apps/{feature}/.env.example",
+            f"target-apps/{feature}/README.md",
+        ]
+    }
+    (cloud_root / "handoffs").mkdir()
+    (cloud_root / "handoffs" / "developer-handoff.json").write_text(
+        __import__("json").dumps(handoff),
+        encoding="utf-8",
+    )
+
+    dests = {dest for _, dest in collect_feature_artifact_entries(feature, root=tmp_path)}
+    assert f"target-apps/{feature}/.env.example" in dests
+    assert f"target-apps/{feature}/README.md" in dests
 
 
 def test_sanitize_publish_content_for_waf_only_on_cloudfront(

@@ -23,13 +23,25 @@ def test_short_model_label_sonnet_and_opus() -> None:
 
 
 def test_run_telemetry_records_usage() -> None:
-    tel = RunTelemetry("developer-agent", target_app="demo-app", model_id="opus-model")
+    tel = RunTelemetry(
+        "developer-agent",
+        target_app="demo-app",
+        model_id="opus-model",
+        run_id="run-123",
+    )
     tel.record_usage({"inputTokens": 100, "outputTokens": 50, "totalTokens": 150})
     data = tel.to_dict()
+    assert data["runId"] == "run-123"
     assert data["inputTokens"] == 100
     assert data["outputTokens"] == 50
     assert data["totalTokens"] == 150
     assert data["modelLabel"] == "opus"
+
+
+def test_run_telemetry_ensure_run_id_from_context() -> None:
+    tel = RunTelemetry("product-agent", target_app="demo-app", model_id="sonnet-model")
+    tel.ensure_run_id({"runId": "uuid-from-context"})
+    assert tel.to_dict()["runId"] == "uuid-from-context"
 
 
 def test_run_telemetry_print_compact() -> None:
@@ -88,3 +100,30 @@ def test_aggregate_pipeline_telemetry(tmp_path: Path, monkeypatch) -> None:
     assert rollup["totals"]["outputTokens"] == 1300
     assert rollup["totals"]["totalTokens"] == 4300
     assert discover_agents_with_telemetry("demo-app") == ["product-agent", "developer-agent"]
+
+
+def test_mirror_to_run_artifacts_injects_run_id(monkeypatch) -> None:
+    import _shared.artifact_store as artifact_store_mod
+    import _shared.telemetry as tel_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_put(run_id: str, rel_path: str, payload: str, **kwargs: object) -> None:
+        captured["run_id"] = run_id
+        captured["rel_path"] = rel_path
+        captured["payload"] = json.loads(payload)
+
+    monkeypatch.setattr(artifact_store_mod, "is_s3_store", lambda: True)
+    monkeypatch.setattr(artifact_store_mod, "put_artifact", fake_put)
+    monkeypatch.setattr(artifact_store_mod, "resolve_run_id", lambda _ctx: "run-abc")
+
+    tel = RunTelemetry("developer-agent", target_app="bug-deduper", model_id="opus-model")
+    tel.record_usage({"inputTokens": 100, "outputTokens": 50})
+    tel.run_id = "run-abc"
+    tel._mirror_to_run_artifacts(json.dumps(tel.to_dict(), indent=2) + "\n")
+
+    assert captured["run_id"] == "run-abc"
+    assert captured["rel_path"] == "bug-deduper/telemetry/developer-agent-telemetry.json"
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["runId"] == "run-abc"

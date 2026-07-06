@@ -57,7 +57,9 @@ export type McpServerName =
   | 'MongoDB'
   | 'Firecrawl'
   | 'AWS Diagram'
-  | 'Terraform';
+  | 'Terraform'
+  | 'Playwright'
+  | 'Postman';
 
 export type McpHealth = 'healthy' | 'degraded' | 'down';
 

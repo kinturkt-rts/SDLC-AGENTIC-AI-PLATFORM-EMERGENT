@@ -1,6 +1,6 @@
 {
   "name": "architect-agent",
-  "description": "Produces AWS architecture PNGs (docs/diagrams/generated-diagrams/) and per-feature solution design (docs/design/<app>.md).",
+  "description": "Produces AWS architecture PNGs (docs/generated-diagrams/) and per-feature solution design (docs/design/<app>.md).",
   "url": "http://127.0.0.1:9102/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

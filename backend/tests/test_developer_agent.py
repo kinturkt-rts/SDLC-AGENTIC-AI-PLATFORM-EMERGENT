@@ -198,3 +198,30 @@ def test_ensure_service_requirements_installed_runs_pip(
     assert ok is True
     assert msg == ""
     assert calls[0][:4] == ["python", "-m", "pip", "install"]
+
+
+def test_ensure_delivery_files_copies_template_seed_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-api"
+    service.mkdir(parents=True)
+    template = tmp_path / "target-apps" / "_template"
+    template.mkdir(parents=True)
+    (template / ".env.example").write_text("APP_ENV=test\n", encoding="utf-8")
+    (template / "README.md").write_text("# Demo API\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_TARGET_APPS", tmp_path / "target-apps")
+    monkeypatch.setattr(mod, "_TEMPLATE_DIR", template)
+    monkeypatch.setattr(mod, "_is_cloud_store", lambda: False)
+
+    written = mod._ensure_delivery_files(
+        "demo-api",
+        ["target-apps/demo-api/app/main.py"],
+        context=None,
+    )
+    assert "target-apps/demo-api/.env.example" in written
+    assert "target-apps/demo-api/README.md" in written
+    assert (service / ".env.example").read_text(encoding="utf-8") == "APP_ENV=test\n"
+    assert (service / "README.md").read_text(encoding="utf-8") == "# Demo API\n"

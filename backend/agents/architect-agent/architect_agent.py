@@ -48,7 +48,7 @@ from strands.multiagent.a2a import A2AServer
 
 AGENT_NAME = "architect-agent"
 A2A_PORT = 9102
-DEFAULT_DIAGRAM_DIR = _REPO_ROOT / "docs" / "diagrams" / "generated-diagrams"
+DEFAULT_DIAGRAM_DIR = _REPO_ROOT / "docs" / "generated-diagrams"
 DEFAULT_DIAGRAM_BASE_NAME = "architecture-diagram"
 
 DEFAULT_PIPELINE_TASK = """\
@@ -548,7 +548,12 @@ def run_task(
     scan_start = time.time()
     design_path: Path | None = None
     target_app = str(context.get("targetApp") or context.get("diagramBaseName") or "").strip() or None
-    telemetry = RunTelemetry(AGENT_NAME, target_app=target_app, model_id=_model_id())
+    telemetry = RunTelemetry(
+        AGENT_NAME,
+        target_app=target_app,
+        model_id=_model_id(),
+        run_id=str(context.get("runId") or context.get("run_id") or "").strip() or None,
+    )
     effective_tools = tools if tools is not None else local_diagram_tools()
     agent = _build_agent(effective_tools, telemetry=telemetry)
     summary = str(agent(_user_message(task, context)))
@@ -571,7 +576,7 @@ def run_task(
         "diagramsSaved": len(saved),
         "designWritten": design_path is not None,
     }
-    telemetry.finalize()
+    telemetry.finalize(context=context)
     return summary, saved, design_path
 
 
@@ -842,7 +847,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        help="Directory for PNG diagrams (default: docs/diagrams/generated-diagrams)",
+        help="Directory for PNG diagrams (default: docs/generated-diagrams)",
     )
     parser.add_argument(
         "--diagram-name",

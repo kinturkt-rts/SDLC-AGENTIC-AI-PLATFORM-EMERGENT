@@ -449,6 +449,52 @@ def run_sql_artifact_keys(run_id: str, feature: str) -> list[str]:
     return found
 
 
+def run_artifact_exists(run_id: str, rel: str) -> bool:
+    """Return True when ``runs/<runId>/<rel>`` exists in the artifact store."""
+    normalized = rel.lstrip("/").replace("\\", "/")
+    if not normalized:
+        return False
+    if is_s3_store():
+        prefix = run_s3_prefix(run_id) + normalized
+        client = _s3_client()
+        try:
+            client.head_object(Bucket=s3_bucket(), Key=prefix)
+            return True
+        except Exception as exc:
+            from botocore.exceptions import ClientError
+
+            if isinstance(exc, ClientError) and exc.response["Error"]["Code"] in {
+                "404",
+                "NoSuchKey",
+                "NotFound",
+            }:
+                return False
+            raise
+    path = repo_root() / "agents" / "pipeline" / "runs" / run_id / normalized
+    return path.is_file()
+
+
+def wait_for_run_artifact(
+    run_id: str,
+    rel: str,
+    *,
+    timeout_sec: float = 180.0,
+    poll_interval_sec: float = 5.0,
+) -> None:
+    """Poll until a run artifact exists or raise TimeoutError."""
+    import time
+
+    normalized = rel.lstrip("/").replace("\\", "/")
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while time.monotonic() < deadline:
+        if run_artifact_exists(run_id, normalized):
+            return
+        time.sleep(max(0.5, poll_interval_sec))
+    raise TimeoutError(
+        f"Timed out after {timeout_sec}s waiting for runs/{run_id}/{normalized}"
+    )
+
+
 def list_run_artifact_keys(run_id: str) -> list[str]:
     """List relative artifact paths under a run prefix."""
     if is_s3_store():

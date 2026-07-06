@@ -614,7 +614,13 @@ def run_prd_from_context(
     ctx_path_rel = pipeline_context_rel_for_app(slug)
     input_text = resolve_input_text(ctx, task=task)
 
-    tel = telemetry or RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+    tel = telemetry or RunTelemetry(
+        AGENT_NAME,
+        target_app=slug,
+        model_id=_model_id(),
+        run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
+    )
+    tel.ensure_run_id(ctx)
     print(f"[product-agent] Generating PRD -> {prd_rel}", file=sys.stderr)
 
     prd_markdown = _generate_prd_from_text(
@@ -644,7 +650,7 @@ def run_prd_from_context(
     tel.extra = {"prdSaved": True, "prdPath": prd_rel, "pipelineContext": ctx_path_rel}
     if run_id:
         tel.extra["runId"] = run_id
-    tel.finalize()
+    tel.finalize(context=ctx)
 
     print(f"[product-agent] PRD: {prd_rel}", file=sys.stderr)
     print(f"[product-agent] Pipeline context: {ctx_path_rel}", file=sys.stderr)
@@ -970,7 +976,12 @@ def main() -> None:
         if run_id:
             run_ctx["runId"] = run_id
 
-        telemetry = RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+        telemetry = RunTelemetry(
+            AGENT_NAME,
+            target_app=slug,
+            model_id=_model_id(),
+            run_id=run_ctx.get("runId"),
+        )
         summary = run_prd_from_context(
             task=args.task or f"Create PRD from {input_rel}",
             context=run_ctx,
@@ -1000,7 +1011,12 @@ def main() -> None:
                 f"[product-agent] Creating Jira backlog (Epic + 5 Stories, title style: {story_title_style})...",
                 file=sys.stderr,
             )
-            jira_telemetry = RunTelemetry(AGENT_NAME, target_app=slug, model_id=_model_id())
+            jira_telemetry = RunTelemetry(
+                AGENT_NAME,
+                target_app=slug,
+                model_id=_model_id(),
+                run_id=run_ctx.get("runId"),
+            )
             print(run_task(jira_task, jira_context, write_allowed=True, telemetry=jira_telemetry))
             jira_telemetry.extra = {"prdSaved": True, "jiraBacklog": True}
             jira_telemetry.finalize()

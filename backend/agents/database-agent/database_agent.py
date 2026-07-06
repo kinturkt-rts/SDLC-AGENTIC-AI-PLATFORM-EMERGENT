@@ -556,7 +556,12 @@ def run_task(
     try:
         with ExitStack() as stack:
             toolset = _build_toolset(stack, use_mongodb=use_mongodb)
-            telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=coding_model_id())
+            telemetry = RunTelemetry(
+                AGENT_NAME,
+                target_app=app,
+                model_id=coding_model_id(),
+                run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
+            )
             agent = _build_agent(toolset, telemetry=telemetry)
             summary = str(agent(_user_message(task, ctx)))
     except MCPClientInitializationError as exc:
@@ -574,7 +579,7 @@ def run_task(
             "Use db_write_file to persist SQL/NoSQL scripts.\n"
         )
     telemetry.extra = {"filesWritten": len(_written_files)}
-    telemetry.finalize()
+    telemetry.finalize(context=ctx)
 
     run_id = resolve_run_id(ctx)
     if run_id:

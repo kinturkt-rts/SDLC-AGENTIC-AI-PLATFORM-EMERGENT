@@ -37,9 +37,15 @@ export function parseLogTerminalStatus(
   if (!log?.trim()) return null;
   const lower = log.toLowerCase();
 
+  const orchestratorStatusSuccess = log.split('\n').some((line) => {
+    const trimmed = line.trim();
+    if (/^\[gitlab-fallback\]/i.test(trimmed)) return false;
+    return /^status:\s*success\b/i.test(trimmed);
+  });
+
   if (
     lower.includes('sdlc pipeline completed') ||
-    /\bstatus:\s*success\b/.test(lower) ||
+    orchestratorStatusSuccess ||
     /\[apply-rds-local\]\s+ok\b/i.test(log) ||
     /\[gitlab\]\s+handoff already exists/i.test(log) ||
     /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log)
@@ -130,11 +136,12 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     return { status: 'completed', currentStep: null };
   }
 
-  // S3 artifact completion takes priority over log-based failure.
-  // The outer HTTP call can time out while the pipeline keeps running in AgentCore;
-  // when that happens the log shows [cloud-invoke] FAILED but S3 has all the artifacts.
+  // All MVP artifacts exist — but not if GitLab was required and never published.
   if (mvpPipelineComplete(input.phaseDone)) {
-    return { status: 'completed', currentStep: null };
+    const skipGitlab = parseLogSkipFlags(input.logText).deploy === true;
+    if (skipGitlab || input.phaseDone.deploy) {
+      return { status: 'completed', currentStep: null };
+    }
   }
 
   if (terminal?.status === 'failed') {

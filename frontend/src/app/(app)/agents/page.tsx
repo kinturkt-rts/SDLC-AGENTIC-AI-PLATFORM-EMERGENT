@@ -41,15 +41,15 @@ export default function AgentsPage() {
     { key: 'role', header: 'Role', className: 'max-w-md', render: (a) => <span className="line-clamp-2 text-muted-foreground">{a.role}</span> },
     {
       key: 'tools',
-      header: 'MCP tools',
+      header: 'Tools',
       render: (a) => {
-        const servers = a.mcpServers.filter((s) => s !== 'Atlassian' && s !== 'AWS Diagram');
+        const items = a.mcpServers.length > 0 ? a.mcpServers : a.mcpTools;
         return (
           <div className="flex flex-wrap gap-1">
-            {servers.slice(0, 2).map((t) => (
+            {items.slice(0, 2).map((t) => (
               <span key={t} className="rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{t}</span>
             ))}
-            {servers.length > 2 ? <span className="text-[11px] text-muted-foreground">+{servers.length - 2}</span> : null}
+            {items.length > 2 ? <span className="text-[11px] text-muted-foreground">+{items.length - 2}</span> : null}
           </div>
         );
       },

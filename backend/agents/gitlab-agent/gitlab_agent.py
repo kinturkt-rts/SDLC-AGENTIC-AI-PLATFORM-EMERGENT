@@ -209,7 +209,14 @@ def run_publish_for_agentcore(
     """Materialize S3 run artifacts (when configured) and publish via MCP — no LLM."""
     import tempfile
 
-    from _shared.artifact_store import is_s3_store, list_run_artifact_keys, materialize_run, put_handoff
+    from _shared.artifact_store import (
+        is_s3_store,
+        list_run_artifact_keys,
+        materialize_run,
+        put_handoff,
+        wait_for_run_artifact,
+    )
+    from _shared.pipeline_context import developer_handoff_rel_for_app, slugify_feature
 
     ctx = dict(context or {})
     rid = (
@@ -222,6 +229,16 @@ def run_publish_for_agentcore(
 
     root: Path | None = None
     if rid and is_s3_store():
+        slug = slugify_feature(target_app)
+        handoff_rel = developer_handoff_rel_for_app(slug)
+        try:
+            wait_for_run_artifact(
+                rid,
+                handoff_rel,
+                timeout_sec=float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "300")),
+            )
+        except TimeoutError:
+            pass
         keys = list_run_artifact_keys(rid)
         root = materialize_run(rid, Path(tempfile.mkdtemp(prefix="sdlc-gitlab-")))
         if not keys:

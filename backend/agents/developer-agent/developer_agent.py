@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -2067,6 +2068,36 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
+_REQUIRED_DELIVERY_FILES = (".env.example", "README.md")
+
+
+def _ensure_delivery_files(
+    app: str,
+    written: list[str],
+    *,
+    context: dict[str, Any] | None,
+) -> list[str]:
+    """Guarantee .env.example and README.md exist and are tracked for publish."""
+    slug = slugify(app)
+    service_dir = _service_dir(slug)
+    prefix = f"target-apps/{slug}/"
+    out = list(written)
+    for name in _REQUIRED_DELIVERY_FILES:
+        rel = f"{prefix}{name}"
+        dest = service_dir / name
+        if not dest.is_file():
+            src = _TEMPLATE_DIR / name
+            if not src.is_file():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        if rel not in out:
+            out.append(rel)
+        if context is not None:
+            write_repo_artifact(_cloud_artifact_rel(rel), dest.read_bytes(), context=context)
+    return _dedupe_preserve_order(out)
+
+
 def _strip_duplicate_handoff_sections(text: str) -> str:
     """Remove file lists and handoff JSON if the model still emitted them."""
     patterns = (
@@ -2317,7 +2348,12 @@ def run_task(
     _run_context = ctx
 
     try:
-        telemetry = RunTelemetry(AGENT_NAME, target_app=app, model_id=_coding_model_id())
+        telemetry = RunTelemetry(
+            AGENT_NAME,
+            target_app=app,
+            model_id=_coding_model_id(),
+            run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
+        )
         agent = _build_agent(ctx, telemetry=telemetry)
         summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
         summary = _append_required_validation(summary, app)
@@ -2325,6 +2361,7 @@ def run_task(
         _run_context = None
 
     written = _dedupe_preserve_order(_written_files)
+    written = _ensure_delivery_files(app, written, context=ctx)
     handoff_rel: str | None = None
     if written:
         has_env_example = any(p.endswith(".env.example") for p in written)
@@ -2355,7 +2392,7 @@ def run_task(
         "filesWritten": len(written),
         "pattern": _select_pattern_keys(ctx) or "all",
     }
-    telemetry.finalize()
+    telemetry.finalize(context=ctx)
 
     run_id = resolve_run_id(ctx)
     if run_id:

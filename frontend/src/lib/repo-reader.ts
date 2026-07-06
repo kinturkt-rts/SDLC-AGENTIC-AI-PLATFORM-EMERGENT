@@ -8,6 +8,7 @@ import {
   runS3Prefix,
   buildS3RunIdByApp,
   getS3RunContext,
+  listS3RunAppEntries,
   listS3ProjectSlugs,
   countS3RunArtifacts,
   getS3RunLastModified,
@@ -195,17 +196,31 @@ interface LiveRunState {
 
 const AGENT_DISPLAY: Record<
   string,
-  { displayName: string; phase: SdlcPhase | null; mcpServers: McpServerName[] }
+  { displayName: string; phase: SdlcPhase | null }
 > = {
-  'orchestrator-agent': { displayName: 'Orchestrator', phase: null, mcpServers: ['GitLab', 'Postgres'] },
-  'product-agent': { displayName: 'Product', phase: 'requirements', mcpServers: ['Atlassian'] },
-  'architect-agent': { displayName: 'Architect', phase: 'architecture', mcpServers: ['AWS Diagram', 'Atlassian'] },
-  'database-agent': { displayName: 'Database', phase: 'data', mcpServers: ['Postgres', 'MongoDB'] },
-  'developer-agent': { displayName: 'Developer', phase: 'implementation', mcpServers: ['GitLab', 'Postgres'] },
-  'qa-agent': { displayName: 'QA', phase: 'qa', mcpServers: ['GitLab'] },
-  'devops-agent': { displayName: 'DevOps', phase: 'deploy', mcpServers: ['Terraform', 'GitLab'] },
-  'gitlab-agent': { displayName: 'GitLab', phase: 'deploy', mcpServers: ['GitLab'] },
-  'security-agent': { displayName: 'Security', phase: 'security', mcpServers: ['GitLab'] },
+  'orchestrator-agent': { displayName: 'Orchestrator', phase: null },
+  'product-agent': { displayName: 'Product', phase: 'requirements' },
+  'architect-agent': { displayName: 'Architect', phase: 'architecture' },
+  'database-agent': { displayName: 'Database', phase: 'data' },
+  'developer-agent': { displayName: 'Developer', phase: 'implementation' },
+  'qa-agent': { displayName: 'QA', phase: 'qa' },
+  'devops-agent': { displayName: 'DevOps', phase: 'deploy' },
+  'gitlab-agent': { displayName: 'GitLab', phase: 'deploy' },
+  'security-agent': { displayName: 'Security', phase: 'security' },
+  'web-crawler-agent': { displayName: 'Web Crawler', phase: 'requirements' },
+};
+
+/** Built-in Strands tools (not MCP) — from agent implementations. */
+const AGENT_BUILTIN_TOOLS: Record<string, string[]> = {
+  'developer-agent': [
+    'dev_read_file',
+    'dev_write_file',
+    'dev_write_files',
+    'dev_scaffold_app',
+    'dev_validate_app',
+    'dev_list_tree',
+  ],
+  'orchestrator-agent': ['pipeline coordination (A2A)'],
 };
 
 /** Phase 1 MVP agents deployed on AgentCore. */
@@ -234,8 +249,53 @@ const MCP_NAME_MAP: Record<string, McpServerName> = {
   MongoDB: 'MongoDB',
   Firecrawl: 'Firecrawl',
   GitLab: 'GitLab',
+  Playwright: 'Playwright',
+  postman: 'Postman',
   terraform: 'Terraform',
 };
+
+function parseUsedByAgent(entry: string): AgentName | null {
+  const match = entry.trim().match(/^([a-z][\w-]*-agent)/);
+  return match ? (match[1] as AgentName) : null;
+}
+
+/** MCP attachments from backend/config/mcp/servers.json (single source of truth). */
+async function mcpServersByAgent(): Promise<Map<AgentName, McpServerName[]>> {
+  const catalog = await readJson<McpCatalog>(repoPath('config', 'mcp', 'servers.json'));
+  const map = new Map<AgentName, McpServerName[]>();
+  if (!catalog?.servers) return map;
+
+  for (const [key, srv] of Object.entries(catalog.servers)) {
+    const mcpName = MCP_NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
+    for (const usedBy of srv.usedBy ?? []) {
+      const agentId = parseUsedByAgent(usedBy);
+      if (!agentId) continue;
+      const list = map.get(agentId) ?? [];
+      if (!list.includes(mcpName)) list.push(mcpName);
+      map.set(agentId, list);
+    }
+  }
+
+  return map;
+}
+
+/** Latest step timestamp per agent from dashboard pipeline runs. */
+async function agentLastRunAtById(): Promise<Map<string, string>> {
+  const runs = await listRuns();
+  const map = new Map<string, string>();
+
+  for (const run of runs) {
+    for (const step of run.steps) {
+      if (!step.agent || step.status === 'queued') continue;
+      const when = step.finishedAt ?? step.startedAt ?? run.finishedAt ?? run.startedAt;
+      if (!when) continue;
+      const prev = map.get(step.agent);
+      if (!prev || when > prev) map.set(step.agent, when);
+    }
+  }
+
+  return map;
+}
 
 function repoPath(...segments: string[]): string {
   return path.join(getBackendRoot(), ...segments);
@@ -962,10 +1022,10 @@ export async function listArtifacts(): Promise<Artifact[]> {
 
 async function listArtifactsUncached(): Promise<Artifact[]> {
   if (isS3Store()) {
-    const s3RunByApp = await buildS3RunIdByApp();
+    const runEntries = await listS3RunAppEntries();
     const artifacts: Artifact[] = [];
 
-    for (const [slug, runId] of s3RunByApp) {
+    for (const { runId, app: slug } of runEntries) {
       const name = slugToTitle(slug);
       const s3Files = await listS3RunArtifacts(runId);
       const prefix = runS3Prefix(runId);
@@ -978,6 +1038,7 @@ async function listArtifactsUncached(): Promise<Artifact[]> {
         const lower = relPath.toLowerCase();
         if (lower.includes('/docs/prd/') || lower.startsWith('docs/prd/')) kind = 'prd';
         else if (lower.includes('/docs/design/') || lower.startsWith('docs/design/')) kind = 'architecture';
+        else if (lower.includes('/docs/generated-diagrams/') || lower.startsWith('docs/generated-diagrams/')) kind = 'diagram';
         else if (lower.includes('/docs/diagrams/') || lower.startsWith('docs/diagrams/')) kind = 'diagram';
         else if (lower.includes('/db/sql/') && lower.endsWith('.sql')) kind = 'migration';
         else if (lower.endsWith('handoff.md')) kind = 'doc';
@@ -996,7 +1057,7 @@ async function listArtifactsUncached(): Promise<Artifact[]> {
         }
 
         artifacts.push({
-          id: `art-${slug}-${base}`,
+          id: `art-${runId.slice(0, 8)}-${relPath.replace(/[^a-zA-Z0-9._-]+/g, '_')}`,
           name: base,
           kind,
           projectId: slug,
@@ -1354,89 +1415,116 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
   return undefined;
 }
 
+function appendContextItemsForRun(
+  items: ContextItem[],
+  slug: string,
+  runId: string | undefined,
+  ctx: PipelineContextFile,
+  updatedAt: string,
+): void {
+  const name = slugToTitle(slug);
+  const idPrefix = runId ? `ctx-${slug}-${runId.slice(0, 8)}` : `ctx-${slug}`;
+
+  if (ctx.productAgentOutput) {
+    items.push({
+      id: `${idPrefix}-product`,
+      projectId: slug,
+      projectSlug: slug,
+      projectName: name,
+      key: 'productAgentOutput',
+      scope: 'project',
+      type: 'document',
+      summary: ctx.productAgentOutput,
+      updatedAt,
+      tokens: Math.ceil(ctx.productAgentOutput.length / 4),
+    });
+  }
+  if (ctx.architectSummary) {
+    items.push({
+      id: `${idPrefix}-architect`,
+      projectId: slug,
+      projectSlug: slug,
+      projectName: name,
+      key: 'architectSummary',
+      scope: 'project',
+      type: 'decision',
+      summary: ctx.architectSummary,
+      updatedAt,
+      tokens: Math.ceil(ctx.architectSummary.length / 4),
+    });
+  }
+  if (ctx.prdPath) {
+    items.push({
+      id: `${idPrefix}-prd`,
+      projectId: slug,
+      projectSlug: slug,
+      projectName: name,
+      key: 'prdPath',
+      scope: 'project',
+      type: 'reference',
+      summary: ctx.prdPath,
+      updatedAt,
+      tokens: 40,
+    });
+  }
+  if (ctx.designDocPath) {
+    items.push({
+      id: `${idPrefix}-design`,
+      projectId: slug,
+      projectSlug: slug,
+      projectName: name,
+      key: 'designDocPath',
+      scope: 'project',
+      type: 'reference',
+      summary: ctx.designDocPath,
+      updatedAt,
+      tokens: 40,
+    });
+  }
+  if (ctx.preferredSqlPath) {
+    items.push({
+      id: `${idPrefix}-sql`,
+      projectId: slug,
+      projectSlug: slug,
+      projectName: name,
+      key: 'preferredSqlPath',
+      scope: 'run',
+      type: 'reference',
+      summary: ctx.preferredSqlPath,
+      updatedAt,
+      tokens: 40,
+    });
+  }
+}
+
 export async function listContextItems(projectSlug?: string): Promise<ContextItem[]> {
-  const s3RunByApp = isS3Store() ? await buildS3RunIdByApp() : undefined;
-  const slugs = projectSlug ? [projectSlug] : await listArtifactProjectSlugs();
   const items: ContextItem[] = [];
 
-  for (const slug of slugs) {
-    const ctx = await resolveContextForSlug(slug, s3RunByApp);
-    if (!ctx) continue;
-    const name = slugToTitle(slug);
-    const runId = s3RunByApp?.get(slug);
-    const updatedAt =
-      isS3Store() && runId ? await getS3RunLastModified(runId) : await latestPipelineMtime(slug);
+  if (isS3Store()) {
+    const allEntries = await listS3RunAppEntries();
+    const runsPerApp = new Map<string, number>();
+    for (const entry of allEntries) {
+      runsPerApp.set(entry.app, (runsPerApp.get(entry.app) ?? 0) + 1);
+    }
 
-    if (ctx.productAgentOutput) {
-      items.push({
-        id: `ctx-${slug}-product`,
-        projectId: slug,
-        projectSlug: slug,
-        projectName: name,
-        key: 'productAgentOutput',
-        scope: 'project',
-        type: 'document',
-        summary: ctx.productAgentOutput,
-        updatedAt,
-        tokens: Math.ceil(ctx.productAgentOutput.length / 4),
-      });
+    const runEntries = projectSlug
+      ? allEntries.filter((entry) => entry.app === projectSlug)
+      : allEntries;
+
+    for (const { runId, app: slug } of runEntries) {
+      const ctx = (await getS3RunContext(runId)) as PipelineContextFile | null;
+      if (!ctx) continue;
+      const runIdForId = (runsPerApp.get(slug) ?? 0) > 1 ? runId : undefined;
+      appendContextItemsForRun(items, slug, runIdForId, ctx, await getS3RunLastModified(runId));
     }
-    if (ctx.architectSummary) {
-      items.push({
-        id: `ctx-${slug}-architect`,
-        projectId: slug,
-        projectSlug: slug,
-        projectName: name,
-        key: 'architectSummary',
-        scope: 'project',
-        type: 'decision',
-        summary: ctx.architectSummary,
-        updatedAt,
-        tokens: Math.ceil(ctx.architectSummary.length / 4),
-      });
-    }
-    if (ctx.prdPath) {
-      items.push({
-        id: `ctx-${slug}-prd`,
-        projectId: slug,
-        projectSlug: slug,
-        projectName: name,
-        key: 'prdPath',
-        scope: 'project',
-        type: 'reference',
-        summary: ctx.prdPath,
-        updatedAt,
-        tokens: 40,
-      });
-    }
-    if (ctx.designDocPath) {
-      items.push({
-        id: `ctx-${slug}-design`,
-        projectId: slug,
-        projectSlug: slug,
-        projectName: name,
-        key: 'designDocPath',
-        scope: 'project',
-        type: 'reference',
-        summary: ctx.designDocPath,
-        updatedAt,
-        tokens: 40,
-      });
-    }
-    if (ctx.preferredSqlPath) {
-      items.push({
-        id: `ctx-${slug}-sql`,
-        projectId: slug,
-        projectSlug: slug,
-        projectName: name,
-        key: 'preferredSqlPath',
-        scope: 'run',
-        type: 'reference',
-        summary: ctx.preferredSqlPath,
-        updatedAt,
-        tokens: 40,
-      });
-    }
+    return items;
+  }
+
+  const slugs = projectSlug ? [projectSlug] : await listArtifactProjectSlugs();
+  for (const slug of slugs) {
+    const ctx = await readContextFile(slug);
+    if (!ctx) continue;
+    appendContextItemsForRun(items, slug, undefined, ctx, await latestPipelineMtime(slug));
   }
 
   return items;
@@ -1466,13 +1554,14 @@ export async function listAgents(): Promise<Agent[]> {
   const registry = await readJson<AgentRegistry>(repoPath('a2a', 'agent-registry.json'));
   if (!registry?.agents) return [];
 
+  const [mcpByAgent, lastRunByAgent] = await Promise.all([mcpServersByAgent(), agentLastRunAtById()]);
+
   const agents: Agent[] = [];
   for (const [id, entry] of Object.entries(registry.agents)) {
     const card = await readJson<AgentCard>(repoPath('a2a', 'agent-cards', `${id}.json`));
     const meta = AGENT_DISPLAY[id] ?? {
       displayName: slugToTitle(id.replace(/-agent$/, '')),
       phase: null,
-      mcpServers: [] as McpServerName[],
     };
     const skills = card?.skills?.map((s) => s.name) ?? [];
     agents.push({
@@ -1481,11 +1570,11 @@ export async function listAgents(): Promise<Agent[]> {
       displayName: meta.displayName,
       role: card?.description ?? `${meta.displayName} specialist agent`,
       skills,
-      mcpTools: [],
-      mcpServers: meta.mcpServers,
+      mcpTools: AGENT_BUILTIN_TOOLS[id] ?? [],
+      mcpServers: mcpByAgent.get(id as AgentName) ?? [],
       port: entry.port,
       availability: resolveAgentAvailability(id),
-      lastRunAt: null,
+      lastRunAt: lastRunByAgent.get(id) ?? null,
       phase: meta.phase,
     });
   }

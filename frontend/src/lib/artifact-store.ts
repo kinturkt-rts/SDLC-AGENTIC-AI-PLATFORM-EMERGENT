@@ -166,6 +166,7 @@ export function isSkippableS3ArtifactRelPath(relPath: string): boolean {
   if (relPath === 'context.json' || relPath.endsWith('/context.json')) return true;
   if (relPath.includes('/inputs/') || relPath.startsWith('inputs/')) return true;
   if (relPath.includes('/handoffs/') && relPath.endsWith('.json')) return true;
+  if (relPath.includes('/telemetry/') && relPath.endsWith('.json')) return true;
   if (relPath.startsWith('agents/pipeline/') && relPath.endsWith('.context.json')) return true;
   return false;
 }
@@ -284,6 +285,36 @@ export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
   }
 
   return new Map([...latest.entries()].map(([app, value]) => [app, value.runId]));
+}
+
+export interface S3RunAppEntry {
+  runId: string;
+  app: string;
+  latestModifiedMs: number;
+}
+
+/** Every S3 run folder with an inferred target app (not just the newest per app). */
+export async function listS3RunAppEntries(): Promise<S3RunAppEntry[]> {
+  if (!isS3Store()) return [];
+
+  const index = await getS3RunArtifactIndex();
+  const entries: S3RunAppEntry[] = [];
+
+  for (const [runId, files] of index) {
+    const app = inferAppFromRunFiles(runId, files);
+    if (!app) continue;
+    entries.push({ runId, app, latestModifiedMs: latestModifiedMs(files) });
+  }
+
+  return entries.sort((a, b) => b.latestModifiedMs - a.latestModifiedMs);
+}
+
+/** All run ids for a target app, newest activity first. */
+export async function listS3RunIdsForApp(targetApp: string): Promise<string[]> {
+  const slug = slugifyApp(targetApp);
+  return (await listS3RunAppEntries())
+    .filter((entry) => entry.app === slug)
+    .map((entry) => entry.runId);
 }
 
 /** Project slugs discovered from S3 runs only (newest run per app). */
