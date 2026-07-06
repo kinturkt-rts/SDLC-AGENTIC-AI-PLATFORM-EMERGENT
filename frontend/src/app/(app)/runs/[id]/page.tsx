@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   Workflow,
+  PlayCircle,
   CheckCircle2,
   Loader2,
   Clock,
