@@ -10,7 +10,7 @@
     "agents/pipeline/inventory-app.gitlab-handoff.json",
     "docs/PRD/inventory-app.md",
     "docs/design/inventory-app.md",
-    "docs/diagrams/generated-diagrams/inventory-app.png",
+    "docs/generated-diagrams/inventory-app.png",
     "target-apps/inventory-app/.env.example",
     "target-apps/inventory-app/.gitignore",
     "target-apps/inventory-app/README.md",

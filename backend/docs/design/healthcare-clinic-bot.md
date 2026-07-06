@@ -2,7 +2,7 @@
 
 ## 1. Summary
 A Streamlit + FastAPI demo chatbot that answers clinic FAQ questions grounded in Postgres-stored entries via AWS Bedrock. Single-clinic MVP; no HIPAA scope, no booking integrations, no vector DB. TBD: Bedrock model selection, exact disclaimer wording, FAQ relevance threshold.
-`Diagram: docs/diagrams/generated-diagrams/healthcare-clinic-bot.png`
+`Diagram: docs/generated-diagrams/healthcare-clinic-bot.png`
 
 ## 2. Stack
 | Layer | Technology |

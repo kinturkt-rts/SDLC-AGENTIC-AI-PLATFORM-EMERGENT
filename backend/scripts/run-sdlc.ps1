@@ -427,7 +427,7 @@ if (-not $SkipArchitect) {
         "--task", "$Feature MVP"
     )) -ne 0) { throw "architect-agent failed" }
     $pipelineAgentsRun += "architect-agent"
-    $png = "docs/diagrams/generated-diagrams/$Feature.png"
+    $png = "docs/generated-diagrams/$Feature.png"
     if (-not (Test-Path $png)) { Write-Warning "Diagram missing: $png" }
     $designRel = "docs/design/$Feature.md"
     if (-not (Test-Path $designRel)) { throw "design doc not found: $designRel" }
@@ -435,7 +435,7 @@ if (-not $SkipArchitect) {
     Invoke-DeliveryVerify -Stage design
 }
 else {
-    Update-Context @{ diagramPaths = @("docs/diagrams/generated-diagrams/$Feature.png") }
+    Update-Context @{ diagramPaths = @("docs/generated-diagrams/$Feature.png") }
 }
 
 # 2b) Web crawler (optional)
@@ -542,7 +542,7 @@ Write-Host "`n[pipeline] Done. Artifacts:" -ForegroundColor Cyan
 Write-Host "  PRD:     docs/PRD/$Feature.md"
 if ($WithJira) { Write-Host "  Jira:    Epic + stories in project $JiraProject (see product-agent output for keys)" }
 Write-Host "  Design:  docs/design/$Feature.md"
-Write-Host "  Diagram: docs/diagrams/generated-diagrams/$Feature.png"
+Write-Host "  Diagram: docs/generated-diagrams/$Feature.png"
 if (-not $SkipDb) {
     Write-Host "  DB:      target-apps/$Feature/db/"
     if ($applyPostgres) { Write-Host "  RDS:     applied via apply_sql_to_rds.py" }

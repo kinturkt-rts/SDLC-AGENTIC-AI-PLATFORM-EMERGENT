@@ -6,7 +6,7 @@
   "designDocPath": "docs/design/expense-tracker.md",
   "prdPath": "docs/PRD/expense-tracker.md",
   "diagramPaths": [
-    "docs/diagrams/generated-diagrams/expense-tracker.png"
+    "docs/generated-diagrams/expense-tracker.png"
   ],
   "deliveryProfile": {
     "uiRequired": false,
@@ -19,5 +19,5 @@
   "diagramOutputDir": "/tmp/generated-diagrams",
   "diagramBaseName": "expense-tracker",
   "diagramOutputFile": "/tmp/generated-diagrams/expense-tracker",
-  "architectSummary": "Internal REST API for submitting, approving, and reporting on employee business expenses with multi-currency support. Postgres stores all monetary values as `NUMERIC(18,4)`; FX conversion is snapshot-based and immutable at submit time. Auth uses per-employee Bearer tokens and scoped API keys (manager/admin) \u2014 no JWT, no UI.\nDiagram: `docs/diagrams/generated-diagrams/expense-tracker.png`\nTBD: token provisioning flow (Open Q-1); manager team-scope restriction (Open Q-4)."
+  "architectSummary": "Internal REST API for submitting, approving, and reporting on employee business expenses with multi-currency support. Postgres stores all monetary values as `NUMERIC(18,4)`; FX conversion is snapshot-based and immutable at submit time. Auth uses per-employee Bearer tokens and scoped API keys (manager/admin) \u2014 no JWT, no UI.\nDiagram: `docs/generated-diagrams/expense-tracker.png`\nTBD: token provisioning flow (Open Q-1); manager team-scope restriction (Open Q-4)."
 }

@@ -2,7 +2,7 @@
 
 ## 1. Summary
 Centralises course catalog, employee roster, and completion records for a single org; derives real-time compliance status (current / expired / missing) per employee. Primary DB is PostgreSQL via SQLAlchemy; API is FastAPI REST (JWT-gated); Streamlit provides four role-gated UI screens.
-Diagram: `docs/diagrams/generated-diagrams/training-compliance.png`
+Diagram: `docs/generated-diagrams/training-compliance.png`
 TBD: identity provider (JWT local auth assumed); validity period unit; expiring-soon window configurability.
 
 ## 2. Stack

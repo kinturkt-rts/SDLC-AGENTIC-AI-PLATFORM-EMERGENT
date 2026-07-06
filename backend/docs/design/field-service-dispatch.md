@@ -1,7 +1,7 @@
 # Field Service Dispatch — Solution Design
 
 ## 1. Summary
-FastAPI REST service + Streamlit UI replacing whiteboard dispatch for a 15-tech HVAC shop. PostgreSQL (prod) / SQLite (dev) via SQLAlchemy; JWT RBAC for Dispatcher, Technician, Owner roles. Diagram: `docs/diagrams/generated-diagrams/field-service-dispatch.png`
+FastAPI REST service + Streamlit UI replacing whiteboard dispatch for a 15-tech HVAC shop. PostgreSQL (prod) / SQLite (dev) via SQLAlchemy; JWT RBAC for Dispatcher, Technician, Owner roles. Diagram: `docs/generated-diagrams/field-service-dispatch.png`
 TBD: SLA breach threshold hour (FR-7); skill enum list (FR-3); parts-post-completion lock confirmation.
 
 ## 2. Stack

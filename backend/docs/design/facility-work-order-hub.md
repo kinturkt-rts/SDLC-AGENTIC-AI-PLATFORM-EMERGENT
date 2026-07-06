@@ -1,7 +1,7 @@
 # Facility Work Order Hub — Solution Design
 
 ## 1. Summary
-Internal facility management REST API (FastAPI) with a Streamlit front-end for creating, assigning, and tracking maintenance work orders across multi-site portfolios. Primary store is PostgreSQL; auth is JWT Bearer (PyJWT, 60-min TTL). Diagram: `docs/diagrams/generated-diagrams/facility-work-order-hub.png`
+Internal facility management REST API (FastAPI) with a Streamlit front-end for creating, assigning, and tracking maintenance work orders across multi-site portfolios. Primary store is PostgreSQL; auth is JWT Bearer (PyJWT, 60-min TTL). Diagram: `docs/generated-diagrams/facility-work-order-hub.png`
 TBD: deployment target (Docker Compose vs. PaaS); JWT TTL for production; technician concurrent-order cap.
 
 ## 2. Stack

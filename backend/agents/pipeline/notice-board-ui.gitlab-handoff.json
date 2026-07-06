@@ -11,7 +11,7 @@
     "agents/pipeline/notice-board-ui.gitlab-handoff.json",
     "docs/PRD/notice-board-ui.md",
     "docs/design/notice-board-ui.md",
-    "docs/diagrams/generated-diagrams/notice-board-ui.png",
+    "docs/generated-diagrams/notice-board-ui.png",
     "target-apps/notice-board-ui/.env.example",
     "target-apps/notice-board-ui/.gitignore",
     "target-apps/notice-board-ui/README.md",

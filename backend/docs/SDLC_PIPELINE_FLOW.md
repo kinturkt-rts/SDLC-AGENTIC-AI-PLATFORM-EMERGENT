@@ -10,7 +10,7 @@ Each specialist agent is a **Strands Agent** on Amazon Bedrock with MCP tools. A
 
 | Layer | Role |
 |-------|------|
-| **Files (source of truth)** | `docs/PRD/<app>.md`, `docs/design/<app>.md`, `docs/diagrams/generated-diagrams/<app>.png`, `target-apps/<app>/db/sql/`, FastAPI code under `target-apps/<app>/` |
+| **Files (source of truth)** | `docs/PRD/<app>.md`, `docs/design/<app>.md`, `docs/generated-diagrams/<app>.png`, `target-apps/<app>/db/sql/`, FastAPI code under `target-apps/<app>/` |
 | **Pipeline JSON (pointers)** | `targetApp`, `prdPath`, `designDocPath`, `diagramPaths`, `productAgentOutput`, `architectSummary`, optional `dbOutputDir` / `preferredSqlPath` |
 | **Discovery** | Architect, database, and developer agents **auto-load** `agents/pipeline/<target-app>.context.json` when `--target-app` is set (unless `--no-auto-context`) |
 | **Explicit handoff** | `--context-file agents/pipeline/<app>.context.json` (recommended on PowerShell instead of `--context-json`) |
@@ -43,7 +43,7 @@ flowchart TB
     PRD[(docs/PRD/app.md)]
     CTX[(agents/pipeline/app.context.json)]
     ARCH[architect-agent]
-    PNG[(docs/diagrams/generated-diagrams/app.png)]
+    PNG[(docs/generated-diagrams/app.png)]
     DES[(docs/design/app.md)]
     WC[web-crawler-agent optional]
     DB[database-agent]
@@ -121,7 +121,7 @@ flowchart TB
 
 - **Input:** PRD + context (`prdPath`, `productAgentOutput`, `targetApp`)
 - **Output:**
-  - Diagram → `docs/diagrams/generated-diagrams/<app>.png` (AWS Diagram MCP)
+  - Diagram → `docs/generated-diagrams/<app>.png` (AWS Diagram MCP)
   - Solution design → `docs/design/<app>.md` (design-writer sub-step)
   - Context updated with `designDocPath`, `diagramPaths`, `architectSummary` (via `run-sdlc.ps1` or manual JSON edit)
 - **Purpose:** Technical approach, stack, APIs, and data boundaries before build

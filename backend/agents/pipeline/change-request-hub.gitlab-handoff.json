@@ -10,7 +10,7 @@
     "agents/pipeline/change-request-hub.developer-handoff.json",
     "docs/PRD/change-request-hub.md",
     "docs/design/change-request-hub.md",
-    "docs/diagrams/generated-diagrams/change-request-hub.png",
+    "docs/generated-diagrams/change-request-hub.png",
     "target-apps/change-request-hub/.env.example",
     "target-apps/change-request-hub/.gitignore",
     "target-apps/change-request-hub/README.md",

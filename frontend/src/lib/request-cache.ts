@@ -18,6 +18,8 @@ export async function cachedAsync<T>(key: string, ttlMs: number, fn: () => Promi
     })
     .catch((err) => {
       inflight.delete(key);
+      // Serve last good value when S3/network blips instead of failing every waiter.
+      if (hit) return hit.value as T;
       throw err;
     });
 

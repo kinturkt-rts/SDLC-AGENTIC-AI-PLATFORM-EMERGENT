@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for bug-deduper MVP requirements.",
     "targetApp":  "bug-deduper",
     "prdPath":  "docs/PRD/bug-deduper.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/bug-deduper.png"
+                         "docs/generated-diagrams/bug-deduper.png"
                      ]
 }

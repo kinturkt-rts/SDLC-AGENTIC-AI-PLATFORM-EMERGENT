@@ -11,7 +11,7 @@
     "agents/pipeline/support-knowledge-hub.gitlab-handoff.json",
     "docs/PRD/support-knowledge-hub.md",
     "docs/design/support-knowledge-hub.md",
-    "docs/diagrams/generated-diagrams/support-knowledge-hub.png",
+    "docs/generated-diagrams/support-knowledge-hub.png",
     "target-apps/support-knowledge-hub/.env.example",
     "target-apps/support-knowledge-hub/.gitignore",
     "target-apps/support-knowledge-hub/README.md",

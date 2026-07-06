@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for facility-work-order-hub MVP requirements.",
     "targetApp":  "facility-work-order-hub",
     "prdPath":  "docs/PRD/facility-work-order-hub.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/facility-work-order-hub.png"
+                         "docs/generated-diagrams/facility-work-order-hub.png"
                      ]
 }

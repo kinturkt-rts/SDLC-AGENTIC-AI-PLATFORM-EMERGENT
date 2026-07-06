@@ -4,7 +4,7 @@
   "prdPath": "docs/PRD/client-project-portal.md",
   "designDocPath": "docs/design/client-project-portal.md",
   "diagramPaths": [
-    "docs/diagrams/generated-diagrams/client-project-portal.png"
+    "docs/generated-diagrams/client-project-portal.png"
   ],
   "deliveryProfile": {
     "uiRequired": true,

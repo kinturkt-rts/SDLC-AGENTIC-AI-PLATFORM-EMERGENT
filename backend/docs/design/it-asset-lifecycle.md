@@ -1,7 +1,7 @@
 # IT Asset Lifecycle — Solution Design
 
 ## 1. Summary
-Full asset lifecycle management (procurement → assignment → maintenance → retirement) for IT Ops and Finance personas. PostgreSQL via SQLAlchemy; FastAPI REST backend; Streamlit role-gated UI. Diagram: `docs/diagrams/generated-diagrams/it-asset-lifecycle.png`
+Full asset lifecycle management (procurement → assignment → maintenance → retirement) for IT Ops and Finance personas. PostgreSQL via SQLAlchemy; FastAPI REST backend; Streamlit role-gated UI. Diagram: `docs/generated-diagrams/it-asset-lifecycle.png`
 TBD: deployment env, key-rotation procedure, pagination on list endpoints, retention policy for `assignment_history`.
 
 ## 2. Stack

@@ -3,7 +3,7 @@
 ## 1. Summary
 Internal knowledge hub enabling employees to search articles semantically, contributors to author with duplicate-awareness, and admins to manage categories, pins, and analytics. Primary DB: PostgreSQL + pgvector. API style: REST (FastAPI). Auth: JWT Bearer with role in payload.
 TBD: chunk size strategy (512-token assumed), gap analytics threshold, pinning-limit eviction policy.
-Diagram: `docs/diagrams/generated-diagrams/support-knowledge-hub.png`
+Diagram: `docs/generated-diagrams/support-knowledge-hub.png`
 
 ## 2. Stack
 | Layer | Technology | Notes |

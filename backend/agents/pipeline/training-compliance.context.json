@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for training-compliance MVP requirements.",
     "targetApp":  "training-compliance",
     "prdPath":  "docs/PRD/training-compliance.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/training-compliance.png"
+                         "docs/generated-diagrams/training-compliance.png"
                      ]
 }

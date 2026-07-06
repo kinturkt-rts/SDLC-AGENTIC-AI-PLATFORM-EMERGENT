@@ -1,7 +1,7 @@
 # Platform Desk (Runbook Vector Desk) — Solution Design
 
 ## 1. Summary
-Runbook Vector Desk is an internal SRE operations tool that ingests structured runbooks (decomposed into ordered steps), embeds step body text for semantic search, and exposes a role-gated on-call console. FastAPI serves all business logic and RBAC; Postgres stores structured metadata; ChromaDB (local) holds vector embeddings; Streamlit provides the UI. TBD: confidence-score threshold value, one-liner summary generation mechanism (excerpt vs. LLM). Diagram: `docs/diagrams/generated-diagrams/platform-desk.png`
+Runbook Vector Desk is an internal SRE operations tool that ingests structured runbooks (decomposed into ordered steps), embeds step body text for semantic search, and exposes a role-gated on-call console. FastAPI serves all business logic and RBAC; Postgres stores structured metadata; ChromaDB (local) holds vector embeddings; Streamlit provides the UI. TBD: confidence-score threshold value, one-liner summary generation mechanism (excerpt vs. LLM). Diagram: `docs/generated-diagrams/platform-desk.png`
 
 ---
 

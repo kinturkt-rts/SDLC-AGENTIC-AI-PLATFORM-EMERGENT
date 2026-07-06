@@ -12,7 +12,7 @@ Legacy single file `docs/design/design.md` may still exist from older runs; new 
 |-------|-----------|---------------------|-----------|
 | **database-agent** | `db_read_file(designDocPath)` | **§3 Data model**, **§6 DB delivery** | `targetApp` → writes `target-apps/<app>/db/sql/` |
 | **developer-agent** | `dev_read_file(designDocPath)` | **§4 API surface**, **§5 Rules** | `targetApp` → writes `target-apps/<app>/` |
-| Humans | Editor | §1–2 overview | PNG in `docs/diagrams/generated-diagrams/`, PRD in `docs/PRD/` |
+| Humans | Editor | §1–2 overview | PNG in `docs/generated-diagrams/`, PRD in `docs/PRD/` |
 
 The **PNG diagram** is not fed into the model as image bytes — only the file path appears in context. Agents rely on **design.md tables** for schemas and APIs.
 

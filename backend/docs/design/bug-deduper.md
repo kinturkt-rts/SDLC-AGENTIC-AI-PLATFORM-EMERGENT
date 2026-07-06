@@ -2,7 +2,7 @@
 
 ## 1. Summary
 FastAPI service (`target-apps/bug-deduper/`) that accepts bug reports, embeds descriptions via AWS Bedrock Titan, and detects near-duplicate open bugs using pgvector cosine similarity. Postgres stores bug records and embedding vectors; Streamlit provides the analyst UI. TBD: Bedrock Titan embedding dimension (assumed 1536); API key storage mechanism (env vs. DB table).
-Diagram: `docs/diagrams/generated-diagrams/bug-deduper.png`
+Diagram: `docs/generated-diagrams/bug-deduper.png`
 
 ## 2. Stack
 | Layer | Technology | Path / Notes |

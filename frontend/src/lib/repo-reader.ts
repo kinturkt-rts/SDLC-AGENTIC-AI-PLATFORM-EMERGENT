@@ -281,7 +281,13 @@ async function mcpServersByAgent(): Promise<Map<AgentName, McpServerName[]>> {
 
 /** Latest step timestamp per agent from dashboard pipeline runs. */
 async function agentLastRunAtById(): Promise<Map<string, string>> {
-  const runs = await listRuns();
+  let runs: PipelineRun[];
+  try {
+    runs = await listRuns();
+  } catch (err) {
+    console.warn('[agentLastRunAtById] listRuns failed:', err);
+    return new Map();
+  }
   const map = new Map<string, string>();
 
   for (const run of runs) {
@@ -1296,26 +1302,30 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
   const coveredRunIds = new Set(uuidRuns.map((r) => r.id));
 
   if (isS3Store()) {
-    await getS3RunArtifactIndex();
-    const s3RunByApp = await buildS3RunIdByApp();
-    for (const [slug, runId] of s3RunByApp) {
-      if (coveredRunIds.has(runId)) continue;
-      const live = await readUuidRunState(runId);
-      if (live) {
-        runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
-      } else {
-        runs.push(
-          await buildPipelineRunFromLive(slug, {
-            runId,
-            feature: slug,
-            targetApp: slug,
-            status: 'completed',
-            triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
-            startedAt: await getS3RunLastModified(runId),
-          }),
-        );
+    try {
+      await getS3RunArtifactIndex();
+      const s3RunByApp = await buildS3RunIdByApp();
+      for (const [slug, runId] of s3RunByApp) {
+        if (coveredRunIds.has(runId)) continue;
+        const live = await readUuidRunState(runId);
+        if (live) {
+          runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
+        } else {
+          runs.push(
+            await buildPipelineRunFromLive(slug, {
+              runId,
+              feature: slug,
+              targetApp: slug,
+              status: 'completed',
+              triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
+              startedAt: await getS3RunLastModified(runId),
+            }),
+          );
+        }
+        coveredRunIds.add(runId);
       }
-      coveredRunIds.add(runId);
+    } catch (err) {
+      console.warn('[listRuns] S3 enrichment failed, using local run.json only:', err);
     }
     return filterUserPipelineRuns(runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   }

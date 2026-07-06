@@ -3,6 +3,6 @@
   "prdPath": "docs/PRD/library-catalog.md",
   "designDocPath": "docs/design/library-catalog.md",
   "diagramPaths": [
-    "docs/diagrams/generated-diagrams/library-catalog.png"
+    "docs/generated-diagrams/library-catalog.png"
   ]
 }

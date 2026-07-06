@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for change-request-hub MVP requirements.",
     "targetApp":  "change-request-hub",
     "prdPath":  "docs/PRD/change-request-hub.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/change-request-hub.png"
+                         "docs/generated-diagrams/change-request-hub.png"
                      ]
 }

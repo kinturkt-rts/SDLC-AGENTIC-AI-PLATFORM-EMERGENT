@@ -187,7 +187,7 @@ runs/<runId>/<slug>/
   inputs/<slug>.txt
   docs/PRD/<slug>.md
   docs/design/<slug>.md
-  docs/diagrams/<slug>.png
+  docs/generated-diagrams/<slug>.png
   db/sql/*.sql
   db/HANDOFF.md
   handoffs/gitlab-handoff.json

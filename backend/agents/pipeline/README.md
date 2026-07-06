@@ -51,7 +51,7 @@ After architect, `run-sdlc.ps1` (or you) should set `diagramPaths` and confirm `
   "prdPath": "docs/PRD/finops-web-app.md",
   "productAgentOutput": "Short MVP summary for the LLM (2-4 sentences).",
   "designDocPath": "docs/design/finops-web-app.md",
-  "diagramPaths": ["docs/diagrams/generated-diagrams/finops-web-app.png"],
+  "diagramPaths": ["docs/generated-diagrams/finops-web-app.png"],
   "architectSummary": "Optional; auto-filled from design §1 if omitted.",
   "dbOutputDir": "target-apps/finops-web-app/db",
   "preferredSqlPath": "target-apps/finops-web-app/db/sql"

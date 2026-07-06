@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for field-service-dispatch MVP requirements.",
     "targetApp":  "field-service-dispatch",
     "prdPath":  "docs/PRD/field-service-dispatch.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/field-service-dispatch.png"
+                         "docs/generated-diagrams/field-service-dispatch.png"
                      ]
 }

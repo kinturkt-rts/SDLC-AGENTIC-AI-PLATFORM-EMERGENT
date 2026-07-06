@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for it-asset-lifecycle MVP requirements.",
     "targetApp":  "it-asset-lifecycle",
     "prdPath":  "docs/PRD/it-asset-lifecycle.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/it-asset-lifecycle.png"
+                         "docs/generated-diagrams/it-asset-lifecycle.png"
                      ]
 }

@@ -10,7 +10,7 @@
     "agents/pipeline/training-compliance.developer-handoff.json",
     "docs/PRD/training-compliance.md",
     "docs/design/training-compliance.md",
-    "docs/diagrams/generated-diagrams/training-compliance.png",
+    "docs/generated-diagrams/training-compliance.png",
     "target-apps/training-compliance/.env.example",
     "target-apps/training-compliance/.gitignore",
     "target-apps/training-compliance/README.md",

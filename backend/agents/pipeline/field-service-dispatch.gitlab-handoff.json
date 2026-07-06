@@ -10,7 +10,7 @@
     "agents/pipeline/field-service-dispatch.developer-handoff.json",
     "docs/PRD/field-service-dispatch.md",
     "docs/design/field-service-dispatch.md",
-    "docs/diagrams/generated-diagrams/field-service-dispatch.png",
+    "docs/generated-diagrams/field-service-dispatch.png",
     "target-apps/field-service-dispatch/.env.example",
     "target-apps/field-service-dispatch/.gitignore",
     "target-apps/field-service-dispatch/README.md",

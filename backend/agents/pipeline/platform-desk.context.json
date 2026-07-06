@@ -13,6 +13,6 @@
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/platform-desk.png"
+                         "docs/generated-diagrams/platform-desk.png"
                      ]
 }

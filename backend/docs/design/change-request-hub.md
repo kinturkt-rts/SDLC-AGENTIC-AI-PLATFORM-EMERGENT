@@ -2,7 +2,7 @@
 
 ## 1. Summary
 Role-aware change management web app: requesters draft changes, managers approve/schedule, implementers execute, leadership reads dashboards. Primary DB is PostgreSQL; API is FastAPI REST (`/api/v1/`); Streamlit is the sole UI. JWT Bearer auth (HS256); append-only audit tables enforced at application layer.
-`Diagram: docs/diagrams/generated-diagrams/change-request-hub.png`
+`Diagram: docs/generated-diagrams/change-request-hub.png`
 TBD: JWT algorithm for production (HS256 assumed), sub-path vs body-driven status transitions, emergency re-approval policy.
 
 ## 2. Stack

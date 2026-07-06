@@ -3,6 +3,6 @@
   "prdPath": "docs/PRD/pr-diff-summarizer.md",
   "designDocPath": "docs/design/pr-diff-summarizer.md",
   "diagramPaths": [
-    "docs/diagrams/generated-diagrams/pr-diff-summarizer.png"
+    "docs/generated-diagrams/pr-diff-summarizer.png"
   ]
 }

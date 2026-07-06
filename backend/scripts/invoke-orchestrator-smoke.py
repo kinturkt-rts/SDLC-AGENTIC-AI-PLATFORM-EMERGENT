@@ -195,7 +195,12 @@ def _reconcile_run_steps(run_id: str, app: str, skip_gitlab: bool) -> None:
     # Detect which agent artifacts exist in S3
     has_prd = has(f"{slug}/docs/prd/") or has("docs/prd/")
     has_design = has(f"{slug}/docs/design/") or has("docs/design/")
-    has_diagram = has(f"{slug}/docs/diagrams/") or has("docs/diagrams/")
+    has_diagram = (
+        has(f"{slug}/docs/generated-diagrams/")
+        or has("docs/generated-diagrams/")
+        or has(f"{slug}/docs/diagrams/")
+        or has("docs/diagrams/")
+    )
     has_sql = has(f"{slug}/db/sql/") or has("db/sql/")
     has_code = has(f"{slug}/app/") or has(f"{slug}/main.py")
     gitlab_status = _gitlab_handoff_status(run_id)

@@ -3,7 +3,7 @@
   "prdPath": "docs/PRD/jwt-rag-streamlit.md",
   "designDocPath": "docs/design/jwt-rag-streamlit.md",
   "diagramPaths": [
-    "docs/diagrams/generated-diagrams/jwt-rag-streamlit.png"
+    "docs/generated-diagrams/jwt-rag-streamlit.png"
   ],
   "deliveryProfile": {
     "uiRequired": true,

@@ -1,4 +1,4 @@
-﻿{
+{
     "productAgentOutput":  "See prdPath for desk-booking MVP requirements.",
     "targetApp":  "desk-booking",
     "prdPath":  "docs/PRD/desk-booking.md",
@@ -13,6 +13,6 @@
                             "requiresStreamlit":  false
                         },
     "diagramPaths":  [
-                         "docs/diagrams/generated-diagrams/desk-booking.png"
+                         "docs/generated-diagrams/desk-booking.png"
                      ]
 }

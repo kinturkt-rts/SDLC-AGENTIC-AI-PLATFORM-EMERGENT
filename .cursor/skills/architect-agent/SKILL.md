@@ -9,7 +9,7 @@ description: Produces architecture diagrams (AWS Diagram MCP), per-feature docs/
 
 Designs system architecture:
 
-1. **PNG diagram** via AWS Diagram MCP → `docs/diagrams/generated-diagrams/`
+1. **PNG diagram** via AWS Diagram MCP → `docs/generated-diagrams/`
 2. **Solution design** → `docs/design/<target-app>.md` (handoff for database-agent + developer-agent)
 3. Short **ADR** bullets in the terminal response
 
@@ -29,7 +29,7 @@ Designs system architecture:
   "productAgentOutput": "...",
   "designDocPath": "docs/design/finops-web-app.md",
   "architectSummary": "<section 1 excerpt>",
-  "diagramPaths": ["docs/diagrams/generated-diagrams/my-feature.png"],
+  "diagramPaths": ["docs/generated-diagrams/my-feature.png"],
   "targetApp": "my-service"
 }
 ```

@@ -53,5 +53,5 @@ python agents/developer-agent/developer_agent.py `
 python agents/developer-agent/developer_agent.py `
   --no-auto-context `
   --target-app checkout-api `
-  --context-json '{"jiraKey":"ASAAP-CHECKOUT","productAgentOutput":"Checkout: validate cart, process payment, confirm order.","architectSummary":"API Gateway -> Lambda -> DynamoDB","diagramPaths":["docs/diagrams/generated-diagrams/checkout-flow-test.png"]}' `
+  --context-json '{"jiraKey":"ASAAP-CHECKOUT","productAgentOutput":"Checkout: validate cart, process payment, confirm order.","architectSummary":"API Gateway -> Lambda -> DynamoDB","diagramPaths":["docs/generated-diagrams/checkout-flow-test.png"]}' `
   --task "Create FastAPI skeleton for checkout-api: routers for validate, pay, confirm stubs returning 501 with TODO and Pydantic models. Add README with run instructions."

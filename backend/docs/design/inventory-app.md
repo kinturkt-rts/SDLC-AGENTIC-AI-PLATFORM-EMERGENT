@@ -2,7 +2,7 @@
 
 ## 1. Summary
 Single-tenant warehouse inventory REST API (FastAPI + PostgreSQL) with JWT-based RBAC, product/stock CRUD, and atomic stock adjustments. Primary store is RDS PostgreSQL (`inventory_app` schema); no browser UI — Swagger at `/docs` is the demo surface.
-Diagram: `docs/diagrams/generated-diagrams/inventory-app.png`. TBD: category delete endpoint, user deactivation API, pagination max-limit enforcement.
+Diagram: `docs/generated-diagrams/inventory-app.png`. TBD: category delete endpoint, user deactivation API, pagination max-limit enforcement.
 
 ## 2. Stack
 | Layer | Technology |
