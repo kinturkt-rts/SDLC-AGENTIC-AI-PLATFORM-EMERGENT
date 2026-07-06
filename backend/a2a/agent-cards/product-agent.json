@@ -1,6 +1,6 @@
 {
   "name": "product-agent",
-  "description": "Converts business requirements into Jira epics and user stories via Atlassian MCP.",
+  "description": "Writes Product Requirements Documents (PRD) from business briefs. Optionally creates Jira epics and user stories via Atlassian MCP when enabled.",
   "url": "http://127.0.0.1:9101/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",
@@ -9,9 +9,15 @@
   "defaultOutputModes": ["text"],
   "skills": [
     {
+      "id": "prd_generation",
+      "name": "prd_generation",
+      "description": "Generate PRD Markdown from requirements briefs (S3/local artifacts)",
+      "tags": ["prd", "product", "requirements"]
+    },
+    {
       "id": "backlog_creation",
       "name": "backlog_creation",
-      "description": "Create Jira epics and stories from natural-language requirements",
+      "description": "Create Jira epics and stories from natural-language requirements (optional)",
       "tags": ["jira", "product", "atlassian"]
     }
   ]

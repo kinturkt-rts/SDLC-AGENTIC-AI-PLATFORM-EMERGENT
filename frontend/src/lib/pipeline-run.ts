@@ -133,6 +133,8 @@ export async function startPipeline(options: {
   targetApp: string;
   runId: string;
   inputFile: string;
+  withJira?: boolean;
+  jiraProject?: string;
 }): Promise<StartPipelineResult> {
   const slugError = validateTargetApp(options.targetApp);
   if (slugError) throw new Error(slugError);
@@ -215,6 +217,8 @@ export async function startPipeline(options: {
     skipDeveloper,
     skipGitlab,
     skipVerify,
+    withJira: options.withJira ?? false,
+    jiraProject: options.withJira ? (options.jiraProject ?? '').trim() : '',
   };
 
   // S3 mode: invoke orchestrator via AgentCore SDK (no local Python subprocess).

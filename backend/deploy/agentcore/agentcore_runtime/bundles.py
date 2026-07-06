@@ -105,7 +105,7 @@ def security_agent_bundle() -> BundleFactory:
 
 def product_agent_bundle() -> BundleFactory:
     mod = import_agent_module("product-agent")
-    skip_jira = env_flag("AGENTCORE_PRODUCT_SKIP_JIRA", default=True)
+    jira_enabled = env_flag("AGENTCORE_PRODUCT_SKIP_JIRA", default=True) is False
 
     skills = [
         AgentSkill(
@@ -115,7 +115,7 @@ def product_agent_bundle() -> BundleFactory:
             tags=["prd", "product"],
         )
     ]
-    if not skip_jira:
+    if jira_enabled:
         skills.append(
             AgentSkill(
                 id="backlog_creation",
@@ -127,14 +127,9 @@ def product_agent_bundle() -> BundleFactory:
 
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
-        if skip_jira:
-            agent = mod.build_prd_pipeline_agent()  # noqa: SLF001 — PRD pipeline + S3 persist
-            yield agent, skills
-        else:
-            with mod._atlassian_mcp() as mcp:  # noqa: SLF001
-                tools = mod._filter_tools(mcp.list_tools_sync(), write_allowed=False)  # noqa: SLF001
-                agent = mod._build_agent(tools)  # noqa: SLF001
-                yield agent, skills
+        # PRD pipeline always; post-PRD Jira is opt-in per run via context (createJiraBacklog).
+        agent = mod.build_prd_pipeline_agent()  # noqa: SLF001
+        yield agent, skills
 
     return factory
 

@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import {
   useDashboardSummary,
@@ -281,6 +282,8 @@ function InputRequirementsCard() {
   const [submitPhase, setSubmitPhase] = React.useState<'idle' | 'upload' | 'start'>('idle');
   const [starting, setStarting] = React.useState(false);
   const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
+  const [withJira, setWithJira] = React.useState(false);
+  const [jiraProject, setJiraProject] = React.useState('');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const featureValid = !feature || FEATURE_SLUG_RE.test(feature);
@@ -361,6 +364,10 @@ function InputRequirementsCard() {
       toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
       return;
     }
+    if (withJira && !jiraProject.trim()) {
+      toast.error('Enter a Jira project key (e.g. SAAP) or turn off Create Jira backlog');
+      return;
+    }
     setSubmitting(true);
     setSubmitPhase('upload');
     try {
@@ -386,6 +393,8 @@ function InputRequirementsCard() {
             targetApp: feature,
             runId: uploadData.runId,
             inputFile: uploadData.inputPath ?? uploadData.inputFile,
+            withJira,
+            jiraProject: withJira ? jiraProject.trim().toUpperCase() : undefined,
           }),
         },
         30_000,
@@ -423,6 +432,8 @@ function InputRequirementsCard() {
           targetApp: feature,
           runId: savedRunId,
           inputFile: savedPath ?? `inputs/${feature}.txt`,
+          withJira,
+          jiraProject: withJira ? jiraProject.trim().toUpperCase() : undefined,
         }),
       });
       const data = await res.json();
@@ -503,6 +514,29 @@ function InputRequirementsCard() {
               <p className="text-[10px] text-red-400/80">lowercase letters, digits, dashes; starts with a letter</p>
             )}
           </div>
+          <div className="space-y-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="with-jira" className="text-[11px] font-medium text-foreground">
+                Create Jira backlog
+              </label>
+              <Switch id="with-jira" checked={withJira} onCheckedChange={setWithJira} />
+            </div>
+            {withJira ? (
+              <div className="space-y-1">
+                <label htmlFor="jira-project" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Jira project key
+                </label>
+                <Input
+                  id="jira-project"
+                  value={jiraProject}
+                  onChange={(e) => setJiraProject(e.target.value.toUpperCase())}
+                  placeholder="SAAP"
+                  className="h-8 border-white/[0.08] bg-white/[0.02] font-mono text-xs uppercase"
+                />
+                <p className="text-[10px] text-muted-foreground">Epic + 5 stories after PRD (opt-in)</p>
+              </div>
+            ) : null}
+          </div>
           <input ref={fileInputRef} type="file" accept=".txt,.md" className="hidden" onChange={handleUpload} />
           <Button
             variant="outline"
@@ -533,6 +567,11 @@ function InputRequirementsCard() {
                   <span className="text-foreground">
                     {titleCase(submittedRun.currentAgent.replace('-agent', ''))}
                   </span>
+                </p>
+              ) : null}
+              {submittedRun?.status === 'failed' && submittedRun.error ? (
+                <p className="mt-1.5 line-clamp-3 text-[11px] leading-relaxed text-red-400/90">
+                  {submittedRun.error}
                 </p>
               ) : null}
               <p className="mt-1 font-mono text-[10px] text-muted-foreground" title={startedRunId}>

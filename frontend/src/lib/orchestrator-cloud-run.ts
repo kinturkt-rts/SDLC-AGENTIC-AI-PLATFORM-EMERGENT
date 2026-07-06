@@ -1,7 +1,8 @@
 import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
-import { getRunArtifactJson } from './artifact-store';
+import { invalidateRunsCache } from './runs-cache';
+import { gitlabHandoffExistsForRun } from './pipeline-handoffs';
 import { invokeAgentRuntimeA2a } from './agentcore-invoke';
 
 export interface PipelineTaskOptions {
@@ -15,6 +16,8 @@ export interface PipelineTaskOptions {
   skipDeveloper?: boolean;
   skipGitlab?: boolean;
   skipVerify?: boolean;
+  withJira?: boolean;
+  jiraProject?: string;
 }
 
 export function buildOrchestratorTask(options: PipelineTaskOptions): string {
@@ -30,6 +33,8 @@ export function buildOrchestratorTask(options: PipelineTaskOptions): string {
     skip_developer: options.skipDeveloper ?? false,
     skip_gitlab: options.skipGitlab ?? false,
     skip_verify: options.skipVerify ?? true,
+    with_jira: options.withJira ?? false,
+    jira_project: options.withJira ? (options.jiraProject ?? '').trim() : '',
   };
   return `Run run_sdlc_pipeline with:\n\n${JSON.stringify(payload, null, 2)}`;
 }
@@ -79,11 +84,15 @@ async function updateRunJson(
 }
 
 async function gitlabHandoffExists(runId: string, app: string): Promise<boolean> {
-  for (const rel of [`handoffs/gitlab.json`, `${app}/handoffs/gitlab-handoff.json`]) {
-    const doc = await getRunArtifactJson(runId, rel);
-    if (doc) return true;
-  }
-  return false;
+  return gitlabHandoffExistsForRun(runId, app);
+}
+
+async function finalizeRunJson(
+  runId: string,
+  patch: { status?: string; currentStep?: string; error?: string | null; finished?: boolean },
+): Promise<void> {
+  await updateRunJson(runId, patch);
+  invalidateRunsCache();
 }
 
 export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
@@ -150,13 +159,13 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
 
   const textLower = text.toLowerCase();
   if (result.status === 'success' && !textLower.includes('pipeline failed')) {
-    await updateRunJson(runId, { status: 'completed' });
+    await finalizeRunJson(runId, { status: 'completed' });
   } else if (!taskOpts.skipGitlab && (await gitlabHandoffExists(runId, app))) {
     // Orchestrator may have timed out after gitlab-agent succeeded — handoff confirms publish.
-    await updateRunJson(runId, { status: 'completed' });
+    await finalizeRunJson(runId, { status: 'completed' });
   } else {
     const isTimeout = /timeout|timed.?out/i.test(result.error ?? '');
-    await updateRunJson(runId, {
+    await finalizeRunJson(runId, {
       status: 'failed',
       error: isTimeout
         ? 'Orchestrator HTTP timeout — pipeline may still be running in cloud (check CloudWatch)'

@@ -87,6 +87,7 @@ export interface PipelineStep {
   startedAt: string | null;
   finishedAt: string | null;
   durationSec: number | null;
+  error?: string | null;
 }
 
 export interface PipelineRun {
@@ -102,6 +103,7 @@ export interface PipelineRun {
   elapsedSec: number;
   triggeredBy: string;
   steps: PipelineStep[];
+  error?: string | null;
 }
 
 /** GitLab publish result from gitlab-agent (handoffs/gitlab.json or legacy slug file). */

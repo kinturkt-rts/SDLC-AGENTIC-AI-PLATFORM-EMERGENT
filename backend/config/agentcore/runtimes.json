@@ -40,7 +40,8 @@
       "env": {
         "AGENTCORE_PRODUCT_SKIP_JIRA": "true",
         "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
-      }
+      },
+      "notes": "Redeploy with AGENTCORE_PRODUCT_JIRA=true to allow opt-in Jira per run. Set ATLASSIAN_MCP_EMAIL+TOKEN on runtime for headless auth. Node required (INSTALL_NODE=true)."
     },
     "architect-agent": {
       "deployed": true,

@@ -104,7 +104,7 @@ def run_sdlc_pipeline_tool(
         skip_verify: Skip local pytest gate
         with_web_crawler: Run web-crawler-agent after architect
         with_qa: Run qa-agent after gitlab
-        with_jira: Create Jira epic/stories (local only; not AgentCore v1)
+        with_jira: Create Jira epic/stories when true (requires jira_project; AgentCore needs AGENTCORE_PRODUCT_SKIP_JIRA=false)
         jira_project: Jira project key when with_jira is true
         transport: auto | local | a2a
 

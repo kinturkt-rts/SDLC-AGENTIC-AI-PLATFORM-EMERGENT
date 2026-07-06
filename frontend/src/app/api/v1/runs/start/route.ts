@@ -10,6 +10,8 @@ interface StartBody {
   runId?: unknown;
   inputPath?: unknown;
   inputFile?: unknown;
+  withJira?: unknown;
+  jiraProject?: unknown;
 }
 
 function bad(message: string, status = 400) {
@@ -35,17 +37,22 @@ export async function POST(request: Request) {
     (typeof body.inputFile === 'string' && body.inputFile.trim()) ||
     (typeof body.inputPath === 'string' && body.inputPath.trim()) ||
     '';
+  const withJira = body.withJira === true || body.withJira === 'true';
+  const jiraProject = typeof body.jiraProject === 'string' ? body.jiraProject.trim().toUpperCase() : '';
 
   const slugError = validateTargetApp(featureRaw);
   if (slugError) return bad(slugError);
   if (!runId) return bad('runId is required');
   if (!inputFile) return bad('inputFile is required');
+  if (withJira && !jiraProject) return bad('jiraProject is required when withJira is true');
 
   try {
     const result = await startPipeline({
       targetApp: featureRaw,
       runId,
       inputFile,
+      withJira,
+      jiraProject: withJira ? jiraProject : undefined,
     });
     return NextResponse.json({
       ...result,

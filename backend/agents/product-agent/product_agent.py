@@ -1,6 +1,7 @@
 """Product agent - Strands + Bedrock + Atlassian MCP (Jira)"""
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -43,10 +44,8 @@ from strands.tools.mcp import MCPClient
 
 AGENT_NAME = "product-agent"
 A2A_PORT = 9101
-ATLASSIAN_MCP_URL = os.getenv(
-    "ATLASSIAN_MCP_URL",
-    "https://mcp.atlassian.com/v1/mcp/authv2",
-)
+ATLASSIAN_MCP_OAUTH_URL = "https://mcp.atlassian.com/v1/mcp/authv2"
+ATLASSIAN_MCP_TOKEN_URL = "https://mcp.atlassian.com/v1/mcp"
 
 _WRITE_TOOL_MARKERS = (
     "createjiraissue",
@@ -341,14 +340,84 @@ def _task_allows_jira_writes(task: str, *, allow_writes_flag: bool) -> bool:
     return any(phrase in lower for phrase in _WRITE_PHRASES)
 
 
+def _atlassian_mcp_basic_auth_value() -> str | None:
+    """Base64(email:api_token) for headless AgentCore / CI (Atlassian Rovo MCP API token auth)."""
+    preencoded = os.getenv("ATLASSIAN_MCP_BASIC_AUTH", "").strip()
+    if preencoded:
+        return preencoded
+    email = os.getenv("ATLASSIAN_MCP_EMAIL", "").strip()
+    token = os.getenv("ATLASSIAN_MCP_TOKEN", "").strip()
+    if email and token:
+        return base64.b64encode(f"{email}:{token}".encode()).decode("ascii")
+    return None
+
+
+def _atlassian_mcp_url() -> str:
+    explicit = os.getenv("ATLASSIAN_MCP_URL", "").strip()
+    if explicit:
+        return explicit
+    if _atlassian_mcp_basic_auth_value():
+        return ATLASSIAN_MCP_TOKEN_URL
+    return ATLASSIAN_MCP_OAUTH_URL
+
+
+def _atlassian_mcp_remote_args() -> list[str]:
+    args = ["-y", "mcp-remote@latest", _atlassian_mcp_url()]
+    basic = _atlassian_mcp_basic_auth_value()
+    if basic:
+        args.extend(["--header", f"Authorization: Basic {basic}"])
+    return args
+
+
+def _agentcore_jira_runtime_enabled() -> bool:
+    """AgentCore kill-switch; default skips Jira unless runtime sets AGENTCORE_PRODUCT_SKIP_JIRA=false."""
+    if not os.getenv("AGENTCORE_AGENT", "").strip():
+        return True
+    flag = os.getenv("AGENTCORE_PRODUCT_SKIP_JIRA", "true").strip().lower()
+    return flag not in ("1", "true", "yes", "on")
+
+
+def _resolve_jira_project(ctx: dict[str, Any], *, task: str = "") -> str:
+    for key in ("jiraProjectKey", "projectKey", "jira_project", "jiraProject"):
+        raw = ctx.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().upper()
+    match = re.search(r"\bproject\s+([A-Z][A-Z0-9_-]{0,19})\b", task, re.I)
+    if match:
+        return match.group(1).upper()
+    return ""
+
+
+def _jira_backlog_requested(ctx: dict[str, Any], *, task: str = "") -> tuple[bool, str]:
+    if not _agentcore_jira_runtime_enabled():
+        return False, ""
+    project = _resolve_jira_project(ctx, task=task)
+    create_flag = ctx.get("createJiraBacklog")
+    if create_flag is None:
+        create_flag = ctx.get("withJira")
+    if create_flag is None:
+        create_flag = ctx.get("with_jira")
+    if create_flag in (True, "true", "yes", "1", 1):
+        return bool(project), project
+    lower = task.lower()
+    if project and any(
+        phrase in lower
+        for phrase in ("create jira", "jira epic", "jira backlog", "user stories in jira")
+    ):
+        return True, project
+    return False, project
+
+
 def _atlassian_mcp() -> MCPClient:
-    """Same transport as Cursor `.cursor/mcp.json` — npx mcp-remote + OAuth (not raw SSE)."""
+    """Cursor OAuth or headless Basic auth via mcp-remote → Atlassian hosted MCP."""
+
+    remote_args = _atlassian_mcp_remote_args()
 
     def transport() -> object:
         return stdio_client(
             StdioServerParameters(
                 command="npx",
-                args=["-y", "mcp-remote@latest", ATLASSIAN_MCP_URL],
+                args=remote_args,
             )
         )
 
@@ -664,6 +733,38 @@ def run_prd_from_context(
         lines.append(f"- runId: {run_id}")
         if is_s3_store():
             lines.append(f"- s3Prefix: runs/{run_id}/")
+
+    requested, project_key = _jira_backlog_requested(ctx, task=task)
+    if requested:
+        try:
+            jira_summary = _run_jira_backlog_from_prd(
+                slug=slug,
+                prd_rel=prd_rel,
+                ctx=ctx,
+                project_key=project_key,
+                parent_telemetry=tel,
+            )
+            lines.append(f"- jiraProjectKey: {project_key}")
+            lines.append(f"- jiraBacklog: created")
+            lines.append("")
+            lines.append(jira_summary)
+            pipeline_ctx["jiraProjectKey"] = project_key
+            pipeline_ctx["jiraBacklogCreated"] = True
+            write_repo_artifact(
+                ctx_path_rel,
+                json.dumps(pipeline_ctx, indent=2) + "\n",
+                context=ctx,
+            )
+            if run_id:
+                put_context(run_id, {**ctx, **pipeline_ctx})
+        except Exception as exc:
+            print(f"[product-agent] Jira backlog failed (PRD kept): {exc}", file=sys.stderr)
+            lines.append(f"- jiraBacklog: failed ({exc})")
+    elif project_key and not _agentcore_jira_runtime_enabled():
+        lines.append(
+            "- jiraBacklog: skipped (set AGENTCORE_PRODUCT_SKIP_JIRA=false on product-agent runtime)"
+        )
+
     return "\n".join(lines)
 
 
@@ -709,6 +810,8 @@ def _prd_pipeline_error_message(exc: ValueError, ctx: dict[str, Any]) -> str:
 def _execute_prd_pipeline_message(message: Any) -> str:
     """Run PRD generation + artifact persistence from an A2A/CLI message."""
     text = _prompt_to_text(message)
+    if text.strip().lower().startswith("control-plane health check"):
+        return "OK"
     task, ctx = parse_task_and_context(text)
     ctx = enrich_prd_context(ctx, task=task)
     try:
@@ -843,6 +946,54 @@ def _minimal_jira_task_from_prd(*, story_title_style: str) -> str:
         "Use a minimal create payload (project, issue type, summary, description, epic link/parent). "
         "Do not use story_points or other custom fields unless metadata explicitly confirms they are available."
     )
+
+def _run_jira_backlog_from_prd(
+    *,
+    slug: str,
+    prd_rel: str,
+    ctx: dict[str, Any],
+    project_key: str,
+    story_title_style: str | None = None,
+    parent_telemetry: RunTelemetry | None = None,
+) -> str:
+    """Create epic + 5 stories after PRD persist; soft-fails so PRD artifacts remain valid."""
+    style = _normalize_story_title_style(
+        story_title_style
+        or str(ctx.get("jiraStoryTitleStyle") or ctx.get("storyTitleStyle") or "").strip()
+        or os.getenv("JIRA_STORY_TITLE_STYLE", _DEFAULT_STORY_TITLE_STYLE)
+    )
+    prd_markdown = read_repo_artifact(prd_rel, context=ctx).decode("utf-8")
+    jira_context = dict(ctx)
+    jira_context["projectKey"] = project_key
+    jira_context["jiraProjectKey"] = project_key
+    jira_context["prdMarkdown"] = prd_markdown
+    jira_context["prdPath"] = prd_rel
+    jira_context["createJiraBacklog"] = True
+
+    jira_task = _minimal_jira_task_from_prd(story_title_style=style)
+    if ctx.get("jiraSprintId") or ctx.get("sprintId"):
+        sprint_id = ctx.get("jiraSprintId") or ctx.get("sprintId")
+        jira_task += f" Add stories to sprint {sprint_id}."
+
+    print(
+        f"[product-agent] Creating Jira backlog in {project_key} "
+        f"(Epic + 5 Stories, title style: {style})...",
+        file=sys.stderr,
+    )
+    jira_telemetry = RunTelemetry(
+        AGENT_NAME,
+        target_app=slug,
+        model_id=_model_id(),
+        run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
+    )
+    jira_telemetry.ensure_run_id(ctx)
+    summary = run_task(jira_task, jira_context, write_allowed=True, telemetry=jira_telemetry)
+    jira_telemetry.extra = {"prdSaved": True, "jiraBacklog": True, "jiraProjectKey": project_key}
+    jira_telemetry.finalize(context=ctx)
+    if parent_telemetry is not None:
+        parent_telemetry.extra = {**(parent_telemetry.extra or {}), "jiraBacklog": True}
+    return str(summary)
+
 
 def run_task(
     task: str,

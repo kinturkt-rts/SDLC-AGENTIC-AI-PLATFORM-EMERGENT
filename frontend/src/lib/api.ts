@@ -22,7 +22,6 @@ import type {
   PipelineContext,
   LogEntry,
   DashboardSummary,
-  RunStatus,
   AgentMessage,
   RunEvent,
   McpConfig,
@@ -54,6 +53,30 @@ export const api = {
     } catch {
       return undefined;
     }
+  },
+  async testAgent(id: string): Promise<{
+    status: 'success' | 'error';
+    agentName: string;
+    text?: string;
+    error?: string;
+    latencyMs?: number;
+  }> {
+    const res = await fetch(`/api/v1/agents/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as {
+      status: 'success' | 'error';
+      agentName: string;
+      text?: string;
+      error?: string;
+      latencyMs?: number;
+    };
+    if (!res.ok) {
+      throw new Error(data.error || `Agent test failed (${res.status})`);
+    }
+    return data;
   },
   async getProjects(): Promise<Project[]> {
     const data = await httpGet<{ projects: Project[] }>('/api/v1/projects');
@@ -107,10 +130,6 @@ export const api = {
   async getAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
     const all = mockAgentMessages;
     return correlationId ? all.filter((m) => m.correlationId === correlationId) : all;
-  },
-  async controlRun(runId: string, action: 'pause' | 'resume' | 'cancel'): Promise<{ id: string; status: RunStatus }> {
-    const status: RunStatus = action === 'pause' ? 'paused' : action === 'resume' ? 'running' : 'cancelled';
-    return { id: runId, status };
   },
   async getArtifacts(): Promise<Artifact[]> {
     const data = await httpGet<{ artifacts: Artifact[] }>('/api/v1/artifacts');

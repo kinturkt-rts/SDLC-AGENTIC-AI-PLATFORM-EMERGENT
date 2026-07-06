@@ -238,22 +238,25 @@ export function buildRunLifecycleEvents(run: PipelineRun, startId = 0): RunEvent
       ts: run.finishedAt ?? run.startedAt,
       level: 'error',
       agent: 'orchestrator-agent',
-      message: `Pipeline failed — ${run.projectName}`,
+      message: run.error ?? `Pipeline failed — ${run.projectName}`,
     });
   }
 
-  for (const step of run.steps) {
-    if (step.status === 'failed') {
-      events.push({
-        id: `ev-step-fail-${run.id}-${step.phase}-${i++}`,
-        runId: run.id,
-        kind: 'step.failed',
-        ts: step.startedAt ?? run.startedAt,
-        phase: step.phase,
-        agent: step.agent,
-        error: 'Step did not complete successfully',
-      });
-    }
+  const failedSteps = run.steps.filter((s) => s.status === 'failed');
+  for (const step of failedSteps) {
+    events.push({
+      id: `ev-step-fail-${run.id}-${step.phase}-${i++}`,
+      runId: run.id,
+      kind: 'step.failed',
+      ts: step.finishedAt ?? step.startedAt ?? run.finishedAt ?? run.startedAt,
+      phase: step.phase,
+      agent: step.agent,
+      error:
+        step.error ??
+        (run.error && failedSteps.length === 1
+          ? run.error
+          : 'Step did not complete successfully'),
+    });
   }
 
   return events;

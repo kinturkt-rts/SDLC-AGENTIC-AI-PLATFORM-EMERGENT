@@ -556,6 +556,23 @@ class SdlcPipelineRunner:
                     args.extend(["--story-title-style", self.options.jira_story_title_style])
             self._run_python(args, step="product-agent")
         else:
+            if self.options.with_jira:
+                if not self.options.jira_project:
+                    raise PipelineStepError("with_jira requires jira_project")
+                self._update_context(
+                    {
+                        "createJiraBacklog": True,
+                        "withJira": True,
+                        "jiraProjectKey": self.options.jira_project,
+                        "projectKey": self.options.jira_project,
+                    }
+                )
+                if self.options.jira_sprint > 0:
+                    self._update_context({"jiraSprintId": self.options.jira_sprint})
+                if self.options.jira_story_title_style:
+                    self._update_context(
+                        {"jiraStoryTitleStyle": self.options.jira_story_title_style}
+                    )
             task = f"Create PRD from staged input for {self.feature}."
             if self.options.with_jira:
                 task += f" Create Jira epic and stories in project {self.options.jira_project}."
@@ -1029,6 +1046,21 @@ def options_from_dict(data: dict[str, Any]) -> PipelineOptions:
             if value and str(value).strip():
                 filtered["run_id"] = str(value).strip()
                 break
+    if "with_jira" not in filtered and data.get("withJira") is not None:
+        filtered["with_jira"] = bool(data.get("withJira"))
+    if "jira_project" not in filtered:
+        for key in ("jiraProject", "jira_project", "jiraProjectKey"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                filtered["jira_project"] = value.strip()
+                break
+    if "jira_sprint" not in filtered and data.get("jiraSprint") is not None:
+        try:
+            filtered["jira_sprint"] = int(data["jiraSprint"])
+        except (TypeError, ValueError):
+            pass
+    if "jira_story_title_style" not in filtered and data.get("jiraStoryTitleStyle"):
+        filtered["jira_story_title_style"] = str(data["jiraStoryTitleStyle"]).strip()
     return PipelineOptions(**filtered)
 
 

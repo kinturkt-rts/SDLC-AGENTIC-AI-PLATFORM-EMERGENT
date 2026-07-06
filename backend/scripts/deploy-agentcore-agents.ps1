@@ -149,8 +149,16 @@ function Test-AgentRegisteredInYaml {
 }
 
 # Default SDLC pipeline runtimes (batch deploy without -Agents).
+# Set AGENTCORE_PRODUCT_JIRA=true before deploy to allow opt-in Jira backlog on product-agent.
+$ProductJiraEnabled = ($env:AGENTCORE_PRODUCT_JIRA -eq "true")
+$ProductAgentExtra = if ($ProductJiraEnabled) {
+    @("AGENTCORE_PRODUCT_SKIP_JIRA=false")
+} else {
+    @("AGENTCORE_PRODUCT_SKIP_JIRA=true")
+}
+
 $PipelineAgents = @(
-    @{ awsName = "product_agent"; bundle = "product-agent"; node = $false; extra = @("AGENTCORE_PRODUCT_SKIP_JIRA=true") },
+    @{ awsName = "product_agent"; bundle = "product-agent"; node = $true; extra = $ProductAgentExtra },
     @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
     @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @() },
     @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
@@ -210,7 +218,7 @@ if ($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST) { $CommonEnv += "DEVELOPER_AGENT_
 
 # Per-agent secrets forwarded from .env.local (never commit these values).
 $AgentSecretKeys = @{
-    product_agent          = @("ATLASSIAN_MCP_TOKEN", "ATLASSIAN_MCP_URL")
+    product_agent          = @("ATLASSIAN_MCP_TOKEN", "ATLASSIAN_MCP_EMAIL", "ATLASSIAN_MCP_BASIC_AUTH", "ATLASSIAN_MCP_URL")
     architect_agent        = @()
     database_agent         = @()
     developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")

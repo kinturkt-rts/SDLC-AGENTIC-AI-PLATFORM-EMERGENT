@@ -16,8 +16,10 @@ import {
   getS3RunArtifactIndex,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
+import { gitlabHandoffExistsForRun } from './pipeline-handoffs';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
-import { cachedAsync, invalidateCacheKey } from './request-cache';
+import { cachedAsync } from './request-cache';
+import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
 import {
   buildRunEvents,
   runEventToActivityFeed,
@@ -56,7 +58,6 @@ import type {
 } from '@/src/types';
 import { mockPipelines } from '@/src/mocks/projects';
 
-const LIST_RUNS_CACHE_KEY = 'listRuns';
 const LIST_RUNS_TTL_MS = 30_000;
 const ACTIVITY_CACHE_KEY = 'listRecentActivity';
 const ARTIFACTS_CACHE_KEY = 'listArtifacts';
@@ -86,9 +87,7 @@ function runNeedsHeavyProbe(live: LiveRunState, log: string | null): boolean {
   return live.status === 'running' || live.status === 'queued';
 }
 
-export function invalidateRunsCache(): void {
-  invalidateCacheKey(LIST_RUNS_CACHE_KEY);
-}
+export { invalidateRunsCache } from './runs-cache';
 
 const SKIP_APPS = new Set(['_template']);
 
@@ -760,10 +759,20 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const currentPhase =
     currentAgentName && currentAgentName in agentPhase ? agentPhase[currentAgentName] : null;
 
-  const steps = (enriched.steps?.length
+  let steps = (enriched.steps?.length
     ? buildStepsFromLive(runId, enriched)
     : buildSteps(runId, phaseDone, reconciled.status)
   ).filter((step) => MVP_TIMELINE_PHASES.includes(step.phase));
+
+  const runError = reconciled.error ?? enriched.error ?? null;
+  if (runError) {
+    const failedSteps = steps.filter((s) => s.status === 'failed');
+    if (failedSteps.length === 1 && !failedSteps[0].error) {
+      steps = steps.map((s) =>
+        s.status === 'failed' ? { ...s, error: runError } : s,
+      );
+    }
+  }
 
   return {
     id: runId,
@@ -782,6 +791,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     elapsedSec,
     triggeredBy: enriched.triggeredBy ?? 'frontend',
     steps,
+    error: runError,
   };
 }
 
@@ -1172,6 +1182,10 @@ async function phaseCompletionForRun(
       f.key.startsWith(prefix) ? f.key.slice(prefix.length) : f.key,
     );
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
+    const deployFromIndex =
+      has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
+      has((r) => /(?:^|\/)handoffs\/gitlab\.json$/i.test(r));
+    const deployDone = deployFromIndex || (await gitlabHandoffExistsForRun(runId, slug));
     return {
       requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
       architecture:
@@ -1183,9 +1197,7 @@ async function phaseCompletionForRun(
         has((r) => r.endsWith('/requirements.txt')),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy:
-        has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
-        has((r) => /handoffs\/gitlab\.json$/i.test(r)),
+      deploy: deployDone,
     };
   }
 
@@ -1232,7 +1244,7 @@ function buildSteps(runId: string, completed: Record<SdlcPhase, boolean>, status
     if (done || status === 'completed') stepStatus = 'completed';
     else if (firstOpen === null) {
       firstOpen = idx;
-      if (status === 'failed' && phase === 'qa') stepStatus = 'failed';
+      if (status === 'failed') stepStatus = 'failed';
       else if (status === 'paused') stepStatus = 'waiting_for_human';
       else stepStatus = status === 'queued' ? 'queued' : 'running';
     }
@@ -1292,6 +1304,7 @@ function buildStepsFromLive(runId: string, live: LiveRunState): PipelineStep[] {
       startedAt: ls.startedAt ?? null,
       finishedAt: ls.finishedAt ?? null,
       durationSec: ls.durationSec ?? null,
+      error: ls.error ?? null,
     };
   });
 }

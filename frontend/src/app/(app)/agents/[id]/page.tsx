@@ -1,7 +1,9 @@
 'use client';
 
+import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Bot, Cpu, Plug, Sparkles, PlayCircle } from 'lucide-react';
+import { ArrowLeft, Bot, Cpu, Plug, Sparkles, PlayCircle, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +17,7 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { useAgent, useRuns } from '@/src/lib/queries';
+import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import type { PipelineStep } from '@/src/types';
 
@@ -46,6 +49,34 @@ function agentLastRunFromRuns(
 export default function AgentDetailPage({ params }: { params: { id: string } }) {
   const { data: agent, isLoading } = useAgent(params.id);
   const { data: runs } = useRuns();
+  const [testing, setTesting] = React.useState(false);
+
+  const handleTestAgent = async () => {
+    setTesting(true);
+    try {
+      const result = await api.testAgent(params.id);
+      if (result.status === 'success') {
+        const preview = result.text?.trim() ?? '';
+        const isHealthPing =
+          preview === 'OK' ||
+          preview.toLowerCase().startsWith('ok') ||
+          preview.includes('PRD pipeline could not start');
+        toast.success(`${agent?.displayName ?? params.id} is reachable`, {
+          description: isHealthPing
+            ? `${result.latencyMs ? `${Math.round(result.latencyMs / 1000)}s · ` : ''}AgentCore runtime responded to health check.`
+            : `${result.latencyMs ? `${Math.round(result.latencyMs / 1000)}s · ` : ''}${preview.slice(0, 120)}`,
+        });
+      } else {
+        toast.error('Agent health check failed', { description: result.error ?? 'Unknown error' });
+      }
+    } catch (err) {
+      toast.error('Agent health check failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   if (!isLoading && !agent) {
     return (
@@ -73,6 +104,7 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
   const lastRunAt = agentLastRunFromRuns(params.id, runs ?? []) ?? agent?.lastRunAt ?? null;
   const hasMcpServers = (agent?.mcpServers.length ?? 0) > 0;
   const hasBuiltinTools = (agent?.mcpTools.length ?? 0) > 0;
+  const canTest = agent?.availability === 'online';
 
   const columns: Column<HistoryRow>[] = [
     {
@@ -107,14 +139,26 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span tabIndex={0}>
-                    <Button disabled variant="outline" className="gap-1.5 border-white/[0.08] text-muted-foreground">
-                      <PlayCircle className="h-4 w-4" /> Test agent
+                  <span tabIndex={canTest ? undefined : 0}>
+                    <Button
+                      variant="outline"
+                      className="gap-1.5 border-white/[0.08]"
+                      disabled={!canTest || testing}
+                      onClick={handleTestAgent}
+                    >
+                      {testing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <PlayCircle className="h-4 w-4" />
+                      )}
+                      {testing ? 'Testing…' : 'Test agent'}
                     </Button>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  Not available yet. A future health check will ping the AgentCore runtime without running a full pipeline task.
+                  {canTest
+                    ? 'Ping the AgentCore runtime with a lightweight health check (may take up to 2 min on cold start).'
+                    : 'This agent is not deployed to AgentCore yet.'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

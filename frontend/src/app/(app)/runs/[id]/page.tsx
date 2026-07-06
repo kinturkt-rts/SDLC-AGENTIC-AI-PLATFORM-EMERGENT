@@ -5,9 +5,6 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   Workflow,
-  PauseCircle,
-  PlayCircle,
-  XCircle,
   CheckCircle2,
   Loader2,
   Clock,
@@ -19,6 +16,8 @@ import {
   Check,
   X,
   Send,
+  AlertTriangle,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -29,7 +28,6 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { useRun, useRunEvents, useRunHandoffs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
-import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
@@ -125,8 +123,6 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
 
-  const [statusOverride, setStatusOverride] = React.useState<RunStatus | null>(null);
-  const [busy, setBusy] = React.useState<string | null>(null);
   const [hitlOverride, setHitlOverride] = React.useState<Record<string, 'approved' | 'rejected'>>({});
 
   if (!isLoading && !run) {
@@ -138,7 +134,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     );
   }
 
-  const status: RunStatus = statusOverride ?? run?.status ?? 'queued';
+  const status: RunStatus = run?.status ?? 'queued';
   const runArtifacts = (artifacts ?? []).filter((a) => a.runId === params.id);
   const runCheckpoints = (checkpoints ?? [])
     .filter((c) => c.runId === params.id)
@@ -147,45 +143,16 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const runEvents = [...(events ?? [])].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
   const displayLive = status === 'running';
 
-  const control = async (action: 'pause' | 'resume' | 'cancel') => {
-    setBusy(action);
-    const res = await api.controlRun(params.id, action);
-    setStatusOverride(res.status);
-    setBusy(null);
-    toast.success(`Run ${action}d`, {
-      description: `${params.id} \u2192 ${res.status} (control-plane action, mock \u2014 no agents executed).`,
-    });
-  };
-
   const resolveHitl = (id: string, title: string, decision: 'approved' | 'rejected') => {
     setHitlOverride((o) => ({ ...o, [id]: decision }));
-    toast.success(`Checkpoint ${decision}`, { description: `${title} \u2014 recorded locally (mock).` });
+    toast.success(`Checkpoint ${decision}`, { description: `${title} — recorded locally (mock).` });
   };
 
-  const controls = (
-    <div className="flex items-center gap-2">
-      {status === 'running' && (
-        <Button size="sm" variant="outline" className="gap-1.5 border-white/[0.08]" disabled={!!busy} onClick={() => control('pause')}>
-          {busy === 'pause' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />} Pause
-        </Button>
-      )}
-      {status === 'paused' && (
-        <Button size="sm" className="gap-1.5 bg-blue-600 text-white hover:bg-blue-700" disabled={!!busy} onClick={() => control('resume')}>
-          {busy === 'resume' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />} Resume
-        </Button>
-      )}
-      {(status === 'running' || status === 'paused' || status === 'queued') && (
-        <Button size="sm" variant="outline" className="gap-1.5 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300" disabled={!!busy} onClick={() => control('cancel')}>
-          {busy === 'cancel' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />} Cancel
-        </Button>
-      )}
-      <StatusBadge status={status} />
-    </div>
-  );
+  const controls = <StatusBadge status={status} />;
 
   const runDescription = run
     ? status === 'running' || status === 'paused'
-      ? `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)}`
+      ? `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)} · monitoring only (runs on AgentCore)`
       : `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)}${
           run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
         }`
@@ -225,6 +192,20 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                 <p className="text-[11px] text-muted-foreground">Live status from the platform - the control plane does not run the agent.</p>
               </div>
               <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+            </Card>
+          ) : null}
+
+          {status === 'failed' ? (
+            <Card className="flex items-start gap-3 border-red-500/30 bg-red-500/[0.05] p-4">
+              <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-400">
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">Pipeline failed</p>
+                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                  {run.error ?? 'See the phase timeline and event stream below for details.'}
+                </p>
+              </div>
             </Card>
           ) : null}
 
@@ -285,9 +266,14 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                           <StatusBadge status={step.status} size="sm" />
                         </div>
                         <p className="font-mono text-xs text-muted-foreground">{step.agent}</p>
-                        <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                          <span>{stepStatusHint(step)}</span>
-                          {step.durationSec != null ? <span>\u00b7 {formatDuration(step.durationSec)}</span> : null}
+                        <div className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-3">
+                            <span>{stepStatusHint(step)}</span>
+                            {step.durationSec != null ? <span>· {formatDuration(step.durationSec)}</span> : null}
+                          </div>
+                          {step.status === 'failed' && step.error ? (
+                            <p className="text-[11px] leading-relaxed text-red-400/90">{step.error}</p>
+                          ) : null}
                         </div>
                       </div>
                     </li>

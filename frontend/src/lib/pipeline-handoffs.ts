@@ -123,6 +123,25 @@ async function loadFirstDeveloperHandoff(
   return null;
 }
 
+/** True when this run has a GitLab publish handoff in S3 or local run storage. */
+export async function gitlabHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
+  const normalized = slug.trim().toLowerCase();
+  const candidates = [
+    `handoffs/gitlab.json`,
+    `${normalized}/handoffs/gitlab-handoff.json`,
+    `agents/pipeline/${normalized}.gitlab-handoff.json`,
+  ];
+  for (const rel of candidates) {
+    const doc = await getRunArtifactJson(runId, rel);
+    if (doc) return true;
+  }
+  if (!isS3Store()) {
+    const local = await readLocalPipelineJson(`agents/pipeline/${normalized}.gitlab-handoff.json`);
+    if (local) return true;
+  }
+  return false;
+}
+
 /** Load gitlab + developer handoffs for a run (S3 run store and local slug files). */
 export async function getRunHandoffs(runId: string, projectSlug: string): Promise<RunHandoffs> {
   const slug = projectSlug.trim().toLowerCase();

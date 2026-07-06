@@ -168,6 +168,14 @@ def test_build_prd_pipeline_agent_stream_async_writes_artifacts(
     assert (repo_root / "agents/pipeline/runs/run-a2a/context.json").is_file()
 
 
+def test_health_check_message_skips_prd_pipeline() -> None:
+    mod = _load_agent_module()
+    result = mod._execute_prd_pipeline_message(
+        "Control-plane health check only. Reply with exactly: OK",
+    )
+    assert result == "OK"
+
+
 @pytest.fixture()
 def repo_root(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()

@@ -98,15 +98,23 @@ function agentCoreClient(readTimeoutMs: number): BedrockAgentCoreClient {
 }
 
 export async function loadRuntimeArn(agentName: string): Promise<string | null> {
+  const meta = await loadAgentRuntimeMeta(agentName);
+  return meta.runtimeArn;
+}
+
+export async function loadAgentRuntimeMeta(
+  agentName: string,
+): Promise<{ deployed: boolean; runtimeArn: string | null }> {
   const file = path.join(getBackendRoot(), 'config', 'agentcore', 'runtimes.json');
   try {
     const data = JSON.parse(await readFile(file, 'utf-8')) as {
-      agents?: Record<string, { runtimeArn?: string }>;
+      agents?: Record<string, { deployed?: boolean; runtimeArn?: string }>;
     };
-    const arn = data.agents?.[agentName]?.runtimeArn?.trim();
-    return arn || null;
+    const entry = data.agents?.[agentName];
+    const runtimeArn = entry?.runtimeArn?.trim() || null;
+    return { deployed: entry?.deployed === true && Boolean(runtimeArn), runtimeArn };
   } catch {
-    return null;
+    return { deployed: false, runtimeArn: null };
   }
 }
 
