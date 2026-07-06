@@ -47,7 +47,7 @@ const MVP_AGENTS: { id: AgentName; label: string }[] = [
 export default function LogsPage() {
   const { data: runs } = useRuns();
   const { data: projects } = useProjects();
-  const currentProjectId = useUiStore((s) => s.currentProjectId);
+  const logsProjectId = useUiStore((s) => s.logsProjectId);
   const [source, setSource] = React.useState<LogSource>('cloudwatch');
   const [level, setLevel] = React.useState<LogEntry['level'] | 'all'>('all');
   const [q, setQ] = React.useState('');
@@ -66,21 +66,25 @@ export default function LogsPage() {
 
   const { data: logs, isLoading, isFetching } = useLogs(filters);
 
-  const projectRuns = (runs ?? []).filter((r) => r.projectId === currentProjectId);
-  const projectRunIds = new Set(projectRuns.map((r) => r.id));
-  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+  const scopedRuns = logsProjectId
+    ? (runs ?? []).filter((r) => r.projectId === logsProjectId)
+    : (runs ?? []);
+  const projectRunIds = new Set(scopedRuns.map((r) => r.id));
+  const projectName = logsProjectId
+    ? (projects?.find((p) => p.id === logsProjectId)?.name ?? logsProjectId)
+    : 'all projects';
 
   React.useEffect(() => {
     if (runId === 'all') return;
-    const belongs = projectRuns.some((r) => r.id === runId);
+    const belongs = scopedRuns.some((r) => r.id === runId);
     if (!belongs) setRunId('all');
-  }, [currentProjectId, runId, projectRuns]);
+  }, [logsProjectId, runId, scopedRuns]);
 
   const rows = filterLogRows(logs ?? [], { q, level })
-    .filter((l) => !l.runId || projectRunIds.has(l.runId))
+    .filter((l) => !logsProjectId || !l.runId || projectRunIds.has(l.runId))
     .sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
 
-  const runOptions = [...projectRuns]
+  const runOptions = [...scopedRuns]
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
     .slice(0, 20);
 
@@ -91,7 +95,11 @@ export default function LogsPage() {
       <PageHeader
         eyebrow="Observe"
         title="Pipeline logs"
-        description={`Agent and orchestrator output for ${projectName}.`}
+        description={
+          logsProjectId
+            ? `Agent and orchestrator output for ${projectName}.`
+            : 'Agent and orchestrator output across all projects.'
+        }
         actions={
           <Tabs value={source} onValueChange={(v) => setSource(v as LogSource)}>
             <TabsList className="h-9">

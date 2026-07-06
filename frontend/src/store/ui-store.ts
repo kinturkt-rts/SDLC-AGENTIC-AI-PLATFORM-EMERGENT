@@ -19,6 +19,10 @@ interface UiState {
   tokensProjectId: string | null;
   setTokensProjectId: (id: string | null) => void;
 
+  /** Logs page only — null = all projects. */
+  logsProjectId: string | null;
+  setLogsProjectId: (id: string | null) => void;
+
   environment: Environment;
   setEnvironment: (env: Environment) => void;
 
@@ -45,6 +49,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   tokensProjectId: null,
   setTokensProjectId: (id) => set({ tokensProjectId: id }),
+
+  logsProjectId: null,
+  setLogsProjectId: (id) => set({ logsProjectId: id }),
 
   environment: 'dev',
   setEnvironment: (env) => set({ environment: env }),

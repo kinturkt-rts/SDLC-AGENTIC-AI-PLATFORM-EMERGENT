@@ -1,0 +1,7 @@
+We want a simple way to keep track of books our team is reading or planning to read.
+
+Each person should be able to add a book with a title and author, mark whether they have not started it yet, are reading it now, or have finished it, and add an optional short note about why they picked it or what they thought of it.
+
+Everyone on the team should be able to see the full list, search by title or author, and filter by reading status. They should also be able to update a book’s details or remove it when it is no longer relevant.
+
+This is an internal tool only — no fancy screens needed for the first version. The main goal is a reliable place to log and browse books without spreadsheets or shared docs getting out of date.

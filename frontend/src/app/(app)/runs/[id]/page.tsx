@@ -152,8 +152,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
   const runDescription = run
     ? status === 'running' || status === 'paused'
-      ? `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)} · monitoring only (runs on AgentCore)`
-      : `Triggered by ${run.triggeredBy} · started ${formatRelative(run.startedAt)}${
+      ? `Started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)} · monitoring only (runs on AgentCore)`
+      : `Started ${formatRelative(run.startedAt)}${
           run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
         }`
     : undefined;
