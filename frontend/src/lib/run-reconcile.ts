@@ -20,6 +20,17 @@ export interface ReconcileRunResult {
   error?: string | null;
 }
 
+/** Cloud invoke may log orchestrator status:error before gitlab-fallback finishes. */
+function cloudGitlabFallbackPending(log: string): boolean {
+  if (/"skip_gitlab":\s*true/i.test(log)) return false;
+  if (!/--- gitlab ---/i.test(log)) return true;
+  return !(
+    /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log) ||
+    /\[gitlab\]\s+handoff already exists/i.test(log) ||
+    /\[gitlab-fallback\].*failed or no handoff/i.test(log)
+  );
+}
+
 export function parseLogTerminalStatus(
   log: string | null,
 ): { status: 'completed' | 'failed'; error?: string } | null {
@@ -45,6 +56,7 @@ export function parseLogTerminalStatus(
     .map((l) => l.trim())
     .find((l) => l.toLowerCase().startsWith('error:'));
   if (errLine) {
+    if (cloudGitlabFallbackPending(log)) return null;
     return { status: 'failed', error: errLine.replace(/^error:\s*/i, '') };
   }
 
@@ -52,6 +64,7 @@ export function parseLogTerminalStatus(
     return { status: 'failed', error: 'SDLC pipeline failed' };
   }
   if (/\bstatus:\s*(error|failed)\b/i.test(log)) {
+    if (cloudGitlabFallbackPending(log)) return null;
     return { status: 'failed', error: 'Orchestrator invoke failed' };
   }
   if (/\bfailed \(exit \d+\)/i.test(log) || lower.includes('traceback (most recent call last)')) {
@@ -116,6 +129,14 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   if (terminal?.status === 'completed') {
     return { status: 'completed', currentStep: null };
   }
+
+  // S3 artifact completion takes priority over log-based failure.
+  // The outer HTTP call can time out while the pipeline keeps running in AgentCore;
+  // when that happens the log shows [cloud-invoke] FAILED but S3 has all the artifacts.
+  if (mvpPipelineComplete(input.phaseDone)) {
+    return { status: 'completed', currentStep: null };
+  }
+
   if (terminal?.status === 'failed') {
     return {
       status: 'failed',
@@ -130,10 +151,6 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
       currentStep: null,
       error: input.error ?? undefined,
     };
-  }
-
-  if (mvpPipelineComplete(input.phaseDone)) {
-    return { status: 'completed', currentStep: null };
   }
 
   const idleMs = Date.now() - lastRunActivityMs(input);

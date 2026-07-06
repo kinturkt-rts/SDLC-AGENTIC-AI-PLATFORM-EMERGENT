@@ -50,6 +50,15 @@ async function updateRunJson(
       if (['completed', 'failed', 'cancelled'].includes(patch.status)) {
         data.finishedAt = new Date().toISOString();
       }
+      if (patch.status === 'completed') {
+        data.currentStep = null;
+        const steps = data.steps as Array<{ name: string; status?: string }> | undefined;
+        if (steps) {
+          for (const step of steps) {
+            if (step.status !== 'skipped') step.status = 'completed';
+          }
+        }
+      }
     }
     if (patch.currentStep) {
       data.currentStep = patch.currentStep;
@@ -142,12 +151,16 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   const textLower = text.toLowerCase();
   if (result.status === 'success' && !textLower.includes('pipeline failed')) {
     await updateRunJson(runId, { status: 'completed' });
-  } else if ((await gitlabHandoffExists(runId, app)) || !taskOpts.skipGitlab) {
+  } else if (!taskOpts.skipGitlab && (await gitlabHandoffExists(runId, app))) {
+    // Orchestrator may have timed out after gitlab-agent succeeded — handoff confirms publish.
     await updateRunJson(runId, { status: 'completed' });
   } else {
+    const isTimeout = /timeout|timed.?out/i.test(result.error ?? '');
     await updateRunJson(runId, {
       status: 'failed',
-      error: 'orchestrator did not complete — check CloudWatch logs',
+      error: isTimeout
+        ? 'Orchestrator HTTP timeout — pipeline may still be running in cloud (check CloudWatch)'
+        : (result.error ?? 'orchestrator did not complete — check CloudWatch logs'),
     });
   }
 }

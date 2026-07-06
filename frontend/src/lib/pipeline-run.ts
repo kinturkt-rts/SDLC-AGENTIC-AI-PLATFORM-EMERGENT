@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs';
+﻿import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
@@ -198,22 +198,20 @@ export async function startPipeline(options: {
     (process.env.SDLC_PIPELINE_SKIP_GITLAB ?? 'false').trim().toLowerCase() === 'true';
   const skipVerify =
     (process.env.SDLC_PIPELINE_SKIP_VERIFY ?? 'true').trim().toLowerCase() !== 'false';
-  const applyRdsLocal =
-    (process.env.SDLC_PIPELINE_APPLY_RDS_LOCAL ?? 'false').trim().toLowerCase() === 'true';
   const useLocalPythonInvoke =
     (process.env.SDLC_PIPELINE_INVOKE_LOCAL ?? 'false').trim().toLowerCase() === 'true';
 
   const logsDir = path.join(repoRoot, 'agents', 'pipeline', '.logs');
   await fs.mkdir(logsDir, { recursive: true });
   const logPath = path.join(logsDir, `${runId}.log`);
-  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '2700', 10);
+  const timeoutSec = parseInt(process.env.SDLC_PIPELINE_TIMEOUT_SEC ?? '3600', 10);
 
   const taskOptions = {
     targetApp: feature,
     runId,
     inputFile: inputRel,
     skipDb: false,
-    skipPostgres: applyRdsLocal,
+    skipPostgres: false,
     skipDeveloper,
     skipGitlab,
     skipVerify,
@@ -252,9 +250,8 @@ export async function startPipeline(options: {
     '--run-id', runId,
     '--input-file', inputRel,
     '--no-skip-db',
-    ...(applyRdsLocal
-      ? ['--skip-postgres', '--apply-rds-local']
-      : ['--no-skip-postgres', '--no-apply-rds-local']),
+    '--no-skip-postgres',
+    '--no-apply-rds-local',
     '--timeout', String(timeoutSec),
     ...(skipDeveloper ? ['--skip-developer'] : ['--no-skip-developer']),
     ...(skipGitlab ? ['--skip-gitlab'] : ['--no-skip-gitlab']),
@@ -310,3 +307,4 @@ export async function submitBrief(targetApp: string, content: string) {
   });
   return { ...upload, ...started };
 }
+

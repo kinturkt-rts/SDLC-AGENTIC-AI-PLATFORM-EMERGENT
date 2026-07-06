@@ -1,4 +1,4 @@
-"""Invoke Bedrock AgentCore Runtimes by ARN (via boto3)."""
+﻿"""Invoke Bedrock AgentCore Runtimes by ARN (via boto3)."""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def invoke_agent_runtime_a2a(
     client = boto3.client(
         "bedrock-agentcore",
         region_name=region,
-        config=Config(read_timeout=timeout, connect_timeout=60, retries={"max_attempts": 2}),
+        config=Config(read_timeout=timeout, connect_timeout=60, retries={"max_attempts": 1}),
     )
     session_id = uuid4().hex + "0"  # AgentCore requires runtimeSessionId length >= 33
     try:
@@ -176,3 +176,4 @@ def should_use_agentcore_arn_invoke() -> bool:
     from .artifact_store import is_s3_store
 
     return is_s3_store()
+

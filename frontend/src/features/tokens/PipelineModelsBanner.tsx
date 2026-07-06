@@ -10,7 +10,7 @@ export function PipelineModelsBanner() {
 
   return (
     <Card className="border-white/[0.06] bg-card/80 p-4">
-      <h2 className="text-sm font-semibold text-foreground">MVP pipeline models</h2>
+      <h2 className="text-sm font-semibold text-foreground">Pipeline models</h2>
       <p className="mt-0.5 text-[11px] text-muted-foreground">
         Bedrock models used by the default Product → Architect → Database → Developer flow
       </p>

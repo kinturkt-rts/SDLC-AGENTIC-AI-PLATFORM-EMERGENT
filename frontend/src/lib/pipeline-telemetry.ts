@@ -4,8 +4,15 @@ import { estimateBedrockCostUsd, shortModelLabel } from './bedrock-pricing';
 import { getBackendRoot } from './repo-root';
 import { cachedAsync } from './request-cache';
 import { titleCase } from './format';
-import { listRuns } from './repo-reader';
+import { isUserPipelineRun, listRuns } from './repo-reader';
 import { expectedModelForAgent, isMvpAgentId, MVP_AGENT_IDS } from './token-display';
+import {
+  findLatestS3RunIdForApp,
+  getRunArtifactJson,
+  isS3Store,
+  listS3RunArtifacts,
+  runS3Prefix,
+} from './artifact-store';
 
 function projectTitle(slug: string): string {
   return titleCase(slug.replace(/-/g, ' '));
@@ -51,6 +58,7 @@ export interface AgentTelemetryRow {
 export interface PipelineTelemetrySummary {
   projectId: string;
   projectName: string;
+  runId: string | null;
   agents: AgentTelemetryRow[];
   totals: {
     inputTokens: number;
@@ -64,7 +72,7 @@ export interface PipelineTelemetrySummary {
     toolCount: number;
     modelCount: number;
   };
-  source: 'local';
+  source: 'local' | 's3';
   updatedAt: string | null;
 }
 
@@ -80,14 +88,16 @@ export function billedTokens(snap: AgentTelemetrySnapshot): number {
 }
 
 function agentDisplayName(agentId: string): string {
-  return agentId
-    .replace(/-agent$/, '')
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ') + ' Agent';
+  return (
+    agentId
+      .replace(/-agent$/, '')
+      .split('-')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ') + ' Agent'
+  );
 }
 
-export async function discoverAgentsWithTelemetry(targetApp: string): Promise<string[]> {
+async function discoverLocalAgentsWithTelemetry(targetApp: string): Promise<string[]> {
   const dir = pipelineDir();
   let entries: string[];
   try {
@@ -110,25 +120,102 @@ export async function discoverAgentsWithTelemetry(targetApp: string): Promise<st
   return MVP_AGENT_IDS.filter((a) => found.has(a));
 }
 
+/** Per-agent telemetry mirrored under runs/<runId>/<slug>/handoffs/ on AgentCore. */
+async function discoverS3AgentsWithTelemetry(
+  targetApp: string,
+  runId: string,
+): Promise<string[]> {
+  if (!isS3Store()) return [];
+  const prefix = runS3Prefix(runId);
+  const files = await listS3RunArtifacts(runId);
+  const handoffPrefix = `${targetApp}/handoffs/`;
+  const found = new Set<string>();
+
+  for (const file of files) {
+    const rel = file.key.startsWith(prefix) ? file.key.slice(prefix.length) : file.key;
+    if (!rel.startsWith(handoffPrefix) || !rel.endsWith('-telemetry.json')) continue;
+    const agent = rel.slice(handoffPrefix.length, -'-telemetry.json'.length);
+    if (isMvpAgentId(agent)) found.add(agent);
+  }
+
+  return MVP_AGENT_IDS.filter((a) => found.has(a));
+}
+
+export async function discoverAgentsWithTelemetry(
+  targetApp: string,
+  runId?: string | null,
+): Promise<string[]> {
+  const rid = runId ?? (await resolveTelemetryRunId(targetApp));
+  if (rid && isS3Store()) {
+    const s3 = await discoverS3AgentsWithTelemetry(targetApp, rid);
+    if (s3.length > 0) return s3;
+  }
+  const local = await discoverLocalAgentsWithTelemetry(targetApp);
+  if (local.length > 0) return local;
+  if (!rid) return [];
+  return discoverS3AgentsWithTelemetry(targetApp, rid);
+}
+
+async function resolveTelemetryRunId(projectId: string): Promise<string | null> {
+  const runs = await listRuns();
+  const latest = runs
+    .filter((r) => r.projectId === projectId && isUserPipelineRun(r))
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+  if (latest) return latest.id;
+  if (isS3Store()) return findLatestS3RunIdForApp(projectId);
+  return null;
+}
+
 async function loadAgentTelemetryFile(
   targetApp: string,
   agentName: string,
-): Promise<{ snap: AgentTelemetrySnapshot; mtimeMs: number } | null> {
+): Promise<{ snap: AgentTelemetrySnapshot; mtimeMs: number; source: 'local' | 's3' } | null> {
   const file = path.join(pipelineDir(), `${targetApp}.${agentName}-telemetry.json`);
   try {
     const [text, stat] = await Promise.all([fs.readFile(file, 'utf-8'), fs.stat(file)]);
     const snap = JSON.parse(text) as AgentTelemetrySnapshot;
-    return { snap, mtimeMs: stat.mtimeMs };
+    return { snap, mtimeMs: stat.mtimeMs, source: 'local' };
   } catch {
     return null;
   }
 }
 
+async function loadAgentTelemetryFromS3(
+  targetApp: string,
+  agentName: string,
+  runId: string,
+): Promise<{ snap: AgentTelemetrySnapshot; mtimeMs: number; source: 'local' | 's3' } | null> {
+  if (!isS3Store()) return null;
+  const relPath = `${targetApp}/handoffs/${agentName}-telemetry.json`;
+  const doc = await getRunArtifactJson(runId, relPath);
+  if (!doc) return null;
+  const snap = doc as unknown as AgentTelemetrySnapshot;
+  const mtimeMs =
+    typeof doc.updatedAt === 'string' ? Date.parse(doc.updatedAt) || Date.now() : Date.now();
+  return { snap, mtimeMs: Number.isFinite(mtimeMs) ? mtimeMs : Date.now(), source: 's3' };
+}
+
+async function loadAgentTelemetry(
+  targetApp: string,
+  agentName: string,
+  runId: string | null,
+): Promise<{ snap: AgentTelemetrySnapshot; mtimeMs: number; source: 'local' | 's3' } | null> {
+  if (runId && isS3Store()) {
+    const s3 = await loadAgentTelemetryFromS3(targetApp, agentName, runId);
+    if (s3) return s3;
+  }
+  const local = await loadAgentTelemetryFile(targetApp, agentName);
+  if (local) return local;
+  if (!runId || isS3Store()) return null;
+  return loadAgentTelemetryFromS3(targetApp, agentName, runId);
+}
+
 export function aggregateTelemetrySnapshots(
   projectId: string,
-  rows: { snap: AgentTelemetrySnapshot; mtimeMs: number }[],
+  rows: { snap: AgentTelemetrySnapshot; mtimeMs: number; source?: 'local' | 's3' }[],
+  runId: string | null = null,
 ): PipelineTelemetrySummary {
-  const byAgent = new Map<string, { snap: AgentTelemetrySnapshot; mtimeMs: number }>();
+  const byAgent = new Map<string, { snap: AgentTelemetrySnapshot; mtimeMs: number; source?: 'local' | 's3' }>();
   for (const row of rows) {
     if (isMvpAgentId(row.snap.agent)) {
       byAgent.set(row.snap.agent, row);
@@ -220,45 +307,54 @@ export function aggregateTelemetrySnapshots(
   totals.modelCount = new Set(reportingAgents.map((a) => a.modelLabel).filter(Boolean)).size;
 
   const latestMtime = rows.reduce((max, r) => Math.max(max, r.mtimeMs), 0);
+  const source: 'local' | 's3' = rows.some((r) => r.source === 's3') ? 's3' : 'local';
 
   return {
     projectId,
     projectName: projectTitle(projectId),
+    runId,
     agents,
     totals: { ...totals, cacheHitRatio },
-    source: 'local',
+    source,
     updatedAt: latestMtime ? new Date(latestMtime).toISOString() : null,
   };
 }
 
+function emptyTelemetrySummary(projectId: string, runId: string | null): PipelineTelemetrySummary {
+  return {
+    projectId,
+    projectName: projectTitle(projectId),
+    runId,
+    agents: [],
+    totals: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      cacheHitRatio: 0,
+      costUsd: 0,
+      elapsedSec: 0,
+      toolCount: 0,
+      modelCount: 0,
+    },
+    source: isS3Store() ? 's3' : 'local',
+    updatedAt: null,
+  };
+}
+
 async function loadPipelineTelemetryUncached(projectId: string): Promise<PipelineTelemetrySummary> {
-  const agentNames = await discoverAgentsWithTelemetry(projectId);
-  const loaded = await Promise.all(agentNames.map((name) => loadAgentTelemetryFile(projectId, name)));
+  const runId = await resolveTelemetryRunId(projectId);
+  const agentNames = await discoverAgentsWithTelemetry(projectId, runId);
+  const toLoad = agentNames.length > 0 ? agentNames : [...MVP_AGENT_IDS];
+  const loaded = await Promise.all(toLoad.map((name) => loadAgentTelemetry(projectId, name, runId)));
   const rows = loaded.filter((r): r is NonNullable<typeof r> => r !== null);
 
   if (rows.length === 0) {
-    return {
-      projectId,
-      projectName: projectTitle(projectId),
-      agents: [],
-      totals: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        cacheReadInputTokens: 0,
-        cacheWriteInputTokens: 0,
-        cacheHitRatio: 0,
-        costUsd: 0,
-        elapsedSec: 0,
-        toolCount: 0,
-        modelCount: 0,
-      },
-      source: 'local',
-      updatedAt: null,
-    };
+    return emptyTelemetrySummary(projectId, runId);
   }
 
-  return aggregateTelemetrySnapshots(projectId, rows);
+  return aggregateTelemetrySnapshots(projectId, rows, runId);
 }
 
 export interface TelemetryOverviewRow {

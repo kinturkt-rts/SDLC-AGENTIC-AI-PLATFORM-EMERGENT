@@ -126,6 +126,7 @@ class RunTelemetry:
         return {
             "agent": self.agent_name,
             "targetApp": self.target_app,
+            "runId": os.getenv("PIPELINE_RUN_ID", "").strip() or None,
             "modelId": self.model_id,
             "modelLabel": short_model_label(self.model_id),
             "toolCount": self.tool_count,
@@ -158,13 +159,38 @@ class RunTelemetry:
             return None
 
     def persist(self) -> None:
-        """Write current snapshot for the next run to compare against. Silent on failure."""
+        """Write current snapshot for the next run to compare against. Silent on failure.
+
+        Also mirrors the snapshot to the run's S3 prefix under
+        ``<slug>/handoffs/<agent>-telemetry.json`` so the control-plane UI can surface
+        per-agent tokens for cloud runs (local disk isn't shared with the frontend).
+        """
         path = self._path()
-        if not path:
+        payload = json.dumps(self.to_dict(), indent=2) + "\n"
+        if path:
+            try:
+                path.write_text(payload, encoding="utf-8")
+            except OSError:
+                pass
+        self._mirror_to_run_artifacts(payload)
+
+    def _mirror_to_run_artifacts(self, payload: str) -> None:
+        if not self.target_app:
             return
         try:
-            path.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
-        except OSError:
+            from .artifact_store import is_s3_store, put_artifact, resolve_run_id
+        except ImportError:
+            return
+        if not is_s3_store():
+            return
+        run_id = resolve_run_id({"targetApp": self.target_app})
+        if not run_id:
+            return
+        rel_path = f"{self.target_app}/handoffs/{self.agent_name}-telemetry.json"
+        try:
+            put_artifact(run_id, rel_path, payload, content_type="application/json")
+        except Exception:
+            # Telemetry mirroring must never break an agent run.
             pass
 
     def print_compact(self, *, stream: Any = sys.stderr) -> None:
@@ -438,7 +464,27 @@ def print_pipeline_summary(
         )
     except OSError:
         pass
+    _mirror_pipeline_rollup_to_run_artifacts(target_app, rollup)
     return rollup
+
+
+def _mirror_pipeline_rollup_to_run_artifacts(target_app: str, rollup: dict[str, Any]) -> None:
+    """Upload pipeline rollup to runs/<runId>/<app>/handoffs/ for the control-plane UI."""
+    try:
+        from .artifact_store import is_s3_store, put_artifact, resolve_run_id
+    except ImportError:
+        return
+    if not is_s3_store():
+        return
+    run_id = resolve_run_id({"targetApp": target_app})
+    if not run_id:
+        return
+    payload = json.dumps(rollup, indent=2) + "\n"
+    rel_path = f"{target_app}/handoffs/pipeline-telemetry.json"
+    try:
+        put_artifact(run_id, rel_path, payload, content_type="application/json")
+    except Exception:
+        pass
 
 
 def usage_from_event(event: Any) -> dict[str, Any] | None:

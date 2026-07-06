@@ -80,6 +80,11 @@ export function TokensProjectView({
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
     .slice(0, 8);
 
+  const latestRun = projectRuns[0];
+  const telemetryRunId = data?.runId ?? latestRun?.id ?? null;
+  const runHref = telemetryRunId ? `/runs/${telemetryRunId}` : null;
+  const runLabel = telemetryRunId ? `${telemetryRunId.slice(0, 8)}…` : null;
+
   const hasActiveRun = projectRuns.some((r) => r.status === 'running' || r.status === 'paused');
 
   if (!projectId) {
@@ -113,7 +118,23 @@ export function TokensProjectView({
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" /> refreshing
             </span>
           ) : data?.updatedAt ? (
-            <span className="text-xs text-muted-foreground">Updated {formatRelative(data.updatedAt)}</span>
+            <span className="text-xs text-muted-foreground">
+              {data.runId ? (
+                <>
+                  Run {data.runId.slice(0, 8)}… · {data.source === 's3' ? 'S3' : 'local'} · updated{' '}
+                  {formatRelative(data.updatedAt)}
+                </>
+              ) : (
+                <>Updated {formatRelative(data.updatedAt)}</>
+              )}
+            </span>
+          ) : data?.runId && runHref ? (
+            <Link
+              href={runHref}
+              className="font-mono text-xs text-muted-foreground hover:text-teal-400"
+            >
+              Run {data.runId.slice(0, 8)}…
+            </Link>
           ) : null
         }
       />
@@ -134,12 +155,40 @@ export function TokensProjectView({
       ) : reportingAgents.length === 0 ? (
         <EmptyState
           icon={Coins}
-          title="No MVP agent telemetry yet"
-          description={`${projectName} has pipeline runs, but Product, Architect, Database, and Developer telemetry has not been captured yet.`}
+          title={hasActiveRun ? 'Waiting for token usage' : 'No token usage recorded'}
+          description={
+            hasActiveRun ? (
+              <>
+                {projectName} is running now. Usage by agent and model will show up here as each step
+                finishes.
+              </>
+            ) : telemetryRunId && runHref ? (
+              <>
+                {projectName} finished run{' '}
+                <Link href={runHref} className="font-mono text-teal-400 hover:underline">
+                  {runLabel}
+                </Link>
+                , but token usage was not saved for that run. Start a new run from the dashboard — usage
+                will appear here as each agent completes.
+              </>
+            ) : (
+              <>
+                {projectName} has no saved token usage yet. Start a run from the dashboard and check back
+                here when agents finish.
+              </>
+            )
+          }
           action={
-            <Link href="/dashboard" className="text-sm font-medium text-teal-400 hover:underline">
-              Run the MVP pipeline
-            </Link>
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              {runHref && !hasActiveRun ? (
+                <Link href={runHref} className="text-sm font-medium text-teal-400 hover:underline">
+                  View run
+                </Link>
+              ) : null}
+              <Link href="/dashboard" className="text-sm font-medium text-teal-400 hover:underline">
+                {hasActiveRun ? 'Back to dashboard' : 'Start a new run'}
+              </Link>
+            </div>
           }
         />
       ) : (
@@ -160,7 +209,7 @@ export function TokensProjectView({
             <StatCard
               label="Wall time"
               value={formatDuration(Math.round(totals?.elapsedSec ?? 0))}
-              sub={`${reportingAgents.length}/4 MVP agents reported`}
+              sub={`${reportingAgents.length}/4 pipeline agents reported`}
               icon={Clock}
             />
             <StatCard

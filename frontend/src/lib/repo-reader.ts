@@ -592,6 +592,16 @@ function mergeStepProgressFromPhases(
   skipFlags?: Partial<Record<SdlcPhase, boolean>>,
 ): LiveStepState[] | undefined {
   if (!live.steps?.length) return live.steps;
+
+  if (status === 'completed') {
+    return live.steps.map((step) => {
+      const phase = agentPhase[step.name];
+      if (!phase || !MVP_TIMELINE_PHASES.includes(phase)) return step;
+      if (step.status === 'skipped' || skipFlags?.[phase]) return { ...step, status: 'skipped' };
+      return { ...step, status: 'completed' };
+    });
+  }
+
   let firstOpen = false;
   return live.steps.map((step) => {
     const phase = agentPhase[step.name];
@@ -602,7 +612,6 @@ function mergeStepProgressFromPhases(
     if (!firstOpen) {
       firstOpen = true;
       if (status === 'failed') return { ...step, status: 'failed' };
-      if (status === 'completed') return { ...step, status: 'completed' };
       if (status === 'running') return { ...step, status: 'running' };
       return { ...step, status: 'queued' };
     }
@@ -616,21 +625,24 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
 
   const needsHeavy = runNeedsHeavyProbe(enriched, log);
+  const terminalFromLog = log ? parseLogTerminalStatus(log) : null;
+  const isTerminal =
+    enriched.status === 'completed' ||
+    enriched.status === 'failed' ||
+    enriched.status === 'cancelled' ||
+    !!terminalFromLog;
   let ctx: PipelineContextFile | null = null;
   let phaseDone = emptyPhaseDone();
   let s3MtimeMs = 0;
 
-  if (needsHeavy) {
+  const shouldLoadPhases = needsHeavy || (isS3Store() && isTerminal) || isTerminal;
+
+  if (shouldLoadPhases) {
     ctx = isS3Store()
       ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
       : await readContextFile(slug);
     phaseDone = await phaseCompletionForRun(runId, slug, ctx);
     s3MtimeMs = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
-  } else if (!isS3Store()) {
-    ctx = await readContextFile(slug);
-    if (enriched.status === 'completed' || enriched.status === 'failed') {
-      phaseDone = await phaseCompletionForRun(runId, slug, ctx);
-    }
   }
 
   // Mark skipped phases as done so reconciler doesn't wait for them (e.g. skip_gitlab=true on old runs).
@@ -901,6 +913,7 @@ async function listProjectsFromS3(): Promise<Project[]> {
   const projects: Project[] = [];
 
   for (const [slug, runId] of s3RunByApp) {
+    if (!UUID_RE.test(runId)) continue;
     const ctx = (await getS3RunContext(runId)) as PipelineContextFile | null;
     const [status, lastRunAt, artifactCount, description] = await Promise.all([
       inferPipelineStatus(slug, runId),
@@ -1103,7 +1116,9 @@ async function phaseCompletionForRun(
         has((r) => r.endsWith('/requirements.txt')),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: has((r) => r.toLowerCase().includes('gitlab-handoff')),
+      deploy:
+        has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
+        has((r) => /handoffs\/gitlab\.json$/i.test(r)),
     };
   }
 
@@ -1133,7 +1148,9 @@ async function phaseCompletionForRun(
       implementation: has((r) => r.includes('/app/') && r.endsWith('.py')),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: has((r) => r.toLowerCase().includes('gitlab-handoff')),
+      deploy:
+        has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
+        has((r) => /handoffs\/gitlab\.json$/i.test(r)),
     };
   }
 
@@ -1145,11 +1162,10 @@ function buildSteps(runId: string, completed: Record<SdlcPhase, boolean>, status
   return PHASES.map((phase, idx) => {
     const done = completed[phase];
     let stepStatus: StepStatus = 'queued';
-    if (done) stepStatus = 'completed';
+    if (done || status === 'completed') stepStatus = 'completed';
     else if (firstOpen === null) {
       firstOpen = idx;
       if (status === 'failed' && phase === 'qa') stepStatus = 'failed';
-      else if (status === 'completed') stepStatus = 'completed';
       else if (status === 'paused') stepStatus = 'waiting_for_human';
       else stepStatus = status === 'queued' ? 'queued' : 'running';
     }
@@ -1158,9 +1174,15 @@ function buildSteps(runId: string, completed: Record<SdlcPhase, boolean>, status
       phase,
       agent: phaseAgent[phase],
       status: stepStatus,
-      startedAt: done || stepStatus === 'running' ? new Date(Date.now() - (PHASES.length - idx) * 3600_000).toISOString() : null,
-      finishedAt: done ? new Date(Date.now() - (PHASES.length - idx - 1) * 3600_000).toISOString() : null,
-      durationSec: done ? 120 + idx * 60 : null,
+      startedAt:
+        done || stepStatus === 'running' || stepStatus === 'completed'
+          ? new Date(Date.now() - (PHASES.length - idx) * 3600_000).toISOString()
+          : null,
+      finishedAt:
+        done || status === 'completed'
+          ? new Date(Date.now() - (PHASES.length - idx - 1) * 3600_000).toISOString()
+          : null,
+      durationSec: done || status === 'completed' ? 120 + idx * 60 : null,
     };
   });
 }
@@ -1208,10 +1230,37 @@ function buildStepsFromLive(runId: string, live: LiveRunState): PipelineStep[] {
 }
 
 async function listRunsUncached(): Promise<PipelineRun[]> {
-  const [uuidRuns, slugs] = await Promise.all([listUuidPipelineRuns(), listPipelineSlugs()]);
-  const coveredSlugs = new Set(uuidRuns.map((r) => r.projectId));
-  const coveredRunIds = new Set(uuidRuns.map((r) => r.id));
+  const uuidRuns = await listUuidPipelineRuns();
   const runs: PipelineRun[] = [...uuidRuns];
+  const coveredRunIds = new Set(uuidRuns.map((r) => r.id));
+
+  if (isS3Store()) {
+    await getS3RunArtifactIndex();
+    const s3RunByApp = await buildS3RunIdByApp();
+    for (const [slug, runId] of s3RunByApp) {
+      if (coveredRunIds.has(runId)) continue;
+      const live = await readUuidRunState(runId);
+      if (live) {
+        runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
+      } else {
+        runs.push(
+          await buildPipelineRunFromLive(slug, {
+            runId,
+            feature: slug,
+            targetApp: slug,
+            status: 'completed',
+            triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
+            startedAt: await getS3RunLastModified(runId),
+          }),
+        );
+      }
+      coveredRunIds.add(runId);
+    }
+    return filterUserPipelineRuns(runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  const slugs = await listPipelineSlugs();
+  const coveredSlugs = new Set(uuidRuns.map((r) => r.projectId));
 
   for (const slug of slugs) {
     if (coveredSlugs.has(slug)) continue;
@@ -1261,7 +1310,16 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     });
   }
 
-  return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return filterUserPipelineRuns(runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** Dashboard submissions always use UUID run ids — exclude legacy slug-only synthetic runs. */
+export function isUserPipelineRun(run: PipelineRun): boolean {
+  return UUID_RE.test(run.id);
+}
+
+function filterUserPipelineRuns(runs: PipelineRun[]): PipelineRun[] {
+  return runs.filter(isUserPipelineRun);
 }
 
 export async function listRuns(): Promise<PipelineRun[]> {
