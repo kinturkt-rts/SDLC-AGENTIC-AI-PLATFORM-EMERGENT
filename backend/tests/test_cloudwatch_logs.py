@@ -8,7 +8,13 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "agents"))
 
-from _shared.cloudwatch_logs import _extract_run_id, _parse_level, _strip_level_prefix  # noqa: E402
+from _shared.cloudwatch_logs import (  # noqa: E402
+    _extract_run_id,
+    _message_matches_run,
+    _parse_level,
+    _run_filter_patterns,
+    _strip_level_prefix,
+)
 
 
 def test_parse_level_from_python_logging_prefix() -> None:
@@ -37,3 +43,20 @@ def test_strip_level_prefix() -> None:
     assert _strip_level_prefix("INFO:_shared.agentcore_serve:Starting server") == "Starting server"
     assert _strip_level_prefix("ERROR:orchestrator:Failed handoff") == "Failed handoff"
     assert _strip_level_prefix("plain line") == "plain line"
+
+
+def test_run_filter_patterns_includes_camel_and_snake() -> None:
+    rid = "b605bf6a-784f-4fc1-a66d-b95ac026eff9"
+    patterns = _run_filter_patterns(rid)
+    assert f'"{rid}"' in patterns
+    assert f'"run_id={rid}"' in patterns
+    assert f'"runId={rid}"' in patterns
+
+
+def test_message_matches_run_variants() -> None:
+    rid = "b605bf6a-784f-4fc1-a66d-b95ac026eff9"
+    assert not _message_matches_run("anything", None)
+    assert _message_matches_run(f"runId={rid} starting product", rid)
+    assert _message_matches_run(f"run_id={rid} done", rid)
+    assert _message_matches_run(f"pipeline {rid} ok", rid)
+    assert not _message_matches_run("unrelated log line", rid)

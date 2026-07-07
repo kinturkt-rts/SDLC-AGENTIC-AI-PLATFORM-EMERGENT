@@ -181,14 +181,12 @@ export const api = {
     runId?: string;
     agent?: string;
     minutes?: number;
-    source?: 'local' | 'cloudwatch';
     limit?: number;
   }): Promise<LogEntry[]> {
     const params = new URLSearchParams();
     if (options?.runId) params.set('runId', options.runId);
     if (options?.agent) params.set('agent', options.agent);
     if (options?.minutes) params.set('minutes', String(options.minutes));
-    if (options?.source) params.set('source', options.source);
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
     const data = await httpGet<{ logs: LogEntry[] }>(`/api/v1/logs${qs ? `?${qs}` : ''}`);

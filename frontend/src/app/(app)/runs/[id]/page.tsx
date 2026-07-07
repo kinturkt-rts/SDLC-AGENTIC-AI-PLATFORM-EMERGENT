@@ -19,6 +19,7 @@ import {
   Send,
   AlertTriangle,
   XCircle,
+  ScrollText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -28,7 +29,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
-import { useRun, useRunEvents, useRunHandoffs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
+import { LogTable } from '@/src/components/logs/LogTable';
+import { useRun, useRunEvents, useRunHandoffs, useRunLogs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
@@ -120,6 +122,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: run, isLoading } = useRun(params.id);
   const isLive = run?.status === 'running' || run?.status === 'paused';
   const { data: events } = useRunEvents(params.id, isLive);
+  const { data: runLogs, isLoading: runLogsLoading } = useRunLogs(params.id, isLive);
   const { data: handoffs } = useRunHandoffs(params.id, isLive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
@@ -306,6 +309,42 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
           </div>
 
           {handoffs ? <PipelineHandoffsCard handoffs={handoffs} /> : null}
+
+          <Card className="border-white/[0.06] bg-card/80">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <ScrollText className="h-4 w-4 text-teal-400" /> Run logs
+                {!runLogsLoading && runLogs?.length ? (
+                  <span className="font-normal text-muted-foreground">({runLogs.length})</span>
+                ) : null}
+              </h2>
+              <Button asChild variant="outline" size="sm" className="h-8 border-white/[0.08]">
+                <Link href={`/logs?runId=${params.id}`}>Open in Logs</Link>
+              </Button>
+            </div>
+            {runLogsLoading ? (
+              <Skeleton className="m-4 h-48 w-full rounded-lg" />
+            ) : !runLogs?.length ? (
+              <EmptyState
+                icon={ScrollText}
+                title="No log lines yet"
+                description="CloudWatch agent stdout for this run window."
+                className="m-4 border-0"
+              />
+            ) : (
+              <div className="max-h-[480px] overflow-auto p-2">
+                <LogTable rows={runLogs.slice(0, 80)} showRunColumn={false} />
+                {runLogs.length > 80 ? (
+                  <p className="px-3 py-2 text-center text-xs text-muted-foreground">
+                    Showing 80 of {runLogs.length}.{' '}
+                    <Link href={`/logs?runId=${params.id}`} className="text-teal-400 hover:underline">
+                      View all in Logs
+                    </Link>
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </Card>
 
           {/* Artifacts for this run */}
           <Card className="border-white/[0.06] bg-card/80">

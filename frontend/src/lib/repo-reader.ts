@@ -590,6 +590,31 @@ export async function listPipelineLogs(options: ListPipelineLogsOptions = {}): P
   return entries.sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit);
 }
 
+function runLogTimeBounds(run: { startedAt: string; finishedAt?: string | null }): {
+  startMs: number;
+  endMs: number | undefined;
+} {
+  const startMs = Date.parse(run.startedAt) - 2 * 60_000;
+  const endMs = run.finishedAt ? Date.parse(run.finishedAt) + 5 * 60_000 : undefined;
+  return { startMs, endMs };
+}
+
+/** CloudWatch agent stdout for one pipeline run (time-window scoped). */
+export async function listRunLogs(runId: string): Promise<LogEntry[]> {
+  const run = await getRun(runId);
+  if (!run) return [];
+
+  const { startMs, endMs } = runLogTimeBounds(run);
+  return listCloudWatchLogs({
+    runId,
+    startMs,
+    endMs,
+    limit: 2000,
+    mvpOnly: true,
+    timeWindowForRun: true,
+  });
+}
+
 async function latestUuidRunMtime(runId: string): Promise<string> {
   const candidates = [
     repoPath('agents', 'pipeline', 'runs', runId, 'run.json'),
@@ -1654,11 +1679,12 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
 }
 
 async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> {
-  const minutes = Math.min(minutesSince(run.startedAt), 240);
+  const minutes = Math.min(runLogWindowMinutes(run), 240);
   const withRunFilter = await listCloudWatchLogs({
     runId: run.id,
     minutes,
-    limit: 80,
+    limit: 120,
+    mvpOnly: true,
   });
   if (withRunFilter.length > 0) return withRunFilter;
 
@@ -1666,7 +1692,7 @@ async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> 
     return [];
   }
 
-  const broad = await listCloudWatchLogs({ minutes, limit: 120 });
+  const broad = await listCloudWatchLogs({ minutes, limit: 120, mvpOnly: true });
   return broad.filter((log) => matchCloudWatchLogToRun(log, [run])?.id === run.id);
 }
 

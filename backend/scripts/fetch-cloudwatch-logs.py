@@ -23,8 +23,20 @@ def main() -> int:
     parser.add_argument("--agent", default=None)
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--minutes", type=int, default=None)
+    parser.add_argument("--start-ms", type=int, default=None)
+    parser.add_argument("--end-ms", type=int, default=None)
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--region", default=None)
+    parser.add_argument(
+        "--time-window-for-run",
+        action="store_true",
+        help="Fetch all agent stdout in start/end window (not UUID pattern only)",
+    )
+    parser.add_argument(
+        "--all-agents",
+        action="store_true",
+        help="Include non-MVP runtimes (e.g. web-crawler) in platform tail",
+    )
     args = parser.parse_args()
 
     try:
@@ -32,8 +44,12 @@ def main() -> int:
             agent=args.agent,
             run_id=args.run_id,
             minutes=args.minutes,
+            start_ms=args.start_ms,
+            end_ms=args.end_ms,
             limit=args.limit,
             region=args.region,
+            mvp_only=not args.all_agents,
+            time_window_for_run=args.time_window_for_run,
         )
     except Exception as err:
         print(json.dumps({"error": str(err), "logs": [], "source": "cloudwatch"}))

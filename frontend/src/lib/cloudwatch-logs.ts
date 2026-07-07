@@ -9,7 +9,11 @@ export interface CloudWatchLogsOptions {
   runId?: string;
   agent?: string;
   minutes?: number;
+  startMs?: number;
+  endMs?: number;
   limit?: number;
+  mvpOnly?: boolean;
+  timeWindowForRun?: boolean;
 }
 
 interface CloudWatchLogsResponse {
@@ -28,7 +32,11 @@ function cacheKey(options: CloudWatchLogsOptions): string {
     runId: options.runId ?? '',
     agent: options.agent ?? '',
     minutes: options.minutes ?? 60,
+    startMs: options.startMs ?? '',
+    endMs: options.endMs ?? '',
     limit: options.limit ?? 500,
+    mvpOnly: options.mvpOnly !== false,
+    timeWindowForRun: options.timeWindowForRun === true,
   });
 }
 
@@ -72,7 +80,11 @@ async function fetchCloudWatchLogs(
   if (options.agent) args.push('--agent', options.agent);
   if (options.runId) args.push('--run-id', options.runId);
   if (options.minutes) args.push('--minutes', String(options.minutes));
+  if (options.startMs) args.push('--start-ms', String(options.startMs));
+  if (options.endMs) args.push('--end-ms', String(options.endMs));
   if (options.limit) args.push('--limit', String(options.limit));
+  if (options.mvpOnly === false) args.push('--all-agents');
+  if (options.timeWindowForRun) args.push('--time-window-for-run');
 
   return await new Promise<LogEntry[]>((resolve) => {
     const child = spawn(python, args, {

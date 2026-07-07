@@ -1,21 +1,19 @@
 import { NextResponse } from 'next/server';
 import { listCloudWatchLogs } from '@/src/lib/cloudwatch-logs';
 import { parseLogAgentQuery } from '@/src/lib/pipeline-phases';
-import { listPipelineLogs } from '@/src/lib/repo-reader';
+import { getRun } from '@/src/lib/repo-reader';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-type LogSource = 'local' | 'cloudwatch';
-
-function resolveSource(value: string | null | undefined): LogSource {
-  if (value === 'cloudwatch') return 'cloudwatch';
-  return 'local';
+function runLogTimeBounds(run: { startedAt: string; finishedAt?: string | null }) {
+  const startMs = Date.parse(run.startedAt) - 2 * 60_000;
+  const endMs = run.finishedAt ? Date.parse(run.finishedAt) + 5 * 60_000 : undefined;
+  return { startMs, endMs };
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const source = resolveSource(searchParams.get('source'));
   const runId = searchParams.get('runId')?.trim() || undefined;
   const agent = parseLogAgentQuery(searchParams.get('agent'));
 
@@ -27,17 +25,29 @@ export async function GET(request: Request) {
   }
 
   const limitRaw = searchParams.get('limit');
-  let limit: number | undefined;
+  let limit = 1000;
   if (limitRaw) {
     const parsed = Number.parseInt(limitRaw, 10);
     if (Number.isFinite(parsed) && parsed > 0) limit = parsed;
   }
 
-  if (source === 'cloudwatch') {
-    const logs = await listCloudWatchLogs({ runId, agent, minutes, limit });
-    return NextResponse.json({ logs, source: 'cloudwatch' });
+  if (runId) {
+    const run = await getRun(runId);
+    if (run) {
+      const { startMs, endMs } = runLogTimeBounds(run);
+      const logs = await listCloudWatchLogs({
+        runId,
+        startMs,
+        endMs,
+        agent,
+        limit,
+        mvpOnly: true,
+        timeWindowForRun: true,
+      });
+      return NextResponse.json({ logs, source: 'cloudwatch', runId });
+    }
   }
 
-  const logs = await listPipelineLogs({ runId, agent, minutes, limit });
-  return NextResponse.json({ logs, source: 'pipeline' });
+  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 240, limit, mvpOnly: true });
+  return NextResponse.json({ logs, source: 'cloudwatch' });
 }

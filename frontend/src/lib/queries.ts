@@ -63,8 +63,13 @@ export const useRun = (id: string) =>
       return status === 'running' || status === 'paused' ? 4000 : false;
     },
   });
-export const useRunLogs = (id: string) =>
-  useQuery({ queryKey: queryKeys.runLogs(id), queryFn: () => api.getRunLogs(id), enabled: !!id });
+export const useRunLogs = (id: string, live = false) =>
+  useQuery({
+    queryKey: queryKeys.runLogs(id),
+    queryFn: () => api.getRunLogs(id),
+    enabled: !!id,
+    refetchInterval: live ? 8000 : false,
+  });
 export const useRunEvents = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runEvents(id),
@@ -99,22 +104,14 @@ export type LogsFilter = {
   runId?: string;
   agent?: string;
   minutes?: number;
-  source?: 'local' | 'cloudwatch';
   limit?: number;
 };
 
-export const useLogs = (filters?: LogsFilter) =>
+export const useLogs = (filters: LogsFilter, live = false) =>
   useQuery({
-    queryKey: [...queryKeys.logs, filters ?? {}],
+    queryKey: [...queryKeys.logs, filters],
     queryFn: () => api.getLogs(filters),
-    refetchInterval:
-      filters?.source === 'cloudwatch'
-        ? filters?.minutes && filters.minutes <= 30
-          ? 5000
-          : 15_000
-        : filters?.minutes && filters.minutes <= 30
-          ? 5000
-          : 30_000,
+    refetchInterval: live ? 8000 : 15_000,
   });
 export const useDashboardSummary = () =>
   useQuery({
