@@ -23,7 +23,7 @@ inputs/*.txt
     → security-agent       (SAST, deps, compliance — roadmap / manual)
 ```
 
-| Step | Agent / script | Status in `run-sdlc.ps1` | Primary outputs (local) |
+| Step | Agent / script | Status in `run-sdlc-local.ps1` | Primary outputs (local) |
 |------|----------------|--------------------------|-------------------------|
 | 1 | **product-agent** | Default (skip with `-SkipProduct`) | `target-apps/<app>/docs/PRD/<app>.md`, `agents/pipeline/<app>.context.json` |
 | 2 | **architect-agent** | Default (skip with `-SkipArchitect`) | `target-apps/<app>/docs/design/<app>.md`, diagram PNG |
@@ -42,14 +42,14 @@ inputs/*.txt
 ```powershell
 aws sso login --profile eks-admin-user
 cd backend
-.\scripts\run-sdlc.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt
+.\scripts\run-sdlc-local.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt
 ```
 
 With QA and without GitLab publish:
 
 ```powershell
 cd backend
-.\scripts\run-sdlc.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt -WithQa -SkipGitlab
+.\scripts\run-sdlc-local.ps1 -Feature platform-desk -InputFile inputs\platform-desk.txt -WithQa -SkipGitlab
 ```
 
 Full flag reference: `backend/scripts/PIPELINE.md`. Flow diagram and handoff details: `backend/docs/SDLC_PIPELINE_FLOW.md`.
@@ -80,7 +80,7 @@ sdlc-agentic-ai-mvp/
 │
 └── backend/                    # SDLC platform (agents, orchestrator, target apps, docs)
     ├── requirements.txt        # Python deps (Strands + shared)
-    ├── scripts/                # run-sdlc.ps1, RDS/MCP helpers
+    ├── scripts/                # run-sdlc-local.ps1, RDS/MCP helpers
     ├── agents/                 # Strands specialist agents + pipeline handoffs
     ├── orchestrator/           # Python pipeline driver (cli | a2a-http | dry-run)
     ├── target-apps/            # FastAPI services built by developer-agent

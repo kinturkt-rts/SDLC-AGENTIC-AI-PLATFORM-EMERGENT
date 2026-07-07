@@ -23,7 +23,7 @@ python agents/developer-agent/developer_agent.py --target-app finops-web-app
 ```
 
 After product-agent, `agents/pipeline/<prd-name>.context.json` is created automatically (`prdPath`, `designDocPath`, `diagramPaths` stubs). Optionally add a short `productAgentOutput` summary for the LLM.
-After architect, `run-sdlc.ps1` (or you) should set `diagramPaths` and confirm `designDocPath` → `docs/design/<target-app>.md`.
+After architect, `run-sdlc-local.ps1` (or you) should set `diagramPaths` and confirm `designDocPath` → `docs/design/<target-app>.md`.
 
 ## Optional flags (only used when provided)
 

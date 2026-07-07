@@ -9,7 +9,7 @@ Python agents, orchestrator, target apps, pipeline artifacts, and shared config.
 | `target-apps/` | FastAPI services built by developer-agent |
 | `inputs/` | Plain-text requirement briefs |
 | `docs/` | PRDs, design docs, diagrams |
-| `scripts/` | `run-sdlc.ps1`, RDS/MCP helpers |
+| `scripts/` | `run-sdlc-local.ps1`, RDS/MCP helpers |
 | `config/` | MCP catalog, orchestrator agent transport config |
 | `a2a/` | Agent-to-agent registry |
 | `deploy/` | Bedrock AgentCore packaging |
@@ -30,7 +30,7 @@ Secrets: `.env` at **monorepo root** (parent of `backend/`) or `backend/.env` �
 
 ```powershell
 cd backend
-.\scripts\run-sdlc.ps1 -Feature my-app -InputFile inputs\my-app.txt
+.\scripts\run-sdlc-local.ps1 -Feature my-app -InputFile inputs\my-app.txt
 ```
 
 Or via the dashboard: `frontend/` → Save Input → Start SDLC Pipeline (spawns `orchestrator_agent.py --run-pipeline` with `cwd=backend/`).

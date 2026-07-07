@@ -13,4 +13,4 @@ The architect also writes **`docs/design/<target-app>.md`** (per-feature solutio
 
 Legacy runs may still reference `docs/diagrams/generated-diagrams/` in context JSON; `pipeline_context.py` normalizes those paths on load.
 
-The AWS Diagram MCP server writes into this folder; architect-agent, `run-sdlc.ps1`, and pipeline context JSON all use this path.
+The AWS Diagram MCP server writes into this folder; architect-agent, `run-sdlc-local.ps1`, and pipeline context JSON all use this path.

@@ -49,10 +49,10 @@ They are intentionally harder than medium E2E apps (#5–#8).
 
 ```powershell
 # Hardest first (multi-tenant)
-.\scripts\run-sdlc.ps1 -Feature client-project-portal -InputFile inputs\client-project-portal.txt
+.\scripts\run-sdlc-local.ps1 -Feature client-project-portal -InputFile inputs\client-project-portal.txt
 
 # Workflow + evidence
-.\scripts\run-sdlc.ps1 -Feature audit-finding-tracker -InputFile inputs\audit-finding-tracker.txt
+.\scripts\run-sdlc-local.ps1 -Feature audit-finding-tracker -InputFile inputs\audit-finding-tracker.txt
 ```
 
 **Note:** The first draft of these files was client-email only (~30 lines) — too thin for agents.
@@ -113,15 +113,15 @@ python agents/developer-agent/developer_agent.py --target-app test-medium-app
 
 # Test #4 — Inventory Desk (login, Postgres CRUD, stock + QA)
 .\scripts\run-pipeline-test.ps1 -Level inventory
-# Same as: .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
+# Same as: .\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 
 # Test #5 — Release Notes Bot (Bedrock + Postgres + Streamlit — medium E2E)
 .\scripts\run-pipeline-test.ps1 -Level release-notes
-# Same as: .\scripts\run-sdlc.ps1 -Feature release-notes-bot -InputFile inputs\release-notes-bot.txt
+# Same as: .\scripts\run-sdlc-local.ps1 -Feature release-notes-bot -InputFile inputs\release-notes-bot.txt
 
 # Test #6 — Standup Tracker (Bedrock + Postgres + Streamlit — golden template test)
 .\scripts\run-pipeline-test.ps1 -Level standup
-# Same as: .\scripts\run-sdlc.ps1 -Feature standup-tracker -InputFile inputs\standup-tracker.txt
+# Same as: .\scripts\run-sdlc-local.ps1 -Feature standup-tracker -InputFile inputs\standup-tracker.txt
 ```
 
 ## Example
@@ -138,7 +138,7 @@ python agents/product-agent/product_agent.py `
 Optional: Jira Epic + 5 stories in the **same pipeline run**:
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -WithJira -JiraProject SAAP
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -WithJira -JiraProject SAAP
 ```
 
 Or manually after PRD:
@@ -156,7 +156,7 @@ Full flag reference: [`scripts/PIPELINE.md`](../scripts/PIPELINE.md)
 
 ## Pipeline (all agents)
 
-**Default full chain** (`run-sdlc.ps1` — no extra flags needed for Postgres apps):
+**Default full chain** (`run-sdlc-local.ps1` — no extra flags needed for Postgres apps):
 
 1. product → architect → database → **apply SQL to RDS** → developer → **qa** → **pytest verify**
 
@@ -165,29 +165,29 @@ aws sso login --profile eks-admin-user
 $env:AWS_PROFILE="eks-admin-user"
 
 # Inventory Desk — DEFAULT full chain (RDS + QA + verify; no Jira unless -WithJira)
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 
 # Same + Jira backlog in project SAAP:
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -WithJira -JiraProject SAAP
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -WithJira -JiraProject SAAP
 
 # Or use the test wrapper:
 .\scripts\run-pipeline-test.ps1 -Level inventory
 .\scripts\run-pipeline-test.ps1 -Level inventory -WithJira -JiraProject SAAP
 
 # No-database apps (skip RDS + DB agent):
-.\scripts\run-sdlc.ps1 -Feature test-medium-app -InputFile inputs\test_medium_app.txt -SkipDb -SkipPostgres
+.\scripts\run-sdlc-local.ps1 -Feature test-medium-app -InputFile inputs\test_medium_app.txt -SkipDb -SkipPostgres
 
 # Opt out of QA or local pytest only:
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipQa
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipVerify
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipQa
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipVerify
 ```
 
 Legacy flags `-WithPostgres` and `-WithQa` still work; RDS apply and QA are **on by default** when database/developer steps run.
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature finops-web-app -InputFile inputs\finops-web-app.txt
-.\scripts\run-sdlc.ps1 -Feature meeting-assistant -InputFile inputs\meeting-assistant.txt
-.\scripts\run-sdlc.ps1 -Feature rag-app-streamlit -InputFile inputs\rag-app-streamlit.txt
+.\scripts\run-sdlc-local.ps1 -Feature finops-web-app -InputFile inputs\finops-web-app.txt
+.\scripts\run-sdlc-local.ps1 -Feature meeting-assistant -InputFile inputs\meeting-assistant.txt
+.\scripts\run-sdlc-local.ps1 -Feature rag-app-streamlit -InputFile inputs\rag-app-streamlit.txt
 ```
 
 ### RAG + Streamlit (step-by-step — recommended for first run)

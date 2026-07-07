@@ -1,6 +1,6 @@
 # Flow Chart — SDLC Agentic AI Platform
 
-This document describes the **target** end-to-end delivery pipeline and what is **implemented today** in this repo. A plain-text requirements brief goes in; the long-term goal is a deployed application on AWS with governance and quality gates. Today, `scripts/run-sdlc.ps1` chains **product → architect → database → RDS apply → developer → verify → GitLab publish**; **qa-agent** is opt-in (`-WithQa`); **devops-agent** and **security-agent** are run manually or via future orchestration.
+This document describes the **target** end-to-end delivery pipeline and what is **implemented today** in this repo. A plain-text requirements brief goes in; the long-term goal is a deployed application on AWS with governance and quality gates. Today, `scripts/run-sdlc-local.ps1` chains **product → architect → database → RDS apply → developer → verify → GitLab publish**; **qa-agent** is opt-in (`-WithQa`); **devops-agent** and **security-agent** are run manually or via future orchestration.
 
 Each specialist agent is a **Strands Agent** on Amazon Bedrock with MCP tools. Agents do not share one monolithic prompt—they pass work through **canonical files** plus a small **pipeline context JSON** (`agents/pipeline/<target-app>.context.json`).
 
@@ -38,7 +38,7 @@ flowchart TB
     USER[User / PM]
   end
 
-  subgraph implemented [Implemented — run-sdlc.ps1]
+  subgraph implemented [Implemented — run-sdlc-local.ps1]
     PROD[product-agent]
     PRD[(docs/PRD/app.md)]
     CTX[(agents/pipeline/app.context.json)]
@@ -123,13 +123,13 @@ flowchart TB
 - **Output:**
   - Diagram → `docs/generated-diagrams/<app>.png` (AWS Diagram MCP)
   - Solution design → `docs/design/<app>.md` (design-writer sub-step)
-  - Context updated with `designDocPath`, `diagramPaths`, `architectSummary` (via `run-sdlc.ps1` or manual JSON edit)
+  - Context updated with `designDocPath`, `diagramPaths`, `architectSummary` (via `run-sdlc-local.ps1` or manual JSON edit)
 - **Purpose:** Technical approach, stack, APIs, and data boundaries before build
 - **Flags:** `--diagram-name`, `--context-file`, `--skip-design` (diagram only)
 
 ### 3b. Web-crawler-agent (optional)
 
-- **When:** `run-sdlc.ps1 -WithWebCrawler` after architect, before database
+- **When:** `run-sdlc-local.ps1 -WithWebCrawler` after architect, before database
 - **Input:** URLs in context or requirements; design/PRD paths
 - **Output:** Scraped markdown under `docs/PRD/scraped/<app>/`, optional Postgres rows (Firecrawl + Postgres MCP)
 - **Purpose:** Enrich PRD/design with external docs (not on every run)
@@ -150,7 +150,7 @@ flowchart TB
 
 ### 5b. Local verify ✅
 
-- **When:** End of `run-sdlc.ps1` before GitLab (skip with `-SkipVerify`)
+- **When:** End of `run-sdlc-local.ps1` before GitLab (skip with `-SkipVerify`)
 - **Purpose:** Import smoke + `pytest` in the app folder
 
 ### 6. GitLab-agent ✅
@@ -162,7 +162,7 @@ flowchart TB
 
 ### 7. QA-agent ✅ (opt-in)
 
-- **When:** `run-sdlc.ps1 -WithQa` after GitLab (`-SkipQa` to skip)
+- **When:** `run-sdlc-local.ps1 -WithQa` after GitLab (`-SkipQa` to skip)
 - **Purpose:** Extended pytest, coverage gaps, `agents/pipeline/<app>.qa-handoff.json`
 
 ### 8–10. Roadmap (target operating model)
@@ -184,7 +184,7 @@ flowchart TB
 **One script (repo root):**
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature rag-pdf-system -InputFile inputs\rag-pdf-system.txt
+.\scripts\run-sdlc-local.ps1 -Feature rag-pdf-system -InputFile inputs\rag-pdf-system.txt
 ```
 
 **Or step-by-step:**

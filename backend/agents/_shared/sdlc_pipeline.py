@@ -1,4 +1,4 @@
-"""Deterministic SDLC pipeline runner — mirrors scripts/run-sdlc.ps1.
+"""Deterministic SDLC pipeline runner — mirrors scripts/run-sdlc-local.ps1.
 
 Used by orchestrator-agent as the master coordinator for local CLI and AgentCore A2A.
 """

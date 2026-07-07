@@ -43,7 +43,7 @@ Deploy ECS MCP: `backend/scripts/push-gitlab-mcp-ecr.ps1` + `deploy-gitlab-mcp-e
 ## Pipeline
 
 ```powershell
-.\scripts\run-sdlc.ps1 `
+.\scripts\run-sdlc-local.ps1 `
   -Feature training-compliance `
   -InputFile inputs\training-compliance.txt `
   -WithGitlab

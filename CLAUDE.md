@@ -10,7 +10,7 @@ sdlc-agentic-ai-platform/
 │   ├── agents/       # Strands specialist agents + pipeline/ handoff JSONs
 │   │   ├── _shared/  # Shared utilities (env, artifact store, pipeline runner, schemas)
 │   │   └── <name>/   # One directory per agent
-│   ├── scripts/      # run-sdlc.ps1, RDS apply, MCP helpers
+│   ├── scripts/      # run-sdlc-local.ps1, RDS apply, MCP helpers
 │   ├── target-apps/  # FastAPI services built by developer-agent (git-ignored output)
 │   ├── inputs/       # Plain-text requirement briefs
 │   ├── tests/        # Platform pytest suite (not per-app tests)
@@ -48,14 +48,14 @@ aws sso login --profile eks-admin-user
 From `backend/`:
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 ```
 
 Key skip/opt-in flags: `-SkipProduct`, `-SkipArchitect`, `-SkipDb`, `-SkipPostgres`, `-SkipDeveloper`, `-SkipGitlab`, `-SkipVerify`, `-WithQa`, `-WithJira -JiraProject <KEY>`, `-WithWebCrawler`.
 
 Resume a partial run (e.g., DB + dev only):
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipProduct -SkipArchitect
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipProduct -SkipArchitect
 ```
 
 Preset test levels (`run-pipeline-test.ps1`): `easy`, `medium`, `db`, `inventory`, `release-notes`.

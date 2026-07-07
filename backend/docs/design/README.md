@@ -30,7 +30,7 @@ Target size: **~90 lines**. Details belong in the PRD; design.md is the implemen
 ## Chain (one command)
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature rag-pdf-system -InputFile inputs\rag-pdf-system.txt
+.\scripts\run-sdlc-local.ps1 -Feature rag-pdf-system -InputFile inputs\rag-pdf-system.txt
 ```
 
 Handoff JSON: `agents/pipeline/<feature>.context.json` includes `designDocPath`: `docs/design/<feature>.md`.

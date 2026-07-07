@@ -1,4 +1,4 @@
-"""RDS + UI parity checks for run-sdlc.ps1 local verify (mirrors dev_validate_app gates)."""
+"""RDS + UI parity checks for run-sdlc-local.ps1 local verify (mirrors dev_validate_app gates)."""
 
 from __future__ import annotations
 

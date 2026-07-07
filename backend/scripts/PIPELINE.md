@@ -14,7 +14,7 @@ One-time CLI profile setup: `aws configure sso --profile eks-admin-user` (writes
 For a Postgres-backed app like **Inventory Desk**, this is the standard one-liner:
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 ```
 
 Equivalent test wrapper:
@@ -36,7 +36,7 @@ Equivalent test wrapper:
 | 6 | **gitlab-agent** | MCP push to `sdlc/<feature>` on GitLab (when `GITLAB_*` in `.env`) |
 | 7 | qa-agent | Extended tests — **only with `-WithQa`** |
 
-GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. **devops-agent** and **security-agent** are not in `run-sdlc.ps1` yet — run manually after QA when needed.
+GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. **devops-agent** and **security-agent** are not in `run-sdlc-local.ps1` yet — run manually after QA when needed.
 
 ---
 
@@ -44,7 +44,7 @@ GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSO
 
 | Script | When to use |
 |--------|-------------|
-| `run-sdlc.ps1` | Any feature — you pass `-Feature` and `-InputFile` |
+| `run-sdlc-local.ps1` | Any feature — you pass `-Feature` and `-InputFile` |
 | `run-pipeline-test.ps1` | Preset levels: `easy`, `medium`, `db`, `inventory`, `release-notes` |
 
 ---
@@ -63,7 +63,7 @@ GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSO
 **Jira example:**
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -WithJira -JiraProject SAAP
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -WithJira -JiraProject SAAP
 ```
 
 ```powershell
@@ -90,13 +90,13 @@ Jira is **never** created unless you pass `-WithJira`. Atlassian MCP must be con
 **No database (API-only apps):**
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature test-medium-app -InputFile inputs\test_medium_app.txt -SkipDb -SkipPostgres
+.\scripts\run-sdlc-local.ps1 -Feature test-medium-app -InputFile inputs\test_medium_app.txt -SkipDb -SkipPostgres
 ```
 
 **SQL files only — no RDS:**
 
 ```powershell
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipPostgres
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipPostgres
 ```
 
 ---
@@ -140,13 +140,13 @@ python scripts/apply_sql_to_rds.py --target-app inventory-app
 
 ```powershell
 # PRD done — continue from architect
-.\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipProduct
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt -SkipProduct
 
 # Design done — DB + dev + QA only
-.\scripts\run-sdlc.ps1 -Feature inventory-app -SkipProduct -SkipArchitect
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -SkipProduct -SkipArchitect
 
 # Dev + QA only
-.\scripts\run-sdlc.ps1 -Feature inventory-app -SkipProduct -SkipArchitect -SkipDb -SkipPostgres
+.\scripts\run-sdlc-local.ps1 -Feature inventory-app -SkipProduct -SkipArchitect -SkipDb -SkipPostgres
 ```
 
 ---

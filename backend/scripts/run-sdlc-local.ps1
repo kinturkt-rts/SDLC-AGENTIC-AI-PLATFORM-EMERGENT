@@ -3,7 +3,7 @@
 # Use -SkipGitlab to skip publish after developer.
 #
 # DEFAULT (Postgres app, full chain + GitLab publish when .env has GITLAB_*):
-#   .\scripts\run-sdlc.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
+#   .\scripts\run-sdlc-local.ps1 -Feature inventory-app -InputFile inputs\inventory-app.txt
 #
 # GitLab overrides:
 #   -GitlabProject / -GitlabBase         # override GITLAB_PROJECT_PATH / GITLAB_BASE_BRANCH
