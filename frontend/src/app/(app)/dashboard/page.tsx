@@ -51,6 +51,15 @@ import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
 
+function inferFeatureSlugFromFilename(filename: string): string {
+  return filename
+    .replace(/\.(txt|md)$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 /* ─────────────────────────────────────────────────────
    SDLC Pipeline Steps
    ───────────────────────────────────────────────────── */
@@ -284,23 +293,47 @@ function InputRequirementsCard() {
   const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
   const [withJira, setWithJira] = React.useState(false);
   const [jiraProject, setJiraProject] = React.useState('');
+  const [fileLoading, setFileLoading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const uploadSeqRef = React.useRef(0);
+  const submitLockRef = React.useRef(false);
 
   const featureValid = !feature || FEATURE_SLUG_RE.test(feature);
+
+  const clearSavedRunState = React.useCallback(() => {
+    setSavedPath(null);
+    setSavedRunId(null);
+    setStartedRunId(null);
+    setLastSaved(null);
+  }, []);
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const seq = ++uploadSeqRef.current;
+    setFileLoading(true);
+    clearSavedRunState();
+
     const reader = new FileReader();
     reader.onload = (ev) => {
+      if (seq !== uploadSeqRef.current) return;
       const text = ev.target?.result as string;
       setContent(text);
-      setStatus('ready');
-      if (!feature) {
-        const inferred = file.name.replace(/\.(txt|md)$/i, '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-        if (FEATURE_SLUG_RE.test(inferred)) setFeature(inferred);
+      setStatus(text.trim() ? 'ready' : 'missing');
+
+      const inferred = inferFeatureSlugFromFilename(file.name);
+      if (FEATURE_SLUG_RE.test(inferred)) {
+        setFeature(inferred);
       }
+
+      setFileLoading(false);
       toast.success('File loaded', { description: `${file.name} (${(file.size / 1024).toFixed(1)} KB)` });
+    };
+    reader.onerror = () => {
+      if (seq !== uploadSeqRef.current) return;
+      setFileLoading(false);
+      toast.error('Could not read file', { description: file.name });
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -356,6 +389,7 @@ function InputRequirementsCard() {
   };
 
   const handleSubmit = async () => {
+    if (submitLockRef.current || submitting || fileLoading) return;
     if (!content.trim()) {
       toast.error('Cannot submit empty requirements');
       return;
@@ -368,15 +402,19 @@ function InputRequirementsCard() {
       toast.error('Enter a Jira project key (e.g. SAAP) or turn off Create Jira backlog');
       return;
     }
+
+    submitLockRef.current = true;
     setSubmitting(true);
     setSubmitPhase('upload');
+    const submitContent = content;
+    const submitFeature = feature;
     try {
       const uploadRes = await fetchWithTimeout(
         '/api/v1/inputs',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ feature, content }),
+          body: JSON.stringify({ feature: submitFeature, content: submitContent }),
         },
         45_000,
       );
@@ -390,7 +428,7 @@ function InputRequirementsCard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            targetApp: feature,
+            targetApp: submitFeature,
             runId: uploadData.runId,
             inputFile: uploadData.inputPath ?? uploadData.inputFile,
             withJira,
@@ -408,7 +446,7 @@ function InputRequirementsCard() {
       setStartedRunId(data.runId);
       setLastSaved(new Date().toLocaleTimeString());
       toast.success('Pipeline submitted', {
-        description: `${feature} · ${data.runId.slice(0, 8)}…`,
+        description: `${submitFeature} · ${data.runId.slice(0, 8)}…`,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -416,6 +454,7 @@ function InputRequirementsCard() {
     } catch (err) {
       toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
+      submitLockRef.current = false;
       setSubmitting(false);
       setSubmitPhase('idle');
     }
@@ -455,7 +494,7 @@ function InputRequirementsCard() {
     setContent(val);
     if (status === 'saved') {
       setStatus('ready');
-      setSavedRunId(null);
+      clearSavedRunState();
     }
     if (!val.trim()) setStatus('missing');
     else if (status === 'missing') setStatus('ready');
@@ -465,7 +504,7 @@ function InputRequirementsCard() {
     setFeature(val.toLowerCase());
     if (status === 'saved') {
       setStatus('ready');
-      setSavedRunId(null);
+      clearSavedRunState();
     }
   };
 
@@ -543,9 +582,10 @@ function InputRequirementsCard() {
           <Button
             variant="outline"
             className="w-full gap-2 border-white/[0.08] text-sm"
+            disabled={fileLoading}
             onClick={() => fileInputRef.current?.click()}
           >
-            <Upload className="h-4 w-4" /> Upload File
+            <Upload className="h-4 w-4" /> {fileLoading ? 'Loading file…' : 'Upload File'}
           </Button>
           <div className="space-y-2 text-[11px] text-muted-foreground">
             {lastSaved && <p>Saved {lastSaved}</p>}
@@ -603,10 +643,12 @@ function InputRequirementsCard() {
               size="sm"
               className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700"
               onClick={handleSubmit}
-              disabled={!content.trim() || !feature || !featureValid || submitting}
+              disabled={!content.trim() || !feature || !featureValid || submitting || fileLoading}
             >
               <PlayCircle className="h-3.5 w-3.5" />{' '}
-              {submitting
+              {fileLoading
+                ? 'Loading file…'
+                : submitting
                 ? submitPhase === 'upload'
                   ? 'Uploading…'
                   : 'Starting pipeline…'
