@@ -1,0 +1,26 @@
+# Control-plane frontend image (docker build -f frontend/Dockerfile .)
+# Exclude local build artifacts — Next.js builds inside the container.
+
+.git
+.cursor
+**/.DS_Store
+**/Thumbs.db
+
+# Frontend — never copy local dev/build output into the image
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+frontend/coverage
+frontend/.env
+frontend/.env.*
+
+# Backend — only agents/config/docs/scripts/inputs/a2a are copied in Dockerfile
+backend/.venv
+backend/**/__pycache__
+backend/**/.pytest_cache
+backend/target-apps
+backend/infrastructure
+backend/deploy
+backend/tests
+backend/.env
+backend/.env.*

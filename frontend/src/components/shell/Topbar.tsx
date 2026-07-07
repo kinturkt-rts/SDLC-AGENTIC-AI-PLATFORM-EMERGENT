@@ -92,7 +92,7 @@ export function Topbar() {
       : 'Select project';
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border/60 bg-background/70 px-4 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border/60 bg-background/70 px-4 pr-5 backdrop-blur-xl sm:pr-6">
       {showProjectFilter ? (
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">Project</span>

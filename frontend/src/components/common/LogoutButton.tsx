@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { LOGOUT } from '@/lib/constants/testIds/auth';
+import { clearAuthenticated } from '@/src/lib/auth-session';
 
 export function LogoutButton() {
   const router = useRouter();
@@ -11,13 +12,17 @@ export function LogoutButton() {
   return (
     <Button
       variant="ghost"
-      size="icon"
+      size="sm"
       aria-label="Log out"
-      title="Log out"
       data-testid={LOGOUT.button}
-      onClick={() => router.push('/login')}
+      className="gap-1.5 text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        clearAuthenticated();
+        router.push('/login');
+      }}
     >
-      <LogOut className="h-4 w-4" />
+      <LogOut className="h-4 w-4 shrink-0" />
+      <span>Log out</span>
     </Button>
   );
 }

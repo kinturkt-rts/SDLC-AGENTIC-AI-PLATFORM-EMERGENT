@@ -1,16 +1,22 @@
-# Build and push control-plane frontend image to ECR.
+# Build and push control-plane frontend image to ECR (redeploy only).
 #
-# Usage (from monorepo root or backend/):
+# Existing repo: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane
+#
+# Usage (from backend/):
+#   aws sso login --profile eks-admin-user
 #   .\scripts\push-frontend-ecr.ps1
 #   .\scripts\push-frontend-ecr.ps1 -SkipBuild
+#
+# Then roll out:
+#   aws ecs update-service --cluster sdlc-agentic-ai --service sdlc-control-plane `
+#     --force-new-deployment --region us-east-2 --profile eks-admin-user
 
 param(
     [string] $Region = "us-east-2",
-    [string] $Profile = "Juno Developers",
+    [string] $Profile = "eks-admin-user",
     [string] $AccountId = "061836593297",
     [string] $Repository = "sdlc-control-plane",
     [string] $Tag = "latest",
-    [switch] $SkipCreateRepo,
     [switch] $SkipBuild
 )
 
@@ -18,25 +24,31 @@ $ErrorActionPreference = "Stop"
 $env:AWS_PROFILE = $Profile
 $BackendRoot = Split-Path $PSScriptRoot -Parent
 $MonorepoRoot = Split-Path $BackendRoot -Parent
-$ImageUri = "$AccountId.dkr.ecr.$Region.amazonaws.com/${Repository}:$Tag"
+$Registry = "$AccountId.dkr.ecr.$Region.amazonaws.com"
+$ImageUri = "$Registry/${Repository}:$Tag"
 
-if (-not $SkipCreateRepo) {
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    aws ecr describe-repositories --repository-names $Repository --region $Region --profile $Profile 2>$null | Out-Null
-    $repoExists = ($LASTEXITCODE -eq 0)
-    $ErrorActionPreference = $prevEap
-    if (-not $repoExists) {
-        Write-Host "Creating ECR repository $Repository ..." -ForegroundColor Cyan
-        aws ecr create-repository --repository-name $Repository --region $Region --profile $Profile | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "ecr create-repository failed" }
-    }
+Write-Host "Verifying ECR repository $Repository ..." -ForegroundColor Cyan
+$repo = aws ecr describe-repositories `
+    --repository-names $Repository `
+    --region $Region `
+    --profile $Profile `
+    --query "repositories[0].repositoryUri" `
+    --output text
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repo)) {
+    throw "ECR repository '$Repository' not found in $Region (profile: $Profile). Create it once via deploy-frontend-ecs.ps1 or the AWS console."
 }
+Write-Host "Using $repo" -ForegroundColor DarkGray
 
 aws ecr get-login-password --region $Region --profile $Profile |
-    docker login --username AWS --password-stdin "$AccountId.dkr.ecr.$Region.amazonaws.com"
+    docker login --username AWS --password-stdin $Registry
+if ($LASTEXITCODE -ne 0) { throw "docker login to ECR failed" }
 
 if (-not $SkipBuild) {
+    $frontendNext = Join-Path $MonorepoRoot "frontend\.next"
+    if (Test-Path $frontendNext) {
+        Write-Host "Removing local frontend/.next (rebuilt inside Docker) ..." -ForegroundColor DarkGray
+        Remove-Item -Recurse -Force $frontendNext -ErrorAction SilentlyContinue
+    }
     Write-Host "Building $ImageUri ..." -ForegroundColor Cyan
     docker build -f (Join-Path $MonorepoRoot "frontend\Dockerfile") -t $ImageUri (Join-Path $MonorepoRoot ".")
     if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
@@ -47,3 +59,4 @@ docker push $ImageUri
 if ($LASTEXITCODE -ne 0) { throw "docker push failed" }
 
 Write-Host "Done: $ImageUri" -ForegroundColor Green
+Write-Host "Next: aws ecs update-service --cluster sdlc-agentic-ai --service sdlc-control-plane --force-new-deployment --region $Region --profile $Profile" -ForegroundColor DarkGray

@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { LOGIN } from '@/lib/constants/testIds/auth';
+import { setAuthenticated, isAuthenticated } from '@/src/lib/auth-session';
+
 import { cn } from '@/lib/utils';
 
 const REMEMBER_KEY = 'sdlc-login-remember-email';
@@ -23,6 +25,12 @@ export function LoginView() {
   const [remember, setRemember] = React.useState(false);
   const [showPassword, setShowPassword] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isAuthenticated()) {
+      router.replace('/dashboard');
+    }
+  }, [router]);
 
   React.useEffect(() => {
     try {
@@ -50,8 +58,9 @@ export function LoginView() {
       } else {
         localStorage.removeItem(REMEMBER_KEY);
       }
-      // Auth is not wired yet — Cognito placeholder in Settings. Proceed to control plane.
+      // Auth is not wired yet - Cognito placeholder in Settings. Proceed to control plane.
       await new Promise((resolve) => setTimeout(resolve, 450));
+      setAuthenticated();
       router.push('/dashboard');
     } finally {
       setIsSubmitting(false);
@@ -183,11 +192,6 @@ export function LoginView() {
                 <span className="login-submit-shine" aria-hidden />
               </Button>
             </form>
-
-            <p className="login-footer mt-8 flex items-center justify-center gap-1.5 text-center text-xs text-slate-500">
-              <Sparkles className="h-3 w-3 text-violet-400/80" aria-hidden />
-              Powered by Agentic AI
-            </p>
           </div>
         </div>
       </motion.div>

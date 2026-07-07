@@ -41,6 +41,14 @@ const MVP_AGENTS: { id: AgentName; label: string }[] = [
 ];
 
 export default function LogsPage() {
+  return (
+    <React.Suspense fallback={<Skeleton className="h-96 w-full rounded-xl" />}>
+      <LogsInner />
+    </React.Suspense>
+  );
+}
+
+function LogsInner() {
   const searchParams = useSearchParams();
   const paramRunId = searchParams.get('runId')?.trim() ?? '';
 
@@ -98,7 +106,7 @@ export default function LogsPage() {
   const description = activeRun
     ? `Live CloudWatch for ${activeRun.projectName} · run ${activeRun.id.slice(0, 8)}…`
     : projectName
-      ? `Live CloudWatch for ${projectName} — pick a run or browse recent activity.`
+      ? `Live CloudWatch for ${projectName} - pick a run or browse recent activity.`
       : 'Live CloudWatch from AgentCore pipeline agents.';
 
   return (

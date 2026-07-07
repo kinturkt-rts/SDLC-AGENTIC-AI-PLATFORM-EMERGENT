@@ -21,7 +21,7 @@ Login is UI-only for now (no Cognito yet) — `/dashboard` is still reachable di
 **Prereqs:** Docker Desktop running, AWS SSO session active.
 
 ```powershell
-aws sso login --profile "Juno Developers"
+aws sso login --profile "eks-admin-user"
 cd backend
 ```
 
@@ -40,20 +40,24 @@ aws ecs update-service `
   --service sdlc-control-plane `
   --force-new-deployment `
   --region us-east-2 `
-  --profile "Juno Developers"
+  --profile "eks-admin-user"
 ```
 
 ### Faster image-only redeploy (typical for UI tweaks)
 
 ```powershell
 .\scripts\push-frontend-ecr.ps1
+```
 
+The script verifies the existing ECR repo (`061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane`) — it does not create one.
+
+```powershell
 aws ecs update-service `
   --cluster sdlc-agentic-ai `
   --service sdlc-control-plane `
   --force-new-deployment `
   --region us-east-2 `
-  --profile "Juno Developers"
+  --profile "eks-admin-user"
 ```
 
 Push only (skip rebuild if image already built locally):
@@ -70,7 +74,7 @@ aws ecs describe-services `
   --cluster sdlc-agentic-ai `
   --services sdlc-control-plane `
   --region us-east-2 `
-  --profile "Juno Developers" `
+  --profile "eks-admin-user" `
   --query "services[0].deployments"
 
 Invoke-WebRequest -Uri "http://sdlc-control-plane-alb-804473930.us-east-2.elb.amazonaws.com/api/health" -UseBasicParsing
@@ -84,7 +88,7 @@ Wait until the primary deployment shows `rolloutState: COMPLETED` and `/login` r
 |------|-------|
 | Account | `061836593297` |
 | Region | `us-east-2` |
-| Profile | `Juno Developers` |
+| Profile | `eks-admin-user` |
 | ECR image | `061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane:latest` |
 | ECS cluster | `sdlc-agentic-ai` |
 | ECS service | `sdlc-control-plane` |
@@ -122,7 +126,7 @@ docker run --rm -p 3000:3000 `
   -e ARTIFACT_STORE=s3 `
   -e ARTIFACT_S3_BUCKET=sdlc-agentic-ai-app-artifacts `
   -e AWS_REGION=us-east-2 `
-  -e AWS_PROFILE="Juno Developers" `
+  -e AWS_PROFILE="eks-admin-user" `
   -v "$env:USERPROFILE\.aws:/root/.aws:ro" `
   sdlc-control-plane:local
 ```

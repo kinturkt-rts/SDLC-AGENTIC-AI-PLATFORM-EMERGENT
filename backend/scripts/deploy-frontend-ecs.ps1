@@ -1,7 +1,7 @@
 # Deploy SDLC control-plane frontend on ECS Fargate + ALB.
 #
 # Prereqs:
-#   aws sso login --profile "Juno Developers"
+#   aws sso login --profile eks-admin-user
 #   .\scripts\push-frontend-ecr.ps1
 #   IAM task role sdlc-control-plane-task (S3 artifact bucket, CloudWatch Logs, bedrock-agentcore:InvokeAgentRuntime)
 #
@@ -11,7 +11,7 @@
 
 param(
     [string] $Region = "us-east-2",
-    [string] $Profile = "Juno Developers",
+    [string] $Profile = "eks-admin-user",
     [string] $AccountId = "061836593297",
     [string] $Cluster = "sdlc-agentic-ai",
     [string] $ServiceName = "sdlc-control-plane",

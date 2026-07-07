@@ -1679,12 +1679,14 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
 }
 
 async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> {
-  const minutes = Math.min(runLogWindowMinutes(run), 240);
+  const { startMs, endMs } = runLogTimeBounds(run);
   const withRunFilter = await listCloudWatchLogs({
     runId: run.id,
-    minutes,
+    startMs,
+    endMs,
     limit: 120,
     mvpOnly: true,
+    timeWindowForRun: true,
   });
   if (withRunFilter.length > 0) return withRunFilter;
 
@@ -1692,6 +1694,7 @@ async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> 
     return [];
   }
 
+  const minutes = Math.min(Math.max(minutesSince(run.startedAt), 15), 240);
   const broad = await listCloudWatchLogs({ minutes, limit: 120, mvpOnly: true });
   return broad.filter((log) => matchCloudWatchLogToRun(log, [run])?.id === run.id);
 }
