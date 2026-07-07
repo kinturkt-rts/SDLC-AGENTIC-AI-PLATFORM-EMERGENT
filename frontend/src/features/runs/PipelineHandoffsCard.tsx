@@ -84,7 +84,7 @@ export function PipelineHandoffsCard({ handoffs }: { handoffs: RunHandoffs }) {
       ) : developer ? (
         <HandoffSection title="GitLab publish" icon={GitBranch}>
           <p className="text-sm text-muted-foreground">
-            Skipped — no GitLab handoff for this run.
+            Skipped - no GitLab handoff for this run.
           </p>
         </HandoffSection>
       ) : null}

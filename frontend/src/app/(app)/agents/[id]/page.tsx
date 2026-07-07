@@ -197,7 +197,7 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
               ))
             ) : (
               <p className="text-xs text-muted-foreground">
-                No external MCP servers — this agent uses built-in Strands tools only.
+                No external MCP servers - this agent uses built-in Strands tools only.
               </p>
             )}
           </div>

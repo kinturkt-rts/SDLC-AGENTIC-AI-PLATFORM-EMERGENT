@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { uploadBrief, validateTargetApp } from '@/src/lib/pipeline-run';
+import { formatApiRouteError } from '@/src/lib/api-route-error';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -50,8 +51,8 @@ export async function POST(request: Request) {
       savedAt: new Date().toISOString(),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes('S3') ? 500 : 400;
+    const message = formatApiRouteError(err);
+    const status = /S3|AWS|timed out|SSO/i.test(message) ? 503 : 400;
     return NextResponse.json({ error: message }, { status });
   }
 }

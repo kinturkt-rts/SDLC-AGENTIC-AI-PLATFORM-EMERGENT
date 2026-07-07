@@ -56,19 +56,19 @@ export function TokensOverview() {
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Tokens</p>
                 <p className="font-mono font-medium text-foreground">
-                  {row.totalTokens > 0 ? formatTokenCount(row.totalTokens) : '—'}
+                  {row.totalTokens > 0 ? formatTokenCount(row.totalTokens) : '-'}
                 </p>
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Est. cost</p>
                 <p className="font-medium text-foreground">
-                  {row.costUsd > 0 ? `$${row.costUsd.toFixed(2)}` : '—'}
+                  {row.costUsd > 0 ? `$${row.costUsd.toFixed(2)}` : '-'}
                 </p>
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Agents</p>
                 <p className="text-foreground">
-                  {row.agentsWithTelemetry > 0 ? `${row.agentsWithTelemetry}/4` : '—'}
+                  {row.agentsWithTelemetry > 0 ? `${row.agentsWithTelemetry}/4` : '-'}
                 </p>
               </div>
             </div>

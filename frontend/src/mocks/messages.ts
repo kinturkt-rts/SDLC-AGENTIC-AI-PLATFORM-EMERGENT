@@ -82,7 +82,7 @@ export const mockAgentMessages: AgentMessage[] = [
     correlationId: 'cor-impl-8f2a91',
     runId: 'run-8f2a91',
     ts: secsAgo(120),
-    summary: 'Scaffolding budgets_router.py — 60% complete.',
+    summary: 'Scaffolding budgets_router.py - 60% complete.',
   },
   {
     id: 'msg-009',
@@ -102,7 +102,7 @@ export const mockAgentMessages: AgentMessage[] = [
     correlationId: 'cor-sec-3c77d0',
     runId: 'run-3c77d0',
     ts: minsAgo(18),
-    summary: '2 medium findings — human approval required before continuing.',
+    summary: '2 medium findings - human approval required before continuing.',
   },
   {
     id: 'msg-011',
@@ -132,6 +132,6 @@ export const mockAgentMessages: AgentMessage[] = [
     correlationId: 'cor-sec-1a40be',
     runId: 'run-1a40be',
     ts: minsAgo(184),
-    summary: 'Production deploy approved by s.patel — resuming pipeline.',
+    summary: 'Production deploy approved by s.patel - resuming pipeline.',
   },
 ];

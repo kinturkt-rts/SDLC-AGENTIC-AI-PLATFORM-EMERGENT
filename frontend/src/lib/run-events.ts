@@ -87,17 +87,17 @@ function phaseForRel(relPath: string): SdlcPhase | null {
 function artifactDescription(kind: ArtifactKind, name: string): string {
   switch (kind) {
     case 'prd':
-      return `PRD published — ${name}`;
+      return `PRD published - ${name}`;
     case 'architecture':
-      return `Architecture doc ready — ${name}`;
+      return `Architecture doc ready - ${name}`;
     case 'diagram':
-      return `Diagram exported — ${name}`;
+      return `Diagram exported - ${name}`;
     case 'migration':
-      return `SQL migration generated — ${name}`;
+      return `SQL migration generated - ${name}`;
     case 'code':
-      return `Application code — ${name}`;
+      return `Application code - ${name}`;
     default:
-      return `Artifact created — ${name}`;
+      return `Artifact created - ${name}`;
   }
 }
 
@@ -226,7 +226,7 @@ export function buildRunLifecycleEvents(run: PipelineRun, startId = 0): RunEvent
       ts: run.finishedAt,
       level: 'info',
       agent: 'orchestrator-agent',
-      message: `Pipeline completed — ${run.projectName}`,
+      message: `Pipeline completed - ${run.projectName}`,
     });
   }
 
@@ -238,7 +238,7 @@ export function buildRunLifecycleEvents(run: PipelineRun, startId = 0): RunEvent
       ts: run.finishedAt ?? run.startedAt,
       level: 'error',
       agent: 'orchestrator-agent',
-      message: run.error ?? `Pipeline failed — ${run.projectName}`,
+      message: run.error ?? `Pipeline failed - ${run.projectName}`,
     });
   }
 
@@ -296,7 +296,7 @@ export function runEventToActivityFeed(
       description = `${phaseDisplayLabel(event.phase)} phase in progress`;
       break;
     case 'step.failed':
-      description = `Failed at ${phaseDisplayLabel(event.phase)} — ${event.error}`;
+      description = `Failed at ${phaseDisplayLabel(event.phase)} - ${event.error}`;
       break;
     case 'log':
       description = event.message;
@@ -312,7 +312,7 @@ export function runEventToActivityFeed(
   }
 
   const isToolLog =
-    event.kind === 'log' && event.message.toLowerCase().startsWith('tool call —');
+    event.kind === 'log' && event.message.toLowerCase().startsWith('tool call -');
   const href = isToolLog
     ? `/logs?agent=${encodeURIComponent(agentId)}`
     : event.kind === 'artifact.created'

@@ -1,4 +1,4 @@
-﻿import { promises as fs } from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
@@ -20,10 +20,10 @@ const RUNS_CACHE_KEYS = [
 const SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-/** Human-friendly run ids (e.g. smoke-004) or UUIDs — matches agent pipeline runId usage. */
+/** Human-friendly run ids (e.g. smoke-004) or UUIDs - matches agent pipeline runId usage. */
 const RUN_ID_RE = /^(?:[a-z][a-z0-9-]{0,62}[a-z0-9]|[0-9a-f-]{36})$/i;
 const MAX_BYTES = 256 * 1024;
-const S3_UPLOAD_TIMEOUT_MS = 25_000;
+const S3_UPLOAD_TIMEOUT_MS = 45_000;
 
 export function validateRunId(runId: string): string | null {
   const id = runId.trim();

@@ -11,15 +11,15 @@ interface UiState {
   currentProjectId: string;
   setCurrentProject: (id: string) => void;
 
-  /** Runs page only — null means show all projects. */
+  /** Runs page only - null means show all projects. */
   runsProjectId: string | null;
   setRunsProject: (id: string | null) => void;
 
-  /** Tokens page only — null = all-projects overview. */
+  /** Tokens page only - null = all-projects overview. */
   tokensProjectId: string | null;
   setTokensProjectId: (id: string | null) => void;
 
-  /** Logs page only — null = all projects. */
+  /** Logs page only - null = all projects. */
   logsProjectId: string | null;
   setLogsProjectId: (id: string | null) => void;
 

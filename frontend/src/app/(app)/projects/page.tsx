@@ -58,7 +58,7 @@ export default function ProjectsPage() {
       <PageHeader
         eyebrow="Design"
         title="Projects"
-        description="Target applications produced by the SDLC pipeline — PRDs, designs, SQL, and FastAPI code. Each slug is a feature app under backend/target-apps/."
+        description="Target applications produced by the SDLC pipeline - PRDs, designs, SQL, and FastAPI code. Each slug is a feature app under backend/target-apps/."
         actions={
           <Link
             href="/dashboard"
@@ -135,7 +135,7 @@ export default function ProjectsPage() {
                     <StatusBadge status={p.pipelineStatus} size="sm" />
                   </div>
                   <p className="mt-3 line-clamp-2 flex-1 text-[13px] leading-relaxed text-muted-foreground">
-                    {p.description || 'No description — open project for pipeline context and artifacts.'}
+                    {p.description || 'No description - open project for pipeline context and artifacts.'}
                   </p>
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-3 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1.5">

@@ -40,7 +40,7 @@ export default function CheckpointsPage() {
       <PageHeader
         eyebrow="Operate"
         title="HITL Checkpoints"
-        description={`Human-in-the-loop gates for ${projectName} — approve, reject, or clarify before the pipeline continues.`}
+        description={`Human-in-the-loop gates for ${projectName} - approve, reject, or clarify before the pipeline continues.`}
       />
 
       {isLoading ? (

@@ -146,7 +146,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
   const resolveHitl = (id: string, title: string, decision: 'approved' | 'rejected') => {
     setHitlOverride((o) => ({ ...o, [id]: decision }));
-    toast.success(`Checkpoint ${decision}`, { description: `${title} — recorded locally (mock).` });
+    toast.success(`Checkpoint ${decision}`, { description: `${title} - recorded locally (mock).` });
   };
 
   const controls = <StatusBadge status={status} />;

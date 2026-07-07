@@ -176,7 +176,7 @@ export default function SettingsPage() {
           <div className="min-w-0 space-y-1">
             <p className="text-sm font-medium text-foreground">Amazon Cognito</p>
             <p className="text-sm text-muted-foreground">
-              Sign-in with a Cognito user pool — SSO-friendly for enterprise teams. Role-based access
+              Sign-in with a Cognito user pool - SSO-friendly for enterprise teams. Role-based access
               to runs, artifacts, and pipeline controls will be enforced here.
             </p>
           </div>

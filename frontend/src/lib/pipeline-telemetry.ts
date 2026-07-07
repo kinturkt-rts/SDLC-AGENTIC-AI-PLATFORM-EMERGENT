@@ -367,7 +367,7 @@ export function aggregateTelemetrySnapshots(
 
 async function loadPipelineTelemetryUncached(projectId: string): Promise<PipelineTelemetrySummary> {
   const runId = await resolveTelemetryRunId(projectId);
-  // Always load all MVP slots — S3 discovery may omit agents whose telemetry only exists locally.
+  // Always load all MVP slots - S3 discovery may omit agents whose telemetry only exists locally.
   const loaded = await Promise.all(
     MVP_AGENT_IDS.map((name) => loadAgentTelemetry(projectId, name, runId)),
   );

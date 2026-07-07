@@ -223,7 +223,7 @@ function latestModifiedMs(files: S3ArtifactFile[]): number {
   return max;
 }
 
-/** One paginated S3 list for all runs/<runId>/ keys — cached 30s. */
+/** One paginated S3 list for all runs/<runId>/ keys - cached 30s. */
 export async function getS3RunArtifactIndex(): Promise<Map<string, S3ArtifactFile[]>> {
   if (!isS3Store()) return new Map();
 

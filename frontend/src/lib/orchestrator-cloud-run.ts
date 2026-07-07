@@ -102,7 +102,7 @@ export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
 
 /**
  * Invoke orchestrator-agent on AgentCore (AWS SDK) and optional cloud gitlab-agent fallback.
- * No local Python subprocess — only the AgentCore runtimes execute the pipeline.
+ * No local Python subprocess - only the AgentCore runtimes execute the pipeline.
  */
 export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions): Promise<void> {
   const { logPath, timeoutSec, ...taskOpts } = options;
@@ -116,7 +116,7 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   if (!taskOpts.skipPostgres && !taskOpts.skipDb) {
     await appendLog(
       logPath,
-      'Note: skip_postgres=false — orchestrator applies RDS in-cloud after database-agent.\n---\n',
+      'Note: skip_postgres=false - orchestrator applies RDS in-cloud after database-agent.\n---\n',
     );
   }
 
@@ -133,7 +133,7 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   if (!taskOpts.skipGitlab) {
     await appendLog(logPath, '--- gitlab ---\n');
     if (await gitlabHandoffExists(runId, app)) {
-      await appendLog(logPath, '[gitlab] Handoff already exists — orchestrator published. Skipping fallback.\n');
+      await appendLog(logPath, '[gitlab] Handoff already exists - orchestrator published. Skipping fallback.\n');
     } else {
       await updateRunJson(runId, { currentStep: 'gitlab-agent' });
       const glTask =
@@ -151,7 +151,7 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
       } else {
         await appendLog(
           logPath,
-          '[gitlab-fallback] Cloud gitlab-agent failed or no handoff — artifacts remain in S3.\n',
+          '[gitlab-fallback] Cloud gitlab-agent failed or no handoff - artifacts remain in S3.\n',
         );
       }
     }
@@ -161,15 +161,15 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   if (result.status === 'success' && !textLower.includes('pipeline failed')) {
     await finalizeRunJson(runId, { status: 'completed' });
   } else if (!taskOpts.skipGitlab && (await gitlabHandoffExists(runId, app))) {
-    // Orchestrator may have timed out after gitlab-agent succeeded — handoff confirms publish.
+    // Orchestrator may have timed out after gitlab-agent succeeded - handoff confirms publish.
     await finalizeRunJson(runId, { status: 'completed' });
   } else {
     const isTimeout = /timeout|timed.?out/i.test(result.error ?? '');
     await finalizeRunJson(runId, {
       status: 'failed',
       error: isTimeout
-        ? 'Orchestrator HTTP timeout — pipeline may still be running in cloud (check CloudWatch)'
-        : (result.error ?? 'orchestrator did not complete — check CloudWatch logs'),
+        ? 'Orchestrator HTTP timeout - pipeline may still be running in cloud (check CloudWatch)'
+        : (result.error ?? 'orchestrator did not complete - check CloudWatch logs'),
     });
   }
 }

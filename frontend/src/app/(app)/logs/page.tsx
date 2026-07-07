@@ -172,9 +172,9 @@ export default function LogsPage() {
 
       <p className="mb-3 text-sm text-muted-foreground">
         {isCloudWatch ? (
-          <>CloudWatch logs of agents — live stdout from deployed Bedrock AgentCore runtimes.</>
+          <>CloudWatch logs of agents - live stdout from deployed Bedrock AgentCore runtimes.</>
         ) : (
-          <>Local pipeline logs — orchestrator output captured on this machine.</>
+          <>Local pipeline logs - orchestrator output captured on this machine.</>
         )}
       </p>
 
@@ -217,7 +217,7 @@ export default function LogsPage() {
                   {l.runId.slice(0, 13)}
                 </Link>
               ) : (
-                <span className="w-28 shrink-0 truncate text-muted-foreground/40">—</span>
+                <span className="w-28 shrink-0 truncate text-muted-foreground/40">-</span>
               )}
               <span className="flex-1 whitespace-pre-wrap break-words text-foreground">{l.message}</span>
             </div>

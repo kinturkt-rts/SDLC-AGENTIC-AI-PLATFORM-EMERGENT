@@ -18,7 +18,7 @@ export default function AgentsPage() {
   const [view, setView] = React.useState<'cards' | 'table'>('cards');
   const router = useRouter();
 
-  // Orchestrator is a system component — show only the specialist agents
+  // Orchestrator is a system component - show only the specialist agents
   // Exclude web crawler per user request
   const agents = (rawAgents ?? []).filter((a) => a.id !== 'orchestrator-agent' && a.id !== 'web-crawler-agent');
 

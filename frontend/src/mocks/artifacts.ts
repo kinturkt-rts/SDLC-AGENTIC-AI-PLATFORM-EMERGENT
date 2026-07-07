@@ -1,7 +1,7 @@
 import type { Artifact } from '@/src/types';
 import { minsAgo } from './time';
 
-export const FINOPS_PRD_PREVIEW = `# FinOps Web App — Product Requirements
+export const FINOPS_PRD_PREVIEW = `# FinOps Web App - Product Requirements
 
 ## 1. Problem
 Engineering and finance lack a shared, real-time view of cloud spend. Budgets are

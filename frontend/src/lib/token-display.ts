@@ -76,7 +76,7 @@ export function modelDisplayLabel(label: string): string {
 
 export function formatCacheHitRatio(inputTokens: number, cacheReadTokens: number): string {
   const total = inputTokens + cacheReadTokens;
-  if (total <= 0) return '—';
+  if (total <= 0) return '-';
   return `${((cacheReadTokens / total) * 100).toFixed(1)}%`;
 }
 

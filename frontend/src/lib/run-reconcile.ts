@@ -129,14 +129,14 @@ export function firstIncompleteMvpPhase(
   return null;
 }
 
-/** Derive truthful run status from logs, S3 artifacts, and last activity — not stale run.json alone. */
+/** Derive truthful run status from logs, S3 artifacts, and last activity - not stale run.json alone. */
 export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult {
   const terminal = parseLogTerminalStatus(input.logText);
   if (terminal?.status === 'completed') {
     return { status: 'completed', currentStep: null };
   }
 
-  // All MVP artifacts exist — but not if GitLab was required and never published.
+  // All MVP artifacts exist - but not if GitLab was required and never published.
   if (mvpPipelineComplete(input.phaseDone)) {
     const skipGitlab = parseLogSkipFlags(input.logText).deploy === true;
     if (skipGitlab || input.phaseDone.deploy) {

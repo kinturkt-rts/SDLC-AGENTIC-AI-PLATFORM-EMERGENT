@@ -9,9 +9,11 @@ export function formatApiRouteError(err: unknown): string {
     return `AWS SSO session expired for profile "${profile}". Run: aws sso login --profile ${profile}, then restart npm run dev.`;
   }
   if (/TimeoutError|timed out|ECONNRESET|ENOTFOUND/i.test(message)) {
-    const profile = process.env.AWS_PROFILE?.trim();
-    const hint = profile ? ` Run: aws sso login --profile ${profile}` : '';
-    return `AWS/S3 request failed (${message}).${hint}`;
+    const profile = process.env.AWS_PROFILE?.trim() || 'your-aws-profile';
+    return (
+      `${message}. This usually means AWS SSO expired or the dev server is busy. ` +
+      `Run: aws sso login --profile ${profile}, restart npm run dev, then retry Submit.`
+    );
   }
   return message;
 }

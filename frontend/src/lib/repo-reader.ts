@@ -209,7 +209,7 @@ const AGENT_DISPLAY: Record<
   'web-crawler-agent': { displayName: 'Web Crawler', phase: 'requirements' },
 };
 
-/** Built-in Strands tools (not MCP) — from agent implementations. */
+/** Built-in Strands tools (not MCP) - from agent implementations. */
 const AGENT_BUILTIN_TOOLS: Record<string, string[]> = {
   'developer-agent': [
     'dev_read_file',
@@ -231,7 +231,7 @@ const MVP_ONLINE_AGENTS = new Set<string>([
   'gitlab-agent',
 ]);
 
-/** Reserved for phase 2 — shown offline in the UI. */
+/** Reserved for phase 2 - shown offline in the UI. */
 const PHASE2_OFFLINE_AGENTS = new Set<string>(['qa-agent', 'devops-agent', 'security-agent']);
 
 function resolveAgentAvailability(agentId: string): AgentAvailability {
@@ -407,7 +407,7 @@ async function listPipelineSlugs(): Promise<string[]> {
   return [...slugs].sort();
 }
 
-/** Project slugs for artifact/context views — S3 runs only when ARTIFACT_STORE=s3. */
+/** Project slugs for artifact/context views - S3 runs only when ARTIFACT_STORE=s3. */
 async function listArtifactProjectSlugs(): Promise<string[]> {
   if (isS3Store()) return listS3ProjectSlugs();
   const [pipelineSlugs, appSlugs] = await Promise.all([listPipelineSlugs(), listTargetAppSlugs()]);
@@ -1169,7 +1169,7 @@ async function phaseCompletion(slug: string, ctx: PipelineContextFile | null): P
   };
 }
 
-/** Per-run artifact checks — avoids marking a new run complete from older slug-level files. */
+/** Per-run artifact checks - avoids marking a new run complete from older slug-level files. */
 async function phaseCompletionForRun(
   runId: string,
   slug: string,
@@ -1397,7 +1397,7 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
   return filterUserPipelineRuns(runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
-/** Dashboard submissions always use UUID run ids — exclude legacy slug-only synthetic runs. */
+/** Dashboard submissions always use UUID run ids - exclude legacy slug-only synthetic runs. */
 export function isUserPipelineRun(run: PipelineRun): boolean {
   return UUID_RE.test(run.id);
 }
@@ -1727,7 +1727,7 @@ function mergeRunEventsFromLists(...groups: RunEvent[][]): RunEvent[] {
   return [...byId.values()].sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
-/** Recent pipeline activity — S3 milestones + live CloudWatch agent stdout. */
+/** Recent pipeline activity - S3 milestones + live CloudWatch agent stdout. */
 export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]> {
   return cachedAsync(`${ACTIVITY_CACHE_KEY}:${limit}`, HEAVY_LIST_TTL_MS, () =>
     listRecentActivityUncached(limit),

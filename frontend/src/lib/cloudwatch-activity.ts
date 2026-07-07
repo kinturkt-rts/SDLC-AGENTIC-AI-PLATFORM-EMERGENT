@@ -66,7 +66,7 @@ export function parseCloudWatchActivityLine(
     const agentId = normalizeAgentId(toolBracket[1], fallbackAgent);
     const toolName = toolBracket[3];
     return {
-      summary: `Tool call — ${toolName}`,
+      summary: `Tool call - ${toolName}`,
       kind: 'tool',
       agentId,
       toolName,
@@ -77,7 +77,7 @@ export function parseCloudWatchActivityLine(
   if (toolBare) {
     const toolName = toolBare[2];
     return {
-      summary: `Tool call — ${toolName}`,
+      summary: `Tool call - ${toolName}`,
       kind: 'tool',
       agentId: fallbackAgent,
       toolName,
@@ -98,7 +98,7 @@ export function parseCloudWatchActivityLine(
 
   if (/traceback \(most recent call last\)/i.test(trimmed)) {
     return {
-      summary: 'Agent error — see CloudWatch logs',
+      summary: 'Agent error - see CloudWatch logs',
       kind: 'error',
       agentId: fallbackAgent,
     };

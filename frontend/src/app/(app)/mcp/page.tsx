@@ -243,7 +243,7 @@ export default function McpPage() {
         <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto border-white/[0.08] bg-card">
           <DialogHeader>
             <DialogTitle>{editingName ? `Edit ${editingName}` : 'Add MCP Server'}</DialogTitle>
-            <DialogDescription>Configure how agents connect to this server. Reference secrets via ${'{'}env:NAME{'}'} — do not enter raw credentials.</DialogDescription>
+            <DialogDescription>Configure how agents connect to this server. Reference secrets via ${'{'}env:NAME{'}'} - do not enter raw credentials.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
@@ -263,7 +263,7 @@ export default function McpPage() {
               <Label htmlFor="m-env">Environment variables</Label>
               <p className="text-[11px] text-muted-foreground">
                 One per line. Reference secrets from <code className="rounded bg-muted/50 px-1">.env</code> with{' '}
-                <code className="rounded bg-muted/50 px-1">${'{'}env:VAR_NAME{'}'}</code> — do not paste raw tokens.
+                <code className="rounded bg-muted/50 px-1">${'{'}env:VAR_NAME{'}'}</code> - do not paste raw tokens.
               </p>
               <Textarea id="m-env" rows={3} value={form.env} onChange={(e) => set('env', e.target.value)} placeholder={'GITLAB_PERSONAL_ACCESS_TOKEN=${env:GITLAB_PERSONAL_ACCESS_TOKEN}'} className="border-white/[0.08] bg-white/[0.02] font-mono text-xs" />
             </div>

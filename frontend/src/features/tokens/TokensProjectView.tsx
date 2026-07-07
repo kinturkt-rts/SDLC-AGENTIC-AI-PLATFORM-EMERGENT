@@ -168,7 +168,7 @@ export function TokensProjectView({
                 <Link href={runHref} className="font-mono text-teal-400 hover:underline">
                   {runLabel}
                 </Link>
-                , but token usage was not saved for that run. Start a new run from the dashboard — usage
+                , but token usage was not saved for that run. Start a new run from the dashboard - usage
                 will appear here as each agent completes.
               </>
             ) : (

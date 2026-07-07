@@ -15,7 +15,7 @@ export function getBackendRoot(): string {
   return path.join(getMonorepoRoot(), 'backend');
 }
 
-/** @deprecated Use getBackendRoot — kept for call-site compatibility. */
+/** @deprecated Use getBackendRoot - kept for call-site compatibility. */
 export function getRepoRoot(): string {
   return getBackendRoot();
 }

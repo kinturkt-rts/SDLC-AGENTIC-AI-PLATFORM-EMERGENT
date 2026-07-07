@@ -1,4 +1,4 @@
-/** User-facing labels for MCP server cards — hide raw ${env:...} wiring from the UI. */
+/** User-facing labels for MCP server cards - hide raw ${env:...} wiring from the UI. */
 
 const ENV_LABELS: Record<string, string> = {
   GITLAB_PERSONAL_ACCESS_TOKEN: 'GitLab token',

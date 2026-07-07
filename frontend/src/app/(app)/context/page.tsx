@@ -35,7 +35,7 @@ function ContextInner() {
       <PageHeader
         eyebrow="Assets"
         title="Context"
-        description={`Shared pipeline context for ${projectName} — PRD summaries, schema notes, and design decisions.`}
+        description={`Shared pipeline context for ${projectName} - PRD summaries, schema notes, and design decisions.`}
       />
       <ContextView projectSlug={currentProjectId} />
     </>

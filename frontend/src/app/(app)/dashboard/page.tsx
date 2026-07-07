@@ -346,7 +346,7 @@ function InputRequirementsCard() {
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new Error(
-          `Request timed out after ${timeoutMs / 1000}s — the dev server may be busy. Retry or restart \`npm run dev\`.`,
+          `Request timed out after ${timeoutMs / 1000}s - the dev server may be busy. Retry or restart \`npm run dev\`.`,
         );
       }
       throw err;
@@ -533,7 +533,9 @@ function InputRequirementsCard() {
                   placeholder="SAAP"
                   className="h-8 border-white/[0.08] bg-white/[0.02] font-mono text-xs uppercase"
                 />
-                <p className="text-[10px] text-muted-foreground">Epic + 5 stories after PRD (opt-in)</p>
+                <p className="text-[10px] text-muted-foreground">
+                  After the PRD is generated, creates one epic and five user stories in this project.
+                </p>
               </div>
             ) : null}
           </div>
@@ -709,7 +711,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="hidden text-right sm:block">
                     <p className="text-[10px] text-muted-foreground">current</p>
-                    <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '—'}</p>
+                    <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Timer className="h-3.5 w-3.5" /> {formatDuration(run.elapsedSec)}

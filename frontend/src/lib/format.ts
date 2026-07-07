@@ -1,7 +1,7 @@
 // Lightweight formatting helpers (no external date lib needed).
 
 export function formatRelative(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const then = new Date(iso).getTime();
   const diff = Date.now() - then;
   const sec = Math.round(diff / 1000);
@@ -18,7 +18,7 @@ export function formatRelative(iso: string | null): string {
 }
 
 export function formatDuration(sec: number | null): string {
-  if (sec == null) return '—';
+  if (sec == null) return '-';
   if (sec < 60) return `${sec}s`;
   const m = Math.floor(sec / 60);
   const s = sec % 60;
@@ -29,7 +29,7 @@ export function formatDuration(sec: number | null): string {
 }
 
 export function formatDateTime(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   return new Date(iso).toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',

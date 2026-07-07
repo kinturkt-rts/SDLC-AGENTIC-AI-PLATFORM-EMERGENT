@@ -62,7 +62,7 @@ const ChartStyle = ({
   return (
     <style
       dangerouslySetInnerHTML={{
-        // THEMES is a module-level const literal — provably non-null at this call site.
+        // THEMES is a module-level const literal - provably non-null at this call site.
         // oxlint-disable-next-line emergent/safe-object-methods
         __html: Object.entries(THEMES)
           .map(([theme, prefix]) => `

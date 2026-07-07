@@ -93,7 +93,7 @@ export default function ArtifactsPage() {
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description={`Deliverables for ${currentProjectName} — PRDs, design docs, architecture diagrams, SQL, code, and CI/CD.`}
+        description={`Deliverables for ${currentProjectName} - PRDs, design docs, architecture diagrams, SQL, code, and CI/CD.`}
         actions={
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground">Kind</span>

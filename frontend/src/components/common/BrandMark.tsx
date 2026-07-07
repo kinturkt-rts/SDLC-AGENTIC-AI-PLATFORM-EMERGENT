@@ -1,7 +1,7 @@
 import { Network } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/** Sidebar / shell mark — orchestrator hub coordinating SDLC specialist agents. */
+/** Sidebar / shell mark - orchestrator hub coordinating SDLC specialist agents. */
 export function BrandMark({
   className,
   iconClassName,
