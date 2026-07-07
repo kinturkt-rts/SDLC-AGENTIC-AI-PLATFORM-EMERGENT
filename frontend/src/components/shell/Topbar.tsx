@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ThemeToggle } from '@/src/components/common/ThemeToggle';
+import { LogoutButton } from '@/src/components/common/LogoutButton';
 import { shouldShowProjectFilter } from '@/src/lib/project-filter';
 import { useUiStore } from '@/src/store/ui-store';
 import { useProjects, useRuns } from '@/src/lib/queries';
@@ -127,6 +128,7 @@ export function Topbar() {
 
       <div className="ml-auto flex items-center gap-2">
         <ThemeToggle />
+        <LogoutButton />
       </div>
     </header>
   );

@@ -1,0 +1,47 @@
+{
+  "family": "sdlc-control-plane",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::061836593297:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::061836593297:role/sdlc-control-plane-task",
+  "containerDefinitions": [
+    {
+      "name": "sdlc-control-plane",
+      "image": "061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "3000" },
+        { "name": "HOSTNAME", "value": "0.0.0.0" },
+        { "name": "BACKEND_ROOT", "value": "/backend" },
+        { "name": "ARTIFACT_STORE", "value": "s3" },
+        { "name": "ARTIFACT_S3_BUCKET", "value": "sdlc-agentic-ai-app-artifacts" },
+        { "name": "AWS_REGION", "value": "us-east-2" },
+        { "name": "SDLC_PIPELINE_TRANSPORT", "value": "a2a" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/sdlc-control-plane",
+          "awslogs-region": "us-east-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

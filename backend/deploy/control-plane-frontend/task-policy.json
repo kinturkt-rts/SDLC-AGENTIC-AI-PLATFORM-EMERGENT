@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ArtifactBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::sdlc-agentic-ai-app-artifacts",
+        "arn:aws:s3:::sdlc-agentic-ai-app-artifacts/*"
+      ]
+    },
+    {
+      "Sid": "AgentCoreRuntimeLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:us-east-2:061836593297:log-group:/aws/bedrock-agentcore/*"
+    },
+    {
+      "Sid": "InvokeAgentCoreRuntimes",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime",
+      "Resource": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/*"
+    }
+  ]
+}

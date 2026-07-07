@@ -215,3 +215,240 @@
 .dark ::-webkit-scrollbar-thumb:hover {
   background: rgba(255,255,255,0.14);
 }
+
+/* ── Login page ─────────────────────────────────────── */
+
+.login-page {
+  background: hsl(225 50% 4%);
+}
+
+.login-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.login-backdrop__gradient {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(34, 211, 238, 0.14), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 100% 50%, rgba(139, 92, 246, 0.1), transparent 50%),
+    radial-gradient(ellipse 50% 40% at 0% 80%, rgba(59, 130, 246, 0.08), transparent 45%),
+    linear-gradient(180deg, hsl(225 50% 3%) 0%, hsl(230 45% 6%) 50%, hsl(225 50% 4%) 100%);
+}
+
+.login-backdrop__grid {
+  position: absolute;
+  inset: -20% -10%;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+  transform: perspective(600px) rotateX(58deg) translateY(-8%);
+  transform-origin: center top;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 75%);
+  opacity: 0.55;
+}
+
+.login-backdrop__mesh {
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2322d3ee' fill-opacity='0.08'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+.login-backdrop__orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  animation: login-orb-float 12s ease-in-out infinite;
+}
+
+.login-backdrop__orb--cyan {
+  top: 8%;
+  left: 12%;
+  width: 280px;
+  height: 280px;
+  background: rgba(34, 211, 238, 0.18);
+}
+
+.login-backdrop__orb--violet {
+  right: 8%;
+  bottom: 18%;
+  width: 320px;
+  height: 320px;
+  background: rgba(139, 92, 246, 0.16);
+  animation-delay: -4s;
+}
+
+.login-backdrop__orb--blue {
+  top: 42%;
+  left: 55%;
+  width: 200px;
+  height: 200px;
+  background: rgba(59, 130, 246, 0.12);
+  animation-delay: -8s;
+}
+
+.login-backdrop__nodes {
+  position: absolute;
+  inset: 0;
+}
+
+.login-backdrop__node {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(34, 211, 238, 0.7);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.5);
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.login-backdrop__node--1 { top: 22%; left: 18%; }
+.login-backdrop__node--2 { top: 35%; right: 22%; animation-delay: 0.8s; }
+.login-backdrop__node--3 { bottom: 28%; left: 28%; animation-delay: 1.6s; }
+.login-backdrop__node--4 { top: 58%; right: 35%; background: rgba(139, 92, 246, 0.8); box-shadow: 0 0 12px rgba(139, 92, 246, 0.45); }
+.login-backdrop__node--5 { bottom: 18%; right: 14%; animation-delay: 2.2s; }
+
+.login-backdrop__line {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.35), transparent);
+  transform-origin: left center;
+}
+
+.login-backdrop__line--1 {
+  top: 23%;
+  left: 18%;
+  width: 180px;
+  transform: rotate(18deg);
+}
+
+.login-backdrop__line--2 {
+  top: 36%;
+  right: 20%;
+  width: 140px;
+  transform: rotate(-24deg);
+}
+
+.login-backdrop__line--3 {
+  bottom: 30%;
+  left: 28%;
+  width: 220px;
+  transform: rotate(8deg);
+  background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.3), transparent);
+}
+
+.login-backdrop__scan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(34, 211, 238, 0.03) 48%,
+    transparent 52%
+  );
+  background-size: 100% 200%;
+  animation: login-scan 8s linear infinite;
+  opacity: 0.6;
+}
+
+@keyframes login-orb-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(12px, -18px) scale(1.05); }
+  66% { transform: translate(-8px, 10px) scale(0.98); }
+}
+
+@keyframes login-scan {
+  0% { background-position: 0 -100%; }
+  100% { background-position: 0 100%; }
+}
+
+.login-card {
+  border-radius: 1.25rem;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(34, 211, 238, 0.35),
+    rgba(59, 130, 246, 0.2) 40%,
+    rgba(139, 92, 246, 0.25) 70%,
+    rgba(255, 255, 255, 0.06)
+  );
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 25px 50px -12px rgba(0, 0, 0, 0.55),
+    0 0 80px rgba(34, 211, 238, 0.06);
+}
+
+.login-card__inner {
+  border-radius: calc(1.25rem - 1px);
+  background: rgba(10, 14, 26, 0.72);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  padding: 2rem 1.75rem;
+}
+
+@media (min-width: 640px) {
+  .login-card__inner {
+    padding: 2.25rem 2rem;
+  }
+}
+
+.login-input {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.55);
+  color: #f1f5f9;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.login-input::placeholder {
+  color: rgba(148, 163, 184, 0.55);
+}
+
+.login-input:focus-visible {
+  border-color: rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+  background: rgba(15, 23, 42, 0.75);
+}
+
+.login-submit-shine {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 65%
+  );
+  transform: translateX(-120%);
+  transition: transform 0.6s ease;
+}
+
+.login-submit-btn:hover .login-submit-shine {
+  transform: translateX(120%);
+}
+
+.login-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: login-spin 0.7s linear infinite;
+}
+
+@keyframes login-spin {
+  to { transform: rotate(360deg); }
+}
+
+.login-footer {
+  letter-spacing: 0.02em;
+}
+
+.login-checkbox-native {
+  accent-color: #22d3ee;
+}
