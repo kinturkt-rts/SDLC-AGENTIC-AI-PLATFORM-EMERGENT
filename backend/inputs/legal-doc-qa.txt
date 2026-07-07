@@ -1,106 +1,62 @@
-Legal Contract Q&A — RAG over uploaded PDFs with clause-level citations
+Legal Contract Q&A — ask questions across uploaded vendor contracts
 
-App idea (one paragraph):
-Legal ops at a mid-size company maintains a folder of executed vendor contracts, NDAs, MSAs,
-and SOWs. Every quarter, finance and sales ask questions like "what's our termination clause
-for vendor X?" or "which contracts auto-renew in Q3?" — answers today require scrolling through
-50-page PDFs. This tool lets a legal-ops user upload contracts, then any authorized user can
-ask questions in a Streamlit chat and get an answer grounded in the actual PDF text with
-**clause-level citations** (document name + page number + relevant snippet).
+Client story:
+Priya runs legal operations for a 400-person company. Her team maintains several hundred
+executed agreements in a shared drive — vendor MSAs, NDAs, SOWs, renewal letters, and
+amendments. Every quarter, finance asks which contracts auto-renew in the next 90 days,
+sales wants to know assignment restrictions before a deal closes, and leadership wants
+quick answers on termination notice periods without waiting for a full contract review.
 
-Purpose:
-- End-to-end SDLC test at HARD complexity, RAG pattern (B++).
-- Exercises **pgvector** + **PDF ingestion** + **cited responses**.
-- Different from rag-pdf-system: domain is legal contracts (longer documents, citation precision
-  matters more), and the answer MUST refuse when the retrieval confidence is below threshold.
+Today Priya or a paralegal opens 40–60 page PDFs and searches manually. Answers take
+hours and are easy to get wrong under time pressure. She wants an internal tool where
+the team uploads contracts once, then anyone with access can ask questions in plain
+English and get answers tied back to the exact clause in the source document.
 
-Personas & auth:
-| Caller | Auth | Can do |
-|--------|------|--------|
-| anonymous | none | GET /health |
-| legal_ops | `X-Legal-Key: <key>` header | Upload PDFs, delete documents, list all documents |
-| reader | `X-API-Key: <key>` header | Ask questions, list documents (read-only) |
+What the tool should do (MVP):
+- Legal ops uploads PDF contracts and tags each one with a type (NDA, MSA, SOW, or other)
+  and a readable title (e.g. "Acme Corp MSA 2024").
+- Approved readers browse the document library — see filename, type, page count, upload date.
+- Readers ask questions in a chat-style screen. Examples:
+  - "What is the termination notice period for the Acme MSA?"
+  - "Which NDAs expire in Q3 2026?"
+  - "Can we assign the Globex SOW to a subsidiary?"
+- Every answer must cite where it came from: document title, page number, and a short
+  quote from the PDF text. If the system cannot find supporting text, it should refuse
+  clearly — no guessing, no answers from general legal knowledge outside our files.
+- Legal ops can delete a document when it is superseded; related indexed content should
+  go away with it.
+- Keep a simple history of recent questions and answers so users can revisit what was asked.
 
-Stack:
-- FastAPI + Postgres + pgvector + Bedrock + Streamlit
-- pypdf for parsing
-- Embeddings: amazon.titan-embed-text-v2:0 (1024 dim)
-- Chat model: us.anthropic.claude-sonnet-4-20250514-v1:0
+Who uses it:
+- Legal ops (Priya's team) — upload, tag, delete documents; full library access.
+- Business reader (finance, sales, ops) — ask questions and browse the library; cannot
+  upload or delete.
+- We are fine with shared access keys for MVP — no full SSO or user directory yet.
 
-Data:
-- documents: id (uuid), filename (text), title (text), doc_type (text — nda | msa | sow | other),
-  uploaded_at (timestamp), uploaded_by (text), page_count (int), total_chunks (int)
-- document_chunks: id (uuid), document_id (FK), page_number (int), chunk_index (int),
-  text (text), embedding (vector(1024)), char_start (int), char_end (int)
-- queries: id (uuid), asked_at (timestamp), question (text), answer (text), confidence (float),
-  cited_chunk_ids (uuid[]), refused (bool), asked_by (text)
+Behavior we care about:
+- Answers come only from uploaded PDF text. If confidence is low, say "I cannot answer
+  from the documents on file" and suggest rephrasing or uploading missing agreements.
+- Citations must be specific enough that Priya can verify in under a minute.
+- Only digital PDFs with selectable text for v1 — scanned image PDFs are out of scope.
+- Reasonable file size limits so someone does not accidentally upload a 200 MB archive.
 
-Ingestion (POST /documents/upload):
-1. Accept multipart/form-data with the PDF file + optional title + doc_type.
-2. Parse via pypdf, extract text per page.
-3. Chunk: 500 chars with 50-char overlap, preserving page boundaries (chunk does not span pages).
-4. Embed each chunk via Bedrock Titan, insert into document_chunks.
-5. Return { document_id, page_count, total_chunks, ingest_seconds }.
-6. Reject uploads larger than 10 MB with 413.
+Demo expectations:
+- Seed or upload at least three sample contracts (one NDA, one MSA, one SOW) so a demo
+  question about termination or renewal returns a cited answer.
+- Show one question that correctly refuses because the topic is not in the library.
+- A simple web UI with upload for legal ops, a Q&A chat area, a document list, and
+  recent question history — organizers should not need Swagger for day-to-day use.
 
-Retrieval (POST /ask):
-1. Embed the question.
-2. Top-K=5 cosine similarity search across all chunks (configurable RETRIEVAL_TOP_K).
-3. Compute confidence = average cosine similarity of top-K.
-4. If confidence < CONFIDENCE_THRESHOLD (default 0.7), return:
-   { "refused": true, "reason": "low confidence — rephrase or upload more context", "answer": null }.
-5. Otherwise call Claude with the top-K chunks as context, asking it to ANSWER ONLY FROM THE
-   PROVIDED CONTEXT and cite each claim with [doc_title, page X].
-6. Return { answer, confidence, citations: [{ document_id, document_title, page_number, snippet }], refused: false }.
+Out of scope for v1:
+- Side-by-side comparison of two contract versions
+- Redlining, editing clauses, or e-signature workflows
+- OCR for scanned documents
+- Multi-tenant or external customer access
+- Automated legal advice disclaimers beyond a simple "for internal reference only" note
 
-Never invent answers. Never use the LLM's general knowledge. Refusal is the correct behavior
-when confidence is low.
-
-API endpoints:
-| Method | Path | Auth | Notes |
-|--------|------|------|-------|
-| GET | /health | none | DB + pgvector extension + Bedrock client checks |
-| POST | /documents/upload | legal_ops | multipart, returns ingest summary |
-| GET | /documents | reader or legal_ops | pagination, filter `?doc_type=` |
-| GET | /documents/{id} | reader | metadata only (no chunks) |
-| DELETE | /documents/{id} | legal_ops | cascade-deletes chunks |
-| POST | /ask | reader | { question } → answer with citations OR refusal |
-| GET | /queries | reader | their own query history (paginate) |
-
-Streamlit UI:
-- Tab 1: "Upload" (legal_ops only) — file picker, doc_type select, upload button, ingestion progress
-- Tab 2: "Ask" — text input, answer area, citations panel showing snippets with page links
-- Tab 3: "Documents" — table of uploaded docs (filename, type, page count, uploaded_at)
-- Tab 4: "History" — last 30 questions asked by the current user
-- Reads API_KEY from .env, sends as X-API-Key (for reader endpoints)
-
-Tests should cover:
-- Upload a small test PDF (use a fixture .pdf in tests/fixtures/), verify chunks created and embeddings non-null.
-- Mock get_bedrock_client for both embeddings AND chat — no live AWS in tests.
-- Low-confidence question returns refusal with no LLM call to chat model (saves cost in tests).
-- High-confidence question returns answer with at least 1 citation.
-- DELETE document cascades chunks (verify count drops to 0).
-- Anonymous /ask → 401.
-- File >10 MB → 413.
-
-Env vars expected (.env.example):
-- DATABASE_URL=postgresql+psycopg://...
-- POSTGRES_SCHEMA=legal_doc_qa
-- AWS_REGION=us-east-2
-- BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
-- BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
-- EMBED_DIM=1024
-- CHUNK_SIZE=500
-- CHUNK_OVERLAP=50
-- RETRIEVAL_TOP_K=5
-- CONFIDENCE_THRESHOLD=0.7
-- LEGAL_API_KEY=...
-- API_KEY=...
-- PDF_STORAGE_DIR=./uploaded_pdfs
-
-Out of scope:
-- OCR (only digital PDFs, not scanned images)
-- Multi-document comparison ("what's different between v1 and v2 of this contract")
-- Redlining / clause editing
-- E-signature integration
-- User management beyond shared keys
+Success looks like:
+- Priya uploads a vendor MSA, asks about termination, and gets an answer with page and
+  snippet she can click through to verify.
+- A sales user asks about a vendor not in the library and gets an honest refusal, not
+  a fabricated clause.
+- The team uses it in a stakeholder demo without opening PDFs manually.

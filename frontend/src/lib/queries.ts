@@ -86,11 +86,12 @@ export const useRunHandoffs = (id: string, live = false) =>
   });
 export const useAgentMessages = (correlationId?: string) =>
   useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
-export const useArtifacts = () =>
+export const useArtifacts = (poll = false) =>
   useQuery({
     queryKey: queryKeys.artifacts,
     queryFn: api.getArtifacts,
     staleTime: 120_000,
+    refetchInterval: poll ? 30_000 : false,
   });
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });

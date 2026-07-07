@@ -311,13 +311,7 @@ export function runEventToActivityFeed(
       description = 'Pipeline event';
   }
 
-  const isToolLog =
-    event.kind === 'log' && event.message.toLowerCase().startsWith('tool call -');
-  const href = isToolLog
-    ? `/logs?agent=${encodeURIComponent(agentId)}`
-    : event.kind === 'artifact.created'
-      ? '/artifacts'
-      : `/runs/${run.id}`;
+  const href = `/runs/${run.id}`;
 
   return {
     id: event.id,

@@ -16,7 +16,8 @@ function Get-AgentCoreBundleFromFolder {
     return ($FolderName -replace '_', '-')
 }
 
-$NodeInstallAgents = @("web_crawler_agent")
+# Agents that need Node.js/npx at runtime (Atlassian mcp-remote, Firecrawl MCP, etc.)
+$NodeInstallAgents = @("product_agent", "web_crawler_agent")
 
 function Set-DockerfileAgentArg {
     param(

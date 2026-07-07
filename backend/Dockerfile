@@ -9,7 +9,7 @@
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
 ARG AGENTCORE_AGENT=product-agent
-ARG INSTALL_NODE=false
+ARG INSTALL_NODE=true
 # AWS: run shared gitlab-mcp-server on ECS (HTTP) and set GITLAB_MCP_HTTP_URL on gitlab-agent.
 # Local stdio fallback: build with --build-arg INSTALL_GITLAB_MCP_BINARY=true (gitlab-agent only).
 ARG INSTALL_GITLAB_MCP_BINARY=false
@@ -24,11 +24,10 @@ RUN apt-get update \
         graphviz \
     && rm -rf /var/lib/apt/lists/*
 
-RUN if [ "$INSTALL_NODE" = "true" ]; then \
-      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-      && apt-get install -y --no-install-recommends nodejs \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g firecrawl-mcp \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV REPO_ROOT=/app
 ENV PYTHONUNBUFFERED=1

@@ -41,12 +41,16 @@ import {
   useRuns,
   useCheckpoints,
   useRecentActivity,
+  useArtifacts,
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
+import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
-import type { PipelineRun } from '@/src/types';
+import type { Artifact, ArtifactKind, PipelineRun } from '@/src/types';
+import { useUiStore } from '@/src/store/ui-store';
+import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
@@ -90,13 +94,74 @@ const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
   'qa-agent': Shield,
 };
 
+const DASHBOARD_ARTIFACT_SKIP = /(?:__init__\.py|\.gitignore|\.env\.example|pytest\.ini|conftest\.py)$/i;
+const DASHBOARD_ARTIFACT_HIGHLIGHT: ArtifactKind[] = ['prd', 'architecture', 'diagram', 'migration'];
+
+function pickDashboardArtifacts(all: Artifact[], limit = 6): Artifact[] {
+  const filtered = all.filter((a) => !DASHBOARD_ARTIFACT_SKIP.test(a.name));
+  const highlights = filtered.filter((a) => DASHBOARD_ARTIFACT_HIGHLIGHT.includes(a.kind));
+  const rest = filtered.filter((a) => !DASHBOARD_ARTIFACT_HIGHLIGHT.includes(a.kind));
+  return [...highlights, ...rest].slice(0, limit);
+}
+
+function RecentArtifactsFeed({ poll }: { poll: boolean }) {
+  const router = useRouter();
+  const setCurrentProject = useUiStore((s) => s.setCurrentProject);
+  const { data: artifacts, isLoading } = useArtifacts(poll);
+  const items = pickDashboardArtifacts(artifacts ?? []);
+
+  const openArtifact = (artifact: Artifact) => {
+    setCurrentProject(artifact.projectId);
+    router.push('/artifacts');
+  };
+
+  return (
+    <Card className="overflow-hidden border-white/[0.06] bg-card/80 lg:col-span-2">
+      <SectionHeader title="Recent Artifacts" href="/artifacts" icon={FileBox} count={items.length || undefined} />
+      <div className="divide-y divide-white/[0.04]">
+        {isLoading ? (
+          <div className="space-y-2 p-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            Artifacts appear here as agents produce PRDs, diagrams, SQL, and code.
+          </p>
+        ) : (
+          items.map((artifact) => (
+            <button
+              key={artifact.id}
+              type="button"
+              onClick={() => openArtifact(artifact)}
+              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/40 ring-1 ring-white/[0.06]">
+                <FileBox className="h-4 w-4 text-teal-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-sm font-medium text-foreground">{artifact.name}</p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {artifact.projectName} · {artifactKindLabel(artifact.kind)} · {titleCase(artifact.producedBy.replace('-agent', ''))}
+                </p>
+              </div>
+              <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">{formatRelative(artifact.createdAt)}</span>
+            </button>
+          ))
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function LiveActivityFeed({ poll }: { poll: boolean }) {
   const { data: activity, isLoading, isFetching } = useRecentActivity(poll);
   const items = activity ?? [];
 
   return (
     <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-      <SectionHeader title="Live Activity" icon={Zap} href="/logs" />
+      <SectionHeader title="Live Activity" icon={Zap} href="/runs" />
       <div className="relative px-4 py-2">
         {poll && isFetching && items.length > 0 ? (
           <span className="absolute right-4 top-2 inline-flex items-center gap-1 text-[10px] font-medium text-blue-400">
@@ -136,7 +201,7 @@ function LiveActivityFeed({ poll }: { poll: boolean }) {
                     ) : null}
                     <span className="text-[10px] text-muted-foreground/60">{formatRelative(event.ts)}</span>
                   </div>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
                     <span className="text-foreground/80">{event.projectName}</span>
                     {' · '}
                     {event.description}
@@ -634,7 +699,7 @@ function InputRequirementsCard() {
           <Textarea
             value={content}
             onChange={(e) => handleContentChange(e.target.value)}
-            placeholder="Paste your product brief / requirements here, or upload a .txt/.md file..."
+            placeholder="Paste your product brief / requirements here, or upload a .txt file..."
             rows={6}
             className="resize-none border-white/[0.08] bg-white/[0.02] font-mono text-xs placeholder:text-muted-foreground/40 focus:border-teal-500/30"
           />
@@ -693,8 +758,8 @@ export default function DashboardPage() {
           <h1 className="mt-3 text-2xl font-bold tracking-tight text-foreground lg:text-3xl">
             SDLC Agentic AI Platform
           </h1>
-          <p className="mt-1.5 max-w-lg text-sm text-muted-foreground">
-            5 specialist agents active, 3 on the roadmap. Pipeline control, human-in-the-loop checkpoints, and full artifact traceability.
+          <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
+            Submit a requirements brief and run the full SDLC pipeline on AgentCore — PRD, architecture, SQL, application code, and GitLab publish.
           </p>
 
           <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -737,8 +802,8 @@ export default function DashboardPage() {
       </Card>
 
       {/* ── 4. Active Runs + Live Activity (side by side) */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="overflow-hidden border-white/[0.06] bg-card/80 lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="overflow-hidden border-white/[0.06] bg-card/80">
           <SectionHeader title="Active Pipeline Runs" href="/runs" icon={Activity} count={activeRuns.length} />
           <div className="divide-y divide-white/[0.04]">
             {activeRuns.length === 0 ? (
@@ -769,22 +834,15 @@ export default function DashboardPage() {
 
       {/* ── 5. Artifacts + HITL Approvals (side by side) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="overflow-hidden border-white/[0.06] bg-card/80 lg:col-span-2">
-          <SectionHeader title="Artifacts" href="/artifacts" icon={FileBox} />
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-            Browse PRDs, diagrams, SQL, and code on the{' '}
-            <Link href="/artifacts" className="text-teal-400 hover:underline">
-              Artifacts
-            </Link>{' '}
-            page.
-          </p>
-        </Card>
+        <RecentArtifactsFeed poll={hasActive} />
 
         <Card className="overflow-hidden border-white/[0.06] bg-card/80">
           <SectionHeader title="Pending HITL Approvals" href="/checkpoints" icon={UserCheck} count={pending.length} />
           <div className="space-y-2 p-3">
             {pending.length === 0 ? (
-              <p className="px-2 py-6 text-center text-sm text-muted-foreground">Nothing waiting.</p>
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                Not enabled in this MVP. Human-in-the-loop checkpoints will appear here when wired up.
+              </p>
             ) : (
               pending.map((c) => (
                 <Link key={c.id} href="/checkpoints" className="block rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3 transition-colors hover:bg-amber-500/[0.07]">

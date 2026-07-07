@@ -21,7 +21,14 @@ export function Sidebar() {
       )}
     >
       {/* ── Branding ──────────────────────────── */}
-      <div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
+      <Link
+        href="/dashboard"
+        title="Go to Dashboard"
+        className={cn(
+          'flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4 transition-colors hover:bg-sidebar-accent/60',
+          collapsed && 'justify-center px-2',
+        )}
+      >
         <BrandMark />
         {!collapsed && (
           <div className="min-w-0">
@@ -33,7 +40,7 @@ export function Sidebar() {
             </p>
           </div>
         )}
-      </div>
+      </Link>
 
       {/* ── Navigation ────────────────────────── */}
       <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 py-4">
