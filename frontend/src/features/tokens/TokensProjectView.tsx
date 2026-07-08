@@ -10,6 +10,7 @@ import {
   Wrench,
   TrendingUp,
   ArrowRight,
+  ChevronLeft,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -30,6 +31,7 @@ import {
   modelDisplayLabel,
 } from '@/src/lib/token-display';
 import { cn } from '@/lib/utils';
+import { useUiStore } from '@/src/store/ui-store';
 
 function StatCard({
   label,
@@ -67,6 +69,7 @@ export function TokensProjectView({
 }) {
   const { data: projects } = useProjects();
   const { data: runs } = useRuns();
+  const setTokensProjectId = useUiStore((s) => s.setTokensProjectId);
   const { data, isLoading, isFetching } = usePipelineTelemetry(projectId, poll ?? false);
 
   const projectName = projects?.find((p) => p.id === projectId)?.name ?? data?.projectName ?? projectId;
@@ -93,7 +96,7 @@ export function TokensProjectView({
         <PageHeader
           eyebrow="Observe"
           title="Token usage"
-          description="Bedrock token and cost estimates per project. Select a project below or from the top bar."
+          description="Bedrock token and cost estimates per project. Select a project below."
         />
         <div className="space-y-4">
           <PipelineModelsBanner />
@@ -108,6 +111,14 @@ export function TokensProjectView({
 
   return (
     <>
+      <button
+        type="button"
+        onClick={() => setTokensProjectId(null)}
+        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-teal-400"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        All projects
+      </button>
       <PageHeader
         eyebrow="Observe"
         title="Token usage"

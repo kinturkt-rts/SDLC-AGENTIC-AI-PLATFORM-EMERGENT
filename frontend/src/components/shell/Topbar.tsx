@@ -18,7 +18,6 @@ import { useProjects, useRuns } from '@/src/lib/queries';
 export function Topbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const isTokensPage = pathname === '/tokens' || pathname.startsWith('/tokens/');
   const isRunsPage = pathname === '/runs' || pathname.startsWith('/runs/');
   const isLogsPage = pathname === '/logs' || pathname.startsWith('/logs/');
   const isArtifactsPage = pathname === '/artifacts' || pathname.startsWith('/artifacts/');
@@ -29,8 +28,6 @@ export function Topbar() {
   const setCurrentProject = useUiStore((s) => s.setCurrentProject);
   const runsProjectId = useUiStore((s) => s.runsProjectId);
   const setRunsProject = useUiStore((s) => s.setRunsProject);
-  const tokensProjectId = useUiStore((s) => s.tokensProjectId);
-  const setTokensProjectId = useUiStore((s) => s.setTokensProjectId);
   const logsProjectId = useUiStore((s) => s.logsProjectId);
   const setLogsProjectId = useUiStore((s) => s.setLogsProjectId);
   const artifactsProjectId = useUiStore((s) => s.artifactsProjectId);
@@ -40,34 +37,27 @@ export function Topbar() {
   const activeRunId = pathname?.startsWith('/runs/') ? pathname.split('/')[2] : null;
   const activeRun = activeRunId ? (runs ?? []).find((r) => r.id === activeRunId) : undefined;
 
-  const projectOptions = isTokensPage || isRunsPage || isLogsPage || isArtifactsPage
+  const projectOptions = isRunsPage || isLogsPage || isArtifactsPage
     ? (projects ?? []).filter((p) => runProjectIds.has(p.id))
     : (projects ?? []);
 
   React.useEffect(() => {
-    if (isTokensPage || isRunsPage || isLogsPage || isArtifactsPage) return;
+    if (isRunsPage || isLogsPage || isArtifactsPage) return;
     if (!projects?.length) return;
     if (!projects.some((p) => p.id === currentProjectId)) {
       setCurrentProject(projects[0].id);
     }
-  }, [isTokensPage, isRunsPage, isLogsPage, isArtifactsPage, projects, currentProjectId, setCurrentProject]);
+  }, [isRunsPage, isLogsPage, isArtifactsPage, projects, currentProjectId, setCurrentProject]);
 
-  const selectedId = isTokensPage
-    ? tokensProjectId
-    : isRunsPage
-      ? activeRun?.projectId ?? runsProjectId
-      : isLogsPage
-        ? logsProjectId
-        : isArtifactsPage
-          ? artifactsProjectId
-          : currentProjectId;
+  const selectedId = isRunsPage
+    ? activeRun?.projectId ?? runsProjectId
+    : isLogsPage
+      ? logsProjectId
+      : isArtifactsPage
+        ? artifactsProjectId
+        : currentProjectId;
 
   const onProjectChange = (id: string) => {
-    if (isTokensPage) {
-      setTokensProjectId(id === '__all__' ? null : id);
-      return;
-    }
-
     if (isLogsPage) {
       setLogsProjectId(id === '__all__' ? null : id);
       return;
@@ -97,7 +87,7 @@ export function Topbar() {
 
   const currentProjectName = selectedId
     ? projectOptions.find((p) => p.id === selectedId)?.name ?? 'Select project'
-    : isRunsPage || isTokensPage || isLogsPage || isArtifactsPage
+    : isRunsPage || isLogsPage || isArtifactsPage
       ? 'All projects'
       : 'Select project';
 
@@ -114,7 +104,7 @@ export function Topbar() {
               <SelectValue placeholder="Select project">{currentProjectName}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {(isRunsPage || isTokensPage || isLogsPage || isArtifactsPage) ? (
+              {(isRunsPage || isLogsPage || isArtifactsPage) ? (
                 <SelectItem value="__all__">All projects</SelectItem>
               ) : null}
               {projectOptions.map((p) => (
@@ -124,15 +114,6 @@ export function Topbar() {
               ))}
             </SelectContent>
           </Select>
-          {isTokensPage && selectedId ? (
-            <button
-              type="button"
-              onClick={() => setTokensProjectId(null)}
-              className="text-xs text-muted-foreground hover:text-teal-400"
-            >
-              All projects
-            </button>
-          ) : null}
         </div>
       ) : null}
 
