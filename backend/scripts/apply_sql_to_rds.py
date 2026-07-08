@@ -316,6 +316,58 @@ def _is_seed_file(path: Path) -> bool:
     return "seed" in path.name.lower()
 
 
+_BCRYPT_PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
+
+
+def _preprocess_seed_sql(sql: str) -> str:
+    """Replace __BCRYPT_PLACEHOLDER__ with a real bcrypt hash before executing.
+
+    Eliminates the fragile post-apply UPDATE pass: the hash is embedded directly
+    in the INSERT so rows always land with a valid bcrypt string, never a placeholder.
+    All seed users share one hash (same dev password); bcrypt.checkpw still works
+    because the salt is stored in the hash string itself.
+    """
+    placeholder_sq = f"'{_BCRYPT_PLACEHOLDER}'"
+    placeholder_dq = f'"{_BCRYPT_PLACEHOLDER}"'
+    if placeholder_sq not in sql and placeholder_dq not in sql:
+        return sql
+
+    try:
+        import bcrypt
+    except ImportError:
+        print(
+            "[apply-sql] WARN: bcrypt not installed — __BCRYPT_PLACEHOLDER__ not replaced",
+            file=sys.stderr,
+        )
+        return sql
+
+    password: str | None = None
+    try:
+        from _shared.verify_seed_bcrypt import documented_password
+        password = documented_password(sql)
+    except ImportError:
+        pass
+
+    if not password:
+        password = os.environ.get("SDLC_DEFAULT_SEED_PASSWORD", "DevPass123!")
+        source = "SDLC_DEFAULT_SEED_PASSWORD env" if os.environ.get("SDLC_DEFAULT_SEED_PASSWORD") else "built-in default"
+        print(
+            f"[apply-sql] No documented password comment in seed SQL — using {source}",
+            file=sys.stderr,
+        )
+
+    digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+    result = sql.replace(placeholder_sq, f"'{digest}'").replace(placeholder_dq, f'"{digest}"')
+    replaced = (sql.count(placeholder_sq) + sql.count(placeholder_dq)) - (
+        result.count(placeholder_sq) + result.count(placeholder_dq)
+    )
+    print(
+        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} __BCRYPT_PLACEHOLDER__ occurrence(s) with bcrypt hash",
+        file=sys.stderr,
+    )
+    return result
+
+
 def apply_sql_files(
     sql_dir: Path,
     *,
@@ -423,6 +475,8 @@ def apply_sql_files(
                         if not sql:
                             print(f"SKIP (empty): {path.name}", file=sys.stderr)
                             continue
+                        if label == "seed":
+                            sql = _preprocess_seed_sql(sql)
                         if verbose:
                             print(f"Applying {path.name} ...", file=sys.stderr)
                         for stmt in split_sql_statements(sql):

@@ -25,8 +25,8 @@ export interface ActivityFeedItem {
   ts: string;
   href: string;
   accent: string;
-  /** cloudwatch = live AgentCore stdout; platform = S3 / run lifecycle */
-  stream?: 'cloudwatch' | 'platform';
+  /** Live streams only — no synthesized lifecycle rows in the dashboard feed. */
+  stream?: 'cloudwatch' | 'artifact' | 'pipeline-log';
 }
 
 const AGENT_LABEL: Record<string, string> = {
@@ -323,7 +323,7 @@ export function runEventToActivityFeed(
     ts: event.ts,
     href,
     accent: AGENT_ACTIVITY_ACCENT[agentId] ?? 'text-muted-foreground',
-    stream: options?.stream ?? 'platform',
+    stream: options?.stream,
   };
 }
 

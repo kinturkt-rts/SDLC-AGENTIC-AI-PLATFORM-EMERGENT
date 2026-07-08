@@ -43,7 +43,7 @@ def count_invalid_hashes(
             cur.execute(
                 psql.SQL(
                     "SELECT COUNT(*) FROM {schema}.users "
-                    "WHERE {hash_col} = %s OR {hash_col} NOT LIKE '$2%'"
+                    "WHERE {hash_col} = %s OR {hash_col} NOT LIKE '$2%%'"
                 ).format(
                     schema=psql.Identifier(schema),
                     hash_col=psql.Identifier(hash_col),
@@ -91,7 +91,7 @@ def materialize(
                         "UPDATE {schema}.users "
                         "SET {hash_col} = %s "
                         "WHERE {lookup_col} = %s "
-                        "AND ({hash_col} = %s OR {hash_col} NOT LIKE '$2%')"
+                        "AND ({hash_col} = %s OR {hash_col} NOT LIKE '$2%%')"
                     ).format(
                         schema=psql.Identifier(schema),
                         hash_col=psql.Identifier(hash_col),

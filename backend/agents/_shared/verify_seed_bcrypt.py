@@ -158,7 +158,11 @@ def verify_rds_seed_password(
     schema = schema_for_app(target_app)
 
     try:
-        engine = create_engine(connection_url(), pool_pre_ping=True)
+        # SQLAlchemy defaults a bare "postgresql://" URL to the psycopg2 driver, which
+        # isn't installed anywhere in this repo (only psycopg 3.x is) — force the psycopg
+        # dialect so this matches the psycopg.connect() calls used elsewhere for RDS.
+        sqlalchemy_url = connection_url().replace("postgresql://", "postgresql+psycopg://", 1)
+        engine = create_engine(sqlalchemy_url, pool_pre_ping=True)
         with engine.connect() as conn:
             row = conn.execute(
                 text(

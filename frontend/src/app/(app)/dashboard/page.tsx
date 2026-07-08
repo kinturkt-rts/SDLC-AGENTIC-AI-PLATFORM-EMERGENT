@@ -153,15 +153,15 @@ function RecentArtifactsFeed({ poll }: { poll: boolean }) {
   );
 }
 
-function LiveActivityFeed({ poll }: { poll: boolean }) {
-  const { data: activity, isLoading, isFetching } = useRecentActivity(poll);
+function LiveActivityFeed({ poll, hasActiveRuns }: { poll: boolean; hasActiveRuns: boolean }) {
+  const { data: activity, isLoading } = useRecentActivity(poll);
   const items = activity ?? [];
 
   return (
     <Card className="overflow-hidden border-white/[0.06] bg-card/80">
       <SectionHeader title="Live Activity" icon={Zap} href="/runs" />
       <div className="relative px-4 py-2">
-        {poll && isFetching && items.length > 0 ? (
+        {hasActiveRuns ? (
           <span className="absolute right-4 top-2 inline-flex items-center gap-1 text-[10px] font-medium text-blue-400">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" /> live
           </span>
@@ -175,7 +175,9 @@ function LiveActivityFeed({ poll }: { poll: boolean }) {
           </div>
         ) : items.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Submit a pipeline to see live agent activity here.
+            {hasActiveRuns
+              ? 'Pipeline running — waiting for agent output…'
+              : 'No active pipelines. Submit a run to see live agent activity here.'}
           </p>
         ) : (
           items.map((event: ActivityFeedItem) => {
@@ -192,11 +194,9 @@ function LiveActivityFeed({ poll }: { poll: boolean }) {
                 <div className="min-w-0 flex-1 pt-0.5">
                   <div className="flex items-center gap-2">
                     <span className={cn('text-[11px] font-semibold', event.accent)}>{event.agent}</span>
-                    {event.stream === 'cloudwatch' ? (
-                      <span className="rounded bg-blue-500/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-blue-400/90">
-                        live
-                      </span>
-                    ) : null}
+                    <span className="rounded bg-blue-500/10 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-blue-400/90">
+                      live
+                    </span>
                     <span className="text-[10px] text-muted-foreground/60">{formatRelative(event.ts)}</span>
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -927,7 +927,7 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        <LiveActivityFeed poll={hasActive} />
+        <LiveActivityFeed poll={hasActive} hasActiveRuns={hasActive} />
       </div>
 
       {/* ── 5. Artifacts + HITL Approvals (side by side) */}

@@ -25,6 +25,7 @@ import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
 import { loadRunTelemetryElapsedSec, resolveRunTimings } from './run-timing';
 import {
   buildRunEvents,
+  buildS3ArtifactEvents,
   runEventToActivityFeed,
   type ActivityFeedItem,
   type S3ArtifactRef,
@@ -36,7 +37,9 @@ import {
   dedupeActivityFeed,
   matchCloudWatchLogToRun,
   minutesSince,
+  parseCloudWatchActivityLine,
 } from './cloudwatch-activity';
+import { filterLiveRuns, isRecentLiveTs } from './live-activity';
 import type {
   Agent,
   AgentAvailability,
@@ -67,6 +70,7 @@ const ARTIFACTS_CACHE_KEY = 'listArtifacts';
 const PROJECTS_CACHE_KEY = 'listProjects';
 const DASHBOARD_CACHE_KEY = 'getDashboardSummary';
 const HEAVY_LIST_TTL_MS = 30_000;
+const ACTIVITY_LIVE_TTL_MS = 8_000;
 const UUID_RUN_BUILD_BATCH = 4;
 
 function emptyPhaseDone(): Record<SdlcPhase, boolean> {
@@ -1801,46 +1805,72 @@ function mergeRunEventsFromLists(...groups: RunEvent[][]): RunEvent[] {
   return [...byId.values()].sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
-/** Recent pipeline activity - S3 milestones + live CloudWatch agent stdout. */
+/** Live agent activity for active runs only (CloudWatch, fresh S3 artifacts, pipeline logs). */
 export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]> {
-  return cachedAsync(`${ACTIVITY_CACHE_KEY}:${limit}`, HEAVY_LIST_TTL_MS, () =>
+  return cachedAsync(`${ACTIVITY_CACHE_KEY}:${limit}`, ACTIVITY_LIVE_TTL_MS, () =>
     listRecentActivityUncached(limit),
   );
 }
 
 async function listRecentActivityUncached(limit = 12): Promise<ActivityFeedItem[]> {
   const runs = await listRuns();
-  const liveRuns = runs.filter((r) => r.status === 'running' || r.status === 'paused');
-  const ranked = [...runs].sort((a, b) => {
-    const aLive = a.status === 'running' || a.status === 'paused' ? 1 : 0;
-    const bLive = b.status === 'running' || b.status === 'paused' ? 1 : 0;
-    if (aLive !== bLive) return bLive - aLive;
-    return b.startedAt.localeCompare(a.startedAt);
-  });
+  const liveRuns = filterLiveRuns(runs);
+  if (liveRuns.length === 0) return [];
 
-  const scan = ranked.slice(0, liveRuns.length > 0 ? 4 : 2);
   const feed: ActivityFeedItem[] = [];
+  const minutes = Math.min(
+    Math.max(...liveRuns.map((r) => minutesSince(r.startedAt)), 15),
+    240,
+  );
 
-  for (const run of scan) {
-    const events = await listRunEvents(run.id, run, false);
-    for (const event of events.slice(0, 4)) {
-      feed.push(runEventToActivityFeed(run, event, { stream: 'platform' }));
+  const cwLogs = await listCloudWatchLogs({ minutes, limit: 200 });
+  for (const log of cwLogs) {
+    const run = matchCloudWatchLogToRun(log, liveRuns);
+    if (!run || !isRecentLiveTs(log.ts, run)) continue;
+    const event = cloudWatchLogToRunEvent(log);
+    if (!event) continue;
+    feed.push(
+      runEventToActivityFeed(run, { ...event, runId: run.id }, { stream: 'cloudwatch' }),
+    );
+  }
+
+  if (isS3Store()) {
+    for (const run of liveRuns) {
+      const prefix = runS3Prefix(run.id);
+      const files = await listS3RunArtifacts(run.id);
+      const refs: S3ArtifactRef[] = [];
+      for (const file of files) {
+        const relPath = file.key.replace(prefix, '');
+        if (isSkippableS3ArtifactRelPath(relPath)) continue;
+        if (!isRecentLiveTs(file.lastModified, run)) continue;
+        refs.push({ relPath, lastModified: file.lastModified, sizeKb: file.sizeKb });
+      }
+      for (const event of buildS3ArtifactEvents(run.id, refs)) {
+        feed.push(runEventToActivityFeed(run, event, { stream: 'artifact' }));
+      }
     }
   }
 
-  if (liveRuns.length > 0) {
-    const minutes = Math.min(
-      Math.max(...liveRuns.map((r) => minutesSince(r.startedAt)), 15),
-      240,
-    );
-    const cwLogs = await listCloudWatchLogs({ minutes, limit: 160 });
-    for (const log of cwLogs) {
-      const run = matchCloudWatchLogToRun(log, liveRuns);
-      if (!run) continue;
-      const event = cloudWatchLogToRunEvent(log);
-      if (!event) continue;
+  for (const run of liveRuns) {
+    const logs = await listPipelineLogs({ runId: run.id, minutes, limit: 100 });
+    for (const log of logs) {
+      if (!isRecentLiveTs(log.ts, run)) continue;
+      const parsed = parseCloudWatchActivityLine(log.message, log.agent);
+      if (!parsed) continue;
       feed.push(
-        runEventToActivityFeed(run, { ...event, runId: run.id }, { stream: 'cloudwatch' }),
+        runEventToActivityFeed(
+          run,
+          {
+            id: log.id,
+            runId: run.id,
+            kind: 'log',
+            ts: log.ts,
+            level: parsed.kind === 'error' ? 'error' : log.level,
+            agent: parsed.agentId,
+            message: parsed.summary,
+          },
+          { stream: 'pipeline-log' },
+        ),
       );
     }
   }

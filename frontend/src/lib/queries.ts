@@ -125,8 +125,8 @@ export const useRecentActivity = (poll = true) =>
   useQuery({
     queryKey: queryKeys.activity,
     queryFn: () => api.getRecentActivity(),
-    staleTime: 30_000,
-    refetchInterval: poll ? 15_000 : false,
+    staleTime: 8_000,
+    refetchInterval: poll ? 10_000 : false,
   });
 
 export const usePlatformSettings = () =>
