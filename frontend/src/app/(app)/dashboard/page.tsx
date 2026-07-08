@@ -25,6 +25,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Circle,
+  RotateCcw,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -49,7 +50,6 @@ import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { Artifact, ArtifactKind, PipelineRun } from '@/src/types';
-import { useUiStore } from '@/src/store/ui-store';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
@@ -106,12 +106,10 @@ function pickDashboardArtifacts(all: Artifact[], limit = 6): Artifact[] {
 
 function RecentArtifactsFeed({ poll }: { poll: boolean }) {
   const router = useRouter();
-  const setCurrentProject = useUiStore((s) => s.setCurrentProject);
   const { data: artifacts, isLoading } = useArtifacts(poll);
   const items = pickDashboardArtifacts(artifacts ?? []);
 
-  const openArtifact = (artifact: Artifact) => {
-    setCurrentProject(artifact.projectId);
+  const openArtifact = () => {
     router.push('/artifacts');
   };
 
@@ -134,7 +132,7 @@ function RecentArtifactsFeed({ poll }: { poll: boolean }) {
             <button
               key={artifact.id}
               type="button"
-              onClick={() => openArtifact(artifact)}
+              onClick={openArtifact}
               className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
             >
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/40 ring-1 ring-white/[0.06]">
@@ -372,9 +370,21 @@ function InputRequirementsCard() {
     setLastSaved(null);
   }, []);
 
+  const handleClearForm = React.useCallback(() => {
+    setContent('');
+    setStatus('missing');
+    clearSavedRunState();
+    toast.message('Form cleared', { description: 'Paste or upload a new brief to start another run.' });
+  }, [clearSavedRunState]);
+
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+      toast.error('Only .txt files are supported', { description: file.name });
+      e.target.value = '';
+      return;
+    }
 
     const seq = ++uploadSeqRef.current;
     setFileLoading(true);
@@ -516,6 +526,10 @@ function InputRequirementsCard() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.artifacts });
+      window.setTimeout(() => {
+        document.getElementById('dashboard-pipeline-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 400);
     } catch (err) {
       toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -578,9 +592,19 @@ function InputRequirementsCard() {
     ready: { label: 'Ready', color: 'text-amber-400 bg-amber-500/10', icon: Circle },
     saved: { label: 'Saved', color: 'text-emerald-400 bg-emerald-500/10', icon: CheckCircle2 },
   };
-  const sc = statusConfig[status];
   const submittedRun = startedRunId ? runs?.find((r) => r.id === startedRunId) : undefined;
   const runStatus = submittedRun?.status ?? (startedRunId ? 'running' : null);
+  const runTerminal =
+    runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled';
+  const headerBadge =
+    runStatus === 'completed'
+      ? { label: 'Complete', color: 'text-emerald-400 bg-emerald-500/10', icon: CheckCircle2 }
+      : runStatus === 'failed'
+        ? { label: 'Failed', color: 'text-red-400 bg-red-500/10', icon: AlertCircle }
+        : runStatus === 'running' || runStatus === 'queued' || runStatus === 'paused'
+          ? { label: 'Running', color: 'text-teal-400 bg-teal-500/10', icon: Activity }
+          : statusConfig[status];
+  const sc = headerBadge;
 
   return (
     <Card className="overflow-hidden border-white/[0.06] bg-card/80">
@@ -593,7 +617,7 @@ function InputRequirementsCard() {
           </span>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Each <strong className="font-semibold text-foreground">Submit</strong> starts the orchestrator agent.
+          Paste a product brief and submit to run the full pipeline.
         </p>
       </div>
 
@@ -643,15 +667,18 @@ function InputRequirementsCard() {
               </div>
             ) : null}
           </div>
-          <input ref={fileInputRef} type="file" accept=".txt,.md" className="hidden" onChange={handleUpload} />
-          <Button
-            variant="outline"
-            className="w-full gap-2 border-white/[0.08] text-sm"
+          <input ref={fileInputRef} type="file" accept=".txt,text/plain" className="hidden" onChange={handleUpload} />
+          <button
+            type="button"
             disabled={fileLoading}
             onClick={() => fileInputRef.current?.click()}
+            className={cn(
+              'flex min-h-[120px] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-white/[0.12] bg-white/[0.02] px-4 py-6 text-sm text-muted-foreground transition-colors hover:border-teal-500/30 hover:bg-teal-500/[0.04] hover:text-foreground disabled:pointer-events-none disabled:opacity-50',
+            )}
           >
-            <Upload className="h-4 w-4" /> {fileLoading ? 'Loading file…' : 'Upload File'}
-          </Button>
+            <Upload className="h-5 w-5" />
+            <span>{fileLoading ? 'Loading file…' : 'Upload .txt brief'}</span>
+          </button>
           <div className="space-y-2 text-[11px] text-muted-foreground">
             {lastSaved && <p>Saved {lastSaved}</p>}
             {content && <p>{content.split('\n').length} lines · {(content.length / 1024).toFixed(1)} KB</p>}
@@ -660,7 +687,14 @@ function InputRequirementsCard() {
             )}
           </div>
           {startedRunId && feature && (
-            <div className="rounded-lg border border-teal-500/25 bg-teal-500/[0.05] p-3">
+            <div
+              className={cn(
+                'rounded-lg border p-3',
+                runStatus === 'completed' && 'border-emerald-500/25 bg-emerald-500/[0.05]',
+                runStatus === 'failed' && 'border-red-500/25 bg-red-500/[0.05]',
+                runStatus !== 'completed' && runStatus !== 'failed' && 'border-teal-500/25 bg-teal-500/[0.05]',
+              )}
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground">{titleCase(feature)}</p>
@@ -668,7 +702,7 @@ function InputRequirementsCard() {
                 </div>
                 {runStatus ? <StatusBadge status={runStatus} size="sm" /> : null}
               </div>
-              {submittedRun?.currentAgent ? (
+              {submittedRun?.currentAgent && !runTerminal ? (
                 <p className="mt-1.5 text-[11px] text-muted-foreground">
                   Current:{' '}
                   <span className="text-foreground">
@@ -681,14 +715,22 @@ function InputRequirementsCard() {
                   {submittedRun.error}
                 </p>
               ) : null}
+              {runStatus === 'completed' ? (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Artifacts published — open run details for GitLab branch and outputs.
+                </p>
+              ) : null}
               <p className="mt-1 font-mono text-[10px] text-muted-foreground" title={startedRunId}>
                 Run {startedRunId.slice(0, 8)}…
               </p>
               <Link
                 href={`/runs/${startedRunId}`}
-                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-teal-400 hover:underline"
+                className={cn(
+                  'mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline',
+                  runStatus === 'completed' ? 'text-emerald-400' : runStatus === 'failed' ? 'text-red-400' : 'text-teal-400',
+                )}
               >
-                View run progress <ArrowRight className="h-3 w-3" />
+                {runTerminal ? 'View run details' : 'View run progress'} <ArrowRight className="h-3 w-3" />
               </Link>
             </div>
           )}
@@ -699,10 +741,51 @@ function InputRequirementsCard() {
           <Textarea
             value={content}
             onChange={(e) => handleContentChange(e.target.value)}
-            placeholder="Paste your product brief / requirements here, or upload a .txt file..."
-            rows={6}
-            className="resize-none border-white/[0.08] bg-white/[0.02] font-mono text-xs placeholder:text-muted-foreground/40 focus:border-teal-500/30"
+            placeholder="Paste your product brief here, or upload a .txt file…"
+            rows={14}
+            className="min-h-[320px] resize-y border-white/[0.08] bg-white/[0.02] font-mono text-xs placeholder:text-muted-foreground/40 focus:border-teal-500/30"
           />
+          {startedRunId && feature ? (
+            <div
+              className={cn(
+                'flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5',
+                runStatus === 'completed' && 'border-emerald-500/30 bg-emerald-500/[0.06]',
+                runStatus === 'failed' && 'border-red-500/30 bg-red-500/[0.06]',
+                runStatus !== 'completed' && runStatus !== 'failed' && 'border-teal-500/30 bg-teal-500/[0.06]',
+              )}
+            >
+              <p className="text-sm text-foreground">
+                {runStatus === 'completed' ? (
+                  <>
+                    <span className="font-semibold text-emerald-300">Pipeline complete</span>
+                    {' — '}
+                    <span className="font-medium">{titleCase(feature)}</span> finished. Brief kept below for reference or re-run.
+                  </>
+                ) : runStatus === 'failed' ? (
+                  <>
+                    <span className="font-semibold text-red-300">Pipeline failed</span>
+                    {' — '}
+                    check run details for the error, then edit the brief and submit again.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-teal-300">Pipeline running</span>
+                    {' — '}
+                    track <span className="font-medium">{titleCase(feature)}</span> in Active Runs and Live Activity below.
+                  </>
+                )}
+              </p>
+              <Link
+                href={`/runs/${startedRunId}`}
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-1 text-xs font-medium hover:underline',
+                  runStatus === 'completed' ? 'text-emerald-400' : runStatus === 'failed' ? 'text-red-400' : 'text-teal-400',
+                )}
+              >
+                Open run <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -717,8 +800,23 @@ function InputRequirementsCard() {
                 ? submitPhase === 'upload'
                   ? 'Uploading…'
                   : 'Starting pipeline…'
-                : 'Submit & Run Pipeline'}
+                : runTerminal
+                  ? 'Submit & Run Again'
+                  : 'Submit & Run Pipeline'}
             </Button>
+            {runTerminal || content.trim() ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5 border-white/[0.08]"
+                onClick={handleClearForm}
+                disabled={submitting || fileLoading}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Clear form
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -802,7 +900,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* ── 4. Active Runs + Live Activity (side by side) */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div id="dashboard-pipeline-activity" className="grid grid-cols-1 gap-4 scroll-mt-6 lg:grid-cols-2">
         <Card className="overflow-hidden border-white/[0.06] bg-card/80">
           <SectionHeader title="Active Pipeline Runs" href="/runs" icon={Activity} count={activeRuns.length} />
           <div className="divide-y divide-white/[0.04]">
