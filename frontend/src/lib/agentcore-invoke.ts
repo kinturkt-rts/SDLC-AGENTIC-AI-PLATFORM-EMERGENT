@@ -71,7 +71,32 @@ export function extractTextFromA2aJsonrpc(data: unknown): string {
     }
   }
 
-  return texts.length ? texts.join('\n') : JSON.stringify(result, null, 2);
+  for (const entry of (res.history as unknown[]) ?? []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const msg = (entry as Record<string, unknown>).message ?? entry;
+    if (!msg || typeof msg !== 'object') continue;
+    for (const part of ((msg as Record<string, unknown>).parts as unknown[]) ?? []) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as Record<string, unknown>;
+      if (p.kind === 'text' && p.text) texts.push(String(p.text));
+    }
+    const role = (msg as Record<string, unknown>).role;
+    const content = (msg as Record<string, unknown>).content;
+    if (role === 'assistant' && Array.isArray(content)) {
+      for (const block of content) {
+        if (block && typeof block === 'object' && (block as Record<string, unknown>).text) {
+          texts.push(String((block as Record<string, unknown>).text));
+        }
+      }
+    }
+  }
+
+  if (texts.length) return texts.join('\n').trim();
+
+  const status = res.status;
+  if (typeof status === 'string' && status) return status;
+
+  return '';
 }
 
 let _client: BedrockAgentCoreClient | null = null;

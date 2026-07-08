@@ -75,13 +75,11 @@ def _resolve_template_dir() -> Path:
     """Local repo copy wins for local dev; else fetch from S3 (cloud runtime)."""
     try:
         return template_store.get_template_dir()
-    except Exception:  # noqa: BLE001 - keep import safe; tools surface errors on use
+    except Exception:
         return _TARGET_APPS / "_template"
-
 
 _TEMPLATE_DIR = _resolve_template_dir()
 
-# DEFAULT PIPELINE
 
 DEFAULT_PIPELINE_TASK = """\
 Implement the **full MVP delivery surface** for targetApp under `target-apps/`:
@@ -2433,6 +2431,10 @@ def _prompt_to_text(message: Any) -> str:
 def _execute_developer_pipeline_message(message: Any) -> str:
     """AgentCore A2A: parse Context, run_task (sets _run_context for S3 writes)."""
     text = _prompt_to_text(message)
+    from _shared.control_plane_health import is_control_plane_health_check
+
+    if is_control_plane_health_check(text):
+        return "OK"
     task, ctx = parse_task_and_context(text)
     if not task.strip():
         task = DEFAULT_PIPELINE_TASK

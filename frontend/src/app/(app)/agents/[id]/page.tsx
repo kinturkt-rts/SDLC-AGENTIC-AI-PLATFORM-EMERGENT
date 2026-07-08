@@ -19,6 +19,13 @@ import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { useAgent, useRuns } from '@/src/lib/queries';
 import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
+import {
+  agentToolSectionLabel,
+  agentToolsEmptyMessage,
+  DEVELOPER_TOOL_HINTS,
+  formatSkillLabel,
+} from '@/src/lib/agent-display';
+import { summarizeAgentHealthCheck } from '@/src/lib/agent-health-check';
 import type { PipelineStep } from '@/src/types';
 
 interface HistoryRow {
@@ -55,19 +62,11 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
     setTesting(true);
     try {
       const result = await api.testAgent(params.id);
-      if (result.status === 'success') {
-        const preview = result.text?.trim() ?? '';
-        const isHealthPing =
-          preview === 'OK' ||
-          preview.toLowerCase().startsWith('ok') ||
-          preview.includes('PRD pipeline could not start');
-        toast.success(`${agent?.displayName ?? params.id} is reachable`, {
-          description: isHealthPing
-            ? `${result.latencyMs ? `${Math.round(result.latencyMs / 1000)}s · ` : ''}AgentCore runtime responded to health check.`
-            : `${result.latencyMs ? `${Math.round(result.latencyMs / 1000)}s · ` : ''}${preview.slice(0, 120)}`,
-        });
+      const summary = summarizeAgentHealthCheck(agent?.displayName ?? params.id, result);
+      if (summary.ok) {
+        toast.success(summary.title, { description: summary.description });
       } else {
-        toast.error('Agent health check failed', { description: result.error ?? 'Unknown error' });
+        toast.error(summary.title, { description: summary.description });
       }
     } catch (err) {
       toast.error('Agent health check failed', {
@@ -170,15 +169,24 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
         <Card className="border-white/[0.06] bg-card/80 p-5">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Sparkles className="h-4 w-4 text-teal-400" /> Capabilities & Skills</h3>
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {agent?.skills.map((s) => <Badge key={s} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">{s}</Badge>)}
+            {agent?.skills.map((s) => (
+              <Badge key={s} variant="secondary" className="border-white/[0.06] bg-muted/60 font-normal">
+                {formatSkillLabel(s)}
+              </Badge>
+            ))}
           </div>
           <h4 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-            {hasBuiltinTools ? 'Built-in tools' : 'MCP tools'}
+            {hasBuiltinTools ? agentToolSectionLabel(params.id) : 'MCP tools'}
           </h4>
           <div className="mt-2 space-y-1">
             {hasBuiltinTools ? (
               agent?.mcpTools.map((t) => (
-                <code key={t} className="block rounded-md border border-white/[0.04] bg-muted/40 px-2.5 py-1.5 font-mono text-xs text-foreground">{t}</code>
+                <div key={t} className="rounded-md border border-white/[0.04] bg-muted/40 px-2.5 py-1.5">
+                  <code className="font-mono text-xs text-foreground">{t}</code>
+                  {DEVELOPER_TOOL_HINTS[t] ? (
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{DEVELOPER_TOOL_HINTS[t]}</p>
+                  ) : null}
+                </div>
               ))
             ) : (
               <p className="text-xs text-muted-foreground">Uses MCP server tools listed on the right.</p>
@@ -197,7 +205,7 @@ export default function AgentDetailPage({ params }: { params: { id: string } }) 
               ))
             ) : (
               <p className="text-xs text-muted-foreground">
-                No external MCP servers - this agent uses built-in Strands tools only.
+                {agentToolsEmptyMessage(params.id)}
               </p>
             )}
           </div>

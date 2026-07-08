@@ -212,15 +212,15 @@ const AGENT_DISPLAY: Record<
   'web-crawler-agent': { displayName: 'Web Crawler', phase: 'requirements' },
 };
 
-/** Built-in Strands tools (not MCP) - from agent implementations. */
+/** Platform Strands tools (not MCP) - keep in sync with agent @tool names. */
 const AGENT_BUILTIN_TOOLS: Record<string, string[]> = {
   'developer-agent': [
     'dev_read_file',
     'dev_write_file',
     'dev_write_files',
-    'dev_scaffold_app',
-    'dev_validate_app',
+    'dev_scaffold',
     'dev_list_tree',
+    'dev_validate_app',
   ],
   'orchestrator-agent': ['pipeline coordination (A2A)'],
 };

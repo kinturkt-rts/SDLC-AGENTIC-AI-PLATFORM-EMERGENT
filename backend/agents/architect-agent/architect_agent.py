@@ -779,6 +779,10 @@ def _execute_architect_pipeline_message(
     tools: list[Any] | None = None,
 ) -> str:
     text = _prompt_to_text(message)
+    from _shared.control_plane_health import is_control_plane_health_check
+
+    if is_control_plane_health_check(text):
+        return "OK"
     task, ctx = parse_task_and_context(text)
     if not task.strip():
         task = DEFAULT_PIPELINE_TASK

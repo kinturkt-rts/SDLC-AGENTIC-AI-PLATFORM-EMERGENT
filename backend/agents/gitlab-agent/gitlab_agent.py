@@ -265,6 +265,11 @@ def run_publish_for_agentcore(
 
 def execute_publish_message(message: Any) -> str:
     """Deterministic AgentCore handler: parse message → publish → return summary text."""
+    text = _prompt_to_text(message)
+    from _shared.control_plane_health import is_control_plane_health_check
+
+    if is_control_plane_health_check(text):
+        return "OK"
     parsed = parse_publish_request(message)
     if parsed is None:
         example = {
