@@ -38,6 +38,7 @@ class PipelineContext(_BaseHandoff):
     prdPath: str | None = None
     designDocPath: str | None = None
     diagramPaths: list[str] = Field(default_factory=list)
+    productBrief: str | None = None
     productAgentOutput: str | None = None
     architectSummary: str | None = None
     dbOutputDir: str | None = None

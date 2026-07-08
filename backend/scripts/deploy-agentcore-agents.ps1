@@ -24,6 +24,7 @@ $env:PYTHONIOENCODING = "utf-8"
 
 $DotenvForwardedKeys = @(
     "ARTIFACT_S3_BUCKET",
+    "ARTIFACT_DYNAMODB_ENABLED",
     "ARTIFACT_DYNAMODB_TABLE",
     "AWS_PROFILE",
     "BEDROCK_READ_TIMEOUT",
@@ -204,6 +205,7 @@ if ($env:MODEL_ID) { $CommonEnv += "MODEL_ID=$($env:MODEL_ID)" }
 else { $CommonEnv += "MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0" }
 
 if ($env:ARTIFACT_S3_BUCKET) { $CommonEnv += "ARTIFACT_S3_BUCKET=$($env:ARTIFACT_S3_BUCKET)" }
+if ($env:ARTIFACT_DYNAMODB_ENABLED) { $CommonEnv += "ARTIFACT_DYNAMODB_ENABLED=$($env:ARTIFACT_DYNAMODB_ENABLED)" }
 if ($env:ARTIFACT_DYNAMODB_TABLE) { $CommonEnv += "ARTIFACT_DYNAMODB_TABLE=$($env:ARTIFACT_DYNAMODB_TABLE)" }
 
 if (-not $env:ARTIFACT_S3_BUCKET) {

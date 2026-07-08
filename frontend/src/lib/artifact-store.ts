@@ -223,6 +223,16 @@ function latestModifiedMs(files: S3ArtifactFile[]): number {
   return max;
 }
 
+function earliestModifiedMs(files: S3ArtifactFile[]): number {
+  let min = 0;
+  for (const file of files) {
+    const ms = Date.parse(file.lastModified);
+    if (!Number.isFinite(ms)) continue;
+    if (!min || ms < min) min = ms;
+  }
+  return min;
+}
+
 /** One paginated S3 list for all runs/<runId>/ keys - cached 30s. */
 export async function getS3RunArtifactIndex(): Promise<Map<string, S3ArtifactFile[]>> {
   if (!isS3Store()) return new Map();
@@ -331,6 +341,11 @@ export async function countS3RunArtifacts(runId: string): Promise<number> {
 
 export async function getS3RunLastModifiedMs(runId: string): Promise<number> {
   return s3RunLatestModifiedMs(runId);
+}
+
+export async function getS3RunEarliestModifiedMs(runId: string): Promise<number> {
+  const files = await listS3RunArtifacts(runId);
+  return earliestModifiedMs(files);
 }
 
 export async function getS3RunLastModified(runId: string): Promise<string> {

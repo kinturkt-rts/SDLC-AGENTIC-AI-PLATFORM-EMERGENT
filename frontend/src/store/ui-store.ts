@@ -23,6 +23,10 @@ interface UiState {
   logsProjectId: string | null;
   setLogsProjectId: (id: string | null) => void;
 
+  /** Artifacts page only - null = all projects (default). */
+  artifactsProjectId: string | null;
+  setArtifactsProjectId: (id: string | null) => void;
+
   environment: Environment;
   setEnvironment: (env: Environment) => void;
 
@@ -52,6 +56,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   logsProjectId: null,
   setLogsProjectId: (id) => set({ logsProjectId: id }),
+
+  artifactsProjectId: null,
+  setArtifactsProjectId: (id) => set({ artifactsProjectId: id }),
 
   environment: 'dev',
   setEnvironment: (env) => set({ environment: env }),

@@ -13,6 +13,8 @@ import {
   countS3RunArtifacts,
   getS3RunLastModified,
   getS3RunLastModifiedMs,
+  getS3RunEarliestModifiedMs,
+  getRunArtifactJson,
   getS3RunArtifactIndex,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
@@ -20,6 +22,7 @@ import { gitlabHandoffExistsForRun } from './pipeline-handoffs';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
+import { loadRunTelemetryElapsedSec, resolveRunTimings } from './run-timing';
 import {
   buildRunEvents,
   runEventToActivityFeed,
@@ -470,7 +473,15 @@ async function listUuidRunIds(): Promise<string[]> {
 }
 
 async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
-  return readJson<LiveRunState>(repoPath('agents', 'pipeline', 'runs', runId, 'run.json'));
+  const local = await readJson<LiveRunState>(
+    repoPath('agents', 'pipeline', 'runs', runId, 'run.json'),
+  );
+  if (local) return local;
+  if (isS3Store()) {
+    const doc = await getRunArtifactJson(runId, 'run.json');
+    if (doc) return doc as unknown as LiveRunState;
+  }
+  return null;
 }
 
 async function readPipelineLog(runId: string): Promise<string | null> {
@@ -724,6 +735,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   let ctx: PipelineContextFile | null = null;
   let phaseDone = emptyPhaseDone();
   let s3MtimeMs = 0;
+  let s3EarliestMs = 0;
 
   const shouldLoadPhases = needsHeavy || (isS3Store() && isTerminal) || isTerminal;
 
@@ -732,7 +744,10 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
       ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
       : await readContextFile(slug);
     phaseDone = await phaseCompletionForRun(runId, slug, ctx);
-    s3MtimeMs = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
+    if (isS3Store()) {
+      s3MtimeMs = await getS3RunLastModifiedMs(runId);
+      s3EarliestMs = await getS3RunEarliestModifiedMs(runId);
+    }
   }
 
   // Mark skipped phases as done so reconciler doesn't wait for them (e.g. skip_gitlab=true on old runs).
@@ -776,7 +791,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     (reconciled.status === 'completed' || reconciled.status === 'failed'
       ? new Date(lastRunActivityMsFromParts(startedAt, logMtimeMs, s3MtimeMs)).toISOString()
       : null);
-  const elapsedSec = finishedAt
+  const preliminaryElapsed = finishedAt
     ? Math.max(1, Math.floor((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000))
     : Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
 
@@ -799,6 +814,28 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     }
   }
 
+  const stepsDurationSec = steps.reduce((sum, step) => sum + (step.durationSec ?? 0), 0) || null;
+  const isTerminalRun =
+    reconciled.status === 'completed' ||
+    reconciled.status === 'failed' ||
+    reconciled.status === 'cancelled';
+  let telemetryElapsedSec: number | null = null;
+  if (isTerminalRun && preliminaryElapsed < 120) {
+    telemetryElapsedSec = await loadRunTelemetryElapsedSec(slug, runId);
+  }
+
+  const timings = resolveRunTimings({
+    startedAt,
+    status: reconciled.status,
+    liveStartedAt: enriched.startedAt,
+    liveFinishedAt: enriched.finishedAt,
+    logMtimeMs,
+    s3LatestMs: s3MtimeMs,
+    s3EarliestMs,
+    telemetryElapsedSec,
+    stepsDurationSec,
+  });
+
   return {
     id: runId,
     projectId: slug,
@@ -811,9 +848,9 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
       reconciled.status === 'completed' || reconciled.status === 'failed' || !currentAgentName
         ? null
         : (currentAgentName as AgentName),
-    startedAt,
-    finishedAt,
-    elapsedSec,
+    startedAt: timings.startedAt,
+    finishedAt: timings.finishedAt,
+    elapsedSec: timings.elapsedSec,
     triggeredBy: enriched.triggeredBy ?? 'frontend',
     steps,
     error: runError,
@@ -1349,14 +1386,14 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
         if (live) {
           runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
         } else {
+          const live = await readUuidRunState(runId);
           runs.push(
-            await buildPipelineRunFromLive(slug, {
+            await buildPipelineRunFromLive(slug, live ?? {
               runId,
               feature: slug,
               targetApp: slug,
               status: 'completed',
               triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
-              startedAt: await getS3RunLastModified(runId),
             }),
           );
         }
@@ -1387,11 +1424,19 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     const status = await inferPipelineStatus(slug);
     const completed = await phaseCompletion(slug, ctx);
     const startedAt = await latestPipelineMtime(slug);
-    const finishedAt =
-      status === 'completed' || status === 'failed' || status === 'cancelled' ? startedAt : null;
-    const elapsedSec = finishedAt
-      ? Math.max(1, Math.floor((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000))
-      : Math.max(60, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+    const [s3LatestMs, s3EarliestMs, telemetryElapsedSec] = await Promise.all([
+      isS3Store() && ctx?.runId ? getS3RunLastModifiedMs(ctx.runId) : Promise.resolve(0),
+      isS3Store() && ctx?.runId ? getS3RunEarliestModifiedMs(ctx.runId) : Promise.resolve(0),
+      ctx?.runId ? loadRunTelemetryElapsedSec(slug, ctx.runId) : Promise.resolve(null),
+    ]);
+    const timings = resolveRunTimings({
+      startedAt,
+      status,
+      logMtimeMs: 0,
+      s3LatestMs,
+      s3EarliestMs,
+      telemetryElapsedSec,
+    });
 
     let currentPhase: SdlcPhase | null = null;
     let currentAgent: AgentName | null = null;
@@ -1411,9 +1456,9 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
       status,
       currentPhase: status === 'completed' ? null : currentPhase,
       currentAgent: status === 'completed' ? null : currentAgent,
-      startedAt,
-      finishedAt,
-      elapsedSec,
+      startedAt: timings.startedAt,
+      finishedAt: timings.finishedAt,
+      elapsedSec: timings.elapsedSec,
       triggeredBy: 'orchestrator-agent',
       steps: buildSteps(runId, completed, status),
     });

@@ -52,7 +52,7 @@ DEFAULT_DIAGRAM_DIR = _REPO_ROOT / "docs" / "generated-diagrams"
 DEFAULT_DIAGRAM_BASE_NAME = "architecture-diagram"
 
 DEFAULT_PIPELINE_TASK = """\
-Use handoff in Context (prdPath, productAgentOutput, targetApp).
+Use handoff in Context (prdPath, productBrief, targetApp).
 1. Read the PRD scope from context; produce one AWS architecture PNG via generate_diagram.
 2. Write design doc at context `designDocPath` (default `docs/design/<targetApp>.md`) per design-writer rules unless --skip-design.
 3. Save PNG under diagramOutputDir using diagramBaseName (default: targetApp slug).
@@ -108,7 +108,7 @@ Return **only**:
 
 ## General
 - Use the **Architecture brief (from PRD)** block in the user message as the primary scope for nodes and clusters.
-- Align with `prdPath` / `productAgentOutput` in context when present.
+- Align with `prdPath` / `productBrief` in context when present.
 - Do not invent Jira keys. Jira is not required for architecture.
 - FastAPI services under `target-apps/` when the PRD implies an app tier.
 - A follow-up step writes the per-feature design doc (`designDocPath` in context) for database-agent and developer-agent; keep ADR bullets aligned with that doc.
@@ -287,7 +287,12 @@ def _generate_design_markdown(
             prd_text = _read_repo_text(str(prd_path), context=context)
         except OSError:
             prd_text = f"(PRD file not readable: {prd_path})"
-    product_out = context.get("productAgentOutput") or context.get("product_agent_output") or ""
+    product_out = (
+        context.get("productBrief")
+        or context.get("productAgentOutput")
+        or context.get("product_agent_output")
+        or ""
+    )
     paths_block = "\n".join(f"- {p.as_posix()}" for p in diagram_paths) or "(no diagram PNG)"
 
     design_callback = (
@@ -438,7 +443,12 @@ def _diagram_user_message(task: str, context: dict[str, Any] | None) -> str:
                 "## Architecture brief (from PRD — use for diagram scope)\n"
                 f"{brief}\n"
             )
-        product_out = context.get("productAgentOutput") or context.get("product_agent_output") or ""
+        product_out = (
+            context.get("productBrief")
+            or context.get("productAgentOutput")
+            or context.get("product_agent_output")
+            or ""
+        )
         if product_out and str(product_out).strip():
             parts.append(f"## Product summary\n{str(product_out).strip()}\n")
         parts.append(f"Context:\n{json.dumps(context, indent=2)}")

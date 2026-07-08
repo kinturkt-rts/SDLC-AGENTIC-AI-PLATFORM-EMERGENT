@@ -187,6 +187,7 @@ PIPELINE_CONTEXT_FIELDS = (
     "targetAppDir",
     "inputFile",
     "prdPath",
+    "productBrief",
     "architectBrief",
     "designDocPath",
     "diagramPaths",

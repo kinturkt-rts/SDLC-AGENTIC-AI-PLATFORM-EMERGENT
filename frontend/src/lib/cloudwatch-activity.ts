@@ -32,6 +32,7 @@ const NOISE_LINE_RES: RegExp[] = [
   /^debug:botocore/i,
   /^info:urllib3/i,
   /^info:strands\b/i,
+  /Strands.*experimental/i,
   /^ping\b/i,
 ];
 

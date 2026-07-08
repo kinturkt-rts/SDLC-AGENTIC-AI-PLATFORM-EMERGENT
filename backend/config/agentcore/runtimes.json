@@ -13,8 +13,9 @@
   "artifactStore": {
     "ARTIFACT_STORE": "s3",
     "ARTIFACT_S3_BUCKET": "sdlc-agentic-ai-app-artifacts",
+    "ARTIFACT_DYNAMODB_ENABLED": "false",
     "ARTIFACT_DYNAMODB_TABLE": "sdlc-pipeline-runs",
-    "notes": "Set on orchestrator AND all mvpPipeline specialists"
+    "notes": "S3 is required for AgentCore artifacts. DynamoDB indexing is optional; set ARTIFACT_DYNAMODB_ENABLED=true only after the table exists."
   },
   "agents": {
     "orchestrator-agent": {

@@ -20,6 +20,8 @@ import {
   AlertTriangle,
   XCircle,
   ScrollText,
+  ExternalLink,
+  GitBranch,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -146,6 +148,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const waitingStep = run?.steps.find((s) => s.status === 'waiting_for_human') ?? null;
   const runEvents = [...(events ?? [])].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
   const displayLive = status === 'running';
+  const gitlabBranchUrl = handoffs?.gitlab?.branchUrl ?? null;
+  const gitlabMrUrl = handoffs?.gitlab?.mergeRequestUrl ?? handoffs?.contextMergeRequestUrl ?? null;
 
   const resolveHitl = (id: string, title: string, decision: 'approved' | 'rejected') => {
     setHitlOverride((o) => ({ ...o, [id]: decision }));
@@ -209,6 +213,52 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                 <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
                   {run.error ?? 'See the phase timeline and event stream below for details.'}
                 </p>
+              </div>
+            </Card>
+          ) : null}
+
+          {status === 'completed' ? (
+            <Card className="flex flex-col gap-3 border-emerald-500/30 bg-emerald-500/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">Pipeline complete</p>
+                  <p className="mt-0.5 text-[12px] text-muted-foreground">
+                    {handoffs?.gitlab?.status === 'published'
+                      ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
+                      : 'All SDLC phases finished. Review artifacts and handoffs below.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                {gitlabBranchUrl ? (
+                  <a
+                    href={gitlabBranchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/15"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                    View branch on GitLab
+                    <ExternalLink className="h-3 w-3 opacity-70" />
+                  </a>
+                ) : null}
+                {gitlabMrUrl ? (
+                  <a
+                    href={gitlabMrUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.08] px-3 py-1.5 text-xs font-medium text-teal-400 hover:bg-white/[0.03]"
+                  >
+                    Open merge request
+                    <ExternalLink className="h-3 w-3 opacity-70" />
+                  </a>
+                ) : null}
+                <Button asChild variant="outline" size="sm" className="h-8 border-white/[0.08]">
+                  <Link href="/artifacts">Browse artifacts</Link>
+                </Button>
               </div>
             </Card>
           ) : null}

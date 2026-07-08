@@ -188,6 +188,7 @@ def test_sanitize_context_for_persist_strips_runtime_fields(monkeypatch: pytest.
         ],
         "diagramOutputDir": "/tmp/generated-diagrams",
         "diagramOutputFile": "/tmp/generated-diagrams/field-service-dispatch",
+        "productBrief": "Feature: Field Service Dispatch\nSchedule HVAC technicians.",
         "productAgentOutput": "See prdPath for field-service-dispatch MVP requirements.",
         "architectSummary": "Streamlit UI + FastAPI...",
         "postgresMcpParams": {"db_endpoint": "", "database": ""},
@@ -206,6 +207,7 @@ def test_sanitize_context_for_persist_strips_runtime_fields(monkeypatch: pytest.
     assert "diagramOutputDir" not in cleaned
     assert "architectSummary" not in cleaned
     assert "productAgentOutput" not in cleaned
+    assert cleaned["productBrief"] == "Feature: Field Service Dispatch\nSchedule HVAC technicians."
     assert "postgresMcpParams" not in cleaned
     assert cleaned["prdPath"] == "field-service-dispatch/docs/PRD/field-service-dispatch.md"
     assert len(cleaned["diagramPaths"]) == 1

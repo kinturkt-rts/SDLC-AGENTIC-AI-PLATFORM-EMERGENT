@@ -480,11 +480,9 @@ class SdlcPipelineRunner:
     def _soft_fail_seed_materialize(self) -> bool:
         """When True, seed bcrypt failures warn but do not abort after SQL apply."""
         flag = os.getenv("SDLC_SOFT_FAIL_SEED_MATERIALIZE", "").strip().lower()
-        if flag in ("0", "false", "no", "off"):
-            return False
         if flag in ("1", "true", "yes", "on"):
             return True
-        return self.transport == "a2a"
+        return False
 
     def _app_dir_for_rds(self, workspace_root: Path) -> Path:
         app_dir = workspace_root / target_app_root_rel(self.feature).replace("/", os.sep)
@@ -599,8 +597,10 @@ class SdlcPipelineRunner:
 
         fields: dict[str, Any] = {
             "prdPath": prd_rel,
-            "productAgentOutput": f"See prdPath for {self.feature} MVP requirements.",
         }
+        product_brief = self._product_brief_from_prd(prd_rel)
+        if product_brief:
+            fields["productBrief"] = product_brief
         if self.options.with_jira:
             fields["jiraProjectKey"] = self.options.jira_project
             fields["jiraBacklogCreated"] = True
@@ -608,6 +608,47 @@ class SdlcPipelineRunner:
         self.agents_run.append("product-agent")
         self.artifacts["PRD"] = prd_rel
         self._after_agent_step("product-agent")
+
+    def _product_brief_from_prd(self, prd_rel: str, *, max_chars: int = 700) -> str:
+        """Build a compact product brief from the PRD artifact."""
+        try:
+            if self.run_id and is_s3_store():
+                from .artifact_store import get_artifact_text
+
+                text = get_artifact_text(self.run_id, prd_rel)
+            else:
+                text = (self.root / prd_rel.replace("/", os.sep)).read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+        title = ""
+        overview_lines: list[str] = []
+        in_overview = False
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("# ") and not title:
+                title = line[2:].strip()
+                continue
+            if line.startswith("## "):
+                heading = line[3:].strip().lower()
+                in_overview = "overview" in heading or "goal" in heading or "summary" in heading
+                continue
+            if in_overview:
+                overview_lines.append(line.lstrip("-* ").strip())
+                if len(" ".join(overview_lines)) >= max_chars:
+                    break
+
+        parts: list[str] = []
+        if title:
+            parts.append(f"Feature: {title}")
+        if overview_lines:
+            parts.append(" ".join(overview_lines))
+        brief = "\n".join(parts).strip()
+        if len(brief) <= max_chars:
+            return brief
+        return brief[: max_chars - 3].rstrip() + "..."
 
     def _step_architect(self) -> None:
         if self.run_id:

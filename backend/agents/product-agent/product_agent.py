@@ -645,6 +645,7 @@ def _build_pipeline_context_dict(
     slug: str,
     prd_rel: str,
     input_rel: str | None = None,
+    prd_markdown: str = "",
 ) -> dict[str, Any]:
     delivery_profile = build_delivery_profile_from_paths(
         _REPO_ROOT,
@@ -658,9 +659,49 @@ def _build_pipeline_context_dict(
         "diagramPaths": [diagram_path_for_app(slug)],
         "deliveryProfile": delivery_profile,
     }
+    product_brief = _build_product_brief(prd_markdown)
+    if product_brief:
+        ctx["productBrief"] = product_brief
     if input_rel:
         ctx["inputPath"] = input_rel
     return ctx
+
+
+def _build_product_brief(prd_markdown: str, *, max_chars: int = 700) -> str:
+    """Return a compact deterministic product summary from the generated PRD."""
+    text = prd_markdown.strip()
+    if not text:
+        return ""
+
+    title = ""
+    overview_lines: list[str] = []
+    in_overview = False
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("# ") and not title:
+            title = line[2:].strip()
+            continue
+        if line.startswith("## "):
+            heading = re.sub(r"^\d+\.\s*", "", line[3:].strip()).lower()
+            in_overview = "overview" in heading or "goal" in heading or "summary" in heading
+            continue
+        if in_overview:
+            overview_lines.append(line.lstrip("-* ").strip())
+            if len(" ".join(overview_lines)) >= max_chars:
+                break
+
+    parts: list[str] = []
+    if title:
+        parts.append(f"Feature: {title}")
+    if overview_lines:
+        parts.append(" ".join(overview_lines))
+    brief = "\n".join(parts).strip()
+    if len(brief) <= max_chars:
+        return brief
+    return brief[: max_chars - 3].rstrip() + "..."
 
 
 def run_prd_from_context(
@@ -708,6 +749,7 @@ def run_prd_from_context(
         slug=slug,
         prd_rel=prd_rel,
         input_rel=input_rel,
+        prd_markdown=prd_markdown,
     )
     run_id = resolve_run_id(ctx)
     if run_id:
@@ -1039,6 +1081,7 @@ def _write_pipeline_context(
         slug=slug,
         prd_rel=prd_rel,
         input_rel=input_rel,
+        prd_markdown=prd_path.read_text(encoding="utf-8") if prd_path.is_file() else "",
     )
     ctx_path_rel = pipeline_context_rel_for_app(slug)
     write_repo_artifact(

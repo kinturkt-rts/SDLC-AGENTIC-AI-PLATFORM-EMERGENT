@@ -46,7 +46,7 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
 export default function ArtifactsPage() {
   const { data: artifacts, isLoading } = useArtifacts();
   const { data: projects } = useProjects();
-  const currentProjectId = useUiStore((s) => s.currentProjectId);
+  const artifactsProjectId = useUiStore((s) => s.artifactsProjectId);
   const [kind, setKind] = React.useState<ArtifactKind | 'all'>('all');
   const [preview, setPreview] = React.useState<Artifact | null>(null);
   const [previewText, setPreviewText] = React.useState<string | null>(null);
@@ -80,20 +80,23 @@ export default function ArtifactsPage() {
     };
   }, [preview]);
 
-  const currentProjectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+  const projectName = artifactsProjectId
+    ? projects?.find((p) => p.id === artifactsProjectId)?.name ?? artifactsProjectId
+    : 'all projects';
 
   const kindLabel = FILTER_OPTIONS.find((o) => o.value === kind)?.label ?? 'All kinds';
 
   const rows = (artifacts ?? [])
-    .filter((a) => a.projectId === currentProjectId)
-    .filter((a) => kind === 'all' || a.kind === kind);
+    .filter((a) => !artifactsProjectId || a.projectId === artifactsProjectId)
+    .filter((a) => kind === 'all' || a.kind === kind)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   return (
     <>
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description={`Deliverables for ${currentProjectName} - PRDs, design docs, architecture diagrams, SQL, code, and CI/CD.`}
+        description={`Deliverables across ${projectName} — PRDs, design docs, architecture diagrams, SQL, code, and CI/CD. Newest first.`}
         actions={
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground">Kind</span>
@@ -132,6 +135,9 @@ export default function ArtifactsPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-mono text-sm font-medium text-foreground">{a.name}</p>
                     <p className="truncate text-xs text-muted-foreground">{a.path}</p>
+                    {!artifactsProjectId ? (
+                      <p className="truncate text-[11px] text-muted-foreground/80">{a.projectName}</p>
+                    ) : null}
                   </div>
                   <span className="shrink-0 rounded-md bg-muted/50 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                     {artifactKindLabel(a.kind)}

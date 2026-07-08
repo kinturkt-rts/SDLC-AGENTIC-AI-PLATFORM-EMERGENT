@@ -2,19 +2,22 @@
 # Build from monorepo root:
 #   docker build -f frontend/Dockerfile -t sdlc-control-plane:local .
 
-FROM node:20-alpine AS deps
+# Base image via AWS Public ECR (Docker Hub mirror) — avoids docker.io DNS blocks on some networks.
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:20-alpine
+
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
-FROM node:20-alpine AS builder
+FROM ${NODE_IMAGE} AS builder
 WORKDIR /app/frontend
 COPY --from=deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 
 RUN apk add --no-cache python3 py3-pip \

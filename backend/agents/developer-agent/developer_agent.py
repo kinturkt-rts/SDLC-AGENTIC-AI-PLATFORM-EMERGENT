@@ -615,7 +615,7 @@ Section numbers vary per feature. Locate content by heading text:
 | `databaseHandoffPath` | `dev_read_file` | Schema summary, SQL list, DSN, ORM notes |
 | `scrapedMarkdownPaths` | `dev_read_file` each | External API docs, competitor research |
 | `architectSummary` | Context JSON | Orientation only |
-| `productAgentOutput` | Context JSON | Jira story fallback when prdPath absent |
+| `productBrief` | Context JSON | Compact product orientation when prdPath is absent |
 | `diagramPaths` | Context JSON | PNG — do not parse |
 
 ## Language and framework — design tech stack is the authority

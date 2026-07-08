@@ -92,7 +92,7 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 |--------|--------|-----|
 | `designDocPath` | `db_read_file` | **§3** → DDL; **§6** → file order + seed spec |
 | `prdPath` | `db_read_file` when present | PRD **§7 Core Data Entities** — validate RDS scope |
-| `productAgentOutput` | Context JSON | Orientation only |
+| `productBrief` | Context JSON | Compact product orientation only |
 | `diagramPaths` | Context JSON | Optional; do not parse PNGs |
 | `postgresMcpParams` | Context JSON (when `--with-postgres`) | RDS target (endpoint, database) for handoff only |
 | `applyToRdsAfterWrite` | Context JSON | When true, write sql/ only; host runs apply script after agent completes |

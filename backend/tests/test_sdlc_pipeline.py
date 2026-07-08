@@ -433,14 +433,60 @@ def test_step_rds_apply_invokes_scripts_with_materialized_sql_dir(
     assert not any(c[0].endswith("materialize_seed_passwords.py") for c in calls)
 
 
-def test_step_rds_apply_soft_fails_seed_materialize_on_a2a(
+def test_step_rds_apply_fails_on_seed_materialize_error(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Seed materialize failure aborts the pipeline (no silent soft-fail)."""
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     monkeypatch.setenv("ARTIFACT_STORE", "local")
     monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
     run_id = "run-db-004"
+
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "desk-booking"
+    runner.root = repo_root
+    runner.context = {"targetApp": "desk-booking", "runId": run_id}
+    runner.ctx_path = repo_root / "agents" / "pipeline" / "desk-booking.context.json"
+
+    def fake_run_python(args: list[str], *, step: str) -> None:
+        if step == "seed-materialize":
+            raise PipelineStepError("seed-materialize failed (exit 1): bad hash column")
+
+    with (
+        patch.object(runner, "_resolve_rds_workspace") as resolve_ws,
+        patch.object(runner, "_run_python", side_effect=fake_run_python),
+        patch(
+            "agents._shared.seed_credentials.seed_sql_has_placeholders",
+            return_value=True,
+        ),
+        patch.object(runner, "_save_context"),
+        patch(
+            "agents._shared.sdlc_pipeline.write_db_handoff",
+            return_value="desk-booking/db/HANDOFF.md",
+        ),
+        patch("agents._shared.sdlc_pipeline.put_context"),
+    ):
+        workspace = repo_root / "workspace"
+        sql_dir = workspace / "desk-booking" / "db" / "sql"
+        sql_dir.mkdir(parents=True)
+        resolve_ws.return_value = (workspace, sql_dir)
+        with pytest.raises(PipelineStepError, match="seed-materialize failed"):
+            runner._step_rds_apply()
+
+
+def test_step_rds_apply_soft_fails_seed_materialize_when_env_opt_in(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soft-fail only when explicitly opted in via env var."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("SDLC_SOFT_FAIL_SEED_MATERIALIZE", "true")
+    run_id = "run-db-005"
 
     runner = object.__new__(SdlcPipelineRunner)
     runner.transport = "a2a"
@@ -477,4 +523,3 @@ def test_step_rds_apply_soft_fails_seed_materialize_on_a2a(
     handoff.assert_called_once()
     assert handoff.call_args.kwargs["rds_applied"] is True
     assert "seedMaterializeWarning" in handoff.call_args.args[1]
-    assert runner.context.get("databaseHandoffPath") == "desk-booking/db/HANDOFF.md"

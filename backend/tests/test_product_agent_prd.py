@@ -64,7 +64,7 @@ def test_run_prd_from_context_writes_target_app_layout(
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     mod = _load_agent_module()
 
-    fake_prd = "# Demo App\n\n## 1. Overview\nShort.\n"
+    fake_prd = "# Demo App\n\n## 1. Overview\nShort product goal for demos.\n"
     with patch.object(mod, "_generate_prd_from_text", return_value=fake_prd):
         summary = mod.run_prd_from_context(
             "Create PRD",
@@ -93,6 +93,7 @@ def test_run_prd_from_context_writes_target_app_layout(
     ctx = json.loads(run_ctx_path.read_text(encoding="utf-8"))
     assert ctx["targetApp"] == "demo-api"
     assert ctx["prdPath"] == "target-apps/demo-api/docs/PRD/demo-api.md"
+    assert ctx["productBrief"] == "Feature: Demo App\nShort product goal for demos."
 
 
 def test_enrich_prd_context_infers_target_and_input(
