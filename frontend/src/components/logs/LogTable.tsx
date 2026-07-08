@@ -25,7 +25,7 @@ export function LogTable({ rows, showRunColumn = true }: { rows: LogEntry[]; sho
                 {l.runId.slice(0, 13)}
               </Link>
             ) : (
-              <span className="w-28 shrink-0 truncate text-muted-foreground/40">—</span>
+              <span className="w-28 shrink-0 truncate text-muted-foreground/40">-</span>
             )
           ) : null}
           <span className="flex-1 whitespace-pre-wrap break-words text-foreground">{l.message}</span>

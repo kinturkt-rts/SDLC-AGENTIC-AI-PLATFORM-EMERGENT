@@ -374,7 +374,7 @@ function InputRequirementsCard() {
     setContent('');
     setStatus('missing');
     clearSavedRunState();
-    toast.message('Form cleared', { description: 'Paste or upload a new brief to start another run.' });
+    toast.message('Cleared', { description: 'Paste or upload a new brief to start another run.' });
   }, [clearSavedRunState]);
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -717,7 +717,7 @@ function InputRequirementsCard() {
               ) : null}
               {runStatus === 'completed' ? (
                 <p className="mt-1.5 text-[11px] text-muted-foreground">
-                  Artifacts published — open run details for GitLab branch and outputs.
+                  Artifacts published - open run details for GitLab branch and outputs.
                 </p>
               ) : null}
               <p className="mt-1 font-mono text-[10px] text-muted-foreground" title={startedRunId}>
@@ -758,19 +758,19 @@ function InputRequirementsCard() {
                 {runStatus === 'completed' ? (
                   <>
                     <span className="font-semibold text-emerald-300">Pipeline complete</span>
-                    {' — '}
+                    {' - '}
                     <span className="font-medium">{titleCase(feature)}</span> finished. Brief kept below for reference or re-run.
                   </>
                 ) : runStatus === 'failed' ? (
                   <>
                     <span className="font-semibold text-red-300">Pipeline failed</span>
-                    {' — '}
+                    {' - '}
                     check run details for the error, then edit the brief and submit again.
                   </>
                 ) : (
                   <>
                     <span className="font-semibold text-teal-300">Pipeline running</span>
-                    {' — '}
+                    {' - '}
                     track <span className="font-medium">{titleCase(feature)}</span> in Active Runs and Live Activity below.
                   </>
                 )}
@@ -808,13 +808,13 @@ function InputRequirementsCard() {
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                className="gap-1.5 border-white/[0.08]"
+                variant="ghost"
+                className="gap-1.5 text-muted-foreground hover:text-foreground"
                 onClick={handleClearForm}
                 disabled={submitting || fileLoading}
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-                Clear form
+                Clear
               </Button>
             ) : null}
           </div>
@@ -857,7 +857,7 @@ export default function DashboardPage() {
             SDLC Agentic AI Platform
           </h1>
           <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-            Submit a requirements brief and run the full SDLC pipeline on AgentCore — PRD, architecture, SQL, application code, and GitLab publish.
+            Submit a requirements brief and run the full SDLC pipeline on AgentCore - PRD, architecture, SQL, application code, and GitLab publish.
           </p>
 
           <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
