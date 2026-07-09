@@ -150,6 +150,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const displayLive = status === 'running';
   const gitlabBranchUrl = handoffs?.gitlab?.branchUrl ?? null;
   const gitlabMrUrl = handoffs?.gitlab?.mergeRequestUrl ?? handoffs?.contextMergeRequestUrl ?? null;
+  const developerStepStatus = run?.steps.find((step) => step.agent === 'developer-agent')?.status;
 
   const resolveHitl = (id: string, title: string, decision: 'approved' | 'rejected') => {
     setHitlOverride((o) => ({ ...o, [id]: decision }));
@@ -358,7 +359,9 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
             </Card>
           </div>
 
-          {handoffs ? <PipelineHandoffsCard handoffs={handoffs} /> : null}
+          {handoffs ? (
+            <PipelineHandoffsCard handoffs={handoffs} developerStepStatus={developerStepStatus} />
+          ) : null}
 
           <Card className="border-white/[0.06] bg-card/80">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">

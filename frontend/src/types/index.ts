@@ -114,6 +114,7 @@ export interface GitlabHandoffInfo {
   mergeRequestUrl?: string | null;
   mergeRequestIid?: number | null;
   gitlabProject?: string | null;
+  repoUrl?: string | null;
   pathsPublishedCount: number;
   error?: string | null;
   source: 's3' | 'local';
@@ -124,8 +125,7 @@ export interface GitlabHandoffInfo {
 export interface DeveloperHandoffInfo {
   targetApp: string;
   writtenFilesCount: number;
-  testCommand?: string | null;
-  runCommand?: string | null;
+  validationStatus?: 'passed' | 'failed' | null;
   source: 's3' | 'local';
   path: string;
 }

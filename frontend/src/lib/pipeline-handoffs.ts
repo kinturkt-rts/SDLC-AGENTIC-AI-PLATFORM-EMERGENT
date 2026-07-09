@@ -32,11 +32,24 @@ function parseGitlabHandoff(
     mergeRequestUrl: typeof data.mergeRequestUrl === 'string' ? data.mergeRequestUrl : null,
     mergeRequestIid: typeof iid === 'number' ? iid : null,
     gitlabProject: typeof data.gitlabProject === 'string' ? data.gitlabProject : null,
+    repoUrl: typeof data.repoUrl === 'string' ? data.repoUrl : null,
     pathsPublishedCount: paths.length,
     error: typeof data.error === 'string' ? data.error : null,
     source,
     path: artifactPath,
   };
+}
+
+function parseValidationStatus(data: HandoffRecord): 'passed' | 'failed' | null {
+  if (data.validationPassed === true) return 'passed';
+  if (data.validationPassed === false) return 'failed';
+  const raw = data.validationStatus;
+  if (typeof raw === 'string') {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'passed' || normalized === 'success') return 'passed';
+    if (normalized === 'failed' || normalized === 'error') return 'failed';
+  }
+  return null;
 }
 
 function parseDeveloperHandoff(
@@ -48,13 +61,7 @@ function parseDeveloperHandoff(
   return {
     targetApp: String(data.targetApp ?? ''),
     writtenFilesCount: files.length,
-    testCommand: typeof data.testCommand === 'string' ? data.testCommand : null,
-    runCommand:
-      typeof data.runCommand === 'string'
-        ? data.runCommand
-        : typeof data.runCommandLocal === 'string'
-          ? data.runCommandLocal
-          : null,
+    validationStatus: parseValidationStatus(data),
     source,
     path: artifactPath,
   };
