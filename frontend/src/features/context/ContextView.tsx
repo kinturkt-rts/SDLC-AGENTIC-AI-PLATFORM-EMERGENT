@@ -17,18 +17,19 @@ import type { ContextItem, PipelineContext } from '@/src/types';
 
 function PipelineContextCard({ ctx }: { ctx: PipelineContext }) {
   const [open, setOpen] = React.useState(false);
-  const rows: [string, React.ReactNode][] = [
-    ...(ctx.runId ? [['runId', ctx.runId] as [string, React.ReactNode]] : []),
-    ['targetApp', ctx.targetApp],
-    ...(ctx.inputPath ? [['inputPath', ctx.inputPath] as [string, React.ReactNode]] : []),
-    ['prdPath', ctx.prdPath],
-    ['designDocPath', ctx.designDocPath],
-    ['diagramPaths', ctx.diagramPaths.join(', ')],
-    ['productAgentOutput', ctx.productAgentOutput],
-    ['architectSummary', ctx.architectSummary],
-    ['dbOutputDir', ctx.dbOutputDir],
-    ['preferredSqlPath', ctx.preferredSqlPath],
+  const rawRows: [string, React.ReactNode][] = [
+    ['Run ID', ctx.runId],
+    ['Target app', ctx.targetApp],
+    ['Input brief', ctx.inputPath],
+    ['PRD path', ctx.prdPath],
+    ['Design doc path', ctx.designDocPath],
+    ['Diagram paths', ctx.diagramPaths.join(', ')],
+    ['Product summary', ctx.productAgentOutput],
+    ['Architecture summary', ctx.architectSummary],
+    ['DB output directory', ctx.dbOutputDir],
+    ['Preferred SQL path', ctx.preferredSqlPath],
   ];
+  const rows = rawRows.filter(([, value]) => value != null && (typeof value !== 'string' || value.trim().length > 0));
   return (
     <Card>
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -39,8 +40,8 @@ function PipelineContextCard({ ctx }: { ctx: PipelineContext }) {
       <dl className="divide-y divide-border">
         {rows.map(([k, v]) => (
           <div key={k} className="flex flex-col gap-0.5 px-4 py-2 sm:flex-row sm:items-center sm:gap-4">
-            <dt className="w-48 shrink-0 font-mono text-xs text-muted-foreground">{k}</dt>
-            <dd className="break-all font-mono text-xs text-foreground">{v}</dd>
+            <dt className="w-48 shrink-0 text-xs font-medium text-muted-foreground">{k}</dt>
+            <dd className="break-words text-xs text-foreground">{v}</dd>
           </div>
         ))}
       </dl>

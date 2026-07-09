@@ -27,6 +27,10 @@ interface UiState {
   artifactsProjectId: string | null;
   setArtifactsProjectId: (id: string | null) => void;
 
+  /** Context page only - null = all projects (default). */
+  contextProjectId: string | null;
+  setContextProjectId: (id: string | null) => void;
+
   environment: Environment;
   setEnvironment: (env: Environment) => void;
 
@@ -59,6 +63,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   artifactsProjectId: null,
   setArtifactsProjectId: (id) => set({ artifactsProjectId: id }),
+
+  contextProjectId: null,
+  setContextProjectId: (id) => set({ contextProjectId: id }),
 
   environment: 'dev',
   setEnvironment: (env) => set({ environment: env }),

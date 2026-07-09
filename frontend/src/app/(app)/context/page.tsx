@@ -19,16 +19,20 @@ export default function ContextPage() {
 function ContextInner() {
   const searchParams = useSearchParams();
   const { data: projects } = useProjects();
-  const currentProjectId = useUiStore((s) => s.currentProjectId);
-  const setCurrentProject = useUiStore((s) => s.setCurrentProject);
+  const contextProjectId = useUiStore((s) => s.contextProjectId);
+  const setContextProjectId = useUiStore((s) => s.setContextProjectId);
 
   const paramProject = searchParams.get('project');
 
   React.useEffect(() => {
-    if (paramProject) setCurrentProject(paramProject);
-  }, [paramProject, setCurrentProject]);
+    if (paramProject) setContextProjectId(paramProject);
+  }, [paramProject, setContextProjectId]);
 
-  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+  const projectSlug = contextProjectId ?? 'all';
+  const projectName =
+    projectSlug === 'all'
+      ? 'all projects'
+      : projects?.find((p) => p.id === projectSlug)?.name ?? projectSlug;
 
   return (
     <>
@@ -37,7 +41,7 @@ function ContextInner() {
         title="Context"
         description={`Shared pipeline context for ${projectName} - PRD summaries, schema notes, and design decisions.`}
       />
-      <ContextView projectSlug={currentProjectId} />
+      <ContextView projectSlug={projectSlug} />
     </>
   );
 }

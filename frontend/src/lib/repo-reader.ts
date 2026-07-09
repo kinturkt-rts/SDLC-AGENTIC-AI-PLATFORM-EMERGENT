@@ -7,6 +7,7 @@ import {
   listS3RunArtifacts,
   runS3Prefix,
   buildS3RunIdByApp,
+  getS3ArtifactPreview,
   getS3RunContext,
   listS3RunAppEntries,
   listS3ProjectSlugs,
@@ -369,6 +370,85 @@ async function readTextPreview(repoRelative: string, maxLen = 1200): Promise<str
   } catch {
     return undefined;
   }
+}
+
+function markdownSummary(text: string | undefined, maxLen = 420): string {
+  if (!text) return '';
+  const body: string[] = [];
+  let inFence = false;
+
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (
+      inFence ||
+      !t ||
+      t.startsWith('#') ||
+      t.startsWith('|') ||
+      t.startsWith('---') ||
+      /^[-*]\s*$/.test(t)
+    ) {
+      continue;
+    }
+    body.push(t.replace(/^[-*]\s+/, ''));
+    if (body.join(' ').length >= maxLen) break;
+  }
+
+  return body.join(' ').slice(0, maxLen).trim();
+}
+
+function contextSummaryValue(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const summary = value.trim();
+  if (!summary || summary.toLowerCase().startsWith('see prdpath')) return '';
+  return summary;
+}
+
+function contextArtifactPathCandidates(relPath: string, slug: string): string[] {
+  const normalized = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  const candidates = [normalized];
+  if (!normalized.startsWith(`${slug}/`)) candidates.push(`${slug}/${normalized}`);
+  return [...new Set(candidates)];
+}
+
+async function readContextArtifactPreview(
+  relPath: string | undefined,
+  slug: string,
+  runId?: string,
+): Promise<string | undefined> {
+  const pathValue = asRepoPath(relPath);
+  if (!pathValue) return undefined;
+
+  if (isS3Store() && runId) {
+    for (const candidate of contextArtifactPathCandidates(pathValue, slug)) {
+      const text = await getS3ArtifactPreview(`${runS3Prefix(runId)}${candidate}`);
+      if (text) return text;
+    }
+    return undefined;
+  }
+
+  for (const candidate of contextArtifactPathCandidates(pathValue, slug)) {
+    const text = await readTextPreview(candidate, 5000);
+    if (text) return text;
+  }
+  return undefined;
+}
+
+async function buildContextSummaries(
+  slug: string,
+  ctx: PipelineContextFile,
+  runId?: string,
+): Promise<{ productAgentOutput: string; architectSummary: string }> {
+  const prdText = await readContextArtifactPreview(ctx.prdPath, slug, runId);
+  const designText = await readContextArtifactPreview(ctx.designDocPath, slug, runId);
+
+  return {
+    productAgentOutput: contextSummaryValue(ctx.productAgentOutput) || markdownSummary(prdText),
+    architectSummary: contextSummaryValue(ctx.architectSummary) || markdownSummary(designText),
+  };
 }
 
 async function extractDescription(slug: string, ctx: PipelineContextFile | null): Promise<string> {
@@ -1512,42 +1592,43 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
   return undefined;
 }
 
-function appendContextItemsForRun(
+async function appendContextItemsForRun(
   items: ContextItem[],
   slug: string,
   runId: string | undefined,
   ctx: PipelineContextFile,
   updatedAt: string,
-): void {
+): Promise<void> {
   const name = slugToTitle(slug);
   const idPrefix = runId ? `ctx-${slug}-${runId.slice(0, 8)}` : `ctx-${slug}`;
+  const summaries = await buildContextSummaries(slug, ctx, runId ?? ctx.runId);
 
-  if (ctx.productAgentOutput) {
+  if (summaries.productAgentOutput) {
     items.push({
       id: `${idPrefix}-product`,
       projectId: slug,
       projectSlug: slug,
       projectName: name,
-      key: 'productAgentOutput',
+      key: 'Product summary',
       scope: 'project',
       type: 'document',
-      summary: ctx.productAgentOutput,
+      summary: summaries.productAgentOutput,
       updatedAt,
-      tokens: Math.ceil(ctx.productAgentOutput.length / 4),
+      tokens: Math.ceil(summaries.productAgentOutput.length / 4),
     });
   }
-  if (ctx.architectSummary) {
+  if (summaries.architectSummary) {
     items.push({
       id: `${idPrefix}-architect`,
       projectId: slug,
       projectSlug: slug,
       projectName: name,
-      key: 'architectSummary',
+      key: 'Architecture summary',
       scope: 'project',
       type: 'decision',
-      summary: ctx.architectSummary,
+      summary: summaries.architectSummary,
       updatedAt,
-      tokens: Math.ceil(ctx.architectSummary.length / 4),
+      tokens: Math.ceil(summaries.architectSummary.length / 4),
     });
   }
   if (ctx.prdPath) {
@@ -1612,7 +1693,7 @@ export async function listContextItems(projectSlug?: string): Promise<ContextIte
       const ctx = (await getS3RunContext(runId)) as PipelineContextFile | null;
       if (!ctx) continue;
       const runIdForId = (runsPerApp.get(slug) ?? 0) > 1 ? runId : undefined;
-      appendContextItemsForRun(items, slug, runIdForId, ctx, await getS3RunLastModified(runId));
+      await appendContextItemsForRun(items, slug, runIdForId, ctx, await getS3RunLastModified(runId));
     }
     return items;
   }
@@ -1621,7 +1702,7 @@ export async function listContextItems(projectSlug?: string): Promise<ContextIte
   for (const slug of slugs) {
     const ctx = await readContextFile(slug);
     if (!ctx) continue;
-    appendContextItemsForRun(items, slug, undefined, ctx, await latestPipelineMtime(slug));
+    await appendContextItemsForRun(items, slug, undefined, ctx, await latestPipelineMtime(slug));
   }
 
   return items;
@@ -1632,6 +1713,7 @@ export async function getPipelineContext(projectSlug: string): Promise<PipelineC
   if (!ctx) return null;
   const slug = projectSlug;
   const appRoot = isS3Store() ? slug : `target-apps/${slug}`;
+  const summaries = await buildContextSummaries(slug, ctx, ctx.runId);
   return {
     targetApp: ctx.targetApp ?? projectSlug,
     runId: ctx.runId,
@@ -1639,8 +1721,8 @@ export async function getPipelineContext(projectSlug: string): Promise<PipelineC
     prdPath: asRepoPath(ctx.prdPath) ?? `${appRoot}/docs/PRD/${projectSlug}.md`,
     designDocPath: asRepoPath(ctx.designDocPath) ?? `${appRoot}/docs/design/${projectSlug}.md`,
     diagramPaths: asRepoPaths(ctx.diagramPaths),
-    productAgentOutput: ctx.productAgentOutput ?? '',
-    architectSummary: ctx.architectSummary ?? '',
+    productAgentOutput: summaries.productAgentOutput,
+    architectSummary: summaries.architectSummary,
     dbOutputDir: asRepoPath(ctx.dbOutputDir) ?? `${appRoot}/db`,
     preferredSqlPath: asRepoPath(ctx.preferredSqlPath) ?? `${appRoot}/db/sql`,
     raw: ctx as Record<string, unknown>,
