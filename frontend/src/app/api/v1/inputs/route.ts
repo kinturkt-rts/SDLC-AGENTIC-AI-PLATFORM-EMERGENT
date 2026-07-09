@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { uploadBrief, validateTargetApp } from '@/src/lib/pipeline-run';
 import { formatApiRouteError } from '@/src/lib/api-route-error';
+import { decodeBriefContent } from '@/src/lib/brief-payload';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -11,6 +12,7 @@ interface SaveInputBody {
   feature?: unknown;
   targetApp?: unknown;
   content?: unknown;
+  contentBase64?: unknown;
   runId?: unknown;
 }
 
@@ -23,7 +25,7 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as SaveInputBody;
   } catch {
-    return bad('Body must be JSON: { targetApp|feature, content, runId? }');
+    return bad('Body must be JSON: { targetApp|feature, content|contentBase64, runId? }');
   }
 
   const featureRaw =
@@ -32,7 +34,12 @@ export async function POST(request: Request) {
       : typeof body.feature === 'string'
         ? body.feature
         : '';
-  const content = typeof body.content === 'string' ? body.content : '';
+  let content = '';
+  try {
+    content = decodeBriefContent(body);
+  } catch (err) {
+    return bad(err instanceof Error ? err.message : String(err));
+  }
   const runId = typeof body.runId === 'string' ? body.runId.trim() : undefined;
 
   const slugError = validateTargetApp(featureRaw);

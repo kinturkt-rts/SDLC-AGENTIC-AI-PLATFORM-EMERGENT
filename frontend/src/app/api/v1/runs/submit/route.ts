@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { loadBackendEnv } from '@/src/lib/backend-env';
 import { submitBrief, validateTargetApp } from '@/src/lib/pipeline-run';
+import { decodeBriefContent } from '@/src/lib/brief-payload';
 
 function formatSubmitError(err: unknown): string {
   loadBackendEnv();
@@ -24,6 +25,7 @@ interface SubmitBody {
   targetApp?: unknown;
   feature?: unknown;
   content?: unknown;
+  contentBase64?: unknown;
 }
 
 function bad(message: string, status = 400) {
@@ -40,7 +42,7 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as SubmitBody;
   } catch {
-    return bad('Body must be JSON: { targetApp, content }');
+    return bad('Body must be JSON: { targetApp, content|contentBase64 }');
   }
 
   const featureRaw =
@@ -49,7 +51,12 @@ export async function POST(request: Request) {
       : typeof body.feature === 'string'
         ? body.feature
         : '';
-  const content = typeof body.content === 'string' ? body.content : '';
+  let content = '';
+  try {
+    content = decodeBriefContent(body);
+  } catch (err) {
+    return bad(err instanceof Error ? err.message : String(err));
+  }
 
   const slugError = validateTargetApp(featureRaw);
   if (slugError) return bad(slugError);

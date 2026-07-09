@@ -46,6 +46,7 @@ import {
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
 import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
+import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
@@ -54,6 +55,21 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
+
+function briefUploadBody(feature: string, content: string): string {
+  return JSON.stringify({
+    feature,
+    contentBase64: encodeUtf8Base64(content),
+  });
+}
+
+interface BriefUploadResponse {
+  runId?: string;
+  inputPath?: string;
+  inputFile?: string;
+  inputS3Uri?: string;
+  error?: string;
+}
 
 function inferFeatureSlugFromFilename(filename: string): string {
   return filename
@@ -428,13 +444,14 @@ function InputRequirementsCard() {
       const res = await fetch('/api/v1/inputs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feature, content }),
+        body: briefUploadBody(feature, content),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const parsed = await readJsonResponse<BriefUploadResponse>(res);
+      if (!parsed.ok) throw new Error(parsed.error);
+      const data = parsed.data;
       setStatus('saved');
       setLastSaved(new Date().toLocaleTimeString());
-      setSavedPath(data.inputPath ?? data.inputFile);
+      setSavedPath(String(data.inputPath ?? data.inputFile ?? ''));
       setSavedRunId(data.runId ?? null);
       setStartedRunId(null);
       const loc = data.inputS3Uri ? `S3 ${data.inputS3Uri}` : `${data.inputPath} (run ${data.runId})`;
@@ -489,12 +506,13 @@ function InputRequirementsCard() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ feature: submitFeature, content: submitContent }),
+          body: briefUploadBody(submitFeature, submitContent),
         },
         45_000,
       );
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.error || `HTTP ${uploadRes.status}`);
+      const uploadParsed = await readJsonResponse<BriefUploadResponse>(uploadRes);
+      if (!uploadParsed.ok) throw new Error(uploadParsed.error);
+      const uploadData = uploadParsed.data;
 
       setSubmitPhase('start');
       const startRes = await fetchWithTimeout(
@@ -512,16 +530,17 @@ function InputRequirementsCard() {
         },
         30_000,
       );
-      const data = await startRes.json();
-      if (!startRes.ok) throw new Error(data.error || `HTTP ${startRes.status}`);
+      const startParsed = await readJsonResponse<BriefUploadResponse>(startRes);
+      if (!startParsed.ok) throw new Error(startParsed.error);
+      const data = startParsed.data;
 
       setStatus('saved');
-      setSavedRunId(data.runId);
-      setSavedPath(data.inputFile ?? uploadData.inputFile);
-      setStartedRunId(data.runId);
+      setSavedRunId(data.runId ?? null);
+      setSavedPath(String(data.inputFile ?? uploadData.inputFile ?? ''));
+      setStartedRunId(data.runId ?? null);
       setLastSaved(new Date().toLocaleTimeString());
       toast.success('Pipeline submitted', {
-        description: `${submitFeature} · ${data.runId.slice(0, 8)}…`,
+        description: `${submitFeature} · ${(data.runId ?? uploadData.runId ?? '').slice(0, 8)}…`,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -554,11 +573,12 @@ function InputRequirementsCard() {
           jiraProject: withJira ? jiraProject.trim().toUpperCase() : undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setStartedRunId(data.runId);
+      const startParsed = await readJsonResponse<BriefUploadResponse>(res);
+      if (!startParsed.ok) throw new Error(startParsed.error);
+      const data = startParsed.data;
+      setStartedRunId(data.runId ?? null);
       toast.success('Pipeline started', {
-        description: `${titleCase(feature)} · run ${data.runId.slice(0, 8)}…`,
+        description: `${titleCase(feature)} · run ${(data.runId ?? savedRunId).slice(0, 8)}…`,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
