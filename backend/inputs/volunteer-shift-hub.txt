@@ -1,0 +1,45 @@
+Volunteer Shift Hub — sign up for community event shifts
+
+Problem:
+Our community outreach team runs monthly food drives and weekend cleanup events. Shift
+schedules live in email threads and spreadsheets, so people double-book, no-shows are
+hard to track, and coordinators cannot see capacity at a glance.
+
+Who uses it:
+- Coordinators create events and shifts (date, time window, location, how many volunteers needed).
+- Volunteers browse upcoming shifts and sign up for open slots.
+- Coordinators can see who signed up and mark attendance after the event.
+- Only signed-in users access shift data; health checks for ops can stay open.
+
+MVP features:
+- Sign in with username and password. Coordinators and volunteers get different permissions.
+- Create and edit events with a title, description, location, and event date.
+- Each event has one or more shifts (start time, end time, volunteer capacity).
+- Volunteers sign up for a shift if capacity remains; signing up twice for the same shift is not allowed.
+- Volunteers can cancel their own signup before the shift starts.
+- Coordinators see a roster per shift and can mark each signup as attended or no-show.
+- Browse upcoming events and shifts; filter by date range and location.
+- Show shifts that are full versus still open.
+
+Business rules:
+- Shift capacity cannot be exceeded.
+- Cancelled signups free a slot immediately.
+- Past shifts cannot accept new signups.
+- Inactive users should not be able to sign in.
+- Coordinators cannot delete an event that already has signups — archive it instead.
+
+Must have for v1:
+- Persisted data with seed users for demo (at least one coordinator and two volunteers).
+- Role-based access so volunteers cannot create events or mark attendance for others.
+- API suitable for demos (Swagger is fine); no customer-facing web UI required yet.
+
+Nice to have (later):
+- Email reminders, calendar export, recurring events, mobile-friendly UI.
+
+Constraints:
+- Internal team use only.
+- Keep secrets out of source code.
+
+Success:
+- Coordinator creates an event with two shifts, volunteers sign up until one shift is full,
+  coordinator marks attendance, and open capacity updates correctly throughout.

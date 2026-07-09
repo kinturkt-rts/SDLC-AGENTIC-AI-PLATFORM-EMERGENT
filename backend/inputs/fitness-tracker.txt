@@ -1,0 +1,50 @@
+Fitness Tracker — personal workout and progress log (Streamlit UI)
+
+Problem:
+Our small wellness group tracks workouts in a shared spreadsheet. Entries get missed,
+history is hard to browse, and nobody can see weekly progress at a glance. We want one
+simple internal app to log activity and review trends without manual chart building.
+
+Who uses it:
+- Any team member logs their own workouts and body metrics.
+- Everyone can view only their own data (single-user accounts for MVP).
+- Simple username/password sign-in; no SSO for v1.
+
+MVP features (5):
+1. **Workout log** — Record a session with activity type (run, walk, cycle, strength,
+   yoga, other), duration in minutes, optional calories burned, date, and a short note.
+   Edit or delete your own entries.
+2. **Body metrics** — Log weight (kg or lb) and optional daily step count with a date.
+   Show the latest value and a simple history list.
+3. **Weekly dashboard** — Summary for the current calendar week: total workouts,
+   total active minutes, and calories (when provided). Highlight if the user hit their
+   weekly workout goal.
+4. **Goals** — Set a personal weekly target (e.g. 3 workouts or 150 active minutes).
+   Display progress toward that target on the dashboard.
+5. **Progress charts** — Streamlit charts for (a) workouts per week over the last 8 weeks
+   and (b) weight trend over time. Keep charts readable on a laptop screen.
+
+Business rules:
+- Users may only read, edit, or delete their own workouts and metrics.
+- Duration must be greater than zero; weight must be positive when logged.
+- Workout date cannot be more than 7 days in the future.
+- One weight entry per user per calendar day (updates replace that day’s row).
+
+Must have for v1:
+- FastAPI backend with persisted Postgres data and seed demo users.
+- **Streamlit UI** under `ui/streamlit_app.py` calling the API (no business logic duplicated
+  in Streamlit). Pages: Dashboard, Log Workout, Body Metrics, History.
+- Swagger/OpenAPI for the API; README with local run steps (API + Streamlit).
+
+Nice to have (later):
+- Apple Health / Google Fit import, social leaderboards, mobile app, coach view.
+
+Constraints:
+- Internal team use only; keep secrets out of source code.
+- Keep the UI simple — forms, tables, and a few charts; no gamification for v1.
+
+Success:
+- User signs in, logs two workouts and one weight entry, sets a weekly goal, and sees
+  updated dashboard totals and charts without touching a spreadsheet.
+
+Target app slug: **fitness-tracker**

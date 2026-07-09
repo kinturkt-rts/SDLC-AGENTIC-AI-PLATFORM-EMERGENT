@@ -149,11 +149,10 @@ def architect_agent_bundle() -> BundleFactory:
 
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
-        from _shared.mcp_clients import aws_diagram_mcp_client
+        from _shared.diagram_tools import local_diagram_tools
 
-        with aws_diagram_mcp_client(cwd=root) as mcp:
-            agent = mod.build_architect_pipeline_agent(mcp.list_tools_sync())  # noqa: SLF001
-            yield agent, skills
+        agent = mod.build_architect_pipeline_agent(local_diagram_tools())  # noqa: SLF001
+        yield agent, skills
 
     return factory
 
@@ -274,42 +273,7 @@ def gitlab_agent_bundle() -> BundleFactory:
 
     @contextmanager
     def factory() -> Iterator[AgentBundle]:
-        import logging
-
-        from strands import tool
-
-        from _shared.runner import build_agent
-
-        logger = logging.getLogger("agentcore.gitlab_agent")
-
-        @tool
-        def gitlab_publish_feature(target_app: str, run_id: str = "") -> str:
-            """Publish SDLC artifacts for a target app to GitLab.
-
-            Materializes S3 run artifacts (if configured) and publishes them
-            to a GitLab branch via MCP.  Returns a markdown summary.
-
-            Args:
-                target_app: Feature / service slug (e.g. "pr-diff-summarizer").
-                run_id: Pipeline run UUID for S3 artifact retrieval.
-            """
-            logger.info("gitlab_publish_feature called: app=%s run_id=%s", target_app, run_id)
-            summary, handoff = mod.run_publish_for_agentcore(target_app, run_id)
-            logger.info("publish result: status=%s paths=%d", handoff.get("status"), len(handoff.get("pathsPublished", [])))
-            return summary
-
-        agent = build_agent(
-            "gitlab-agent",
-            system_prompt=(
-                "You are the GitLab publish agent. "
-                "When asked to publish, call gitlab_publish_feature with the "
-                "targetApp and runId from the user message. "
-                "Return the tool output verbatim."
-            ),
-            tools=[gitlab_publish_feature],
-            enable_a2a_peers=False,
-        )
-        yield agent, skills
+        yield mod.build_gitlab_pipeline_agent(), skills  # noqa: SLF001
 
     return factory
 

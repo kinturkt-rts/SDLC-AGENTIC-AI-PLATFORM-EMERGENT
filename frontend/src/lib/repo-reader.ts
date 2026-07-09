@@ -19,7 +19,7 @@ import {
   getS3RunArtifactIndex,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
-import { gitlabHandoffExistsForRun } from './pipeline-handoffs';
+import { gitlabHandoffExistsForRun, resolveProjectRepositoryLink } from './pipeline-handoffs';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
@@ -1114,6 +1114,8 @@ async function listProjectsFromLocal(): Promise<Project[]> {
       extractDescription(slug, ctx),
     ]);
 
+    const repoLink = await resolveProjectRepositoryLink(slug);
+
     projects.push({
       id: slug,
       name: slugToTitle(slug),
@@ -1122,7 +1124,10 @@ async function listProjectsFromLocal(): Promise<Project[]> {
       pipelineStatus: status,
       artifactCount,
       lastRunAt,
-      repo: `target-apps/${slug}`,
+      repo: repoLink.label,
+      repoHref: repoLink.href,
+      repoExternal: repoLink.external,
+      runId: null,
       environment: 'dev' as Environment,
     });
   }
@@ -1144,6 +1149,8 @@ async function listProjectsFromS3(): Promise<Project[]> {
       extractDescription(slug, ctx),
     ]);
 
+    const repoLink = await resolveProjectRepositoryLink(slug, runId);
+
     projects.push({
       id: slug,
       name: slugToTitle(slug),
@@ -1152,7 +1159,10 @@ async function listProjectsFromS3(): Promise<Project[]> {
       pipelineStatus: status,
       artifactCount,
       lastRunAt,
-      repo: `runs/${runId}`,
+      repo: repoLink.label,
+      repoHref: repoLink.href,
+      repoExternal: repoLink.external,
+      runId,
       environment: 'dev' as Environment,
     });
   }

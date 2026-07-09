@@ -73,7 +73,7 @@ AWS architecture PNG using the AWS Diagram MCP tools.
 - Target **8–14 nodes** total across all clusters.
 - At most **3 clusters** (e.g. Users/API, Data, Integrations).
 - **ASCII-only** labels: letters, numbers, spaces, hyphen. No em-dash, arrows, or Unicode.
-- Diagram title: short ASCII (e.g. `FinOps Web App MVP`).
+- Diagram title: short ASCII app name only (e.g. `FinOps Web App`). **Do not** append MVP, Phase 1, or other scope suffixes — the title is rendered on the PNG.
 - Prefer left-to-right (`direction="LR"`). Avoid fan-out edges to lists of nodes.
 - Use only icons you saw in examples or list_icons. Do not invent class names.
 
@@ -89,7 +89,7 @@ AWS architecture PNG using the AWS Diagram MCP tools.
 
 Example skeleton:
 ```python
-with Diagram("FinOps MVP", filename="/abs/path/finops-web-app", show=False, direction="LR"):
+with Diagram("FinOps Web App", filename="/abs/path/finops-web-app", show=False, direction="LR"):
     with Cluster("App"):
         user = Users("Users")
         api = APIGateway("API")

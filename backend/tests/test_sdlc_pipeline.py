@@ -200,6 +200,61 @@ def test_hydrate_run_context_uses_docs_layout_from_s3(
     ]
 
 
+def test_sync_delivery_profile_survives_hydrate_run_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression: deliveryProfile computed by _sync_delivery_profile() must not be
+    wiped by a later _hydrate_run_context() call (as _step_architect/_step_developer
+    do for a2a/S3 runs) — otherwise requiresStreamlit never reaches architect/developer
+    and the Streamlit UI silently gets dropped from cloud pipeline runs."""
+    from agents._shared.artifact_store import put_context
+    from agents._shared.delivery_profile import sync_context_delivery_profile
+    from agents._shared.sdlc_pipeline import PipelineOptions, SdlcPipelineRunner
+
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr("agents._shared.artifact_store.is_s3_store", lambda: False)
+    (tmp_path / "agents" / "pipeline").mkdir(parents=True)
+    (tmp_path / "inputs").mkdir()
+    (tmp_path / "inputs" / "fitness-tracker.txt").write_text(
+        "Must have for v1: Streamlit UI under ui/streamlit_app.py.", encoding="utf-8"
+    )
+
+    run_id = "smoke-delivery-profile"
+    put_context(run_id, {"targetApp": "fitness-tracker", "runId": run_id})
+
+    options = PipelineOptions(
+        target_app="fitness-tracker",
+        run_id=run_id,
+        transport="a2a",
+        input_file="inputs/fitness-tracker.txt",
+        skip_product=True,
+        skip_architect=True,
+        skip_db=True,
+        skip_developer=True,
+        skip_gitlab=True,
+        skip_verify=True,
+    )
+    runner = SdlcPipelineRunner(options)
+    runner._load_context()
+
+    def fake_run_python(args: list[str], *, step: str) -> None:
+        sync_context_delivery_profile(
+            runner.root, runner.ctx_path, input_path="inputs/fitness-tracker.txt"
+        )
+
+    monkeypatch.setattr(runner, "_run_python", fake_run_python)
+    runner._sync_delivery_profile("inputs/fitness-tracker.txt")
+
+    assert runner.context["deliveryProfile"]["requiresStreamlit"] is True
+
+    # Simulate what _step_architect() does immediately afterward.
+    runner._hydrate_run_context()
+
+    assert runner.context["deliveryProfile"]["requiresStreamlit"] is True
+
+
 def test_step_product_uses_prd_path_from_s3_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -523,3 +578,37 @@ def test_step_rds_apply_soft_fails_seed_materialize_when_env_opt_in(
     handoff.assert_called_once()
     assert handoff.call_args.kwargs["rds_applied"] is True
     assert "seedMaterializeWarning" in handoff.call_args.args[1]
+
+
+def test_step_developer_a2a_waits_for_handoff(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cloud developer step must wait for developer-handoff after A2A invoke returns."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = "run-dev-wait-001"
+    runner.feature = "demo-api"
+    runner.root = repo_root
+    runner.context = {"targetApp": "demo-api", "runId": runner.run_id}
+    runner.options = PipelineOptions(target_app="demo-api", transport="a2a")
+    runner.agents_run = []
+    runner.artifacts = {}
+
+    with (
+        patch.object(runner, "_hydrate_run_context"),
+        patch.object(runner, "_invoke_a2a") as invoke_mock,
+        patch.object(runner, "_wait_for_developer_handoff") as wait_mock,
+        patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_developer()
+
+    invoke_mock.assert_called_once()
+    wait_mock.assert_called_once()
+    assert "developer-agent" in runner.agents_run

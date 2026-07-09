@@ -130,6 +130,63 @@ async function loadFirstDeveloperHandoff(
   return null;
 }
 
+/** GitLab branch/repo link for project overview when a publish handoff exists. */
+export async function resolveGitlabRepositoryLink(
+  runId: string,
+  slug: string,
+): Promise<{ label: string; href: string } | null> {
+  const gitlab = await loadFirstGitlabHandoff(runId, slug.trim().toLowerCase());
+  if (!gitlab) return null;
+  const href = gitlab.branchUrl ?? gitlab.repoUrl;
+  if (!href) return null;
+  return {
+    label: gitlab.branch ?? `sdlc/${slug.trim().toLowerCase()}`,
+    href,
+  };
+}
+
+/** Readable repository label + href for project cards (GitLab branch or latest run). */
+export async function resolveProjectRepositoryLink(
+  slug: string,
+  runId?: string | null,
+): Promise<{ label: string; href: string | null; external: boolean }> {
+  const normalized = slug.trim().toLowerCase();
+  const localFallback = {
+    label: `target-apps/${normalized}`,
+    href: null as string | null,
+    external: false,
+  };
+
+  if (runId) {
+    const gitlab = await resolveGitlabRepositoryLink(runId, normalized);
+    if (gitlab) {
+      return { label: gitlab.label, href: gitlab.href, external: true };
+    }
+    return {
+      label: `Run ${runId.slice(0, 8)}`,
+      href: `/runs/${runId}`,
+      external: false,
+    };
+  }
+
+  const localGitlab = await readLocalPipelineJson(
+    `agents/pipeline/${normalized}.gitlab-handoff.json`,
+  );
+  if (localGitlab) {
+    const href =
+      (typeof localGitlab.branchUrl === 'string' && localGitlab.branchUrl) ||
+      (typeof localGitlab.repoUrl === 'string' && localGitlab.repoUrl) ||
+      null;
+    if (href) {
+      const branch =
+        typeof localGitlab.branch === 'string' ? localGitlab.branch : `sdlc/${normalized}`;
+      return { label: branch, href, external: true };
+    }
+  }
+
+  return localFallback;
+}
+
 /** True when this run has a GitLab publish handoff in S3 or local run storage. */
 export async function gitlabHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
   const normalized = slug.trim().toLowerCase();
@@ -145,6 +202,29 @@ export async function gitlabHandoffExistsForRun(runId: string, slug: string): Pr
   if (!isS3Store()) {
     const local = await readLocalPipelineJson(`agents/pipeline/${normalized}.gitlab-handoff.json`);
     if (local) return true;
+  }
+  return false;
+}
+
+/** True when developer-agent wrote its completion handoff for this run. */
+export async function developerHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
+  return (await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase())) !== null;
+}
+
+/** Poll until developer-handoff.json exists (cloud runs can finish developer after orchestrator HTTP returns). */
+export async function waitForDeveloperHandoffForRun(
+  runId: string,
+  slug: string,
+  options?: { timeoutSec?: number; pollIntervalMs?: number },
+): Promise<boolean> {
+  const timeoutSec = options?.timeoutSec ?? 900;
+  const pollIntervalMs = options?.pollIntervalMs ?? 5000;
+  const deadline = Date.now() + timeoutSec * 1000;
+  const normalized = slug.trim().toLowerCase();
+
+  while (Date.now() < deadline) {
+    if (await developerHandoffExistsForRun(runId, normalized)) return true;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   return false;
 }

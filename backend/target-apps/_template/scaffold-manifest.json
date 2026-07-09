@@ -18,6 +18,7 @@
         ".gitignore",
         ".env.example",
         "README.md",
+        "pytest.ini",
         "tests/test_health.py"
       ],
       "copy_as": {

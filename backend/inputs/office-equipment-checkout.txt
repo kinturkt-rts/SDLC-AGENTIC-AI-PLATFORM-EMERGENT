@@ -1,0 +1,46 @@
+Office Equipment Checkout — track laptops, monitors, and accessories lent to staff
+
+Problem:
+IT keeps a closet of spare laptops, monitors, keyboards, and adapters for new hires and
+travel. Today they use a shared spreadsheet that is always out of date — nobody knows
+what is available, who has what, or when something is overdue.
+
+Who uses it:
+- IT admins maintain the equipment catalog and record checkouts and returns.
+- Employees can view what they currently have checked out (read-only for v1).
+- Only signed-in users access equipment records; health checks for ops can stay open.
+
+MVP features:
+- Sign in with username and password. IT admins and employees get different permissions.
+- Equipment catalog: each item has a label, category (laptop, monitor, keyboard, adapter, other),
+  serial number or asset tag, and status (available, checked out, maintenance, retired).
+- Checkout flow: admin assigns an available item to an employee with a due date and optional note.
+- Return flow: admin marks an item returned; status goes back to available.
+- List all items with filters by status, category, and who has it checked out.
+- Highlight overdue checkouts (due date in the past and not yet returned).
+- Simple checkout history per item (who had it, checkout date, return date).
+
+Business rules:
+- An item in checked-out or maintenance status cannot be checked out again until returned
+  or marked available.
+- Retired items cannot be checked out.
+- Due date must be today or in the future at checkout time.
+- Employees cannot check out items themselves in v1 — admin only.
+- Inactive users should not be able to sign in.
+
+Must have for v1:
+- Persisted data with seed users for demo (at least one IT admin and two employees).
+- Seed a small catalog (roughly eight items across categories) and one active checkout.
+- Role-based access so employees cannot modify the catalog or checkouts.
+- API suitable for demos (Swagger is fine); no customer-facing web UI required yet.
+
+Nice to have (later):
+- Self-service checkout requests, barcode labels, email overdue reminders, asset photos.
+
+Constraints:
+- Internal team use only.
+- Keep secrets out of source code.
+
+Success:
+- Admin checks out a laptop to an employee, employee sees it on their list, admin returns it,
+  item shows available again, and overdue items appear on an admin report.

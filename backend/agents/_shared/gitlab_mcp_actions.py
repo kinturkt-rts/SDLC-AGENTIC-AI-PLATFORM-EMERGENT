@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,8 +14,8 @@ from .gitlab_mcp_client import (
     GitLabMcpError,
     _list_repository_tree_async,
     call_gitlab_mcp_tool,
+    gitlab_mcp_publish_url_candidates,
     gitlab_mcp_session,
-    gitlab_mcp_url_candidates,
     gitlab_mcp_uses_cloudfront,
     list_existing_blob_paths,
     use_gitlab_mcp_http,
@@ -46,13 +47,14 @@ def sanitize_publish_content_for_waf(content: str) -> str:
 
 
 def _publish_batch_size() -> int:
-    """HTTP MCP behind CloudFront/WAF: one file per request avoids body-size and content rules."""
+    """CloudFront/WAF: one file per request. Direct ALB: batched commits (default 20)."""
     if use_gitlab_mcp_http():
-        raw = os.getenv("GITLAB_MCP_HTTP_BATCH_SIZE", "1").strip()
+        default = "1" if gitlab_mcp_uses_cloudfront() else str(_BATCH_SIZE)
+        raw = os.getenv("GITLAB_MCP_HTTP_BATCH_SIZE", default).strip()
         try:
             return max(1, int(raw))
         except ValueError:
-            return 1
+            return 1 if gitlab_mcp_uses_cloudfront() else _BATCH_SIZE
     return _BATCH_SIZE
 
 PublishLayout = Literal["monorepo", "apps"]
@@ -155,7 +157,13 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
     if not normalized.startswith(prefix):
         return None
     tail = normalized[len(prefix) :]
-    if not tail or tail.startswith("inputs/") or tail.startswith("telemetry/"):
+    if not tail or tail.startswith("telemetry/"):
+        return None
+
+    if tail.startswith("inputs/"):
+        name = Path(tail).name
+        if name.endswith(".txt"):
+            return f"inputs/{name}"
         return None
 
     if tail == "context.json":
@@ -182,6 +190,16 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
     return f"target-apps/{slug}/{tail}"
 
 
+def _merge_input_brief_entries(
+    slug: str,
+    root: Path,
+    entries: set[tuple[str, str]],
+) -> None:
+    """Attach inputs/<brief>.txt for monorepo and apps publish layouts."""
+    for source_rel, dest_rel in _collect_input_brief_entries(slug, root=root):
+        entries.add((source_rel, dest_rel))
+
+
 def collect_feature_artifact_entries(
     feature: str,
     *,
@@ -202,6 +220,7 @@ def collect_feature_artifact_entries(
             if dest:
                 entries.add((source, dest))
         _merge_developer_handoff_entries(slug, root, entries)
+        _merge_input_brief_entries(slug, root, entries)
         return sorted(entries, key=lambda item: item[1])
 
     entries = {
@@ -209,6 +228,7 @@ def collect_feature_artifact_entries(
         for rel in _collect_local_monorepo_artifact_paths(feature, root=root)
     }
     _merge_developer_handoff_entries(slug, root, entries)
+    _merge_input_brief_entries(slug, root, entries)
     return sorted(entries, key=lambda item: item[1])
 
 
@@ -256,11 +276,60 @@ def apps_branch_name(feature: str) -> str:
 
 
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
-    """Map target-apps/<slug>/... to repo-root paths for the apps GitLab project."""
+    """Map monorepo-relative paths to apps-repo branch root (target-apps stripped)."""
+    if rel_path.startswith("inputs/") and rel_path.endswith(".txt"):
+        return rel_path
     prefix = f"target-apps/{slug}/"
     if rel_path.startswith(prefix):
         return rel_path[len(prefix) :]
     return None
+
+
+def _input_brief_candidate_rels(slug: str, root: Path) -> list[str]:
+    """Repo-relative input brief paths to try (context inputFile, then slug default)."""
+    rels: list[str] = []
+    for ctx_path in (
+        root / slug / "context.json",
+        root / "agents" / "pipeline" / f"{slug}.context.json",
+    ):
+        if not ctx_path.is_file():
+            continue
+        try:
+            data = json.loads(ctx_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for key in ("inputFile", "inputPath"):
+            val = data.get(key)
+            if isinstance(val, str) and val.strip().startswith("inputs/"):
+                rels.append(val.strip().replace("\\", "/"))
+    rels.append(f"inputs/{slug}.txt")
+    return list(dict.fromkeys(rels))
+
+
+def _collect_input_brief_entries(slug: str, *, root: Path) -> list[tuple[str, str]]:
+    """Input briefs for apps-repo publish: (workspace_source_rel, inputs/<file>.txt)."""
+    entries: list[tuple[str, str]] = []
+    seen_dest: set[str] = set()
+
+    def _add(source: Path, dest: str) -> None:
+        if dest in seen_dest or not source.is_file() or not should_include_file(source):
+            return
+        try:
+            source_rel = source.relative_to(root).as_posix()
+        except ValueError:
+            return
+        seen_dest.add(dest)
+        entries.append((source_rel, dest))
+
+    cloud_inputs = root / slug / "inputs"
+    if cloud_inputs.is_dir():
+        for file_path in sorted(cloud_inputs.glob("*.txt")):
+            _add(file_path, f"inputs/{file_path.name}")
+
+    for rel in _input_brief_candidate_rels(slug, root):
+        _add(root / rel, rel)
+
+    return entries
 
 
 def gitlab_personal_access_token() -> str:
@@ -388,15 +457,29 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
 
 
 def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, str]]:
-    """Publish only target-apps/<slug>/ files at branch root (apps GitLab project)."""
+    """Publish target-apps/<slug>/ at branch root plus inputs/<brief>.txt (apps GitLab project)."""
     root_path = root or repo_root()
     slug = slugify_feature(feature)
     text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
-    files: list[dict[str, str]] = []
+    seen_dest: set[str] = set()
+    publish_entries: list[tuple[str, str]] = []
+
     for source_rel, dest_rel in collect_feature_artifact_entries(slug, root=root_path):
         dest = dest_path_for_apps_repo(dest_rel, slug)
-        if dest is None:
+        if dest is None or dest in seen_dest:
             continue
+        seen_dest.add(dest)
+        publish_entries.append((source_rel, dest))
+
+    for source_rel, dest_rel in _collect_input_brief_entries(slug, root=root_path):
+        dest = dest_path_for_apps_repo(dest_rel, slug)
+        if dest is None or dest in seen_dest:
+            continue
+        seen_dest.add(dest)
+        publish_entries.append((source_rel, dest))
+
+    files: list[dict[str, str]] = []
+    for source_rel, dest in publish_entries:
         src = root_path / source_rel
         data = src.read_bytes()
         if src.suffix.lower() == ".png":
@@ -488,7 +571,8 @@ async def _publish_text_file_batches(
     text_files: list[dict[str, str]],
     existing_paths: set[str],
 ) -> list[str]:
-    if use_gitlab_mcp_http():
+    # CloudFront WAF limits POST bodies — one file per MCP call. Direct ALB uses batched commits.
+    if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
         return await _publish_files_via_file_api(
             session,
             project_id=project_id,
@@ -847,9 +931,10 @@ async def publish_feature_async(
                 },
             )
 
-    mcp_urls = gitlab_mcp_url_candidates() if use_gitlab_mcp_http() else []
+    mcp_urls = gitlab_mcp_publish_url_candidates() if use_gitlab_mcp_http() else []
     attempt_urls: list[str | None] = mcp_urls if mcp_urls else [None]
     last_exc: BaseException | None = None
+    publish_started = time.monotonic()
 
     for index, mcp_url in enumerate(attempt_urls):
         try:
@@ -873,6 +958,7 @@ async def publish_feature_async(
 
     mr_url = str(mr_result.get("web_url") or "")
     branch_url = _branch_tree_url(project_web_url, publish_branch) if project_web_url else None
+    elapsed_sec = round(time.monotonic() - publish_started, 2)
     return {
         "ok": True,
         "status": "published",
@@ -884,6 +970,10 @@ async def publish_feature_async(
         "openMergeRequest": open_mr,
         "pathsPublished": [f["path"] for f in files],
         "commits": commits,
+        "commitCount": len(commits),
+        "fileCount": len(files),
+        "elapsedSec": elapsed_sec,
+        "mcpUrl": attempt_urls[0] if attempt_urls and attempt_urls[0] else None,
         "mergeRequestUrl": mr_url or None,
         "mergeRequestIid": mr_result.get("iid"),
         "repoUrl": project_web_url,

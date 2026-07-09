@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TARGET_APPS = _REPO_ROOT / "target-apps"
 _DEV_AGENT_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 sys.path.insert(0, str(_DEV_AGENT_DIR))
@@ -236,13 +238,13 @@ Rules — apply to every FR regardless of domain:
     `target-apps/_template/tests/test_seed_bcrypt_reference.py`). conftest `hash_password(...)`
     MUST use the **same plaintext** documented in the seed SQL comment — never a different password.
     Passing pytest without test_seed_bcrypt.py is a false green for RDS login.
-    When seed SQL uses `__BCRYPT_PLACEHOLDER__`, README **Seed Users** section MUST include
-    this warning block immediately before the credentials table:
-    ```
-    > ⚠ **RDS login will fail until seed passwords are materialized.**
-    > Full pipeline (recommended): `python scripts/apply_sql_to_rds.py --target-app <app>`
-    > Manual (if SQL already applied): `python agents/_shared/materialize_seed_passwords.py --target-app <app>`
-    ```
+    When seed SQL uses `__BCRYPT_PLACEHOLDER__`, README **Seed Users** (or **Demo accounts**) section:
+    - Table: username/email | password | role — use the plaintext from the seed SQL comment / HANDOFF.
+    - Do **not** mention `__BCRYPT_PLACEHOLDER__`, `materialize_seed_passwords.py`, or other pipeline
+      internals in README (those are implementation details, not user docs).
+    - Optional one line in plain English: "Demo logins work after the database seed has been applied
+      to Postgres." If documenting manual RDS setup from repo root: run
+      `python scripts/apply_sql_to_rds.py --target-app <app>` from `backend/` — no placeholder jargon.
 
 **Step 4 — configuration and README**
 4a. .env.example only when the service reads env vars. Placeholder values, no real secrets.
@@ -332,8 +334,8 @@ Rules — apply to every FR regardless of domain:
   - `tests/test_seed_bcrypt.py` present and passes
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
-  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README Seed Users section has ⚠ materialize warning
-    with exact command: `python agents/_shared/materialize_seed_passwords.py --target-app <app>`
+  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder
+    or materialize script names); password matches seed SQL comment exactly
 
   UI parity (Pattern C / requiresStreamlit only — skip when API-only):
   - `dev_validate_app` must report `UI_PARITY OK`
@@ -473,6 +475,8 @@ startup check. NEVER import from `app/` — Streamlit calls the API over HTTP on
 **UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
 list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
 inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
+**Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Use
+`width="stretch"` for full-width dataframes/buttons, `width="content"` to fit content.
 README: **Terminal 2** — separate **PowerShell (Windows)** and **Bash** blocks: `cd target-apps/<app>`,
 `.\\.venv\\Scripts\\Activate.ps1` (Windows) or `source .venv/bin/activate` (bash), `cd ui`, then
 `streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
@@ -594,6 +598,7 @@ Section numbers vary per feature. Locate content by heading text:
   or PRD section 11 / input brief requires Streamlit — even if design.md Stack omitted it.
   Place at `ui/streamlit_app.py`; call API over HTTP; add `streamlit` to `ui/requirements.txt`;
   README documents Terminal 1 (uvicorn) + Terminal 2 (`streamlit run ui/streamlit_app.py`).
+  Streamlit widgets: use `width="stretch"` / `width="content"` — never `use_container_width`.
   **UI scope:** Wire Streamlit to design §4 **collection GET** routes and role-specific views — NOT every
   internal/admin route needs a screen, but browse/create flows from the PRD MUST be usable without pasting UUIDs.
 - **API-only (Pattern B/B+/B++ without Streamlit):** FastAPI routes + pytest only — no `ui/` folder.
@@ -626,7 +631,9 @@ If `HANDOFF.md` has `### seedCredentials` or seed SQL uses `'__BCRYPT_PLACEHOLDE
 
 1. Optionally copy `target-apps/_template/scripts/seed_dev_users.py` via `dev_scaffold` and set `_CREDENTIALS` from HANDOFF (local re-seed only).
 2. **Do NOT** tell users to run `seed_dev_users.py` as a required setup step — `scripts/apply_sql_to_rds.py` **automatically** calls `materialize_seed_passwords.py` after seed SQL.
-3. README "Setup": document seed login emails/passwords from HANDOFF; note RDS passwords are applied during pipeline DB apply.
+3. README "Setup": document seed login emails/passwords from HANDOFF in a **Demo accounts** table;
+   optional note that logins work after DB seed is applied to Postgres. Do not expose placeholder
+   sentinels or internal materialize scripts in README.
 4. Add `bcrypt>=4.0` to `requirements.txt` when the app verifies passwords.
 
 Same sentinel approach for `api_key_hash` or other hash columns documented in HANDOFF.
@@ -698,6 +705,8 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | SQLAlchemy ENUM on SQLite | `create_type=True` (default) fails on SQLite with `CompileError` | `SAEnum(..., create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
 | Pydantic `EmailStr` | Importing `EmailStr` alone is fine, but at *validation time* Pydantic imports `email-validator` lazily and raises `ImportError: email-validator is not installed` | Any schema that uses `EmailStr` requires `pydantic[email]>=2.0` (or `email-validator>=2.0`) in `requirements.txt`. Add it the moment you write `EmailStr` anywhere — not later. |
 | `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
+| `import app.models` + bare `app` name | `from app.main import app` then `import app.models` rebinds `app` to the **package**; `app.dependency_overrides` raises `AttributeError` on every test using the `client` fixture | Always `from app.main import app as fastapi_app`; use `fastapi_app.dependency_overrides` and `TestClient(fastapi_app)`. The golden conftest_reference.py already includes `import app.models` — do not re-add it under a bare `app` name. |
+| Streamlit `use_container_width` | Deprecated; removed in Streamlit 1.41+ — logs warnings and will break on upgrade | Never `use_container_width=True/False`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
 
 When writing `tests/conftest.py`, COPY `_template/tests/conftest_reference.py` via
 `dev_read_file("target-apps/_template/tests/conftest_reference.py")` then `dev_write_file` as
@@ -1087,13 +1096,14 @@ The reference handles ALL known pitfalls that caused past runtime failures:
 Only adapt these specific parts:
 1. Replace SCHEMA_NAME with the actual POSTGRES_SCHEMA value
 2. Keep only the auth variant the app uses (JWT or API-key, not both)
-3. Add app-specific model imports and seed fixtures
+3. Add app-specific seed fixtures (import from `app.models.*` inside fixtures — do NOT add another `import app.models` if already present)
 4. Import `hash_password`, `create_access_token` etc. from the app's security module
 
 **Critical rules (regardless of reference):**
 - `os.environ.setdefault(...)` for ALL config vars BEFORE any `from app.*` import
-- Never `from app.main import app` at module level before env is set
-- Never create `TestClient(app)` at module level — always inside a fixture
+- Always `from app.main import app as fastapi_app` — never bare `from app.main import app` at module level
+- `import app.models` (already in reference) binds local name `app` to the **package** — use only `fastapi_app` for TestClient and dependency_overrides
+- Never create `TestClient(fastapi_app)` at module level — always inside the `client` fixture
 - When POSTGRES_SCHEMA != "public": ATTACH ':memory:' AS <schema> in engine connect event
 
 ### Bedrock mock — always patch at import site
@@ -1162,7 +1172,7 @@ App code rules (container-ready without refactors):
 5. Every POST has status_code=201 on decorator; every DELETE has status_code=204.
 6. Every DB-backed route has Depends(get_db); auth routes use Rules-specified deps (API-key or JWT).
 7. List routes match API surface (page object or list[T]) with documented pagination params.
-8. conftest.py sets env before app import; no module-level TestClient.
+8. conftest.py sets env before app import; uses `fastapi_app` alias; no module-level TestClient.
 9. No circular imports: schemas → nothing from app/; models → enums only.
 10. requirements.txt matches actual imports — no psycopg2-binary, no missing packages.
 11. .env.example has every env var config.py reads; .gitignore has .env and .venv/.
@@ -1232,6 +1242,14 @@ def _ensure_service_exists(service: str) -> Path:
     return dest
 
 
+_VERBATIM_SCAFFOLD_SUFFIXES = (
+    ("app", "database.py"),
+    ("app", "startup_checks.py"),
+    ("app", "routers", "health.py"),
+    ("app", "models", "pg_types.py"),
+)
+
+
 def _validate_dev_write_path(file_path: Path) -> str | None:
     """Return an error string if this path must not be written by developer-agent."""
     parts = set(file_path.parts)
@@ -1247,6 +1265,15 @@ def _validate_dev_write_path(file_path: Path) -> str | None:
             "Error: cannot write .env or .env.* secret files — "
             "write .env.example with placeholders; users copy to .env locally"
         )
+    path_parts = file_path.parts
+    for suffix in _VERBATIM_SCAFFOLD_SUFFIXES:
+        if path_parts[-len(suffix) :] == suffix:
+            rel = "/".join(suffix)
+            return (
+                f"Error: {rel} is a golden template file copied verbatim from _template/ — "
+                f"do not hand-write it. Call dev_scaffold(service, pattern, force=True) to "
+                "(re)copy it unchanged."
+            )
     return None
 
 
@@ -1760,6 +1787,16 @@ def run_service_validation(
         return _fail("router_antipattern", detail)
     _ok("router_antipattern")
 
+    from _shared.validate_conftest import validate_conftest
+
+    conftest_errors = validate_conftest(service_dir)
+    if conftest_errors:
+        detail = "CONFTEST FAILED (fix before pytest):\n" + "\n".join(
+            f"  - {e}" for e in conftest_errors
+        )
+        return _fail("conftest", detail)
+    _ok("conftest")
+
     seed_sql = (
         list((service_dir / "db" / "sql").glob("*seed*.sql"))
         if (service_dir / "db" / "sql").is_dir()
@@ -1805,8 +1842,8 @@ def run_service_validation(
                     if has_placeholders:
                         _warn(
                             "seed SQL uses __BCRYPT_PLACEHOLDER__ — RDS login will 401 until "
-                            f"materialized (`python scripts/apply_sql_to_rds.py --target-app {service}` "
-                            "or materialize_seed_passwords.py); README Seed Users must document this"
+                            f"apply_sql_to_rds.py runs (`python scripts/apply_sql_to_rds.py --target-app {service}`); "
+                            "README should list demo credentials only, not placeholder internals"
                         )
             except subprocess.TimeoutExpired:
                 _warn("seed_bcrypt check timed out (non-blocking)")
@@ -2131,6 +2168,58 @@ def _write_developer_handoff(
     return path.relative_to(_REPO_ROOT).as_posix()
 
 
+def _build_developer_handoff_payload(
+    app: str,
+    written: list[str],
+    ctx: dict[str, Any],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    has_env_example = any(p.endswith(".env.example") for p in written)
+    handoff: dict[str, Any] = {
+        "writtenFiles": written,
+        "targetApp": app,
+        "status": status,
+        "jiraKey": ctx.get("jiraKey"),
+        "dbBackend": ctx.get("dbBackend"),
+        "designDocPath": ctx.get("designDocPath"),
+        "prdPath": ctx.get("prdPath"),
+        "databaseHandoffPath": ctx.get("databaseHandoffPath"),
+        "runCommandLocal": f"cd target-apps/{app} && uvicorn app.main:app --reload --port 8000",
+        "testCommand": f"cd target-apps/{app} && pytest tests/ -q",
+        "deploymentHandoff": _deployment_handoff(app, written),
+    }
+    handoff["runCommand"] = handoff["runCommandLocal"]
+    if has_env_example:
+        handoff["userSetupCommand"] = (
+            f"cd target-apps/{app} && cp .env.example .env  "
+            "# Windows: copy .env.example .env — then edit real values locally"
+        )
+        handoff["envVarsRequired"] = _env_var_names_from_example(written)
+    return handoff
+
+
+def _persist_developer_handoff(
+    app: str,
+    ctx: dict[str, Any],
+    written: list[str],
+    *,
+    status: str,
+) -> str | None:
+    """Write developer-handoff.json when at least one file was produced."""
+    if not written:
+        return None
+    handoff = _build_developer_handoff_payload(app, written, ctx, status=status)
+    rel = _write_developer_handoff(app, handoff, context=ctx)
+    logger.info(
+        "[developer-agent] handoff persisted: %s (%d files, status=%s)",
+        rel,
+        len(written),
+        status,
+    )
+    return rel
+
+
 def _max_output_tokens() -> int:
     return int(os.getenv("DEVELOPER_AGENT_MAX_TOKENS", "32768"))
 
@@ -2345,6 +2434,12 @@ def run_task(
     
     _run_context = ctx
 
+    telemetry: RunTelemetry | None = None
+    summary = ""
+    handoff_rel: str | None = None
+    written: list[str] = []
+    agent_error: BaseException | None = None
+
     try:
         telemetry = RunTelemetry(
             AGENT_NAME,
@@ -2355,35 +2450,29 @@ def run_task(
         agent = _build_agent(ctx, telemetry=telemetry)
         summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
         summary = _append_required_validation(summary, app)
+    except BaseException as exc:
+        agent_error = exc
     finally:
+        written = _dedupe_preserve_order(_written_files)
+        if written:
+            try:
+                written = _ensure_delivery_files(app, written, context=ctx)
+                handoff_rel = _persist_developer_handoff(
+                    app,
+                    ctx,
+                    written,
+                    status="failed" if agent_error else "completed",
+                )
+                if handoff_rel:
+                    ctx["developerHandoffPath"] = handoff_rel
+            except Exception:
+                logger.exception("[developer-agent] failed to persist developer handoff")
         _run_context = None
 
-    written = _dedupe_preserve_order(_written_files)
-    written = _ensure_delivery_files(app, written, context=ctx)
-    handoff_rel: str | None = None
-    if written:
-        has_env_example = any(p.endswith(".env.example") for p in written)
-        handoff: dict[str, Any] = {
-            "writtenFiles": written,
-            "targetApp": app,
-            "jiraKey": ctx.get("jiraKey"),
-            "dbBackend": ctx.get("dbBackend"),
-            "designDocPath": ctx.get("designDocPath"),
-            "prdPath": ctx.get("prdPath"),
-            "databaseHandoffPath": ctx.get("databaseHandoffPath"),
-            "runCommandLocal": f"cd target-apps/{app} && uvicorn app.main:app --reload --port 8000",
-            "testCommand": f"cd target-apps/{app} && pytest tests/ -q",
-            "deploymentHandoff": _deployment_handoff(app, written),
-        }
-        handoff["runCommand"] = handoff["runCommandLocal"]
-        if has_env_example:
-            handoff["userSetupCommand"] = (
-                f"cd target-apps/{app} && cp .env.example .env  "
-                "# Windows: copy .env.example .env — then edit real values locally"
-            )
-            handoff["envVarsRequired"] = _env_var_names_from_example(written)
-        handoff_rel = _write_developer_handoff(app, handoff, context=ctx)
-        ctx["developerHandoffPath"] = handoff_rel
+    if agent_error is not None:
+        raise agent_error
+
+    assert telemetry is not None
 
     # Telemetry: tokens, cache hits, wall-clock, file count; persist for next-run delta.
     telemetry.extra = {

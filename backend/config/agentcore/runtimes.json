@@ -39,10 +39,10 @@
       "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/product_agent-az4pY1Blv1",
       "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fproduct_agent-az4pY1Blv1/invocations",
       "env": {
-        "AGENTCORE_PRODUCT_SKIP_JIRA": "true",
+        "AGENTCORE_PRODUCT_SKIP_JIRA": "false",
         "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
       },
-      "notes": "Redeploy with AGENTCORE_PRODUCT_JIRA=true to allow opt-in Jira per run. Set ATLASSIAN_MCP_EMAIL+TOKEN on runtime for headless auth. Node required (INSTALL_NODE=true)."
+      "notes": "Jira opt-in is enabled (AGENTCORE_PRODUCT_SKIP_JIRA=false) with ATLASSIAN_MCP_EMAIL+TOKEN set on the runtime (verified live 2026-07-09; this file previously said skip=true, which was stale). Node required (INSTALL_NODE=true) for the mcp-remote Atlassian bridge — confirm the deployed image still has it when redeploying."
     },
     "architect-agent": {
       "deployed": true,
@@ -85,7 +85,7 @@
         "MODEL_ID": "us.anthropic.claude-sonnet-4-6",
         "GITLAB_MCP_URL": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
         "GITLAB_MCP_HTTP_DIRECT_URL": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
-        "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
+        "GITLAB_MCP_HTTP_BATCH_SIZE": "20"
       },
       "gitlabMcp": {
         "configFile": "config/agentcore/gitlab-mcp-endpoints.json",

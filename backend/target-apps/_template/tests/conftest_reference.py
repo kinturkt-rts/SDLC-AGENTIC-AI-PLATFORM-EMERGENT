@@ -12,7 +12,7 @@ Copy and adapt for each target-app. This handles:
 Adapt checklist:
   - Replace SCHEMA_NAME with actual POSTGRES_SCHEMA value
   - Replace JWT/API-key env vars to match the app's config.py
-  - Add app-specific seed fixtures (users, categories, etc.)
+  - Add app-specific seed fixtures (import models from app.models.* inside fixtures)
   - For TimestampTZ columns: use `_ts("2024-01-01T00:00:00+00:00")` in fixtures — not bare ISO strings
   - Remove auth sections not needed (JWT or API-key, not both)
 """
@@ -82,7 +82,7 @@ if _SECURITY_MODULE is not None:
 
 # ── 3. UUID TypeDecorator for SQLite ─────────────────────────────────────────
 class _UUIDStr(TypeDecorator):
-    """Stores UUID as 36-char string in SQLite; round-trips to uuid.UUID."""
+    """Stores UUID as 36-char string in SQLite; round-trips to str."""
     impl = String(36)
     cache_ok = True
 
@@ -91,10 +91,10 @@ class _UUIDStr(TypeDecorator):
             return None
         return str(value)
 
-    def process_result_value(self, value: Any, dialect: Any) -> uuid.UUID | None:
+    def process_result_value(self, value: Any, dialect: Any) -> str | None:
         if value is None:
             return None
-        return uuid.UUID(str(value))
+        return str(value)
 
 
 def _patch_uuid_columns_for_sqlite(metadata: Any) -> None:
@@ -108,7 +108,10 @@ def _patch_uuid_columns_for_sqlite(metadata: Any) -> None:
 # ── 4. Now import app (AFTER env is set + shims applied) ────────────────────
 from app import database as _db_module  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import app as fastapi_app  # noqa: E402
+# Register ORM models with Base.metadata. `import app.models` binds local name `app`
+# to the package — always use `fastapi_app` (never bare `app`) for TestClient/overrides.
+import app.models  # noqa: E402, F401
 
 # ── 5. Engine + session fixtures ────────────────────────────────────────────
 
@@ -173,10 +176,10 @@ def client(engine: Engine, db_session: Session) -> Generator[TestClient, None, N
         finally:
             sess.close()
 
-    app.dependency_overrides[get_db] = _override
-    with TestClient(app) as c:
+    fastapi_app.dependency_overrides[get_db] = _override
+    with TestClient(fastapi_app) as c:
         yield c
-    app.dependency_overrides.clear()
+    fastapi_app.dependency_overrides.clear()
 
 
 # ── 6. Auth fixtures (ADAPT: keep only what the app uses) ───────────────────

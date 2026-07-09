@@ -16,6 +16,7 @@ from _shared.api_surface import (  # noqa: E402
 from _shared.validate_ui_parity import (  # noqa: E402
     check_post_create_has_list_get,
     check_streamlit_list_coverage,
+    check_streamlit_no_deprecated_width_api,
     validate_ui_parity_blocking,
 )
 
@@ -70,6 +71,18 @@ def test_facility_work_order_hub_fails_ui_parity() -> None:
         pytest.skip("target-apps/facility-work-order-hub not present")
     errors = validate_ui_parity_blocking(app, _REPO_ROOT)
     assert errors  # sites list, streamlit gaps, etc.
+
+
+def test_streamlit_deprecated_width_api_detected(tmp_path: Path) -> None:
+    ui_dir = tmp_path / "mini-app" / "ui"
+    ui_dir.mkdir(parents=True)
+    (ui_dir / "streamlit_app.py").write_text(
+        'st.dataframe(rows, use_container_width=True)\n',
+        encoding="utf-8",
+    )
+    errors = check_streamlit_no_deprecated_width_api(tmp_path / "mini-app")
+    assert len(errors) == 1
+    assert "use_container_width" in errors[0]
 
 
 def test_desk_booking_api_only_skips_streamlit_checks() -> None:

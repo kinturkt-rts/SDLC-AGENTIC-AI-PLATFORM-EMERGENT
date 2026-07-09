@@ -37,6 +37,7 @@ load_repo_env()
 from a2a.types import AgentSkill
 from mcp import StdioServerParameters, stdio_client
 from strands import Agent
+from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.models import BedrockModel
 from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
@@ -138,6 +139,15 @@ tickets using your Atlassian tools.
      confirms those fields are available on the create screen.
    - If create fails due to field/screen mismatch, retry exactly once with a minimal
      payload and then stop.
+9. Do not search for or verify duplicates/existing issues before creating in Mode B.
+   The PRD/task is the source of truth — go straight to metadata lookup (rule 6, once)
+   then create. Budget roughly 1 call per ticket to create (plus the one metadata
+   lookup) — that is enough for an epic + 5 stories.
+10. After a successful createJiraIssue call, do not call getJiraIssue to verify it —
+    trust the create response's returned key and move on to the next ticket.
+11. There is a hard tool-call budget enforced outside this prompt. If you see a
+    "Tool call budget exceeded" tool result, stop immediately and reply with the
+    final summary of what you already created — do not call any more tools.
 
 ## Tool permissions (when jiraWriteAllowed is false)
 Allowed: getJiraIssue, searchJiraIssuesUsingJql, getVisibleJiraProjects,
@@ -463,11 +473,43 @@ def _build_prd_agent(*, telemetry: RunTelemetry | None = None) -> Agent:
     )
 
 
+_JIRA_AGENT_MAX_TOOL_CALLS_DEFAULT = 30
+
+
+class _ToolCallBudgetHook(HookProvider):
+    """Circuit breaker for the Jira agent: some models loop on read tools (re-checking
+    for duplicates, re-fetching metadata) instead of stopping per the system prompt's
+    own "minimize tool calls" / "retry once then stop" rules. Past the budget, cancel
+    further tool calls with an instructive message so the model is forced to emit a
+    final text response (which becomes a normal "jiraBacklog: failed" — not a stall
+    that only ends when AgentCore's connection is killed).
+    """
+
+    def __init__(self, max_calls: int) -> None:
+        self.max_calls = max_calls
+        self.count = 0
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        registry.add_callback(BeforeToolCallEvent, self._on_before_tool_call)
+
+    def _on_before_tool_call(self, event: BeforeToolCallEvent) -> None:
+        self.count += 1
+        if self.count > self.max_calls:
+            event.cancel_tool = (
+                f"Tool call budget exceeded ({self.max_calls} calls). Stop calling tools now "
+                "and reply with a final summary: list any issues you already created "
+                "successfully (with keys), and report the rest as not created."
+            )
+
+
 def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:
     callback = (
         StrandsTelemetryCallback(AGENT_NAME, telemetry)
         if telemetry is not None
         else None
+    )
+    max_calls = int(
+        os.getenv("JIRA_AGENT_MAX_TOOL_CALLS", str(_JIRA_AGENT_MAX_TOOL_CALLS_DEFAULT))
     )
     return Agent(
         agent_id=AGENT_NAME,
@@ -477,6 +519,7 @@ def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> 
         system_prompt=PRODUCT_SYS_PROMPT,
         tools=tools,
         callback_handler=callback,
+        hooks=[_ToolCallBudgetHook(max_calls)],
     )
 
 

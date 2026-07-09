@@ -20,15 +20,22 @@
     "note": "GenericLFI_BODY excluded on CloudFront Web ACL CreatedByCloudFront-0a676d76 (one-time AWS console/CLI change)."
   },
   "usage": {
-    "gitlabAgentPublish": "cloudFront.mcpUrl",
+    "gitlabAgentPublish": "directMcpUrl (batched commits; ALB bypasses CloudFront WAF)",
     "qaAgentGitLabTools": "cloudFront.mcpUrl",
     "cursorIdeMcp": "cloudFront.mcpUrl",
     "agentcoreGatewayTarget": "cloudFront.mcpUrl",
     "albFallback": "directMcpUrl"
   },
   "runtimeEnv": {
-    "GITLAB_MCP_URL": "cloudFront.mcpUrl",
-    "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl (optional fallback if WAF not updated)",
-    "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
+    "gitlabAgent": {
+      "GITLAB_MCP_URL": "directMcpUrl",
+      "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl",
+      "GITLAB_MCP_HTTP_BATCH_SIZE": "20"
+    },
+    "defaultAgents": {
+      "GITLAB_MCP_URL": "cloudFront.mcpUrl",
+      "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl (fallback on WAF 403)",
+      "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
+    }
   }
 }

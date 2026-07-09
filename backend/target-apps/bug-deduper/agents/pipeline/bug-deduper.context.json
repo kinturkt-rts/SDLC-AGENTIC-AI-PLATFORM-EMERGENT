@@ -1,7 +1,0 @@
-{
-  "targetApp": "bug-deduper",
-  "runId": "smoke-003",
-  "inputFile": "inputs/bug-deduper.txt",
-  "inputPath": "inputs/bug-deduper.txt",
-  "designDocPath": "target-apps/bug-deduper/docs/design/bug-deduper.md"
-}

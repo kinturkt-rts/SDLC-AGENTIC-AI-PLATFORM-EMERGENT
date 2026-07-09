@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -115,6 +116,7 @@ _EXAMPLES = {
 
         Rules:
         - Start with `with Diagram(` — no import lines, they are pre-imported.
+        - Diagram title: app or feature name only — no MVP/Phase suffix (title is burned into PNG).
         - Use `filename=filename` (variable injected by runtime, no .png suffix).
         - `show=False` always.
         - ASCII-only labels. Max 14 nodes, max 3 clusters.
@@ -185,6 +187,17 @@ def awsdiagram_list_icons(provider: str = "aws") -> str:
     return _ICONS
 
 
+_DIAGRAM_TITLE_MVP_SUFFIX = re.compile(
+    r'(with Diagram\s*\(\s*)(["\'])([^"\']*?)\s+MVP\s*\2',
+    re.IGNORECASE,
+)
+
+
+def strip_mvp_from_diagram_title(code: str) -> str:
+    """Remove trailing MVP from Diagram() title — scope belongs in the doc, not the PNG."""
+    return _DIAGRAM_TITLE_MVP_SUFFIX.sub(r"\1\2\3\2", code)
+
+
 @tool
 def awsdiagram_generate_diagram(code: str, filename: str, workspace_dir: str) -> str:
     """Generate an AWS architecture PNG from Python DSL code using the diagrams library.
@@ -204,6 +217,7 @@ def awsdiagram_generate_diagram(code: str, filename: str, workspace_dir: str) ->
     Returns:
         Absolute path of the saved PNG on success, or an error description.
     """
+    code = strip_mvp_from_diagram_title(code)
     script = (
         f"filename = {filename!r}\n"
         f"workspace_dir = {workspace_dir!r}\n"

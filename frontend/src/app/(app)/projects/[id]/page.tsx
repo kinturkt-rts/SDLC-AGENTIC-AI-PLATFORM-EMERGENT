@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, GitBranch, FileBox, Clock, ExternalLink, ChevronRight } from 'lucide-react';
+import { ArrowLeft, GitBranch, FileBox, Clock, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -10,6 +10,7 @@ import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { ContextView } from '@/src/features/context/ContextView';
+import { ProjectRepositoryLink } from '@/src/features/projects/ProjectRepositoryLink';
 import {
   useProject,
   useRuns,
@@ -102,12 +103,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
             </Card>
           </div>
           <Card className="border-white/[0.06] bg-card/80 p-4">
-            <div className="flex items-center gap-2 text-sm">
-              <GitBranch className="h-4 w-4 text-teal-400" />
-              <span className="text-muted-foreground">Repository</span>
-              <code className="rounded-md bg-muted/40 px-1.5 py-0.5 font-mono text-foreground">{project?.repo}</code>
-              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-            </div>
+            {project ? <ProjectRepositoryLink project={project} /> : null}
           </Card>
         </TabsContent>
 

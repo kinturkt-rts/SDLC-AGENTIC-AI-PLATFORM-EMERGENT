@@ -2,7 +2,7 @@ import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
 import { invalidateRunsCache } from './runs-cache';
-import { gitlabHandoffExistsForRun } from './pipeline-handoffs';
+import { gitlabHandoffExistsForRun, waitForDeveloperHandoffForRun } from './pipeline-handoffs';
 import { invokeAgentRuntimeA2a } from './agentcore-invoke';
 
 export interface PipelineTaskOptions {
@@ -95,6 +95,33 @@ async function finalizeRunJson(
   invalidateRunsCache();
 }
 
+async function invokeGitlabFallback(
+  runId: string,
+  app: string,
+  logPath: string,
+  timeoutSec: number,
+): Promise<void> {
+  await updateRunJson(runId, { currentStep: 'gitlab-agent' });
+  const glTask =
+    `Publish SDLC artifacts for ${app} to GitLab branch sdlc/${app}.\n\n` +
+    `Context:\n${JSON.stringify({ targetApp: app, runId }, null, 2)}`;
+  await appendLog(logPath, '[gitlab-fallback] Invoking gitlab-agent on AgentCore...\n');
+  const glResult = await invokeAgentRuntimeA2a('gitlab-agent', glTask, { timeoutSec });
+  await appendLog(logPath, `[gitlab-fallback] cloud status: ${glResult.status}\n`);
+  if (glResult.error) await appendLog(logPath, `[gitlab-fallback] cloud error: ${glResult.error}\n`);
+  if (glResult.text) {
+    await appendLog(logPath, `[gitlab-fallback] cloud response: ${glResult.text.slice(0, 1500)}\n`);
+  }
+  if (glResult.status === 'success' && (await gitlabHandoffExists(runId, app))) {
+    await appendLog(logPath, '[gitlab-fallback] Cloud gitlab-agent succeeded.\n');
+  } else {
+    await appendLog(
+      logPath,
+      '[gitlab-fallback] Cloud gitlab-agent failed or no handoff - artifacts remain in S3.\n',
+    );
+  }
+}
+
 export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
   logPath: string;
   timeoutSec: number;
@@ -134,26 +161,19 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
     await appendLog(logPath, '--- gitlab ---\n');
     if (await gitlabHandoffExists(runId, app)) {
       await appendLog(logPath, '[gitlab] Handoff already exists - orchestrator published. Skipping fallback.\n');
-    } else {
-      await updateRunJson(runId, { currentStep: 'gitlab-agent' });
-      const glTask =
-        `Publish SDLC artifacts for ${app} to GitLab branch sdlc/${app}.\n\n` +
-        `Context:\n${JSON.stringify({ targetApp: app, runId }, null, 2)}`;
-      await appendLog(logPath, '[gitlab-fallback] Invoking gitlab-agent on AgentCore...\n');
-      const glResult = await invokeAgentRuntimeA2a('gitlab-agent', glTask, { timeoutSec });
-      await appendLog(logPath, `[gitlab-fallback] cloud status: ${glResult.status}\n`);
-      if (glResult.error) await appendLog(logPath, `[gitlab-fallback] cloud error: ${glResult.error}\n`);
-      if (glResult.text) {
-        await appendLog(logPath, `[gitlab-fallback] cloud response: ${glResult.text.slice(0, 1500)}\n`);
-      }
-      if (glResult.status === 'success' && (await gitlabHandoffExists(runId, app))) {
-        await appendLog(logPath, '[gitlab-fallback] Cloud gitlab-agent succeeded.\n');
-      } else {
+    } else if (!taskOpts.skipDeveloper) {
+      await appendLog(logPath, '[gitlab-fallback] Waiting for developer-handoff before publish...\n');
+      const devReady = await waitForDeveloperHandoffForRun(runId, app, { timeoutSec });
+      if (!devReady) {
         await appendLog(
           logPath,
-          '[gitlab-fallback] Cloud gitlab-agent failed or no handoff - artifacts remain in S3.\n',
+          '[gitlab-fallback] developer-handoff not ready — skipping GitLab publish (artifacts remain in S3).\n',
         );
+      } else {
+        await invokeGitlabFallback(runId, app, logPath, timeoutSec);
       }
+    } else {
+      await invokeGitlabFallback(runId, app, logPath, timeoutSec);
     }
   }
 

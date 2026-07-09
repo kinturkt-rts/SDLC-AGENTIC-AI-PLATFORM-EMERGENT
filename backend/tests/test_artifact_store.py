@@ -254,3 +254,25 @@ def test_wait_for_run_artifact_local(repo_root: Path, monkeypatch: pytest.Monkey
     put_artifact(run_id, "demo-app/handoffs/developer-handoff.json", '{"writtenFiles": []}\n')
     wait_for_run_artifact(run_id, "demo-app/handoffs/developer-handoff.json", timeout_sec=1.0)
     assert run_artifact_exists(run_id, "demo-app/handoffs/developer-handoff.json") is True
+
+
+def test_wait_for_developer_handoff_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import (
+        developer_handoff_exists,
+        put_artifact,
+        wait_for_developer_handoff,
+    )
+    from _shared.pipeline_context import developer_handoff_rel_for_app
+
+    run_id = "wait-dev-handoff-001"
+    rel = developer_handoff_rel_for_app("demo-app")
+    assert developer_handoff_exists(run_id, "demo-app") is False
+    put_artifact(
+        run_id,
+        rel,
+        '{"writtenFiles": ["target-apps/demo-app/app/main.py"], "status": "completed"}\n',
+    )
+    found = wait_for_developer_handoff(run_id, "demo-app", timeout_sec=1.0)
+    assert found == rel
+    assert developer_handoff_exists(run_id, "demo-app") is True

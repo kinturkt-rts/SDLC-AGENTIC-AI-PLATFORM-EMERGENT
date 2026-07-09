@@ -132,6 +132,20 @@ def check_streamlit_no_raw_uuid_fields(
     ]
 
 
+def check_streamlit_no_deprecated_width_api(app_dir: Path) -> list[str]:
+    """Block deprecated use_container_width (Streamlit 1.41+ prefers width=)."""
+    ui = app_dir / "ui" / "streamlit_app.py"
+    if not ui.is_file():
+        return []
+    text = ui.read_text(encoding="utf-8", errors="replace")
+    if "use_container_width" not in text:
+        return []
+    return [
+        "UI_PARITY: ui/streamlit_app.py uses deprecated `use_container_width` — "
+        'replace True with width="stretch" and False with width="content"'
+    ]
+
+
 def validate_ui_parity(app_dir: Path, repo_root: Path) -> list[str]:
     """Run API/UI parity checks. Streamlit rules apply only when Pattern C is required."""
     app_slug = app_dir.name
@@ -150,7 +164,8 @@ def validate_ui_parity(app_dir: Path, repo_root: Path) -> list[str]:
                 app_dir, streamlit_required=streamlit_required
             )
         )
-    elif (app_dir / "ui" / "streamlit_app.py").is_file():
+    errors.extend(check_streamlit_no_deprecated_width_api(app_dir))
+    if not streamlit_required and (app_dir / "ui" / "streamlit_app.py").is_file():
         errors.append(
             f"UI_PARITY WARN: {app_slug} has ui/streamlit_app.py but "
             "deliveryProfile.requiresStreamlit is false — API-only apps should omit ui/"

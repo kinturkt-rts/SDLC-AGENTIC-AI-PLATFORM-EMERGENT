@@ -662,14 +662,14 @@ class SdlcPipelineRunner:
                     "--context-file",
                     self.context_file,
                     "--task",
-                    f"{self.feature} MVP",
+                    self.feature,
                 ],
                 step="architect-agent",
             )
         else:
             self._invoke_a2a(
                 "architect-agent",
-                f"Produce architecture diagram and design doc for {self.feature} MVP.",
+                f"Produce architecture diagram and design doc for {self.feature}.",
                 step="architect-agent",
             )
 
@@ -876,6 +876,8 @@ class SdlcPipelineRunner:
                 step="developer-agent",
                 include_db_paths=not self.options.skip_db,
             )
+            # AgentCore may return before developer-agent finishes writing S3 artifacts.
+            self._wait_for_developer_handoff()
 
         if self.transport == "a2a" and self.run_id:
             self._merge_run_context_from_s3()
@@ -885,17 +887,27 @@ class SdlcPipelineRunner:
         self._after_agent_step("developer-agent")
 
     def _wait_for_developer_handoff(self) -> None:
-        """Block gitlab until developer-handoff.json lands in S3 (AgentCore can return early)."""
+        """Block until developer-handoff.json lands in S3 (AgentCore can return early)."""
         if not self.run_id or not is_s3_store() or self.options.skip_developer:
             return
-        from .artifact_store import wait_for_run_artifact
+        from .artifact_store import wait_for_developer_handoff
         from .pipeline_context import developer_handoff_rel_for_app
 
         rel = developer_handoff_rel_for_app(self.feature)
-        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "300"))
-        logger.info("[pipeline] waiting for developer handoff: runs/%s/%s", self.run_id, rel)
+        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "900"))
+        logger.info(
+            "[pipeline] waiting for developer handoff: runs/%s/%s (timeout=%ss)",
+            self.run_id,
+            rel,
+            timeout,
+        )
         try:
-            wait_for_run_artifact(self.run_id, rel, timeout_sec=timeout)
+            wait_for_developer_handoff(
+                self.run_id,
+                self.feature,
+                timeout_sec=timeout,
+            )
+            logger.info("[pipeline] developer handoff ready: runs/%s/%s", self.run_id, rel)
         except TimeoutError as exc:
             raise PipelineStepError(
                 f"developer-agent handoff not ready before gitlab-agent: {exc}"
@@ -1033,6 +1045,14 @@ class SdlcPipelineRunner:
         if input_file:
             args.extend(["--input-file", input_file.replace("\\", "/")])
         self._run_python(args, step="delivery-profile-sync")
+        # The sync above writes deliveryProfile only to the on-disk context file
+        # (via a subprocess). Pull it into the in-memory context immediately so a
+        # later _hydrate_run_context() (which merges S3 context and re-saves) does
+        # not silently drop it before it reaches architect/developer over A2A.
+        if self.ctx_path.is_file():
+            on_disk = json.loads(self.ctx_path.read_text(encoding="utf-8-sig"))
+            if on_disk.get("deliveryProfile"):
+                self.context["deliveryProfile"] = on_disk["deliveryProfile"]
 
     def _delivery_check(self, stage: str) -> None:
         if not self.ctx_path.is_file():

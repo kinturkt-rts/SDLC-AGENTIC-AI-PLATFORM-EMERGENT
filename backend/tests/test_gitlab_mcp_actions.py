@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from _shared.gitlab_mcp_actions import (  # noqa: E402
+    _collect_apps_repo_publish_files,
+    _collect_input_brief_entries,
     _is_branch_not_found,
     _mcp_error_message,
     _publish_commit_message,
@@ -106,6 +108,71 @@ def test_apps_branch_name() -> None:
 def test_dest_path_for_apps_repo() -> None:
     assert dest_path_for_apps_repo("target-apps/notice-board-ui/app/main.py", "notice-board-ui") == "app/main.py"
     assert dest_path_for_apps_repo("docs/PRD/notice-board-ui.md", "notice-board-ui") is None
+    assert dest_path_for_apps_repo("inputs/notice-board-ui.txt", "notice-board-ui") == "inputs/notice-board-ui.txt"
+
+
+def test_cloud_workspace_maps_input_brief_for_apps_repo() -> None:
+    dest = cloud_workspace_to_gitlab_dest("demo-app", "demo-app/inputs/demo-app.txt")
+    assert dest == "inputs/demo-app.txt"
+    assert cloud_workspace_to_gitlab_dest("demo-app", "demo-app/telemetry/demo-app.json") is None
+
+
+def test_cloud_materialized_includes_input_brief(tmp_path: Path) -> None:
+    feature = "demo-app"
+    cloud_root = tmp_path / feature
+    (cloud_root / "inputs").mkdir(parents=True)
+    (cloud_root / "inputs" / f"{feature}.txt").write_text("# brief\n", encoding="utf-8")
+    (cloud_root / "app").mkdir(parents=True)
+    (cloud_root / "app" / "main.py").write_text("# main", encoding="utf-8")
+
+    entries = collect_feature_artifact_entries(feature, root=tmp_path)
+    dests = {dest for _, dest in entries}
+    assert f"inputs/{feature}.txt" in dests
+    assert f"target-apps/{feature}/app/main.py" in dests
+
+
+def test_monorepo_publish_includes_input_brief(tmp_path: Path) -> None:
+    feature = "demo-app"
+    cloud_root = tmp_path / feature
+    (cloud_root / "inputs").mkdir(parents=True)
+    (cloud_root / "inputs" / f"{feature}.txt").write_text("# brief\n", encoding="utf-8")
+    (cloud_root / "app").mkdir(parents=True)
+    (cloud_root / "app" / "main.py").write_text("# main", encoding="utf-8")
+
+    from _shared.gitlab_mcp_actions import _collect_monorepo_publish_files
+
+    paths = {item["path"] for item in _collect_monorepo_publish_files(feature, root=tmp_path)}
+    assert f"inputs/{feature}.txt" in paths
+    assert f"target-apps/{feature}/app/main.py" in paths
+
+
+def test_apps_repo_publish_includes_local_input_brief(tmp_path: Path) -> None:
+    feature = "demo-app"
+    (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
+    (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# main", encoding="utf-8")
+    (tmp_path / "inputs").mkdir(parents=True)
+    (tmp_path / "inputs" / f"{feature}.txt").write_text("# requirements brief\n", encoding="utf-8")
+
+    files = _collect_apps_repo_publish_files(feature, root=tmp_path)
+    paths = {item["path"] for item in files}
+    assert "app/main.py" in paths
+    assert f"inputs/{feature}.txt" in paths
+
+
+def test_collect_input_brief_from_context_path(tmp_path: Path) -> None:
+    feature = "office-equipment-checkout"
+    (tmp_path / "inputs").mkdir(parents=True)
+    brief = tmp_path / "inputs" / "office-equipment-checkout.txt"
+    brief.write_text("# brief\n", encoding="utf-8")
+    ctx = tmp_path / "agents" / "pipeline"
+    ctx.mkdir(parents=True)
+    (ctx / f"{feature}.context.json").write_text(
+        '{"inputFile": "inputs/office-equipment-checkout.txt"}',
+        encoding="utf-8",
+    )
+
+    entries = _collect_input_brief_entries(feature, root=tmp_path)
+    assert ("inputs/office-equipment-checkout.txt", "inputs/office-equipment-checkout.txt") in entries
 
 
 def test_should_exclude_env_and_venv(tmp_path: Path) -> None:

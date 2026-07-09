@@ -179,6 +179,12 @@ export interface Project {
   artifactCount: number;
   lastRunAt: string;
   repo: string;
+  /** Where the repository row links (GitLab branch URL or /runs/<id>). */
+  repoHref?: string | null;
+  /** True when repoHref is an external GitLab URL. */
+  repoExternal?: boolean;
+  /** Latest cloud pipeline run id when known (S3 mode). */
+  runId?: string | null;
   environment: Environment;
 }
 

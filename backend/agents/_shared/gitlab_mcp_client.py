@@ -105,6 +105,21 @@ def gitlab_mcp_url_candidates() -> list[str]:
     return urls
 
 
+def gitlab_mcp_is_cloudfront_url(url: str) -> bool:
+    return "cloudfront.net" in url.lower()
+
+
+def gitlab_mcp_publish_url_candidates() -> list[str]:
+    """MCP URLs for artifact publish — prefer direct ALB (batched commits) over CloudFront/WAF."""
+    candidates = gitlab_mcp_url_candidates()
+    direct_raw = os.getenv("GITLAB_MCP_HTTP_DIRECT_URL", "").strip()
+    if not direct_raw:
+        return candidates
+    direct = normalize_gitlab_mcp_http_url(direct_raw)
+    rest = [url for url in candidates if url != direct]
+    return [direct, *rest]
+
+
 def _raw_gitlab_mcp_http_url() -> str | None:
     candidates = gitlab_mcp_url_candidates()
     return candidates[0] if candidates else None
@@ -139,10 +154,10 @@ async def using_gitlab_mcp_url(url: str) -> AsyncIterator[None]:
 
 
 def gitlab_mcp_uses_cloudfront() -> bool:
-    """True when the primary HTTP MCP URL is a CloudFront distribution."""
+    """True when the active HTTP MCP URL is a CloudFront distribution."""
     forced = _forced_mcp_url.get()
     primary = forced if forced else _raw_gitlab_mcp_http_url()
-    return bool(primary and "cloudfront.net" in primary.lower())
+    return bool(primary and gitlab_mcp_is_cloudfront_url(primary))
 
 
 def gitlab_mcp_http_url() -> str | None:

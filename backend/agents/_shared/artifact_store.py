@@ -603,6 +603,36 @@ def _put_dynamodb_pointer(
     _dynamodb_table().put_item(Item=item)
 
 
+def developer_handoff_rel_for_slug(target_app: str) -> str:
+    """Run-relative path for developer-agent completion handoff."""
+    from .pipeline_context import developer_handoff_rel_for_app
+
+    return developer_handoff_rel_for_app(target_app)
+
+
+def developer_handoff_exists(run_id: str, target_app: str) -> bool:
+    """True when developer-handoff.json is present for a pipeline run."""
+    return run_artifact_exists(run_id, developer_handoff_rel_for_slug(target_app))
+
+
+def wait_for_developer_handoff(
+    run_id: str,
+    target_app: str,
+    *,
+    timeout_sec: float = 300.0,
+    poll_interval_sec: float = 5.0,
+) -> str:
+    """Poll until developer-handoff.json exists; return the relative artifact path."""
+    rel = developer_handoff_rel_for_slug(target_app)
+    wait_for_run_artifact(
+        run_id,
+        rel,
+        timeout_sec=timeout_sec,
+        poll_interval_sec=poll_interval_sec,
+    )
+    return rel
+
+
 def put_handoff(run_id: str, name: str, handoff: dict[str, Any]) -> str:
     """Store handoff JSON under handoffs/<name>.json."""
     rel = f"handoffs/{name}.json"

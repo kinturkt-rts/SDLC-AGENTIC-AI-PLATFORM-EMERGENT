@@ -158,6 +158,21 @@ def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> 
     assert mod._validate_dev_write_path(service / ".venv" / "pyvenv.cfg") is not None
 
 
+def test_validate_dev_write_path_blocks_verbatim_scaffold_files(tmp_path: Path) -> None:
+    """Golden template files must come from dev_scaffold, not hand-written content —
+    regression for a hand-rewritten app/startup_checks.py that shipped a syntax error."""
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-svc"
+    (service / "app" / "routers").mkdir(parents=True)
+    (service / "app" / "models").mkdir(parents=True)
+
+    assert mod._validate_dev_write_path(service / "app" / "database.py") is not None
+    assert mod._validate_dev_write_path(service / "app" / "startup_checks.py") is not None
+    assert mod._validate_dev_write_path(service / "app" / "routers" / "health.py") is not None
+    assert mod._validate_dev_write_path(service / "app" / "models" / "pg_types.py") is not None
+    assert mod._validate_dev_write_path(service / "app" / "routers" / "items.py") is None
+
+
 def test_python_for_service_prefers_repo_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_agent_module()
     service = tmp_path / "target-apps" / "demo-api"

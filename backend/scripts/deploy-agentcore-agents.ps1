@@ -143,6 +143,21 @@ function Import-GitLabMcpEndpointsFromConfig {
 
 Import-GitLabMcpEndpointsFromConfig
 
+function Get-GitLabAgentMcpEnv {
+    $configPath = Join-Path $RepoRoot "config\agentcore\gitlab-mcp-endpoints.json"
+    if (-not (Test-Path $configPath)) { return @() }
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    if (-not $config.directMcpUrl) { return @() }
+    $direct = $config.directMcpUrl.Trim()
+    return @(
+        "GITLAB_MCP_URL=$direct",
+        "GITLAB_MCP_HTTP_DIRECT_URL=$direct",
+        "GITLAB_MCP_HTTP_BATCH_SIZE=20"
+    )
+}
+
+$GitLabAgentMcpEnv = Get-GitLabAgentMcpEnv
+
 function Test-AgentRegisteredInYaml {
     param([string] $AwsName)
     $yamlPath = Join-Path $RepoRoot ".bedrock_agentcore.yaml"
@@ -164,7 +179,7 @@ $PipelineAgents = @(
     @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
     @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @() },
     @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
-    @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = @() },
+    @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = $GitLabAgentMcpEnv },
     @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() }
 )
 
@@ -300,6 +315,17 @@ foreach ($agent in $TargetAgents) {
         continue
     }
 
+    if ($awsName -eq "developer_agent") {
+        Write-Host "Publishing target-apps/_template to S3 (AgentCore has no local _template copy)..." -ForegroundColor DarkGray
+        $publishScript = Join-Path $PSScriptRoot "publish-template-to-s3.py"
+        python $publishScript
+        if ($LASTEXITCODE -ne 0) {
+            $DeployFailures += $awsName
+            Write-Warning "Template publish failed for $awsName — skipping agent deploy."
+            continue
+        }
+    }
+
     $deployArgs = @("deploy", "--agent", $awsName, "--env", "AGENTCORE_AGENT=$bundle")
     $envBlock = $CommonEnv + $agent.extra
     if ($AgentSecretKeys.ContainsKey($awsName)) {
@@ -307,6 +333,13 @@ foreach ($agent in $TargetAgents) {
     }
     if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc") {
         $envBlock += Get-EnvPairsForKeys -Keys $OrchestratorRdsKeys
+    }
+    if ($awsName -eq "gitlab_agent" -and $GitLabAgentMcpEnv.Count -gt 0) {
+        $envBlock = @($envBlock | Where-Object {
+            $_ -notlike "GITLAB_MCP_URL=*" -and
+            $_ -notlike "GITLAB_MCP_HTTP_DIRECT_URL=*" -and
+            $_ -notlike "GITLAB_MCP_HTTP_BATCH_SIZE=*"
+        }) + $GitLabAgentMcpEnv
     }
     foreach ($item in $envBlock) {
         if ($awsName -eq "gitlab_agent" -and $item -like "MODEL_ID=*") {

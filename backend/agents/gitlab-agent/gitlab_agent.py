@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,7 @@ def run_publish(
     layout = "apps" if apps_repo or ctx.get("gitlabPublishLayout") == "apps" else "monorepo"
     _enrich_gitlab_context(ctx, layout=layout, root=publish_root)
 
+    publish_started = time.monotonic()
     result = publish_feature(
         app,
         project=str(ctx.get("gitlabProject", "")),
@@ -100,6 +102,7 @@ def run_publish(
         root=publish_root,
         layout=layout,
     )
+    publish_elapsed = round(time.monotonic() - publish_started, 2)
 
     handoff = {
         "targetApp": app,
@@ -114,6 +117,10 @@ def run_publish(
         "repoUrl": result.get("repoUrl"),
         "branchUrl": result.get("branchUrl"),
         "error": result.get("error"),
+        "elapsedSec": result.get("elapsedSec", publish_elapsed),
+        "commitCount": result.get("commitCount"),
+        "fileCount": result.get("fileCount"),
+        "mcpUrl": result.get("mcpUrl"),
     }
     handoff_path = _write_gitlab_handoff(app, handoff)
 
@@ -129,6 +136,7 @@ def run_publish(
         f"## status\npublished\n\n"
         f"## branch\n`{result.get('branch')}`\n\n"
         f"## branch_url\n{result.get('branchUrl')}\n\n"
+        f"## elapsed_sec\n{handoff.get('elapsedSec')}\n\n"
     )
     if result.get("mergeRequestUrl"):
         summary += f"## merge_request\n{result.get('mergeRequestUrl')}\n\n"
@@ -207,6 +215,7 @@ def run_publish_for_agentcore(
     context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Materialize S3 run artifacts (when configured) and publish via MCP — no LLM."""
+    import logging
     import tempfile
 
     from _shared.artifact_store import (
@@ -214,9 +223,11 @@ def run_publish_for_agentcore(
         list_run_artifact_keys,
         materialize_run,
         put_handoff,
-        wait_for_run_artifact,
+        wait_for_developer_handoff,
     )
-    from _shared.pipeline_context import developer_handoff_rel_for_app, slugify_feature
+    from _shared.pipeline_context import slugify_feature
+
+    logger = logging.getLogger(__name__)
 
     ctx = dict(context or {})
     rid = (
@@ -230,15 +241,15 @@ def run_publish_for_agentcore(
     root: Path | None = None
     if rid and is_s3_store():
         slug = slugify_feature(target_app)
-        handoff_rel = developer_handoff_rel_for_app(slug)
+        wait_sec = float(os.getenv("SDLC_GITLAB_PRE_PUBLISH_WAIT_SEC", "30"))
         try:
-            wait_for_run_artifact(
-                rid,
-                handoff_rel,
-                timeout_sec=float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "300")),
-            )
+            wait_for_developer_handoff(rid, slug, timeout_sec=wait_sec)
         except TimeoutError:
-            pass
+            logger.warning(
+                "developer handoff not found after %ss for run %s; publishing available artifacts",
+                wait_sec,
+                rid,
+            )
         keys = list_run_artifact_keys(rid)
         root = materialize_run(rid, Path(tempfile.mkdtemp(prefix="sdlc-gitlab-")))
         if not keys:
