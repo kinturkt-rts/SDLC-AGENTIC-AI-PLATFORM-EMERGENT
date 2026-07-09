@@ -11,22 +11,6 @@
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"
       }
-    },
-    "MongoDB": {
-      "disabled": false,
-      "timeout": 60,
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "mongodb-mcp-server"
-      ],
-      "env": {
-        "MDB_MCP_CONNECTION_STRING": "${env:MDB_MCP_CONNECTION_STRING}",
-        "MDB_MCP_API_CLIENT_ID": "${env:MDB_MCP_API_CLIENT_ID}",
-        "MDB_MCP_API_CLIENT_SECRET": "${env:MDB_MCP_API_CLIENT_SECRET}",
-        "MDB_MCP_READ_ONLY": "${env:MDB_MCP_READ_ONLY}"
-      }
     }
   }
 }
