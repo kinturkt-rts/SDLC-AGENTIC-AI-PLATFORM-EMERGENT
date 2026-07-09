@@ -27,6 +27,7 @@ from _shared.pipeline_context import (
     TargetAppRequiredError,
     design_doc_rel_for_app,
     diagram_path_for_app,
+    enrich_handoff_context,
     infer_target_app_from_context,
     merge_run_handoff_context,
     pipeline_context_rel_for_app,

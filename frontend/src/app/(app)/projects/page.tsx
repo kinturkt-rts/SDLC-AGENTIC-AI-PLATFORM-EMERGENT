@@ -58,7 +58,7 @@ export default function ProjectsPage() {
       <PageHeader
         eyebrow="Design"
         title="Projects"
-        description="Target applications produced by the SDLC pipeline - PRDs, designs, SQL, and FastAPI code. Each slug is a feature app under backend/target-apps/."
+        description="Target applications produced by the SDLC pipeline - PRDs, diagram, designs, SQL, and Python code."
         actions={
           <Link
             href="/dashboard"
