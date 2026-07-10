@@ -477,6 +477,10 @@ list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/v
 inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
 **Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Use
 `width="stretch"` for full-width dataframes/buttons, `width="content"` to fit content.
+**Arrow-safe dataframes:** In `st.dataframe`/`st.table` data, never mix string placeholders
+("—", "N/A", "") into numeric columns — pass `None` for missing values (Arrow rejects mixed-type
+columns). Placeholders belong in display formatting (`st.column_config.NumberColumn(format=...)`)
+or single-value widgets like `st.metric`, never in the DataFrame itself.
 README: **Terminal 2** — separate **PowerShell (Windows)** and **Bash** blocks: `cd target-apps/<app>`,
 `.\\.venv\\Scripts\\Activate.ps1` (Windows) or `source .venv/bin/activate` (bash), `cd ui`, then
 `streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
@@ -2498,19 +2502,24 @@ def run_task(
                     ctx["developerHandoffPath"] = handoff_rel
             except Exception:
                 logger.exception("[developer-agent] failed to persist developer handoff")
+        # Telemetry must persist even when the agent run fails — tokens were billed
+        # either way, and the control-plane cost breakdown needs every agent reported.
+        if telemetry is not None:
+            telemetry.extra = {
+                "filesWritten": len(written),
+                "pattern": _select_pattern_keys(ctx) or "all",
+                "status": "failed" if agent_error else "completed",
+            }
+            try:
+                telemetry.finalize(context=ctx)
+            except Exception:
+                logger.exception("[developer-agent] failed to persist telemetry")
         _run_context = None
 
     if agent_error is not None:
         raise agent_error
 
     assert telemetry is not None
-
-    # Telemetry: tokens, cache hits, wall-clock, file count; persist for next-run delta.
-    telemetry.extra = {
-        "filesWritten": len(written),
-        "pattern": _select_pattern_keys(ctx) or "all",
-    }
-    telemetry.finalize(context=ctx)
 
     run_id = resolve_run_id(ctx)
     if run_id:
