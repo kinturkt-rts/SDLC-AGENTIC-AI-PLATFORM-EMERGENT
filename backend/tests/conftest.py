@@ -36,6 +36,7 @@ _ISOLATED_ENV_KEYS = (
 @pytest.fixture(autouse=True)
 def isolate_local_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent .env.local from clobbering monkeypatched env in unit tests."""
+    monkeypatch.setenv("SDLC_SKIP_REPO_ENV", "1")
     monkeypatch.setattr(shared_env, "load_repo_env", lambda: None)
     for key in _ISOLATED_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)

@@ -206,16 +206,6 @@ def put_context(run_id: str, context: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def run_artifact_exists(run_id: str, rel_path: str) -> bool:
-    """True when runs/<runId>/<rel_path> exists in the artifact store."""
-    rel = rel_path.lstrip("/").replace("\\", "/")
-    try:
-        get_artifact(run_id, rel)
-    except FileNotFoundError:
-        return False
-    return True
-
-
 def enrich_db_paths_from_run(ctx: dict[str, Any]) -> dict[str, Any]:
     """Fill db/sql handoff paths from run store when local disk is unavailable (cloud)."""
     run_id = resolve_run_id(ctx)

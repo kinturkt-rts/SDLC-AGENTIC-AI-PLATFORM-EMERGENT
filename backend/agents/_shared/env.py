@@ -29,6 +29,8 @@ _AWS_STATIC_KEYS = frozenset(
 
 
 def load_repo_env() -> None:
+    if os.getenv("SDLC_SKIP_REPO_ENV", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
     merged: dict[str, str | None] = {}
     for path in (
         _MONOREPO_ROOT / ".env",
