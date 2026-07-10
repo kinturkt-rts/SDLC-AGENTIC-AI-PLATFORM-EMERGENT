@@ -843,7 +843,12 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   }
 
   const startedAt =
-    enriched.startedAt ?? (UUID_RE.test(runId) ? await latestUuidRunMtime(runId) : await latestPipelineMtime(slug));
+    enriched.startedAt ??
+    (isS3Store() && s3EarliestMs
+      ? new Date(s3EarliestMs).toISOString()
+      : UUID_RE.test(runId)
+        ? await latestUuidRunMtime(runId)
+        : await latestPipelineMtime(slug));
   const logMtimeMs = await pipelineLogMtime(runId);
 
   const reconciled = reconcileRunStatus({
@@ -1496,7 +1501,7 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     } catch (err) {
       console.warn('[listRuns] S3 enrichment failed, using local run.json only:', err);
     }
-    return filterUserPipelineRuns(runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return sortRunsByRecentActivity(filterUserPipelineRuns(runs));
   }
 
   const slugs = await listPipelineSlugs();
@@ -1558,7 +1563,7 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     });
   }
 
-  return filterUserPipelineRuns(runs).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return sortRunsByRecentActivity(filterUserPipelineRuns(runs));
 }
 
 /** Dashboard submissions always use UUID run ids - exclude legacy slug-only synthetic runs. */
@@ -1568,6 +1573,23 @@ export function isUserPipelineRun(run: PipelineRun): boolean {
 
 function filterUserPipelineRuns(runs: PipelineRun[]): PipelineRun[] {
   return runs.filter(isUserPipelineRun);
+}
+
+function runActivityMs(run: PipelineRun): number {
+  const finished = run.finishedAt ? Date.parse(run.finishedAt) : 0;
+  const started = Date.parse(run.startedAt);
+  return Math.max(
+    Number.isFinite(finished) ? finished : 0,
+    Number.isFinite(started) ? started : 0,
+  );
+}
+
+function sortRunsByRecentActivity(runs: PipelineRun[]): PipelineRun[] {
+  return runs.sort((a, b) => {
+    const diff = runActivityMs(b) - runActivityMs(a);
+    if (diff !== 0) return diff;
+    return b.startedAt.localeCompare(a.startedAt);
+  });
 }
 
 export async function listRuns(): Promise<PipelineRun[]> {

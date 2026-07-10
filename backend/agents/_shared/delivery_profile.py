@@ -4,8 +4,19 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+# This module is always invoked as a standalone subprocess script
+# (python agents/_shared/delivery_profile.py ...), which runs it as __main__ with no
+# parent package - a bare `from .artifact_store import ...` inside _read_optional would
+# raise "attempted relative import with no known parent package". Put agents/ on sys.path
+# so `from _shared.artifact_store import ...` resolves the same way whether this file is
+# run directly or imported normally as part of the _shared package.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT / "agents") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 _STREAMLIT_MARKERS = (
     "streamlit",
@@ -100,7 +111,7 @@ def _read_optional(repo_root: Path, rel_or_abs: str | None, *, run_id: str | Non
     # S3-aware read when run_id is available (cloud containers don't have local artifacts)
     if run_id:
         try:
-            from .artifact_store import get_artifact
+            from _shared.artifact_store import get_artifact
             return get_artifact(run_id, rel).decode("utf-8", errors="replace")
         except Exception:
             pass

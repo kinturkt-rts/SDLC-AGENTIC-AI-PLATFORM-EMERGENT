@@ -1,79 +1,83 @@
 # SDLC Agentic AI Platform — Control Plane
 
-A production-quality **Next.js App Router** control plane UI for an SDLC Agentic AI Platform.
-It visualizes specialist AI agents, pipeline runs, artifacts, and human-in-the-loop (HITL)
-checkpoints across the software delivery lifecycle.
+Next.js 14 (App Router) UI for monitoring and operating the SDLC agent pipeline: projects,
+runs, artifacts, agents, MCP servers, and token usage.
 
-> **Control plane only.** This UI does **not** run agents or LLMs. It reads platform state
-> through a typed service layer that is mock-backed today and swaps to a real REST API
-> (`NEXT_PUBLIC_API_BASE_URL`) without changing any call sites.
+The browser does **not** run Bedrock or agent logic directly. Server routes under `src/app/api/`
+read platform state and can **start** pipeline runs (local Python subprocess or AgentCore invoke).
 
-## Tech stack
-- **Next.js (App Router)** + **TypeScript (strict)**
-- **Tailwind CSS** + **shadcn/ui**
-- **TanStack Query** for server state
-- **Zustand** for UI state (sidebar, project switcher, environment, filters, selected run)
-- **lucide-react** icons
-- **next-themes** dark/light mode (dark default)
+## Modes
 
-## Design
-Professional devtools aesthetic (Vercel + Linear + GitHub Actions): neutral slate/zinc palette
-with a single **teal** accent. Status colors: `queued`=gray, `running`=blue, `completed`=green,
-`failed`=red, `waiting_for_human`/`paused`=amber.
+| Mode | Config | Data source |
+|------|--------|-------------|
+| **Local (default)** | Leave `NEXT_PUBLIC_API_BASE_URL` unset | Next.js `/api/v1/*` reads `backend/` (filesystem + optional S3 artifact store) |
+| **Remote API** | Set `NEXT_PUBLIC_API_BASE_URL` | External platform REST API at that base URL |
 
-## Pages
-| Route | Description |
-|-------|-------------|
-| `/dashboard` | Active runs, pending HITL approvals, recent artifacts, agent health grid, MCP health |
-| `/runs` | All pipeline runs with status filter + run detail sheet (phase timeline) |
-| `/checkpoints` | HITL gates with approve/reject (recorded locally — no platform API yet) |
-| `/projects` | Target apps as project cards |
-| `/projects/[id]` | Tabs: Overview, Pipelines, Runs, Artifacts, Context |
-| `/pipelines` | Reusable SDLC pipeline definitions with phase flow |
-| `/agents` | Agent registry (cards/table toggle), ports 9100–9110 (matches `a2a/agent-registry.json`) |
-| `/agents/[id]` | Capabilities, MCP servers, execution history, disabled "Test agent" |
-| `/artifacts` | Deliverables grid with kind filter + preview dialog |
-| `/context` | Shared context store (documents, decisions, memory, references) |
-| `/mcp` | MCP Registry (health, latency, tools, endpoints) |
-| `/logs` | Agent log stream with level filter + search |
-| `/settings` | API base URL, theme toggle, auth placeholder (disabled) |
-
-## Project structure
-```
-src/
-  app/                      # App Router (route group "(app)" holds the shell + pages)
-    (app)/...               # dashboard, runs, agents, projects, etc.
-    api/[[...path]]/route.ts # health check only (control plane is read-only)
-    layout.tsx, providers.tsx, globals.css
-  components/
-    common/                 # StatusBadge, PageHeader, EmptyState, DataTable, AgentCard, ThemeToggle
-    shell/                  # Sidebar, Topbar, AppShell
-  features/                 # (reserved for feature-specific composition)
-  lib/                      # api (mock service layer), queries (TanStack hooks), nav, format
-  mocks/                    # typed fixtures: agents, projects, runs, artifacts, checkpoints, mcp, context, logs
-  store/                    # zustand UI store
-  types/                    # domain interfaces (AgentName, RunStatus, StepStatus, SdlcPhase, ...)
-```
-> shadcn/ui primitives live in `components/ui` (imported via `@/components/ui/*`).
+Copy `.env.example` → `.env.local` for local development.
 
 ## Getting started
-```bash
-yarn install     # or: npm install
-yarn dev         # starts Next.js on 0.0.0.0:3000
+
+```powershell
+cd frontend
+copy .env.example .env.local
+npm install   # or: yarn install
+npm run dev   # http://localhost:3000
 ```
-Open the app — `/` redirects to `/dashboard`.
+
+`/` redirects to `/dashboard`. The dashboard can submit an input brief and start a pipeline run
+(`POST /api/v1/runs/start` → `backend/scripts/run-sdlc-local.ps1` or AgentCore when
+`SDLC_PIPELINE_TRANSPORT=a2a`).
 
 ## Environment variables
-| Var | Purpose |
-|-----|---------|
-| `NEXT_PUBLIC_API_BASE_URL` | Base URL of the future platform REST API. **Unset → the UI serves typed mock data.** When set, swap the mock branch in `src/lib/api.ts` for `fetch()`. |
 
-## Swapping mocks for the real API
-All data flows through `src/lib/api.ts`. Each method returns a `Promise`. To go live, replace
-the mock return with a `fetch(\`${API_BASE_URL}/...\`)` call — the TanStack Query hooks in
-`src/lib/queries.ts` and every page remain unchanged.
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_API_BASE_URL` | Optional remote API base. Unset = local `/api/v1` mode. |
+| `BACKEND_ROOT` | Path to `backend/` (default: `../backend`) |
+| `ORCHESTRATOR_PYTHON` | Python for pipeline subprocess (default: auto-detect `backend/.venv`) |
+| `SDLC_PIPELINE_TRANSPORT` | `local` (subprocess) or `a2a` (AgentCore cloud invoke) |
+| `ARTIFACT_STORE`, `ARTIFACT_S3_BUCKET`, `AWS_*` | S3 run artifacts — loaded from `backend/.env.local` if unset here |
+| `CORS_ORIGINS` | CORS allow-list for API routes (default: `*`) |
 
-## Constraints honored
-- No agent execution / fake "LLM running" animations in the frontend.
-- No secrets in `localStorage`.
-- All data via a swappable mock API service layer.
+See `.env.example` for comments. Secrets stay in env files — never in the repo.
+
+## Pages
+
+| Route | Description |
+|-------|-------------|
+| `/dashboard` | Summary, activity feed, submit brief / start pipeline |
+| `/runs`, `/runs/[id]` | Pipeline runs, live progress, handoffs, logs |
+| `/projects`, `/projects/[id]` | Target apps — overview, runs, artifacts, context, repo link |
+| `/pipelines`, `/pipelines/[id]` | SDLC pipeline definitions |
+| `/agents`, `/agents/[id]` | Agent registry, MCP tools, optional connectivity test |
+| `/orchestrator`, `/orchestrator/messages` | Orchestrator flow and message log |
+| `/artifacts` | PRDs, designs, diagrams, generated apps |
+| `/context` | Pipeline context documents per project |
+| `/mcp` | MCP server registry (edit via UI → `frontend/data/mcp.json`) |
+| `/tokens` | Per-run model token usage from pipeline telemetry |
+| `/checkpoints` | HITL approval queue (local UI state until platform API wired) |
+| `/logs` | Run and agent log stream |
+| `/settings` | Platform settings |
+| `/login` | Auth shell (placeholder) |
+
+## Project layout
+
+```
+src/
+  app/
+    (app)/          # Shell + pages
+    api/v1/         # REST bridge: agents, runs, projects, artifacts, telemetry, …
+    api/mcp/        # MCP config CRUD
+  components/       # Shell, common UI, shadcn/ui
+  features/         # Auth, context, runs handoffs, tokens, projects
+  lib/              # api.ts (service layer), repo-reader.ts, artifact-store.ts, queries
+  store/            # Zustand UI state
+  types/            # Shared TypeScript types
+```
+
+All pages consume data through `src/lib/api.ts` and TanStack Query hooks in `src/lib/queries.ts`.
+
+## Deployed UI
+
+Docker/ECS packaging lives under repo deploy scripts (e.g. `backend/scripts/push-frontend-ecr.ps1`).
+Set `BACKEND_ROOT=/backend` in the container so API routes can reach agent config and inputs.

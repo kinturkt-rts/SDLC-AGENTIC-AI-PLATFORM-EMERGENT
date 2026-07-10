@@ -177,7 +177,7 @@ $ProductAgentExtra = if ($ProductJiraEnabled) {
 $PipelineAgents = @(
     @{ awsName = "product_agent"; bundle = "product-agent"; node = $true; extra = $ProductAgentExtra },
     @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
-    @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @() },
+    @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
     @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
     @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = $GitLabAgentMcpEnv },
     @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() }

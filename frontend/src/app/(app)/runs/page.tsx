@@ -22,6 +22,15 @@ import type { PipelineRun, RunStatus } from '@/src/types';
 
 const STATUS_OPTIONS: (RunStatus | 'all')[] = ['all', 'running', 'paused', 'queued', 'completed', 'failed', 'cancelled'];
 
+function runActivityMs(run: PipelineRun): number {
+  const finished = run.finishedAt ? Date.parse(run.finishedAt) : 0;
+  const started = Date.parse(run.startedAt);
+  return Math.max(
+    Number.isFinite(finished) ? finished : 0,
+    Number.isFinite(started) ? started : 0,
+  );
+}
+
 export default function RunsPage() {
   const { data: runs, isLoading } = useRuns();
   const { data: projects } = useProjects();
@@ -40,7 +49,7 @@ export default function RunsPage() {
       .filter((r) => !runsProjectId || r.projectId === runsProjectId)
       .filter((r) => filter === 'all' || r.status === filter),
     q,
-  );
+  ).sort((a, b) => runActivityMs(b) - runActivityMs(a));
 
   const columns: Column<PipelineRun>[] = [
     { key: 'id', header: 'Run', render: (r) => <span className="font-mono text-xs text-foreground" title={r.id}>{r.id.slice(0, 8)}…</span> },
@@ -49,7 +58,7 @@ export default function RunsPage() {
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
     { key: 'currentAgent', header: 'Current agent', render: (r) => <span className="text-muted-foreground">{r.currentAgent ?? '\u2014'}</span> },
     { key: 'elapsed', header: 'Elapsed', render: (r) => <span className="text-muted-foreground">{formatDuration(r.elapsedSec)}</span> },
-    { key: 'started', header: 'Started', render: (r) => <span className="text-muted-foreground">{formatRelative(r.startedAt)}</span> },
+    { key: 'updated', header: 'Updated', render: (r) => <span className="text-muted-foreground">{formatRelative(r.finishedAt ?? r.startedAt)}</span> },
   ];
 
   return (

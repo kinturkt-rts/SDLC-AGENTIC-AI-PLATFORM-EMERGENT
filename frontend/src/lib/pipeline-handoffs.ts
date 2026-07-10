@@ -206,6 +206,15 @@ export async function gitlabHandoffExistsForRun(runId: string, slug: string): Pr
   return false;
 }
 
+/** True only when a GitLab publish handoff exists AND it actually succeeded. */
+export async function gitlabPublishSucceededForRun(runId: string, slug: string): Promise<boolean> {
+  const gitlab = await loadFirstGitlabHandoff(runId, slug.trim().toLowerCase());
+  if (!gitlab) return false;
+  const status = (gitlab.status ?? '').toLowerCase();
+  if (status === 'failed' || status === 'error') return false;
+  return Boolean(gitlab.branchUrl || gitlab.repoUrl || gitlab.mergeRequestUrl || status === 'published');
+}
+
 /** True when developer-agent wrote its completion handoff for this run. */
 export async function developerHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
   return (await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase())) !== null;

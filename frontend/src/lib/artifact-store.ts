@@ -343,6 +343,15 @@ export async function getS3RunLastModifiedMs(runId: string): Promise<number> {
   return s3RunLatestModifiedMs(runId);
 }
 
+export async function s3RunHasAppCode(runId: string): Promise<boolean> {
+  if (!isS3Store()) return false;
+  const files = await listS3RunArtifacts(runId);
+  return files.some((file) => {
+    const key = file.key.replace(/\\/g, '/');
+    return /\/app\/.+\.py$/.test(key) || /\/requirements\.txt$/.test(key);
+  });
+}
+
 export async function getS3RunEarliestModifiedMs(runId: string): Promise<number> {
   const files = await listS3RunArtifacts(runId);
   return earliestModifiedMs(files);
@@ -353,7 +362,6 @@ export async function getS3RunLastModified(runId: string): Promise<string> {
   return ms ? new Date(ms).toISOString() : new Date().toISOString();
 }
 
-/** Resolve the newest S3 run folder for a target app when local context lacks runId. */
 export async function findLatestS3RunIdForApp(
   targetApp: string,
   cache?: Map<string, string>,

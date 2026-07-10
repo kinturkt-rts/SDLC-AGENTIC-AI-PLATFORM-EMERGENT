@@ -1317,6 +1317,31 @@ def _deployment_handoff(app: str, written_files: list[str]) -> dict[str, Any]:
 
 # Agent Tools
 
+
+def _refresh_developer_handoff_safe() -> None:
+    """Persist an in-progress developer-handoff as files land.
+
+    The handoff is normally written once in ``run_task``'s ``finally`` block. When the
+    developer-agent runtime is killed at its A2A timeout, that final write is lost even
+    though app code already streamed to S3. Refreshing the handoff incrementally means a
+    mid-run termination still leaves a usable handoff for gitlab-agent / qa-agent.
+    Best-effort: never raise into the calling tool.
+    """
+    ctx = _run_context
+    if ctx is None or not resolve_run_id(ctx):
+        return
+    written = _dedupe_preserve_order(_written_files)
+    if not written:
+        return
+    app = slugify(str(ctx.get("targetApp") or ctx.get("target_app") or ""))
+    if not app:
+        return
+    try:
+        _persist_developer_handoff(app, ctx, written, status="in_progress")
+    except Exception:
+        logger.debug("[developer-agent] incremental handoff refresh failed", exc_info=True)
+
+
 @tool
 def dev_list_tree(service: str, subpath: str = "") -> str:
     """List files under the service app root (optionally under subpath)."""
@@ -1377,6 +1402,9 @@ def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
         if _run_context is not None:
             content = (dest / rel).read_bytes()
             write_repo_artifact(_cloud_artifact_rel(local_full), content, context=_run_context)
+
+    if result["copied"]:
+        _refresh_developer_handoff_safe()
 
     return format_scaffold_report(result, service=slugify(service))
 
@@ -1479,6 +1507,9 @@ def dev_write_files(files: dict[str, str]) -> str:
         if _run_context is not None:
             write_repo_artifact(_cloud_artifact_rel(rel), content, context=_run_context)
         written.append(rel)
+
+    if written:
+        _refresh_developer_handoff_safe()
 
     summary = f"Wrote {len(written)} file(s)"
     if errors:

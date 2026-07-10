@@ -63,7 +63,8 @@
       "env": {
         "AGENTCORE_DATABASE_USE_POSTGRES": "true",
         "CODING_MODEL_ID": "us.anthropic.claude-opus-4-6-v1"
-      }
+      },
+      "notes": "AGENTCORE_DATABASE_USE_POSTGRES gates whether the live Postgres MCP tool is attached at agent-build time (deploy/agentcore/agentcore_runtime/bundles.py:206). It was previously unset live (silently dropped by a batch redeploy) because scripts/deploy-agentcore-agents.ps1 had an empty extra=@() for database_agent with no wiring for this flag. Fixed 2026-07-10: the script now always passes AGENTCORE_DATABASE_USE_POSTGRES=true for database_agent, and the runtime was redeployed (version 21) to restore it."
     },
     "developer-agent": {
       "deployed": true,

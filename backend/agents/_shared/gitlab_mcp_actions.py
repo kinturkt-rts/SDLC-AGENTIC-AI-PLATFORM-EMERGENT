@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -385,7 +386,33 @@ def _is_branch_not_found(exc: BaseException) -> bool:
 
 def _run(coro: Any) -> dict[str, Any]:
     try:
-        return asyncio.run(coro)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running (CLI / local pipeline) — safe to use asyncio.run().
+            return asyncio.run(coro)
+        # Already inside an event loop (e.g. AgentCore A2A server). asyncio.run() would raise
+        # "cannot be called from a running event loop", so drive the coroutine to completion on a
+        # dedicated loop in a worker thread instead.
+        box: dict[str, Any] = {}
+
+        def _worker() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                box["value"] = loop.run_until_complete(coro)
+            except BaseException as exc:  # noqa: BLE001 - surfaced via box["error"]
+                box["error"] = exc
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
+        thread = threading.Thread(target=_worker, name="gitlab-mcp-publish")
+        thread.start()
+        thread.join()
+        if "error" in box:
+            raise box["error"]
+        return box["value"]
     except BaseException as exc:
         return {"ok": False, "error": _mcp_error_message(exc)}
 

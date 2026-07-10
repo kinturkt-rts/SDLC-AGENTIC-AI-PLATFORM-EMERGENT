@@ -2,8 +2,12 @@ import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
 import { invalidateRunsCache } from './runs-cache';
-import { gitlabHandoffExistsForRun, waitForDeveloperHandoffForRun } from './pipeline-handoffs';
+import {
+  gitlabPublishSucceededForRun,
+  waitForDeveloperHandoffForRun,
+} from './pipeline-handoffs';
 import { invokeAgentRuntimeA2a } from './agentcore-invoke';
+import { s3RunHasAppCode } from './artifact-store';
 
 export interface PipelineTaskOptions {
   targetApp: string;
@@ -83,8 +87,8 @@ async function updateRunJson(
   }
 }
 
-async function gitlabHandoffExists(runId: string, app: string): Promise<boolean> {
-  return gitlabHandoffExistsForRun(runId, app);
+async function gitlabPublished(runId: string, app: string): Promise<boolean> {
+  return gitlabPublishSucceededForRun(runId, app);
 }
 
 async function finalizeRunJson(
@@ -112,7 +116,7 @@ async function invokeGitlabFallback(
   if (glResult.text) {
     await appendLog(logPath, `[gitlab-fallback] cloud response: ${glResult.text.slice(0, 1500)}\n`);
   }
-  if (glResult.status === 'success' && (await gitlabHandoffExists(runId, app))) {
+  if (glResult.status === 'success' && (await gitlabPublished(runId, app))) {
     await appendLog(logPath, '[gitlab-fallback] Cloud gitlab-agent succeeded.\n');
   } else {
     await appendLog(
@@ -159,18 +163,30 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
 
   if (!taskOpts.skipGitlab) {
     await appendLog(logPath, '--- gitlab ---\n');
-    if (await gitlabHandoffExists(runId, app)) {
-      await appendLog(logPath, '[gitlab] Handoff already exists - orchestrator published. Skipping fallback.\n');
+    if (await gitlabPublished(runId, app)) {
+      await appendLog(logPath, '[gitlab] Publish succeeded (orchestrator). Skipping fallback.\n');
     } else if (!taskOpts.skipDeveloper) {
-      await appendLog(logPath, '[gitlab-fallback] Waiting for developer-handoff before publish...\n');
-      const devReady = await waitForDeveloperHandoffForRun(runId, app, { timeoutSec });
-      if (!devReady) {
+      await appendLog(logPath, '[gitlab-fallback] Waiting for developer output before publish...\n');
+      // Handoff is written last and can be lost to a developer-agent timeout kill, so also
+      // accept app code that already landed in S3 as proof the developer produced output.
+      const handoffWaitSec = Math.min(timeoutSec, 180);
+      const devReady = await waitForDeveloperHandoffForRun(runId, app, {
+        timeoutSec: handoffWaitSec,
+      });
+      const hasAppCode = devReady || (await s3RunHasAppCode(runId));
+      if (hasAppCode) {
+        if (!devReady) {
+          await appendLog(
+            logPath,
+            '[gitlab-fallback] developer-handoff missing but app code is in S3 — publishing anyway.\n',
+          );
+        }
+        await invokeGitlabFallback(runId, app, logPath, timeoutSec);
+      } else {
         await appendLog(
           logPath,
-          '[gitlab-fallback] developer-handoff not ready — skipping GitLab publish (artifacts remain in S3).\n',
+          '[gitlab-fallback] no developer output in S3 — skipping GitLab publish (developer-agent produced no app code).\n',
         );
-      } else {
-        await invokeGitlabFallback(runId, app, logPath, timeoutSec);
       }
     } else {
       await invokeGitlabFallback(runId, app, logPath, timeoutSec);
@@ -178,18 +194,42 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   }
 
   const textLower = text.toLowerCase();
-  if (result.status === 'success' && !textLower.includes('pipeline failed')) {
+  const orchestratorOk = result.status === 'success' && !textLower.includes('pipeline failed');
+  const gitlabDidPublish = !taskOpts.skipGitlab && (await gitlabPublished(runId, app));
+
+  // A run is only truly complete when GitLab published (or GitLab was skipped and the
+  // orchestrator succeeded). Otherwise report the real failure instead of a false green
+  // pipeline that masks a developer/gitlab step that produced nothing.
+  if (taskOpts.skipGitlab) {
+    if (orchestratorOk) {
+      await finalizeRunJson(runId, { status: 'completed' });
+    } else {
+      const isTimeout = /timeout|timed.?out/i.test(result.error ?? '');
+      await finalizeRunJson(runId, {
+        status: 'failed',
+        error: isTimeout
+          ? 'Orchestrator HTTP timeout - pipeline may still be running in cloud (check CloudWatch)'
+          : (result.error ?? 'orchestrator did not complete - check CloudWatch logs'),
+      });
+    }
+    return;
+  }
+
+  if (gitlabDidPublish) {
     await finalizeRunJson(runId, { status: 'completed' });
-  } else if (!taskOpts.skipGitlab && (await gitlabHandoffExists(runId, app))) {
-    // Orchestrator may have timed out after gitlab-agent succeeded - handoff confirms publish.
-    await finalizeRunJson(runId, { status: 'completed' });
+  } else if (await s3RunHasAppCode(runId)) {
+    await finalizeRunJson(runId, {
+      status: 'failed',
+      error:
+        'App code was generated but GitLab publish did not complete - artifacts remain in S3 (check gitlab-agent / CloudWatch)',
+    });
   } else {
     const isTimeout = /timeout|timed.?out/i.test(result.error ?? '');
     await finalizeRunJson(runId, {
       status: 'failed',
       error: isTimeout
-        ? 'Orchestrator HTTP timeout - pipeline may still be running in cloud (check CloudWatch)'
-        : (result.error ?? 'orchestrator did not complete - check CloudWatch logs'),
+        ? 'Developer/GitLab step timed out - no app code was published (check CloudWatch)'
+        : (result.error ?? 'Pipeline stopped before publishing app code - check CloudWatch logs'),
     });
   }
 }

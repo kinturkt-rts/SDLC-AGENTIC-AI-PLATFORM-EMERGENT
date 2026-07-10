@@ -1,8 +1,9 @@
 import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
-/** No log/S3 activity for this long → treat "running" as stalled (orchestrator timeout is up to 30 min). */
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
+
+export const RUN_NO_PROGRESS_IDLE_MS = 12 * 60 * 1000;
 
 export interface ReconcileRunInput {
   status: RunStatus;
@@ -20,7 +21,6 @@ export interface ReconcileRunResult {
   error?: string | null;
 }
 
-/** Cloud invoke may log orchestrator status:error before gitlab-fallback finishes. */
 function cloudGitlabFallbackPending(log: string): boolean {
   if (/"skip_gitlab":\s*true/i.test(log)) return false;
   if (!/--- gitlab ---/i.test(log)) return true;
@@ -80,7 +80,6 @@ export function parseLogTerminalStatus(
   return null;
 }
 
-/** Parse skip_* flags from the orchestrator invocation JSON in the log header. */
 export function parseLogSkipFlags(
   log: string | null,
 ): Partial<Record<SdlcPhase, boolean>> {
@@ -136,7 +135,6 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     return { status: 'completed', currentStep: null };
   }
 
-  // All MVP artifacts exist - but not if GitLab was required and never published.
   if (mvpPipelineComplete(input.phaseDone)) {
     const skipGitlab = parseLogSkipFlags(input.logText).deploy === true;
     if (skipGitlab || input.phaseDone.deploy) {
@@ -162,15 +160,16 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
 
   const idleMs = Date.now() - lastRunActivityMs(input);
   const isActiveStatus = input.status === 'running' || input.status === 'queued';
+  const anyProgress = MVP_TIMELINE_PHASES.some((phase) => input.phaseDone[phase]);
+  const idleThresholdMs = anyProgress ? RUN_LIVE_IDLE_MS : RUN_NO_PROGRESS_IDLE_MS;
 
-  if (isActiveStatus && idleMs > RUN_LIVE_IDLE_MS) {
-    const anyProgress = MVP_TIMELINE_PHASES.some((phase) => input.phaseDone[phase]);
+  if (isActiveStatus && idleMs > idleThresholdMs) {
     return {
       status: 'failed',
       currentStep: null,
       error: anyProgress
         ? 'Pipeline stalled (no activity in the last hour)'
-        : 'Pipeline abandoned (never progressed)',
+        : 'Pipeline abandoned (no activity since it started - never completed product-agent)',
     };
   }
 
