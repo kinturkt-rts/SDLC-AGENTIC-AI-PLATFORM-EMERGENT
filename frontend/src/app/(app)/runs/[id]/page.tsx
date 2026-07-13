@@ -32,10 +32,12 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { LogTable } from '@/src/components/logs/LogTable';
+import { useRouter } from 'next/navigation';
 import { useRun, useRunEvents, useRunHandoffs, useRunLogs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
+import { useUiStore } from '@/src/store/ui-store';
 import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
 
 const STEP_ICON: Record<StepStatus, typeof Clock> = {
@@ -121,6 +123,7 @@ function RunEventItem({ event }: { event: RunEvent }) {
 }
 
 export default function RunDetailPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const { data: run, isLoading } = useRun(params.id);
   const isLive = run?.status === 'running' || run?.status === 'paused';
   const { data: events } = useRunEvents(params.id, isLive);
@@ -128,6 +131,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: handoffs } = useRunHandoffs(params.id, isLive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
+  const setArtifactsProjectId = useUiStore((s) => s.setArtifactsProjectId);
 
   const [hitlOverride, setHitlOverride] = React.useState<Record<string, 'approved' | 'rejected'>>({});
 
@@ -257,8 +261,16 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                     <ExternalLink className="h-3 w-3 opacity-70" />
                   </a>
                 ) : null}
-                <Button asChild variant="outline" size="sm" className="h-8 border-white/[0.08]">
-                  <Link href="/artifacts">Browse artifacts</Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/[0.08]"
+                  onClick={() => {
+                    if (run?.projectId) setArtifactsProjectId(run.projectId);
+                    router.push('/artifacts');
+                  }}
+                >
+                  Browse artifacts
                 </Button>
               </div>
             </Card>

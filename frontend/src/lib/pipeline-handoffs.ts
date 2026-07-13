@@ -60,8 +60,10 @@ function parseDeveloperHandoff(
   const files = Array.isArray(data.writtenFiles) ? data.writtenFiles : [];
   return {
     targetApp: String(data.targetApp ?? ''),
+    status: String(data.status ?? 'unknown'),
     writtenFilesCount: files.length,
     validationStatus: parseValidationStatus(data),
+    error: typeof data.error === 'string' ? data.error : null,
     source,
     path: artifactPath,
   };
@@ -220,7 +222,21 @@ export async function developerHandoffExistsForRun(runId: string, slug: string):
   return (await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase())) !== null;
 }
 
-/** Poll until developer-handoff.json exists (cloud runs can finish developer after orchestrator HTTP returns). */
+/** True only when developer-agent reached a successful terminal handoff. */
+export async function developerHandoffSucceededForRun(
+  runId: string,
+  slug: string,
+): Promise<boolean> {
+  const developer = await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase());
+  if (!developer) return false;
+  const status = developer.status.trim().toLowerCase();
+  if (status === 'failed' || status === 'error' || developer.validationStatus === 'failed') {
+    return false;
+  }
+  return status === 'completed' || developer.validationStatus === 'passed';
+}
+
+/** Poll until developer-handoff.json reports success. */
 export async function waitForDeveloperHandoffForRun(
   runId: string,
   slug: string,
@@ -232,7 +248,7 @@ export async function waitForDeveloperHandoffForRun(
   const normalized = slug.trim().toLowerCase();
 
   while (Date.now() < deadline) {
-    if (await developerHandoffExistsForRun(runId, normalized)) return true;
+    if (await developerHandoffSucceededForRun(runId, normalized)) return true;
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   return false;

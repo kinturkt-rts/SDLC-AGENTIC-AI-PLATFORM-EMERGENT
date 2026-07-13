@@ -1,4 +1,4 @@
-import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
+import { MVP_TIMELINE_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
@@ -43,10 +43,11 @@ export function parseLogTerminalStatus(
     return /^status:\s*success\b/i.test(trimmed);
   });
 
+  // Only true "pipeline finished" markers count. Step-level markers like
+  // "[apply-rds-local] ok" or a mid-run "status: success" are NOT sufficient — those
+  // just say one substep finished, not that the whole pipeline reached publish.
   if (
     lower.includes('sdlc pipeline completed') ||
-    orchestratorStatusSuccess ||
-    /\[apply-rds-local\]\s+ok\b/i.test(log) ||
     /\[gitlab\]\s+handoff already exists/i.test(log) ||
     /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log)
   ) {
@@ -55,6 +56,16 @@ export function parseLogTerminalStatus(
 
   if (/\[cloud-invoke\]\s+failed/i.test(log)) {
     return { status: 'failed', error: 'Cloud orchestrator invoke failed' };
+  }
+
+  if (
+    /\[gitlab-fallback\]\s+developer-agent did not reach a completed handoff/i.test(log) ||
+    /\[dev-fallback\]\s+handoff status after wait:\s*not completed/i.test(log)
+  ) {
+    return {
+      status: 'failed',
+      error: 'developer-agent did not reach a completed handoff after retries',
+    };
   }
 
   const errLine = log
@@ -128,18 +139,66 @@ export function firstIncompleteMvpPhase(
   return null;
 }
 
-/** Derive truthful run status from logs, S3 artifacts, and last activity - not stale run.json alone. */
-export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult {
-  const terminal = parseLogTerminalStatus(input.logText);
-  if (terminal?.status === 'completed') {
-    return { status: 'completed', currentStep: null };
+/** Compute effective phaseDone honoring parsed skip flags. */
+function effectivePhaseDone(
+  phaseDone: Record<SdlcPhase, boolean>,
+  skipFlags: Partial<Record<SdlcPhase, boolean>>,
+): Record<SdlcPhase, boolean> {
+  const out = { ...phaseDone };
+  for (const key of Object.keys(skipFlags) as SdlcPhase[]) {
+    if (skipFlags[key]) out[key] = true;
   }
+  return out;
+}
 
-  if (mvpPipelineComplete(input.phaseDone)) {
-    const skipGitlab = parseLogSkipFlags(input.logText).deploy === true;
-    if (skipGitlab || input.phaseDone.deploy) {
-      return { status: 'completed', currentStep: null };
-    }
+function firstMissingRequired(
+  phaseDone: Record<SdlcPhase, boolean>,
+  skipFlags: Partial<Record<SdlcPhase, boolean>>,
+): SdlcPhase | null {
+  for (const phase of MVP_TIMELINE_PHASES) {
+    if (skipFlags[phase]) continue;
+    if (!phaseDone[phase]) return phase;
+  }
+  return null;
+}
+
+function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
+  const label = PHASE_DISPLAY_LABEL[missing] ?? missing;
+  return {
+    status: 'failed',
+    currentStep: PHASE_AGENT[missing] ?? null,
+    error:
+      `Pipeline stopped before ${label} finished. ` +
+      'Check the developer and GitLab handoffs for the failure reason.',
+  };
+}
+
+/**
+ * Derive truthful run status from verified evidence, not just whatever run.json / logs claim.
+ *
+ * Rules (in order):
+ *   1. VERIFIED SUCCESS - every non-skipped required MVP phase has real artifacts →
+ *      completed. This is the ONLY path to a green pipeline.
+ *   2. Explicit failure signals (log/run.json) → failed.
+ *   3. Claimed completion (from run.json OR a "pipeline completed" log line) that
+ *      CANNOT be verified against artifacts → failed with the first missing phase named,
+ *      as long as we have some evidence the run actually started in the artifact store.
+ *      This is how a run that silently died mid-way stops showing as "green".
+ *   4. Claimed completion with NO artifact evidence at all (very old runs whose S3
+ *      lifecycle has purged everything) → trust the recorded status; we have no way to
+ *      disprove it and downgrading them all to failed would be dishonest.
+ *   5. Otherwise fall through to active/stalled logic.
+ */
+export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult {
+  const skipFlags = parseLogSkipFlags(input.logText);
+  const effectiveDone = effectivePhaseDone(input.phaseDone, skipFlags);
+  const missingRequired = firstMissingRequired(input.phaseDone, skipFlags);
+  const verifiedComplete = missingRequired === null;
+  const hasAnyEvidence = MVP_TIMELINE_PHASES.some((p) => input.phaseDone[p]);
+  const terminal = parseLogTerminalStatus(input.logText);
+
+  if (verifiedComplete) {
+    return { status: 'completed', currentStep: null };
   }
 
   if (terminal?.status === 'failed') {
@@ -150,7 +209,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     };
   }
 
-  if (input.status === 'completed' || input.status === 'failed' || input.status === 'cancelled') {
+  if (input.status === 'failed' || input.status === 'cancelled') {
     return {
       status: input.status,
       currentStep: null,
@@ -158,9 +217,21 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     };
   }
 
+  const claimsCompleted = input.status === 'completed' || terminal?.status === 'completed';
+  if (claimsCompleted) {
+    // Claimed completion but at least one required phase is unverifiable.
+    // If there is *any* evidence in the artifact store for this run, the pipeline
+    // clearly ran but didn't finish → mark it failed with the missing phase named.
+    // If there is no evidence at all (old run, artifacts pruned), trust run.json.
+    if (hasAnyEvidence && missingRequired) {
+      return partialCompletionFailure(missingRequired);
+    }
+    return { status: 'completed', currentStep: null };
+  }
+
   const idleMs = Date.now() - lastRunActivityMs(input);
   const isActiveStatus = input.status === 'running' || input.status === 'queued';
-  const anyProgress = MVP_TIMELINE_PHASES.some((phase) => input.phaseDone[phase]);
+  const anyProgress = hasAnyEvidence;
   const idleThresholdMs = anyProgress ? RUN_LIVE_IDLE_MS : RUN_NO_PROGRESS_IDLE_MS;
 
   if (isActiveStatus && idleMs > idleThresholdMs) {
@@ -174,7 +245,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   if (isActiveStatus) {
-    const phase = firstIncompleteMvpPhase(input.phaseDone);
+    const phase = firstIncompleteMvpPhase(effectiveDone);
     return {
       status: 'running',
       currentStep: phase ? PHASE_AGENT[phase] : null,

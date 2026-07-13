@@ -3,11 +3,28 @@ import path from 'path';
 import { getBackendRoot } from './repo-root';
 import { invalidateRunsCache } from './runs-cache';
 import {
+  developerHandoffSucceededForRun,
   gitlabPublishSucceededForRun,
   waitForDeveloperHandoffForRun,
 } from './pipeline-handoffs';
 import { invokeAgentRuntimeA2a } from './agentcore-invoke';
 import { s3RunHasAppCode } from './artifact-store';
+
+const DEV_TASK_DB = [
+  'Implement API surface from designDocPath as FastAPI routes.',
+  'Read db/HANDOFF.md and every db/sql/*.sql before models. Include Postgres parity',
+  '(psycopg + postgresql+psycopg://, dialect-guarded database.py, ENUM/UUID variants),',
+  'Pydantic response schemas, baseline pytest, and README setup + uvicorn instructions.',
+  'If deliveryProfile.requiresStreamlit is true, add ui/streamlit_app.py per Pattern C.',
+  'Ensure the developer handoff (status=completed) is written before finishing.',
+].join(' ');
+
+const DEV_TASK_NO_DB =
+  'Implement API surface and rules from designDocPath as FastAPI routes, Pydantic schemas, ' +
+  'and baseline pytest. README with uvicorn + /docs. Ensure the developer handoff ' +
+  '(status=completed) is written before finishing.';
+
+const DEFAULT_DEVELOPER_FALLBACK_MODEL = 'us.anthropic.claude-sonnet-4-6';
 
 export interface PipelineTaskOptions {
   targetApp: string;
@@ -91,12 +108,83 @@ async function gitlabPublished(runId: string, app: string): Promise<boolean> {
   return gitlabPublishSucceededForRun(runId, app);
 }
 
-async function finalizeRunJson(
+export async function finalizeRunJson(
   runId: string,
   patch: { status?: string; currentStep?: string; error?: string | null; finished?: boolean },
 ): Promise<void> {
   await updateRunJson(runId, patch);
   invalidateRunsCache();
+}
+
+function envInt(name: string, fallback: number): number {
+  const parsed = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function envBool(name: string, fallback = false): boolean {
+  const raw = (process.env[name] ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return fallback;
+}
+
+function developerFallbackModel(): string {
+  const raw = process.env.DEVELOPER_AGENT_FALLBACK_MODEL_ID;
+  if (raw === undefined) return DEFAULT_DEVELOPER_FALLBACK_MODEL;
+  return raw.trim();
+}
+
+/**
+ * Invoke developer-agent directly (bypasses orchestrator) with the Sonnet fallback so
+ * a killed orchestrator session cannot leave the run stuck at status="in_progress".
+ * Returns true when the resulting developer handoff reaches status=completed.
+ */
+async function invokeDeveloperFallback(
+  runId: string,
+  app: string,
+  logPath: string,
+  timeoutSec: number,
+  attempt: number,
+  totalAttempts: number,
+  skipDb: boolean,
+): Promise<boolean> {
+  await updateRunJson(runId, { currentStep: 'developer-agent' });
+  const fallbackModel = developerFallbackModel();
+  const baseTask = skipDb ? DEV_TASK_NO_DB : DEV_TASK_DB;
+  const task =
+    `${baseTask}\n\nRETRY NOTE: a previous developer-agent attempt did not reach a ` +
+    `completed handoff. Re-implement the app end-to-end and ensure the developer ` +
+    `handoff status is "completed" before returning.\n\n` +
+    `Context:\n${JSON.stringify(
+      {
+        targetApp: app,
+        runId,
+        ...(fallbackModel ? { codingModelOverride: fallbackModel } : {}),
+      },
+      null,
+      2,
+    )}`;
+
+  await appendLog(
+    logPath,
+    `[dev-fallback] Invoking developer-agent directly (attempt ${attempt}/${totalAttempts}` +
+      `${fallbackModel ? `, model=${fallbackModel}` : ''}).\n`,
+  );
+
+  const result = await invokeAgentRuntimeA2a('developer-agent', task, { timeoutSec });
+  await appendLog(logPath, `[dev-fallback] status: ${result.status}\n`);
+  if (result.error) await appendLog(logPath, `[dev-fallback] error: ${result.error}\n`);
+  if (result.text) {
+    await appendLog(logPath, `[dev-fallback] response: ${result.text.slice(0, 1500)}\n`);
+  }
+
+  const handoffWaitSec = envInt('SDLC_DEV_FALLBACK_HANDOFF_WAIT_SEC', 900);
+  const ready = await waitForDeveloperHandoffForRun(runId, app, { timeoutSec: handoffWaitSec });
+  await appendLog(
+    logPath,
+    `[dev-fallback] handoff status after wait: ${ready ? 'completed' : 'not completed'}\n`,
+  );
+  return ready;
 }
 
 async function invokeGitlabFallback(
@@ -109,21 +197,31 @@ async function invokeGitlabFallback(
   const glTask =
     `Publish SDLC artifacts for ${app} to GitLab branch sdlc/${app}.\n\n` +
     `Context:\n${JSON.stringify({ targetApp: app, runId }, null, 2)}`;
-  await appendLog(logPath, '[gitlab-fallback] Invoking gitlab-agent on AgentCore...\n');
-  const glResult = await invokeAgentRuntimeA2a('gitlab-agent', glTask, { timeoutSec });
-  await appendLog(logPath, `[gitlab-fallback] cloud status: ${glResult.status}\n`);
-  if (glResult.error) await appendLog(logPath, `[gitlab-fallback] cloud error: ${glResult.error}\n`);
-  if (glResult.text) {
-    await appendLog(logPath, `[gitlab-fallback] cloud response: ${glResult.text.slice(0, 1500)}\n`);
-  }
-  if (glResult.status === 'success' && (await gitlabPublished(runId, app))) {
-    await appendLog(logPath, '[gitlab-fallback] Cloud gitlab-agent succeeded.\n');
-  } else {
+  // Publish is idempotent (same branch/artifacts), so retry transient gitlab-agent failures.
+  const maxAttempts = envInt('SDLC_GITLAB_PUBLISH_RETRIES', 2) + 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await appendLog(
       logPath,
-      '[gitlab-fallback] Cloud gitlab-agent failed or no handoff - artifacts remain in S3.\n',
+      `[gitlab-fallback] Invoking gitlab-agent on AgentCore (attempt ${attempt}/${maxAttempts})...\n`,
     );
+    const glResult = await invokeAgentRuntimeA2a('gitlab-agent', glTask, { timeoutSec });
+    await appendLog(logPath, `[gitlab-fallback] cloud status: ${glResult.status}\n`);
+    if (glResult.error) await appendLog(logPath, `[gitlab-fallback] cloud error: ${glResult.error}\n`);
+    if (glResult.text) {
+      await appendLog(logPath, `[gitlab-fallback] cloud response: ${glResult.text.slice(0, 1500)}\n`);
+    }
+    if (glResult.status === 'success' && (await gitlabPublished(runId, app))) {
+      await appendLog(logPath, '[gitlab-fallback] Cloud gitlab-agent succeeded.\n');
+      return;
+    }
+    if (attempt < maxAttempts) {
+      await appendLog(logPath, '[gitlab-fallback] Publish not confirmed - retrying...\n');
+    }
   }
+  await appendLog(
+    logPath,
+    '[gitlab-fallback] Cloud gitlab-agent failed or no handoff - artifacts remain in S3.\n',
+  );
 }
 
 export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
@@ -161,35 +259,64 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   const text = result.text ?? '';
   await appendLog(logPath, `--- response ---\n${text.slice(0, 8000)}\n`);
 
+  let developerCompleted = false;
   if (!taskOpts.skipGitlab) {
     await appendLog(logPath, '--- gitlab ---\n');
     if (await gitlabPublished(runId, app)) {
       await appendLog(logPath, '[gitlab] Publish succeeded (orchestrator). Skipping fallback.\n');
+      developerCompleted = true;
     } else if (!taskOpts.skipDeveloper) {
       await appendLog(logPath, '[gitlab-fallback] Waiting for developer output before publish...\n');
-      // Handoff is written last and can be lost to a developer-agent timeout kill, so also
-      // accept app code that already landed in S3 as proof the developer produced output.
-      const handoffWaitSec = Math.min(timeoutSec, 180);
-      const devReady = await waitForDeveloperHandoffForRun(runId, app, {
+      const handoffWaitSec = Math.min(timeoutSec, envInt('SDLC_GITLAB_FALLBACK_HANDOFF_WAIT_SEC', 900));
+      developerCompleted = await waitForDeveloperHandoffForRun(runId, app, {
         timeoutSec: handoffWaitSec,
       });
-      const hasAppCode = devReady || (await s3RunHasAppCode(runId));
-      if (hasAppCode) {
-        if (!devReady) {
-          await appendLog(
-            logPath,
-            '[gitlab-fallback] developer-handoff missing but app code is in S3 — publishing anyway.\n',
-          );
-        }
-        await invokeGitlabFallback(runId, app, logPath, timeoutSec);
-      } else {
+
+      // If orchestrator's own retry loop got killed with its session, the frontend
+      // re-invokes developer-agent here so a stuck status="in_progress" handoff cannot
+      // silently masquerade as success (and cannot get partial code published to GitLab).
+      const maxFrontendAttempts = envInt('SDLC_DEVELOPER_FRONTEND_RETRY_ATTEMPTS', 1) + 1;
+      let attempt = 1;
+      while (!developerCompleted && attempt <= maxFrontendAttempts) {
+        const status = await developerHandoffSucceededForRun(runId, app);
         await appendLog(
           logPath,
-          '[gitlab-fallback] no developer output in S3 — skipping GitLab publish (developer-agent produced no app code).\n',
+          `[dev-fallback] Handoff not completed after wait (succeeded=${status}); re-invoking developer-agent.\n`,
         );
+        developerCompleted = await invokeDeveloperFallback(
+          runId,
+          app,
+          logPath,
+          timeoutSec,
+          attempt,
+          maxFrontendAttempts,
+          taskOpts.skipDb ?? false,
+        );
+        attempt += 1;
+      }
+
+      if (developerCompleted) {
+        await invokeGitlabFallback(runId, app, logPath, timeoutSec);
+      } else {
+        const allowPartial = envBool('SDLC_ALLOW_PARTIAL_PUBLISH', false);
+        const hasAppCode = await s3RunHasAppCode(runId);
+        if (allowPartial && hasAppCode) {
+          await appendLog(
+            logPath,
+            '[gitlab-fallback] developer handoff not completed but SDLC_ALLOW_PARTIAL_PUBLISH=true — publishing anyway.\n',
+          );
+          await invokeGitlabFallback(runId, app, logPath, timeoutSec);
+        } else {
+          await appendLog(
+            logPath,
+            '[gitlab-fallback] developer-agent did not reach a completed handoff after retries — NOT publishing partial code to GitLab.\n',
+          );
+        }
       }
     } else {
+      // skipDeveloper=true — orchestrator/gitlab-agent already covered by prior branch.
       await invokeGitlabFallback(runId, app, logPath, timeoutSec);
+      developerCompleted = true;
     }
   }
 
@@ -215,8 +342,14 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
     return;
   }
 
-  if (gitlabDidPublish) {
+  if (gitlabDidPublish && developerCompleted) {
     await finalizeRunJson(runId, { status: 'completed' });
+  } else if (!developerCompleted) {
+    await finalizeRunJson(runId, {
+      status: 'failed',
+      error:
+        'developer-agent did not reach a completed handoff after retries - partial app code was NOT published to GitLab (check CloudWatch developer_agent logs)',
+    });
   } else if (await s3RunHasAppCode(runId)) {
     await finalizeRunJson(runId, {
       status: 'failed',

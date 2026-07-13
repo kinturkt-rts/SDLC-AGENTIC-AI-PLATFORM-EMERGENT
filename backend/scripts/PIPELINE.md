@@ -34,9 +34,10 @@ Equivalent test wrapper:
 | 4 | developer-agent | FastAPI app under `target-apps/<feature>/` |
 | 5 | local verify | Import smoke + `pytest` in app folder |
 | 6 | **gitlab-agent** | MCP push to `sdlc/<feature>` on GitLab (when `GITLAB_*` in `.env`) |
-| 7 | qa-agent | Extended tests — **only with `-WithQa`** |
+| 7 | **devops-agent** | Terraform root + **ECS Fargate deploy → live ALB URL** — **only with `-WithDeploy`** |
+| 8 | qa-agent | Extended tests — **only with `-WithQa`** |
 
-GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. **devops-agent** and **security-agent** are not in `run-sdlc-local.ps1` yet — run manually after QA when needed.
+GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSONAL_ACCESS_TOKEN` and `GITLAB_PROJECT_PATH`. Use **`-SkipGitlab`** to skip. **security-agent** is not in `run-sdlc-local.ps1` yet — run manually after QA when needed.
 
 ---
 
@@ -59,6 +60,9 @@ GitLab publish runs **by default** after developer when `.env` has `GITLAB_PERSO
 | `-WithWebCrawler` | — | Optional scrape step (Firecrawl + Postgres) between architect and DB |
 | `-WithPostgres` | — | Legacy: force RDS apply (already default when DB runs) |
 | `-WithQa` | — | Run qa-agent after GitLab publish |
+| **`-WithDeploy`** | Docker Desktop + terraform + AWS SSO | devops-agent: Terraform + ECS Fargate deploy, prints live URL (see `infrastructure/README.md`) |
+| `-DeployPlanOnly` | `-WithDeploy` | `terraform plan` only — no AWS changes |
+| `-SkipDeploy` | — | Force-disable deploy even when `-WithDeploy` was passed |
 
 **Jira example:**
 

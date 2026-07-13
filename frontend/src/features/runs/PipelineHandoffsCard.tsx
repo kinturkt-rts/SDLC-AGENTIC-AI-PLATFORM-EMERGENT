@@ -29,6 +29,14 @@ function MetadataRow({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
+function handoffBadge(status: string): 'completed' | 'failed' | 'running' | 'queued' {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === 'completed' || normalized === 'published') return 'completed';
+  if (normalized === 'failed' || normalized === 'error') return 'failed';
+  if (normalized === 'in_progress' || normalized === 'running') return 'running';
+  return 'queued';
+}
+
 function resolveValidationLabel(
   validationStatus: 'passed' | 'failed' | null | undefined,
   developerStepStatus?: StepStatus,
@@ -66,7 +74,7 @@ export function PipelineHandoffsCard({
   const branchUrl = gitlab?.branchUrl ?? null;
   const repoUrl = gitlab?.repoUrl ?? null;
   const mrUrl = gitlab?.mergeRequestUrl ?? handoffs.contextMergeRequestUrl ?? null;
-  const hasAnything = Boolean(developer || branchUrl || repoUrl || mrUrl);
+  const hasAnything = Boolean(developer || gitlab || branchUrl || repoUrl || mrUrl);
 
   if (!hasAnything) {
     return null;
@@ -89,6 +97,19 @@ export function PipelineHandoffsCard({
               label="Files generated"
               value={`${developer.writtenFilesCount.toLocaleString()} file${developer.writtenFilesCount === 1 ? '' : 's'}`}
             />
+            <MetadataRow
+              label="Developer handoff"
+              value={
+                <StatusBadge
+                  status={handoffBadge(developer.status)}
+                  size="sm"
+                  label={developer.status.replaceAll('_', ' ')}
+                />
+              }
+            />
+            {developer.error ? (
+              <MetadataRow label="Developer error" value={<span className="text-red-400">{developer.error}</span>} />
+            ) : null}
             {validation ? (
               <MetadataRow
                 label="Validation"
@@ -98,10 +119,15 @@ export function PipelineHandoffsCard({
           </>
         ) : null}
 
-        {branchUrl || repoUrl || mrUrl ? (
+        {gitlab ? (
           <div className="space-y-2 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">GitLab</p>
             <div className="flex flex-col gap-1.5">
+              <StatusBadge
+                status={handoffBadge(gitlab.status)}
+                size="sm"
+                label={gitlab.status.replaceAll('_', ' ')}
+              />
               {branchUrl ? <MetaLink href={branchUrl} label="View branch on GitLab" /> : null}
               {repoUrl ? <MetaLink href={repoUrl} label="View repository on GitLab" /> : null}
               {mrUrl ? <MetaLink href={mrUrl} label="Open merge request" /> : null}

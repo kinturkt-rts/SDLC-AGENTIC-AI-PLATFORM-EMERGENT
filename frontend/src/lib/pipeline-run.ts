@@ -6,7 +6,7 @@ import { getBackendRoot } from './repo-root';
 import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './artifact-store';
 import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
-import { runOrchestratorCloud } from './orchestrator-cloud-run';
+import { finalizeRunJson, runOrchestratorCloud } from './orchestrator-cloud-run';
 
 const RUNS_CACHE_KEYS = [
   'listRuns',
@@ -230,6 +230,11 @@ export async function startPipeline(options: {
     }).catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err);
       await fs.appendFile(logPath, `\n[cloud-invoke] FAILED: ${message}\n`, 'utf-8');
+      // Mark the run terminal so the UI never shows a silently stuck "running" state.
+      await finalizeRunJson(runId, {
+        status: 'failed',
+        error: `Cloud orchestrator invoke failed: ${message.slice(0, 300)}`,
+      }).catch(() => {});
     });
 
     invalidateCacheKeys(...RUNS_CACHE_KEYS);
