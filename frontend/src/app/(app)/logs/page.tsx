@@ -55,6 +55,7 @@ function LogsInner() {
   const { data: runs } = useRuns();
   const { data: projects } = useProjects();
   const logsProjectId = useUiStore((s) => s.logsProjectId);
+  const setLogsProjectId = useUiStore((s) => s.setLogsProjectId);
 
   const [level, setLevel] = React.useState<LogEntry['level'] | 'all'>('all');
   const [q, setQ] = React.useState('');
@@ -77,6 +78,18 @@ function LogsInner() {
   React.useEffect(() => {
     if (paramRunId) setSelectedRunId(paramRunId);
   }, [paramRunId]);
+
+  // When arriving via "Open in Logs" (?runId=...), sync the Topbar project
+  // dropdown to that run's project so the page context matches the log content.
+  const syncedParamRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!paramRunId || syncedParamRef.current === paramRunId) return;
+    const run = (runs ?? []).find((r) => r.id === paramRunId);
+    if (run?.projectId && run.projectId !== logsProjectId) {
+      setLogsProjectId(run.projectId);
+    }
+    syncedParamRef.current = paramRunId;
+  }, [paramRunId, runs, logsProjectId, setLogsProjectId]);
 
   React.useEffect(() => {
     if (selectedRunId === 'all') return;
