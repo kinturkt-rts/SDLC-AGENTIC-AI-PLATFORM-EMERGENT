@@ -17,7 +17,8 @@ import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { useProjects, useRuns } from '@/src/lib/queries';
 import { filterRunsByQuery } from '@/src/lib/log-filters';
 import { useUiStore } from '@/src/store/ui-store';
-import { formatRelative, formatDuration } from '@/src/lib/format';
+import { formatRelative } from '@/src/lib/format';
+import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import type { PipelineRun, RunStatus } from '@/src/types';
 
 const STATUS_OPTIONS: (RunStatus | 'all')[] = ['all', 'running', 'paused', 'queued', 'completed', 'failed', 'cancelled'];
@@ -57,7 +58,19 @@ export default function RunsPage() {
     { key: 'pipeline', header: 'Pipeline', render: (r) => <span className="text-muted-foreground">{r.pipeline}</span> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
     { key: 'currentAgent', header: 'Current agent', render: (r) => <span className="text-muted-foreground">{r.currentAgent ?? '\u2014'}</span> },
-    { key: 'elapsed', header: 'Elapsed', render: (r) => <span className="text-muted-foreground">{formatDuration(r.elapsedSec)}</span> },
+    {
+      key: 'elapsed',
+      header: 'Elapsed',
+      render: (r) => (
+        <LiveElapsed
+          className="text-muted-foreground"
+          startedAt={r.startedAt}
+          finishedAt={r.finishedAt}
+          live={r.status === 'running' || r.status === 'paused'}
+          fallbackSec={r.elapsedSec}
+        />
+      ),
+    },
     { key: 'updated', header: 'Updated', render: (r) => <span className="text-muted-foreground">{formatRelative(r.finishedAt ?? r.startedAt)}</span> },
   ];
 

@@ -44,7 +44,8 @@ import {
   useArtifacts,
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
-import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
+import { formatRelative, titleCase } from '@/src/lib/format';
+import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
@@ -191,7 +192,7 @@ function LiveActivityFeed({ poll, hasActiveRuns }: { poll: boolean; hasActiveRun
         ) : items.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             {hasActiveRuns
-              ? 'Pipeline running — waiting for agent output…'
+              ? 'Pipeline running - waiting for agent output…'
               : 'No active pipelines. Submit a run to see live agent activity here.'}
           </p>
         ) : (
@@ -902,7 +903,13 @@ export default function DashboardPage() {
                     <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Timer className="h-3.5 w-3.5" /> {formatDuration(run.elapsedSec)}
+                    <Timer className="h-3.5 w-3.5" />
+                    <LiveElapsed
+                      startedAt={run.startedAt}
+                      finishedAt={run.finishedAt}
+                      live={run.status === 'running' || run.status === 'paused'}
+                      fallbackSec={run.elapsedSec}
+                    />
                   </div>
                 </Link>
               ))

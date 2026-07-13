@@ -35,6 +35,7 @@ import { LogTable } from '@/src/components/logs/LogTable';
 import { useRouter } from 'next/navigation';
 import { useRun, useRunEvents, useRunHandoffs, useRunLogs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { formatRelative, formatDuration } from '@/src/lib/format';
+import { LiveRunMonitoringLine } from '@/src/components/common/LiveElapsed';
 import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import { useUiStore } from '@/src/store/ui-store';
@@ -163,13 +164,12 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
   const controls = <StatusBadge status={status} />;
 
-  const runDescription = run
-    ? status === 'running' || status === 'paused'
-      ? `Started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)} · monitoring only (runs on AgentCore)`
-      : `Started ${formatRelative(run.startedAt)}${
+  const runDescription =
+    run && status !== 'running' && status !== 'paused'
+      ? `Started ${formatRelative(run.startedAt)}${
           run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
         }`
-    : undefined;
+      : undefined;
 
   return (
     <>
@@ -180,7 +180,13 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
       <PageHeader
         eyebrow={run ? `${run.id} \u00b7 ${run.pipeline}` : params.id}
         title={run?.projectName ?? params.id}
-        description={runDescription}
+        description={
+          run && (status === 'running' || status === 'paused') ? (
+            <LiveRunMonitoringLine startedAt={run.startedAt} live />
+          ) : (
+            runDescription
+          )
+        }
         actions={isLoading ? null : controls}
       />
 
