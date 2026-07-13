@@ -38,9 +38,14 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     );
   }
 
-  const projectRuns = (runs ?? []).filter((r) => r.projectId === params.id);
+  const projectRuns = (runs ?? [])
+    .filter((r) => r.projectId === params.id)
+    .slice()
+    .sort((a, b) => (b.finishedAt ?? b.startedAt).localeCompare(a.finishedAt ?? a.startedAt));
   const projectArtifacts = (artifacts ?? []).filter((a) => a.projectId === params.id);
   const projectContext = (context ?? []).filter((c) => c.projectId === params.id);
+  const latestRun = projectRuns[0];
+  const headerStatus = latestRun?.status ?? project?.pipelineStatus;
 
   const runCols: Column<PipelineRun>[] = [
     { key: 'id', header: 'Run', render: (r) => <span className="font-mono text-xs text-foreground">{r.id}</span> },
@@ -75,7 +80,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         title={project?.name ?? params.id}
         eyebrow={project?.slug}
         description={project?.description}
-        actions={project ? <StatusBadge status={project.pipelineStatus} /> : null}
+        actions={headerStatus ? <StatusBadge status={headerStatus} /> : null}
       />
 
       <Tabs defaultValue="overview">

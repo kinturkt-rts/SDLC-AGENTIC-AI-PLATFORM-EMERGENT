@@ -1001,26 +1001,45 @@ async function latestPipelineMtime(slug: string): Promise<string> {
 }
 
 async function inferPipelineStatus(slug: string, runId?: string): Promise<RunStatus> {
-  if (runId && UUID_RE.test(runId)) {
-    const uuidLive = await readUuidRunState(runId);
-    if (uuidLive?.status) {
-      if (uuidLive.status === 'cancelled') return 'cancelled';
-      if (uuidLive.status === 'failed') return 'failed';
-      if (uuidLive.status === 'completed') return 'completed';
-      if (uuidLive.status === 'running') return 'running';
-      if (uuidLive.status === 'queued') return 'queued';
+  // Prefer the newest UUID run and reconcile it the same way as /runs.
+  // Raw run.json often stays "queued"/"running" after AgentCore returns, which made
+  // the Projects page look permanently stale.
+  let candidateRunId = runId && UUID_RE.test(runId) ? runId : undefined;
+  if (!candidateRunId) {
+    const slugLive = await readRunState(slug);
+    const slugRunId = slugLive?.runId?.trim();
+    if (slugRunId && UUID_RE.test(slugRunId)) {
+      candidateRunId = slugRunId;
     }
   }
 
+  if (candidateRunId) {
+    const live = await readUuidRunState(candidateRunId);
+    const run = await buildPipelineRunFromLive(
+      slug,
+      live
+        ? { ...live, runId: live.runId || candidateRunId }
+        : {
+            runId: candidateRunId,
+            feature: slug,
+            targetApp: slug,
+            status: 'queued',
+            triggeredBy: 'frontend',
+          },
+    );
+    return run.status;
+  }
+
   const live = await readRunState(slug);
-  if (live) {
-    if (!runId || !live.runId || live.runId === runId) {
-      if (live.status === 'cancelled') return 'cancelled';
-      if (live.status === 'failed') return 'failed';
-      if (live.status === 'completed') return 'completed';
-      if (live.status === 'running') return 'running';
-      if (live.status === 'queued') return 'queued';
-    }
+  if (live?.status === 'cancelled' || live?.status === 'failed' || live?.status === 'completed') {
+    return live.status;
+  }
+
+  // Slug-keyed handoff files under agents/pipeline/ are legacy local-CLI artifacts.
+  // In S3 mode they are stale repo leftovers baked into the image; never let them
+  // mark a cloud project as completed when no UUID run is known.
+  if (isS3Store()) {
+    return live?.status === 'running' ? live.status : 'queued';
   }
   if (await handoffExists(slug, 'gitlab-handoff.json')) return 'completed';
   if (await handoffExists(slug, 'developer-handoff.json')) return 'completed';
@@ -1031,10 +1050,7 @@ async function inferPipelineStatus(slug: string, runId?: string): Promise<RunSta
   ) {
     return 'completed';
   }
-  if (isS3Store()) {
-    if (runId) return 'queued';
-    return 'queued';
-  }
+  if (live?.status === 'running') return live.status;
   if (await readContextFile(slug)) return 'queued';
   return 'queued';
 }

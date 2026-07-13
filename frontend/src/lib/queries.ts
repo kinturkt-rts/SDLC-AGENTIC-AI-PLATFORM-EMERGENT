@@ -38,20 +38,35 @@ export const useAgents = () =>
   });
 export const useAgent = (id: string) =>
   useQuery({ queryKey: queryKeys.agent(id), queryFn: () => api.getAgent(id), enabled: !!id });
-export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryFn: api.getProjects });
+export const useProjects = () =>
+  useQuery({
+    queryKey: queryKeys.projects,
+    queryFn: api.getProjects,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
 export const useProject = (id: string) =>
-  useQuery({ queryKey: queryKeys.project(id), queryFn: () => api.getProject(id), enabled: !!id });
+  useQuery({
+    queryKey: queryKeys.project(id),
+    queryFn: () => api.getProject(id),
+    enabled: !!id,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
 export const usePipelines = () => useQuery({ queryKey: queryKeys.pipelines, queryFn: api.getPipelines });
 export const useRuns = () =>
   useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.getRuns,
-    staleTime: 30_000,
+    staleTime: 10_000,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 15_000;
-      return false;
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 8_000;
+      return 20_000;
     },
+    refetchOnWindowFocus: true,
   });
 export const useRun = (id: string) =>
   useQuery({
