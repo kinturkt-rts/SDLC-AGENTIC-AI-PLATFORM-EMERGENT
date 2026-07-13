@@ -198,6 +198,7 @@ PIPELINE_CONTEXT_FIELDS = (
     "databaseHandoffPath",
     "dbBackend",
     "developerHandoffPath",
+    "openApiPath",
     "jiraProjectKey",
     "jiraKey",
     "applyToRdsAfterWrite",

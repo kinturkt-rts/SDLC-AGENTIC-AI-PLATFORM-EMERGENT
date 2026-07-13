@@ -2061,6 +2061,11 @@ with TestClient(app) as client:
     openapi = client.get("/openapi.json")
     if openapi.status_code == 200:
         spec = openapi.json()
+        # --- ADDED: persist the spec so the frontend agent can read it ---
+        with open("openapi.json", "w", encoding="utf-8") as f:
+            json.dump(spec, f, indent=2)
+        print("OPENAPI_SAVED path=openapi.json")
+        # --- end added ---
         for route_path, methods in spec.get("paths", {}).items():
             if route_path in ("/health", "/healthz", "/", "/openapi.json", "/docs", "/redoc"):
                 continue
