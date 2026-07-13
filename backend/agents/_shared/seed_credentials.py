@@ -21,6 +21,12 @@ _USERS_INSERT_HEADER = re.compile(
     r"INSERT\s+INTO\s+(?:\S+\.)?users\s*\(([^)]+)\)",
     re.IGNORECASE,
 )
+_USERS_INSERT_STATEMENT = re.compile(
+    r"INSERT\s+INTO\s+(?:\S+\.)?users\s*"
+    r"\((?=[^)]*\b(?:password_hash|hashed_password)\b)[^)]*\)\s*"
+    r"VALUES\b(?P<values>.*?)(?:;|$)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _users_insert_columns(seed_path: Path) -> list[str] | None:
@@ -211,6 +217,12 @@ def collect_credentials(app_dir: Path) -> list[tuple[str, str, str, str]]:
 
 
 def seed_sql_has_placeholders(app_dir: Path) -> bool:
+    """Return True only for user-password placeholders requiring materialization.
+
+    Other secret-like seed columns (for example API-key hashes) may deliberately
+    use the same placeholder token but are not handled by the users-table password
+    materializer.
+    """
     sql_dir = app_dir / "db" / "sql"
     if not sql_dir.is_dir():
         return False
@@ -218,6 +230,8 @@ def seed_sql_has_placeholders(app_dir: Path) -> bool:
         if "fix" in seed.name.lower():
             continue
         text = seed.read_text(encoding="utf-8")
-        if f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text:
-            return True
+        for statement in _USERS_INSERT_STATEMENT.finditer(text):
+            values = statement.group("values")
+            if f"'{_PLACEHOLDER}'" in values or f'"{_PLACEHOLDER}"' in values:
+                return True
     return False

@@ -53,6 +53,19 @@ def test_detects_unparseable_seed_placeholders(tmp_path: Path) -> None:
     assert "collect_credentials" in errors[0]
 
 
+def test_ignores_api_key_only_bcrypt_placeholders(tmp_path: Path) -> None:
+    app = tmp_path / "api-key-app"
+    sql_dir = app / "db" / "sql"
+    sql_dir.mkdir(parents=True)
+    (sql_dir / "010_seed.sql").write_text(
+        "INSERT INTO manager_keys (id, key_hash) VALUES\n"
+        "  ('a1000000-0000-0000-0000-000000000001', '__BCRYPT_PLACEHOLDER__');\n",
+        encoding="utf-8",
+    )
+
+    assert check_seed_materialize_parseable(app) == []
+
+
 def test_detects_text_orm_with_timestamptz_ddl(tmp_path: Path) -> None:
     app = tmp_path / "ts-app"
     models = app / "app" / "models"
