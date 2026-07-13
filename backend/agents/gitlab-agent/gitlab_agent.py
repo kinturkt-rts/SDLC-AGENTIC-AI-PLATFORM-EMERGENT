@@ -219,11 +219,14 @@ def run_publish_for_agentcore(
     import tempfile
 
     from _shared.artifact_store import (
+        DEV_READY_FAILED,
+        DEV_READY_MISSING,
+        DEV_READY_PARTIAL,
+        classify_developer_readiness,
         is_s3_store,
         list_run_artifact_keys,
         materialize_run,
         put_handoff,
-        wait_for_developer_handoff,
     )
     from _shared.pipeline_context import slugify_feature
 
@@ -242,13 +245,31 @@ def run_publish_for_agentcore(
     if rid and is_s3_store():
         slug = slugify_feature(target_app)
         wait_sec = float(os.getenv("SDLC_GITLAB_PRE_PUBLISH_WAIT_SEC", "30"))
-        try:
-            wait_for_developer_handoff(rid, slug, timeout_sec=wait_sec)
-        except TimeoutError:
+        decision, dev_handoff = classify_developer_readiness(rid, slug, timeout_sec=wait_sec)
+        if decision in {DEV_READY_FAILED, DEV_READY_MISSING}:
+            if decision == DEV_READY_FAILED:
+                reason = str((dev_handoff or {}).get("error") or "developer-agent reported failure")
+                error = f"GitLab publish blocked: developer-agent failed: {reason}"
+            else:
+                error = (
+                    "GitLab publish blocked: developer-agent produced no publishable "
+                    f"app artifacts for run {rid}"
+                )
+            logger.error("%s", error)
+            handoff = {
+                "targetApp": slug,
+                "status": "failed",
+                "error": error,
+                "pathsPublished": [],
+            }
+            put_handoff(rid, "gitlab", handoff)
+            return f"## status\nfailed\n\n## error\n{error}\n", handoff
+        if decision == DEV_READY_PARTIAL:
             logger.warning(
-                "developer handoff not found after %ss for run %s; publishing available artifacts",
-                wait_sec,
+                "developer handoff not finalized for run %s (status=%s); "
+                "publishing delivered artifacts best-effort",
                 rid,
+                (dev_handoff or {}).get("status", "in_progress"),
             )
         keys = list_run_artifact_keys(rid)
         root = materialize_run(rid, Path(tempfile.mkdtemp(prefix="sdlc-gitlab-")))

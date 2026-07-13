@@ -6,6 +6,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 _REPO = Path(__file__).resolve().parents[1]
 _AGENT_PATH = _REPO / "agents" / "gitlab-agent" / "gitlab_agent.py"
@@ -84,3 +85,87 @@ def test_parse_publish_request_from_context_block() -> None:
     assert app == "pr-diff-summarizer"
     assert run_id == "92099e5f-be02-4894-9276-67f2e5a72343"
     assert ctx["targetApp"] == "pr-diff-summarizer"
+
+
+def test_agentcore_publish_is_blocked_when_developer_failed(monkeypatch) -> None:
+    mod = _load_gitlab_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    with (
+        patch(
+            "_shared.artifact_store.classify_developer_readiness",
+            return_value=("failed", {"status": "failed", "error": "developer model timeout"}),
+        ),
+        patch("_shared.artifact_store.put_handoff") as put_handoff,
+        patch("_shared.artifact_store.materialize_run") as materialize,
+    ):
+        summary, handoff = mod.run_publish_for_agentcore(
+            "contacts-api",
+            "run-developer-failed",
+            {"targetApp": "contacts-api"},
+        )
+
+    assert handoff["status"] == "failed"
+    assert "developer-agent failed" in handoff["error"]
+    assert "developer model timeout" in handoff["error"]
+    assert "failed" in summary
+    put_handoff.assert_called_once()
+    materialize.assert_not_called()
+
+
+def test_agentcore_publish_is_blocked_when_no_artifacts(monkeypatch) -> None:
+    mod = _load_gitlab_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    with (
+        patch(
+            "_shared.artifact_store.classify_developer_readiness",
+            return_value=("missing", {"status": "in_progress"}),
+        ),
+        patch("_shared.artifact_store.put_handoff") as put_handoff,
+        patch("_shared.artifact_store.materialize_run") as materialize,
+    ):
+        summary, handoff = mod.run_publish_for_agentcore(
+            "contacts-api",
+            "run-empty",
+            {"targetApp": "contacts-api"},
+        )
+
+    assert handoff["status"] == "failed"
+    assert "no publishable" in handoff["error"]
+    put_handoff.assert_called_once()
+    materialize.assert_not_called()
+
+
+def test_agentcore_publish_proceeds_on_partial_developer_delivery(monkeypatch) -> None:
+    """Developer runtime died before finalizing, but app artifacts exist — publish."""
+    mod = _load_gitlab_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    published = {"status": "published", "branch": "sdlc/contacts-api", "pathsPublished": ["a.py"]}
+    with (
+        patch(
+            "_shared.artifact_store.classify_developer_readiness",
+            return_value=("partial", {"status": "in_progress"}),
+        ),
+        patch(
+            "_shared.artifact_store.list_run_artifact_keys",
+            return_value=["contacts-api/app/main.py"],
+        ),
+        patch("_shared.artifact_store.materialize_run", return_value=None) as materialize,
+        patch("_shared.artifact_store.put_handoff") as put_handoff,
+        patch.object(mod, "run_publish", return_value=("## status\npublished\n", published)) as run_publish,
+    ):
+        summary, handoff = mod.run_publish_for_agentcore(
+            "contacts-api",
+            "run-partial",
+            {"targetApp": "contacts-api"},
+        )
+
+    assert handoff["status"] == "published"
+    materialize.assert_called_once()
+    run_publish.assert_called_once()
+    put_handoff.assert_called_once()
