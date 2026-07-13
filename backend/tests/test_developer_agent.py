@@ -107,6 +107,16 @@ def test_resolve_repo_path_blocks_writes_outside_target_apps(
         mod._resolve_repo_path("docs/design/foo.md", write=True)
 
 
+def test_resolve_repo_path_blocks_template_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+
+    with pytest.raises(ValueError, match="read-only"):
+        mod._resolve_repo_path("target-apps/_template/golden/generated.py", write=True)
+
+
 def test_deployment_handoff_includes_port_and_env_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_agent_module()
     service = tmp_path / "target-apps" / "demo-api"
@@ -144,6 +154,29 @@ def test_dedupe_preserve_order() -> None:
     assert mod._dedupe_preserve_order(["a.py", "b.py", "a.py"]) == ["a.py", "b.py"]
 
 
+def test_failed_developer_handoff_is_written_without_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_agent_module()
+    captured: dict[str, Any] = {}
+
+    def _capture(_app: str, handoff: dict[str, Any], *, context=None) -> str:
+        captured.update(handoff)
+        return "demo/handoffs/developer-handoff.json"
+
+    monkeypatch.setattr(mod, "_write_developer_handoff", _capture)
+    rel = mod._persist_developer_handoff(
+        "demo",
+        {"targetApp": "demo"},
+        [],
+        status="failed",
+        error="model timeout",
+    )
+
+    assert rel is not None
+    assert captured["status"] == "failed"
+    assert captured["writtenFiles"] == []
+    assert captured["error"] == "model timeout"
+
+
 def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> None:
     mod = _load_agent_module()
     service = tmp_path / "target-apps" / "demo-svc"
@@ -171,6 +204,14 @@ def test_validate_dev_write_path_blocks_verbatim_scaffold_files(tmp_path: Path) 
     assert mod._validate_dev_write_path(service / "app" / "routers" / "health.py") is not None
     assert mod._validate_dev_write_path(service / "app" / "models" / "pg_types.py") is not None
     assert mod._validate_dev_write_path(service / "app" / "routers" / "items.py") is None
+
+
+def test_validate_dev_write_path_blocks_all_template_files(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    template_file = tmp_path / "target-apps" / "_template" / "golden" / "database_golden.py"
+
+    assert "read-only" in str(mod._validate_dev_write_path(template_file))
+    assert "read-only" in mod.dev_scaffold("_template", "B")
 
 
 def test_python_for_service_prefers_repo_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

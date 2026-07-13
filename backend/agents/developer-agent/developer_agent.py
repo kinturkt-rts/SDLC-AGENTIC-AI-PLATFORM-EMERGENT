@@ -1211,6 +1211,11 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     if not str(candidate).startswith(str(_REPO_ROOT.resolve())):
         raise ValueError(f"path must stay inside repo: {relative_path}")
     if write:
+        template_root = (_TARGET_APPS / "_template").resolve()
+        if candidate == template_root or template_root in candidate.parents:
+            raise ValueError(
+                "target-apps/_template is read-only; use dev_scaffold to copy from it"
+            )
         under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
         under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
         if not (under_target_apps or under_repo_root):
@@ -1241,6 +1246,11 @@ def _service_dir(service: str) -> Path:
 
 def _ensure_service_exists(service: str) -> Path:
     """Ensure target-apps/<service>/ exists. Layout is design-driven — no auto-copy."""
+    requested = service.strip().replace("\\", "/").strip("/").casefold()
+    if requested in {"_template", "template", "target-apps/_template"}:
+        raise ValueError(
+            "target-apps/_template is a read-only scaffold source, not a target service"
+        )
     dest = _service_dir(service)
     dest.mkdir(parents=True, exist_ok=True)
     return dest
@@ -1257,6 +1267,11 @@ _VERBATIM_SCAFFOLD_SUFFIXES = (
 def _validate_dev_write_path(file_path: Path) -> str | None:
     """Return an error string if this path must not be written by developer-agent."""
     parts = set(file_path.parts)
+    if "_template" in {part.casefold() for part in file_path.parts}:
+        return (
+            "Error: target-apps/_template is read-only; "
+            "call dev_scaffold to copy template files into the target app"
+        )
     if parts & _BLOCKED_PATH_PARTS:
         return "Error: cannot write under .venv/, node_modules/, or cache directories"
     name = file_path.name
@@ -1362,7 +1377,10 @@ def dev_list_tree(service: str, subpath: str = "") -> str:
         ]
         return "\n".join(paths) if paths else "(no files)"
 
-    root = _ensure_service_exists(service)
+    try:
+        root = _ensure_service_exists(service)
+    except ValueError as exc:
+        return f"Error: {exc}"
     base = (root / subpath).resolve()
     if not str(base).startswith(str(root.resolve())):
         return "Error: subpath escapes service directory"
@@ -1387,8 +1405,8 @@ def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
         pattern: B | B+ | B++ | C
         force: when True, overwrite existing scaffold files from _template/
     """
-    dest = _ensure_service_exists(service)
     try:
+        dest = _ensure_service_exists(service)
         result = scaffold_service(
             template_dir=_TEMPLATE_DIR,
             service_dir=dest,
@@ -2240,11 +2258,14 @@ def _persist_developer_handoff(
     written: list[str],
     *,
     status: str,
+    error: str | None = None,
 ) -> str | None:
-    """Write developer-handoff.json when at least one file was produced."""
-    if not written:
+    """Write a terminal developer handoff, including failures with no output files."""
+    if not written and status != "failed":
         return None
     handoff = _build_developer_handoff_payload(app, written, ctx, status=status)
+    if error:
+        handoff["error"] = error
     rel = _write_developer_handoff(app, handoff, context=ctx)
     logger.info(
         "[developer-agent] handoff persisted: %s (%d files, status=%s)",
@@ -2299,14 +2320,21 @@ class _DeveloperCallbackHandler:
                 self.telemetry.record_usage(usage)
 
 
-def _coding_model_id() -> str:
+def _coding_model_id(ctx: dict[str, Any] | None = None) -> str:
+    """Model for this run; pipeline retries pass codingModelOverride (Sonnet fallback)."""
+    if ctx:
+        override = str(ctx.get("codingModelOverride") or "").strip()
+        if override:
+            return override
     return coding_model_id()
 
 
-def _coding_model() -> BedrockModel:
+def _coding_model(ctx: dict[str, Any] | None = None) -> BedrockModel:
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
+    model_id = _coding_model_id(ctx)
+    is_override = model_id != coding_model_id()
     model_kwargs: dict[str, Any] = {
-        "model_id": _coding_model_id(),
+        "model_id": model_id,
         "region_name": os.getenv("AWS_REGION", "us-east-2"),
         "max_tokens": _max_output_tokens(),
         "streaming": True,
@@ -2318,7 +2346,9 @@ def _coding_model() -> BedrockModel:
             retries={"mode": "standard", "max_attempts": 2},
         ),
     }
-    if _thinking_enabled():
+    # Thinking budgets are tuned for the primary coding model; skip them on the
+    # Sonnet fallback override unless that model also has thinking enabled.
+    if _thinking_enabled() and not is_override:
         # "adaptive" thinking is only supported on Claude 4.5+; Sonnet 4 requires "enabled"|"disabled".
         model_kwargs["additional_request_fields"] = {
             "thinking": {"type": "enabled", "budget_tokens": _thinking_budget_tokens()},
@@ -2342,7 +2372,7 @@ def _build_agent(
             "Patterns: in-memory, postgres, postgres-llm, rag, streamlit "
             "(legacy aliases: A, B, B+, B++, C)."
         ),
-        model=_coding_model(),
+        model=_coding_model(ctx),
         system_prompt=_build_system_prompt(ctx),
         tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_write_files, dev_validate_app],
         callback_handler=_DeveloperCallbackHandler(
@@ -2479,7 +2509,7 @@ def run_task(
         telemetry = RunTelemetry(
             AGENT_NAME,
             target_app=app,
-            model_id=_coding_model_id(),
+            model_id=_coding_model_id(ctx),
             run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
         )
         agent = _build_agent(ctx, telemetry=telemetry)
@@ -2489,19 +2519,32 @@ def run_task(
         agent_error = exc
     finally:
         written = _dedupe_preserve_order(_written_files)
-        if written:
-            try:
+        try:
+            if written:
                 written = _ensure_delivery_files(app, written, context=ctx)
+            handoff_rel = _persist_developer_handoff(
+                app,
+                ctx,
+                written,
+                status="failed" if agent_error else "completed",
+                error=str(agent_error) if agent_error else None,
+            )
+            if handoff_rel:
+                ctx["developerHandoffPath"] = handoff_rel
+        except Exception as exc:
+            logger.exception("[developer-agent] failed to finalize developer handoff")
+            if agent_error is None:
+                agent_error = exc
+            try:
                 handoff_rel = _persist_developer_handoff(
                     app,
                     ctx,
                     written,
-                    status="failed" if agent_error else "completed",
+                    status="failed",
+                    error=str(agent_error),
                 )
-                if handoff_rel:
-                    ctx["developerHandoffPath"] = handoff_rel
             except Exception:
-                logger.exception("[developer-agent] failed to persist developer handoff")
+                logger.exception("[developer-agent] failed to persist failure handoff")
         # Telemetry must persist even when the agent run fails — tokens were billed
         # either way, and the control-plane cost breakdown needs every agent reported.
         if telemetry is not None:

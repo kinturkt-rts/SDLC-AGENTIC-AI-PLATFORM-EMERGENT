@@ -34,6 +34,8 @@ $DotenvForwardedKeys = @(
     "MODEL_ID",
     "SDLC_AGENT_TIMEOUT_SEC",
     "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC",
+    "SDLC_DEVELOPER_RETRY_ATTEMPTS",
+    "DEVELOPER_AGENT_FALLBACK_MODEL_ID",
     "ATLASSIAN_MCP_TOKEN",
     "ATLASSIAN_MCP_EMAIL",
     "ATLASSIAN_MCP_URL",
@@ -231,6 +233,14 @@ if ($env:CODING_MODEL_ID) { $CommonEnv += "CODING_MODEL_ID=$($env:CODING_MODEL_I
 if ($env:BEDROCK_READ_TIMEOUT) { $CommonEnv += "BEDROCK_READ_TIMEOUT=$($env:BEDROCK_READ_TIMEOUT)" }
 if ($env:SDLC_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_AGENT_TIMEOUT_SEC=$($env:SDLC_AGENT_TIMEOUT_SEC)" }
 if ($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC=$($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC)" }
+if ($env:SDLC_DEVELOPER_RETRY_ATTEMPTS) { $CommonEnv += "SDLC_DEVELOPER_RETRY_ATTEMPTS=$($env:SDLC_DEVELOPER_RETRY_ATTEMPTS)" }
+# Default retry fallback matches product/architect MODEL_ID (Sonnet 4.6).
+if ($env:DEVELOPER_AGENT_FALLBACK_MODEL_ID) {
+    $CommonEnv += "DEVELOPER_AGENT_FALLBACK_MODEL_ID=$($env:DEVELOPER_AGENT_FALLBACK_MODEL_ID)"
+} else {
+    $fallbackModel = if ($env:MODEL_ID) { $env:MODEL_ID } else { "us.anthropic.claude-sonnet-4-6" }
+    $CommonEnv += "DEVELOPER_AGENT_FALLBACK_MODEL_ID=$fallbackModel"
+}
 if ($env:DEVELOPER_AGENT_AUTO_VALIDATE) { $CommonEnv += "DEVELOPER_AGENT_AUTO_VALIDATE=$($env:DEVELOPER_AGENT_AUTO_VALIDATE)" }
 if ($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST) { $CommonEnv += "DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST=$($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST)" }
 
@@ -359,9 +369,13 @@ foreach ($agent in $TargetAgents) {
         # agentcore deploy pushes a versioned tag but AgentCore references :latest.
         # Re-tag the most recent versioned image as :latest so the runtime pulls it.
         $ecrRepo = "bedrock-agentcore-$awsName"
-        python -c "
-import boto3, sys
-ecr = boto3.Session(profile_name='eks-admin-user', region_name='$Region').client('ecr')
+        if (-not $env:AWS_PROFILE) {
+            $env:AWS_PROFILE = "eks-admin-user"
+        }
+        python -c @"
+import os, boto3, sys
+profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
+ecr = boto3.Session(profile_name=profile, region_name='$Region').client('ecr')
 imgs = ecr.describe_images(repositoryName='$ecrRepo')['imageDetails']
 tagged = [i for i in imgs if i.get('imageTags') and 'latest' not in i['imageTags']]
 tagged.sort(key=lambda i: i['imagePushedAt'], reverse=True)
@@ -375,7 +389,7 @@ try:
     print('  Tagged ' + vtag + ' as :latest in $ecrRepo')
 except ecr.exceptions.ImageAlreadyExistsException:
     print('  :latest already current in $ecrRepo')
-" 2>`$null
+"@
     }
 }
 
