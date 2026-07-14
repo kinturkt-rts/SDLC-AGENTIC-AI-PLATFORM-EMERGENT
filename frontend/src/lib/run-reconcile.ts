@@ -23,6 +23,15 @@ export interface ReconcileRunResult {
 
 function cloudGitlabFallbackPending(log: string): boolean {
   if (/"skip_gitlab":\s*true/i.test(log)) return false;
+  // If the async status poll (or any other path) already recorded a terminal
+  // failure, gitlab was never reached — do not treat that as "still waiting".
+  if (
+    /\[status-poll\]\s+status:\s*(failed|cancelled)\b/i.test(log) ||
+    /sdlc pipeline failed/i.test(log) ||
+    /developer-agent failed/i.test(log)
+  ) {
+    return false;
+  }
   if (!/--- gitlab ---/i.test(log)) return true;
   return !(
     /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log) ||
@@ -165,10 +174,10 @@ function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   let error = `Pipeline stopped before ${label} finished.`;
   if (missing === 'implementation') {
     error =
-      'Developer-agent did not complete successfully. Open the run → developer handoff for the concrete error.';
+      'Developer-agent did not complete successfully. Open the run and check the developer handoff for the concrete error.';
   } else if (missing === 'deploy') {
     error =
-      'GitLab publish did not complete successfully. Open the run → GitLab handoff for the concrete error.';
+      'GitLab publish did not complete successfully. Open the run and check the GitLab handoff for the concrete error.';
   } else if (agent) {
     error = `Pipeline stopped before ${label} finished (${agent}).`;
   }

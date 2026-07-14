@@ -23,6 +23,30 @@ def _load_agent_module():
     return module
 
 
+def test_resolve_repo_path_rejects_template_escape_with_stray_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a stray space in an LLM-authored path ("_template /x.json") let a
+    write escape the golden-template guard and land as a bogus top-level S3 key
+    (runs/<runId>/_template /scaffold-manifest.json) instead of being blocked. In
+    cloud mode _resolve_repo_path permits writes anywhere under repo root, so the
+    golden-template guard depends entirely on _validate_dev_write_path's part check —
+    which the un-stripped space defeated (this reproduces the cloud codepath)."""
+    mod = _load_agent_module()
+    monkeypatch.setattr(mod, "_is_cloud_store", lambda: True)
+    file_path = mod._resolve_repo_path("_template /scaffold-manifest.json", write=True)
+    assert "_template" in file_path.parts
+    blocked = mod._validate_dev_write_path(file_path)
+    assert blocked is not None
+    assert "read-only" in blocked
+
+
+def test_resolve_repo_path_still_blocks_clean_template_path() -> None:
+    mod = _load_agent_module()
+    with pytest.raises(ValueError, match="read-only"):
+        mod._resolve_repo_path("target-apps/_template/app/database.py", write=True)
+
+
 def test_max_output_tokens_defaults_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_agent_module()
     monkeypatch.delenv("DEVELOPER_AGENT_MAX_TOKENS", raising=False)

@@ -1,0 +1,5 @@
+We need a small internal task board API so the team can stop tracking work in chat threads.
+
+Each person should be able to create a task with a title, optional description, assignee name, and status — todo, in_progress, or done. People should see the full list, filter by status or assignee, update a task when something changes, and delete it when it is no longer needed.
+
+This is an internal FastAPI + Postgres CRUD tool only. No login screens, no LLM, no UI for v1 — Swagger at /docs is enough for demos. Keep it reliable and simple so new tasks do not get lost.

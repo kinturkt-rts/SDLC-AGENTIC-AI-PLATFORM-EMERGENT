@@ -562,16 +562,30 @@ async function listUuidRunIds(): Promise<string[]> {
   }
 }
 
+function isTerminalLiveStatus(status: string | undefined | null): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
 async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   const local = await readJson<LiveRunState>(
     repoPath('agents', 'pipeline', 'runs', runId, 'run.json'),
   );
-  if (local) return local;
   if (isS3Store()) {
-    const doc = await getRunArtifactJson(runId, 'run.json');
-    if (doc) return doc as unknown as LiveRunState;
+    const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
+    // Prefer S3 when it is terminal and local is still active/missing. The ECS
+    // container (and baked Docker copies of agents/pipeline/runs) can keep a
+    // stale local status=running long after the orchestrator wrote failed/
+    // cancelled to S3 — that made dead runs stick on the Active Runs dashboard.
+    if (doc && isTerminalLiveStatus(doc.status)) {
+      if (!local || !isTerminalLiveStatus(local.status)) {
+        return { ...doc, runId: doc.runId || runId };
+      }
+    }
+    if (local) return local;
+    if (doc) return { ...doc, runId: doc.runId || runId };
+    return null;
   }
-  return null;
+  return local;
 }
 
 async function readPipelineLog(runId: string): Promise<string | null> {
@@ -815,6 +829,22 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
 
+  // If developer handoff already failed, never keep the run as "running" on
+  // the dashboard even when local run.json is stale.
+  if ((enriched.status === 'running' || enriched.status === 'queued') && isS3Store()) {
+    const exists = await developerHandoffExistsForRun(runId, slug);
+    if (exists && !(await developerHandoffSucceededForRun(runId, slug))) {
+      enriched = {
+        ...enriched,
+        status: 'failed',
+        currentStep: null,
+        error:
+          enriched.error ??
+          'developer-agent failed before GitLab publish (handoff status is not completed)',
+      };
+    }
+  }
+
   const needsHeavy = runNeedsHeavyProbe(enriched, log);
   const terminalFromLog = log ? parseLogTerminalStatus(log) : null;
   const isTerminal =
@@ -944,9 +974,16 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     pipeline: 'Standard SDLC',
     status: reconciled.status,
     currentPhase:
-      reconciled.status === 'completed' || reconciled.status === 'failed' ? null : currentPhase,
+      reconciled.status === 'completed' ||
+      reconciled.status === 'failed' ||
+      reconciled.status === 'cancelled'
+        ? null
+        : currentPhase,
     currentAgent:
-      reconciled.status === 'completed' || reconciled.status === 'failed' || !currentAgentName
+      reconciled.status === 'completed' ||
+      reconciled.status === 'failed' ||
+      reconciled.status === 'cancelled' ||
+      !currentAgentName
         ? null
         : (currentAgentName as AgentName),
     startedAt: timings.startedAt,

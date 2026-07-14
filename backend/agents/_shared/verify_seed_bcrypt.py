@@ -23,9 +23,9 @@ _PASSWORD_COMMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _BCRYPT_HASH_RE = re.compile(r"\$2[aby]\$12\$[./A-Za-z0-9]{53}")
-# First user row in seed INSERT: ('uuid', 'username', '$2b$12$...')
+# First user row in seed INSERT: ('uuid', 'username', '$2b$12$...') or (1, 'username', '$2b$12$...')
 _SEED_USERNAME_RE = re.compile(
-    r"\('[0-9a-f-]{36}',\s*'([^']+)',\s*'\$2[aby]\$12\$",
+    r"\(\s*(?:'[0-9a-f-]{36}'|\d+)\s*,\s*'([^']+)',\s*'\$2[aby]\$12\$",
     re.IGNORECASE,
 )
 # Dollar-quoting bcrypt breaks the leading $ (stored as 2b$12$...)

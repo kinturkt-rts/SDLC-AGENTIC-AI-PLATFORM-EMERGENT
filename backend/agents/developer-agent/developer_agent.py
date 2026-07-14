@@ -1203,6 +1203,11 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     raw = relative_path.strip().replace("\\", "/")
     if not raw:
         raise ValueError("path is required")
+    # Normalize whitespace around path segments (LLM-authored paths occasionally carry
+    # a stray space, e.g. "_template /scaffold-manifest.json") — an un-stripped segment
+    # defeats exact-match guards downstream (_validate_dev_write_path's "_template" check)
+    # and previously let a write land as a bogus top-level runs/<runId>/_template /... key.
+    raw = "/".join(seg.strip() for seg in raw.split("/"))
     candidate = (
         (_REPO_ROOT / raw).resolve()
         if not Path(raw).is_absolute()
@@ -1267,7 +1272,7 @@ _VERBATIM_SCAFFOLD_SUFFIXES = (
 def _validate_dev_write_path(file_path: Path) -> str | None:
     """Return an error string if this path must not be written by developer-agent."""
     parts = set(file_path.parts)
-    if "_template" in {part.casefold() for part in file_path.parts}:
+    if "_template" in {part.strip().casefold() for part in file_path.parts}:
         return (
             "Error: target-apps/_template is read-only; "
             "call dev_scaffold to copy template files into the target app"

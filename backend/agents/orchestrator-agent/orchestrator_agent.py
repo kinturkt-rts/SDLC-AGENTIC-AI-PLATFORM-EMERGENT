@@ -181,6 +181,60 @@ def _pipeline_result_payload(result: Any) -> dict[str, Any]:
     }
 
 
+def _orchestrator_async_enabled() -> bool:
+    """Fire-and-forget mode on AgentCore (opt-out: AGENTCORE_ORCHESTRATOR_ASYNC=false).
+
+    Synchronous InvokeAgentRuntime request/response is capped at ~15 minutes;
+    a full pipeline run exceeds that. In async mode the entrypoint acks with the
+    runId immediately, the pipeline continues on a background thread (session
+    kept alive via HealthyBusy pings), and callers poll runs/<runId>/run.json.
+    """
+    raw = os.getenv("AGENTCORE_ORCHESTRATOR_ASYNC", "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return bool(os.getenv("AGENTCORE_AGENT", "").strip())
+
+
+def _start_pipeline_async(options: PipelineOptions) -> str | None:
+    """Ack immediately and run the pipeline on a background thread.
+
+    Returns the ack text, or None when async is unavailable (disabled or not an
+    S3-backed run — polling needs a shared store) so the caller runs sync.
+    """
+    from _shared.artifact_store import is_s3_store, new_run_id
+
+    if not (_orchestrator_async_enabled() and is_s3_store()):
+        return None
+    if not options.run_id:
+        options.run_id = new_run_id()
+    run_id = options.run_id
+
+    from _shared.background_tasks import run_in_background
+    from _shared.sdlc_pipeline import mark_run_failed
+
+    def _background_run() -> None:
+        try:
+            result = run_sdlc_pipeline(options)
+            _safe_print(f"[orchestrator] async pipeline finished:\n{result.summary()}")
+        except BaseException as exc:  # run() only handles PipelineStepError itself
+            _safe_print(f"[orchestrator] async pipeline crashed: {exc}")
+            mark_run_failed(run_id, options.target_app, f"orchestrator crashed: {exc}")
+            raise
+
+    run_in_background(f"sdlc-pipeline:{run_id}", _background_run)
+    steps = "\n".join(f"  {i}. {s}" for i, s in enumerate(planned_steps(options), start=1))
+    return (
+        "PIPELINE_ASYNC_STARTED orchestrator-agent\n"
+        f"- runId: {run_id}\n"
+        f"- targetApp: {options.target_app}\n"
+        f"- status: runs/{run_id}/run.json (poll until status=completed|failed)\n"
+        f"planned steps:\n{steps}\n"
+        "Pipeline continues in the background on this runtime session."
+    )
+
+
 def _execute_pipeline_message(message: Any) -> str:
     """Run the SDLC pipeline deterministically from an A2A/CLI message."""
     text = _prompt_to_text(message)
@@ -207,6 +261,10 @@ def _execute_pipeline_message(message: Any) -> str:
 
     if not options.target_app:
         return "Pipeline could not start: target_app is required in the JSON payload."
+
+    async_ack = _start_pipeline_async(options)
+    if async_ack is not None:
+        return async_ack
 
     _print_pipeline_plan(options)
     result = run_sdlc_pipeline(options)

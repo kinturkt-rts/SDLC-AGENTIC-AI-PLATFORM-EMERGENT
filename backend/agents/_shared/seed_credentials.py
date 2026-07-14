@@ -9,12 +9,16 @@ from _shared.verify_seed_bcrypt import documented_password, first_seed_username
 
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
 _SEED_CREDENTIALS_HEADER = re.compile(r"^###\s*seedCredentials\s*$", re.MULTILINE | re.IGNORECASE)
+
+# Users PK is either a UUID string or an auto-increment integer — both are valid
+# schema designs database-agent produces; the leading tuple value must match either.
+_PK_LITERAL = r"(?:'[0-9a-f-]{36}'|\d+)"
 _USER_INSERT_USERNAME = re.compile(
-    r"\('[0-9a-f-]{36}',\s*'([^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
+    rf"\(\s*{_PK_LITERAL}\s*,\s*'([^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
     re.IGNORECASE,
 )
 _USER_INSERT_EMAIL = re.compile(
-    r"\('[0-9a-f-]{36}',\s*'[0-9a-f-]{36}',\s*'([^']+@[^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
+    rf"\(\s*{_PK_LITERAL}\s*,\s*{_PK_LITERAL}\s*,\s*'([^']+@[^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
     re.IGNORECASE,
 )
 _USERS_INSERT_HEADER = re.compile(
@@ -105,7 +109,7 @@ def _parse_users_insert_rows(
         ):
             in_users_block = False
             continue
-        if not stripped.startswith("('"):
+        if not stripped.startswith("("):
             if stripped and not stripped.startswith("--"):
                 in_users_block = False
             continue

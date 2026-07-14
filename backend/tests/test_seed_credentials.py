@@ -64,6 +64,26 @@ def test_seed_placeholder_gate_ignores_api_key_hashes(tmp_path: Path) -> None:
     assert collect_credentials(app) == []
 
 
+def test_parse_seed_credentials_integer_pk_layout(tmp_path: Path) -> None:
+    """database-agent sometimes uses serial/integer PKs instead of UUIDs (fitness-tracker
+    run 36445603 hit this: parsing returned zero credentials even though the seed SQL
+    correctly documented a password and used __BCRYPT_PLACEHOLDER__)."""
+    seed = tmp_path / "005_seed.sql"
+    seed.write_text(
+        '-- Password for all seed users: "FitnessPass123!"\n'
+        "INSERT INTO users (id, username, password_hash, created_at) VALUES\n"
+        "    (1, 'alice', '__BCRYPT_PLACEHOLDER__', '2024-01-10 08:00:00+00'),\n"
+        "    (2, 'bob',   '__BCRYPT_PLACEHOLDER__', '2024-01-11 09:30:00+00')\n"
+        "ON CONFLICT (username) DO NOTHING;\n",
+        encoding="utf-8",
+    )
+    creds = parse_seed_credentials(seed)
+    usernames = {row[0] for row in creds}
+    assert usernames == {"alice", "bob"}
+    assert all(row[1] == "FitnessPass123!" for row in creds)
+    assert all(row[2] == "username" and row[3] == "password_hash" for row in creds)
+
+
 def test_seed_placeholder_gate_keeps_malformed_user_seed_strict(tmp_path: Path) -> None:
     app = tmp_path / "malformed-user-app"
     sql_dir = app / "db" / "sql"

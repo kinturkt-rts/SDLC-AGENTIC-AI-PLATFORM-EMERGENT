@@ -8,7 +8,7 @@ import {
   waitForDeveloperHandoffForRun,
 } from './pipeline-handoffs';
 import { invokeAgentRuntimeA2a } from './agentcore-invoke';
-import { s3RunHasAppCode } from './artifact-store';
+import { getRunArtifactJson, s3RunHasAppCode } from './artifact-store';
 
 const DEV_TASK_DB = [
   'Implement API surface from designDocPath as FastAPI routes.',
@@ -82,6 +82,16 @@ async function updateRunJson(
         if (steps) {
           for (const step of steps) {
             if (step.status !== 'skipped') step.status = 'completed';
+          }
+        }
+      } else if (patch.status === 'failed' || patch.status === 'cancelled') {
+        // Mark the in-flight step failed too - otherwise it stays "running" forever in
+        // the steps array (set by an earlier currentStep update) even though the top-level
+        // status is terminal, and the UI's step timeline shows a phantom live step.
+        const steps = data.steps as Array<{ name: string; status?: string }> | undefined;
+        if (steps) {
+          for (const step of steps) {
+            if (step.status === 'running') step.status = patch.status;
           }
         }
       }
@@ -224,6 +234,56 @@ async function invokeGitlabFallback(
   );
 }
 
+interface RunStatusDoc {
+  status?: unknown;
+  currentStep?: unknown;
+  error?: unknown;
+}
+
+/**
+ * Poll the orchestrator's S3 run.json mirror until it reports a terminal state.
+ * This is the primary completion signal for async (fire-and-forget) orchestrator
+ * runs; the AgentCore invoke itself only returns a "PIPELINE_ASYNC_STARTED" ack.
+ * Mirrors currentStep into the local run.json so the UI live-updates while polling.
+ */
+async function pollRunStatusUntilTerminal(
+  runId: string,
+  logPath: string,
+  timeoutSec: number,
+): Promise<{ status: 'completed' | 'failed' | 'timeout'; error?: string | null }> {
+  const pollMs = Math.max(2000, envInt('SDLC_PIPELINE_STATUS_POLL_MS', 15000));
+  const deadline = Date.now() + timeoutSec * 1000;
+  let lastStep: string | null = null;
+  let lastStatus = '';
+
+  while (Date.now() < deadline) {
+    const doc = (await getRunArtifactJson(runId, 'run.json')) as RunStatusDoc | null;
+    if (doc) {
+      const status = typeof doc.status === 'string' ? doc.status.toLowerCase() : '';
+      const step = typeof doc.currentStep === 'string' ? doc.currentStep : null;
+      if (step && step !== lastStep) {
+        lastStep = step;
+        await appendLog(logPath, `[status-poll] currentStep: ${step}\n`);
+        await updateRunJson(runId, { currentStep: step });
+        invalidateRunsCache();
+      }
+      if (status && status !== lastStatus) {
+        lastStatus = status;
+        await appendLog(logPath, `[status-poll] status: ${status}\n`);
+      }
+      if (status === 'completed') return { status: 'completed' };
+      if (status === 'failed' || status === 'cancelled') {
+        return {
+          status: 'failed',
+          error: typeof doc.error === 'string' ? doc.error : null,
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return { status: 'timeout' };
+}
+
 export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
   logPath: string;
   timeoutSec: number;
@@ -258,6 +318,49 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   if (result.error) await appendLog(logPath, `error: ${result.error}\n`);
   const text = result.text ?? '';
   await appendLog(logPath, `--- response ---\n${text.slice(0, 8000)}\n`);
+
+  // Async orchestrator: the invoke returns an ack in seconds and the pipeline
+  // keeps running in the cloud. Poll the S3 run.json mirror to the terminal
+  // state; only fall through to the legacy fallback chain on poll timeout or
+  // when a "completed" claim cannot be verified against the publish handoff.
+  const asyncStarted = result.status === 'success' && text.includes('PIPELINE_ASYNC_STARTED');
+  if (asyncStarted) {
+    const statusWaitSec = envInt('SDLC_PIPELINE_STATUS_WAIT_SEC', 7200);
+    await appendLog(
+      logPath,
+      `[status-poll] Async orchestrator accepted; polling runs/${runId}/run.json (timeout=${statusWaitSec}s)...\n`,
+    );
+    const final = await pollRunStatusUntilTerminal(runId, logPath, statusWaitSec);
+    if (final.status === 'completed') {
+      if (taskOpts.skipGitlab || (await gitlabPublished(runId, app))) {
+        await appendLog(logPath, '[status-poll] Pipeline completed in cloud.\n');
+        await finalizeRunJson(runId, { status: 'completed' });
+        return;
+      }
+      await appendLog(
+        logPath,
+        '[status-poll] Orchestrator reports completed but no GitLab publish handoff found - running fallback verification.\n',
+      );
+    } else if (final.status === 'failed') {
+      // "SDLC pipeline failed" is one of parseLogTerminalStatus's recognized markers
+      // (run-reconcile.ts) - without it, a reconciler pass driven only by log text (no
+      // run.json) can't tell this run apart from one still in progress.
+      await appendLog(
+        logPath,
+        `[status-poll] SDLC pipeline failed: ${final.error ?? 'unknown error'}\n`,
+      );
+      await finalizeRunJson(runId, {
+        status: 'failed',
+        error: final.error ?? 'pipeline failed in cloud - check CloudWatch orchestrator logs',
+      });
+      return;
+    } else {
+      await appendLog(
+        logPath,
+        '[status-poll] Timed out waiting for terminal run status - entering fallback verification path.\n',
+      );
+    }
+  }
 
   let developerCompleted = false;
   if (!taskOpts.skipGitlab) {

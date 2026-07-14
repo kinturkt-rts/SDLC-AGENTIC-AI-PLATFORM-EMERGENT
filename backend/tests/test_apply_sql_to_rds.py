@@ -89,6 +89,38 @@ def test_sql_files_need_pgvector_false_for_plain_tables(tmp_path: Path) -> None:
     assert mod._sql_files_need_pgvector([sql_dir / "002_create_users.sql"]) is False
 
 
+def test_sql_files_need_pgtrgm_detects_trigram_index(tmp_path: Path) -> None:
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "003_add_indexes.sql").write_text(
+        "CREATE INDEX idx_recipes_name ON recipes USING gin (name gin_trgm_ops);",
+        encoding="utf-8",
+    )
+    assert mod._sql_files_need_pgtrgm([sql_dir / "003_add_indexes.sql"]) is True
+
+
+def test_ensure_pgtrgm_relocates_extension_to_public() -> None:
+    mod = _load_module()
+
+    class FakeCursor:
+        schemas = iter(["old_app_schema", "public"])
+
+        def __init__(self) -> None:
+            self.executed: list[str] = []
+
+        def execute(self, stmt: str) -> None:
+            self.executed.append(str(stmt))
+
+        def fetchone(self) -> tuple[str] | None:
+            return (next(self.schemas),)
+
+    cur = FakeCursor()
+    mod._ensure_pgtrgm_extension(cur, verbose=False)
+
+    assert "ALTER EXTENSION pg_trgm SET SCHEMA public" in cur.executed
+
+
 def test_connection_url_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://bad:pass@word@host:5432/db")
     monkeypatch.setenv("POSTGRES_MCP_DB_ENDPOINT", "host.example.com")

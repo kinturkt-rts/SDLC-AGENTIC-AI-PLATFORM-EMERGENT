@@ -79,12 +79,28 @@ _PGVECTOR_SQL_MARKERS = (
     "using hnsw",
 )
 
+_PGTRGM_SQL_MARKERS = (
+    "gin_trgm_ops",
+    "gist_trgm_ops",
+    "similarity(",
+    "create extension if not exists pg_trgm",
+)
+
 
 def _sql_files_need_pgvector(files: list[Path]) -> bool:
     """True when migrations use pgvector types, indexes, or extension DDL."""
     for path in files:
         lowered = path.read_text(encoding="utf-8").lower()
         if any(marker in lowered for marker in _PGVECTOR_SQL_MARKERS):
+            return True
+    return False
+
+
+def _sql_files_need_pgtrgm(files: list[Path]) -> bool:
+    """True when migrations use pg_trgm operators/opclasses or extension DDL."""
+    for path in files:
+        lowered = path.read_text(encoding="utf-8").lower()
+        if any(marker in lowered for marker in _PGTRGM_SQL_MARKERS):
             return True
     return False
 
@@ -127,6 +143,53 @@ def _ensure_pgvector_extension(cur, *, verbose: bool) -> None:
         )
     if verbose:
         print("  pgvector extension OK (schema public)", file=sys.stderr)
+
+
+def _trgm_opclass_schema(cur) -> str | None:
+    cur.execute(
+        """
+        SELECT n.nspname
+        FROM pg_opclass opc
+        JOIN pg_am am ON am.oid = opc.opcmethod
+        JOIN pg_namespace n ON n.oid = opc.opcnamespace
+        WHERE opc.opcname = 'gin_trgm_ops'
+          AND am.amname = 'gin'
+        LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _ensure_pgtrgm_extension(cur, *, verbose: bool) -> None:
+    """Install pg_trgm in public before trigram index DDL.
+
+    On shared RDS, `CREATE EXTENSION IF NOT EXISTS pg_trgm` can no-op because
+    another app schema already owns the extension. Then `gin_trgm_ops` is not
+    visible from the current app schema search_path and trigram indexes fail.
+    """
+    opclass_schema = _trgm_opclass_schema(cur)
+    if opclass_schema is None:
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
+        opclass_schema = _trgm_opclass_schema(cur)
+    elif opclass_schema != "public":
+        if verbose:
+            print(
+                f"  Relocating pg_trgm from {opclass_schema} to public (shared RDS) ...",
+                file=sys.stderr,
+            )
+        cur.execute("ALTER EXTENSION pg_trgm SET SCHEMA public")
+        opclass_schema = _trgm_opclass_schema(cur)
+
+    if opclass_schema != "public":
+        raise RuntimeError(
+            'pg_trgm operator class "gin_trgm_ops" is not available in schema public. '
+            f"Found in {opclass_schema!r} instead. "
+            "On RDS, run: ALTER EXTENSION pg_trgm SET SCHEMA public; "
+            "or contact a DBA to relocate the extension."
+        )
+    if verbose:
+        print("  pg_trgm extension OK (schema public)", file=sys.stderr)
 
 
 def _is_verbose() -> bool:
@@ -462,6 +525,10 @@ def apply_sql_files(
                     if verbose:
                         print("Ensuring pgvector extension (public) ...", file=sys.stderr)
                     _ensure_pgvector_extension(cur, verbose=verbose)
+                if _sql_files_need_pgtrgm(files):
+                    if verbose:
+                        print("Ensuring pg_trgm extension (public) ...", file=sys.stderr)
+                    _ensure_pgtrgm_extension(cur, verbose=verbose)
                 applied: list[str] = []
                 ddl_files = [f for f in files if not _is_seed_file(f)]
                 seed_files = [f for f in files if _is_seed_file(f)]
