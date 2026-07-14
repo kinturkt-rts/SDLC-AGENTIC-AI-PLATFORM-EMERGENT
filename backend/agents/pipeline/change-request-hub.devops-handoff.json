@@ -1,0 +1,44 @@
+﻿{
+    "ecsCluster":  "sdlc-target-apps-dev",
+    "healthy":  true,
+    "extraEnv":  {
+                     "JWT_SECRET_KEY":  "WDShUwuTqUSRofqwgcwseSI9Q9g3tDCx"
+                 },
+    "manifest":  {
+                     "targetApp":  "change-request-hub",
+                     "environment":  "dev",
+                     "awsRegion":  "us-east-2",
+                     "appDir":  "target-apps/change-request-hub",
+                     "tfRoot":  "infrastructure/environments/dev/change-request-hub",
+                     "enableUi":  true,
+                     "hasDatabase":  true,
+                     "dbInstanceIdentifier":  "agenticaidbinstance",
+                     "databaseUrlAvailable":  true,
+                     "dockerfiles":  {
+                                         "api":  true,
+                                         "ui":  true
+                                     },
+                     "gitlab":  {
+                                    "branch":  "sdlc/change-request-hub",
+                                    "project":  "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
+                                    "mergeRequestUrl":  null
+                                },
+                     "extraEnvVars":  [
+
+                                      ],
+                     "extraEnv":  {
+                                      "JWT_SECRET_KEY":  "WDShUwuTqUSRofqwgcwseSI9Q9g3tDCx"
+                                  },
+                     "tfRootExists":  true
+                 },
+    "tfGeneratedAt":  "2026-07-13T21:21:01.106529+00:00",
+    "imageTag":  "latest",
+    "targetApp":  "change-request-hub",
+    "environment":  "dev",
+    "ecsService":  "sdlc-change-request-hub-dev",
+    "appUrl":  "http://sdlc-target-apps-dev-976943026.us-east-2.elb.amazonaws.com/change-request-hub/",
+    "tfRootPresent":  true,
+    "tfRoot":  "infrastructure/environments/dev/change-request-hub",
+    "region":  "us-east-2",
+    "deployedAt":  "2026-07-13T21:22:28.9571745Z"
+}

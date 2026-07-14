@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 import shutil
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,18 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def db_instance_identifier_from_env() -> str | None:
+    """POSTGRES_MCP_INSTANCE_IDENTIFIER, else derived from the RDS endpoint's first
+    label (<instance-id>.<hash>.<region>.rds.amazonaws.com)."""
+    explicit = os.getenv("POSTGRES_MCP_INSTANCE_IDENTIFIER", "").strip()
+    if explicit:
+        return explicit
+    endpoint = os.getenv("POSTGRES_MCP_DB_ENDPOINT", "").strip()
+    if endpoint.endswith(".rds.amazonaws.com") and "." in endpoint:
+        return endpoint.split(".", 1)[0]
+    return None
+
+
 def database_url_from_env() -> str | None:
     """Build a SQLAlchemy Postgres DSN from POSTGRES_MCP_* (same vars the RDS apply uses)."""
     endpoint = os.getenv("POSTGRES_MCP_DB_ENDPOINT", "").strip()
@@ -37,7 +51,43 @@ def database_url_from_env() -> str | None:
     port = os.getenv("POSTGRES_MCP_PORT", "5432").strip() or "5432"
     if not (endpoint and database and user and password):
         return None
-    return f"postgresql://{user}:{password}@{endpoint}:{port}/{database}"
+    # postgresql+psycopg: target apps use SQLAlchemy 2 + psycopg3 (see _template).
+    return f"postgresql+psycopg://{user}:{password}@{endpoint}:{port}/{database}?sslmode=require"
+
+
+_PLACEHOLDER_HINTS = ("change-me", "change_me", "your_", "your-", "example", "placeholder", "strong-secret")
+_SECRET_KEY_RE = re.compile(r"(SECRET|TOKEN|PASSWORD|API_KEY)", re.IGNORECASE)
+
+
+def derive_extra_env(app: str) -> dict[str, str]:
+    """Secret-ish env vars from the app's .env.example that still hold placeholders.
+
+    Generates real values (persisted in <app>.devops-handoff.json so redeploys do
+    not rotate them). Non-placeholder keys are skipped — apps ship working defaults
+    in config.py; DATABASE_URL is always excluded (injected via Secrets Manager).
+    """
+    env_example = _TARGET_APPS / app / ".env.example"
+    if not env_example.is_file():
+        return {}
+
+    previous: dict[str, str] = {}
+    handoff = _read_json(_PIPELINE_DIR / f"{app}.devops-handoff.json") or {}
+    if isinstance(handoff.get("extraEnv"), dict):
+        previous = {str(k): str(v) for k, v in handoff["extraEnv"].items()}
+
+    result: dict[str, str] = {}
+    for line in env_example.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key == "DATABASE_URL" or not _SECRET_KEY_RE.search(key):
+            continue
+        if not any(hint in value.lower() for hint in _PLACEHOLDER_HINTS):
+            continue  # looks like a real/workable value; leave app defaults alone
+        result[key] = previous.get(key) or secrets.token_urlsafe(24)
+    return result
 
 
 def ensure_deploy_dockerfiles(app: str) -> list[str]:
@@ -82,11 +132,7 @@ def build_deploy_manifest(app: str, context: dict[str, Any] | None = None) -> di
         "tfRoot": f"infrastructure/environments/dev/{app}",
         "enableUi": has_ui,
         "hasDatabase": has_db,
-        "dbInstanceIdentifier": (
-            os.getenv("POSTGRES_MCP_INSTANCE_IDENTIFIER", "").strip() or None
-        )
-        if has_db
-        else None,
+        "dbInstanceIdentifier": db_instance_identifier_from_env() if has_db else None,
         "databaseUrlAvailable": bool(database_url_from_env()) if has_db else False,
         "dockerfiles": {
             "api": (app_dir / "deploy" / "Dockerfile.api").is_file(),
@@ -100,6 +146,7 @@ def build_deploy_manifest(app: str, context: dict[str, Any] | None = None) -> di
         if gitlab_handoff
         else None,
         "extraEnvVars": developer_handoff.get("envVarNames") or [],
+        "extraEnv": derive_extra_env(app),
         "tfRootExists": (INFRA_DEV_DIR / app / "main.tf").is_file(),
     }
     return manifest

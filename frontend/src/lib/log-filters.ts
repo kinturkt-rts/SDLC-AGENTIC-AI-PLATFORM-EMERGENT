@@ -38,7 +38,7 @@ export function filterLogRows(
   });
 }
 
-/** Strict run scope — only lines tied to this run (by runId or message content). */
+/** Strict run scope - only lines tied to this run (by runId or message content). */
 export function filterLogsForRun(rows: LogEntry[], runId: string): LogEntry[] {
   const rid = runId.trim();
   if (!rid) return rows;

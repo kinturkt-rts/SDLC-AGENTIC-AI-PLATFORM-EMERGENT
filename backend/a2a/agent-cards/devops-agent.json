@@ -1,6 +1,6 @@
 {
   "name": "devops-agent",
-  "description": "Generates per-app Terraform deploy roots (ECS Fargate + shared ALB) and deploys target-apps to AWS.",
+  "description": "Generates infrastructure-as-code and deploys generated applications to AWS (containers, load balancing, and environments)."
   "url": "http://127.0.0.1:9105/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

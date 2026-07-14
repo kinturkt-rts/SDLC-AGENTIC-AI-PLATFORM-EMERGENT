@@ -2600,6 +2600,65 @@ def _prompt_to_text(message: Any) -> str:
     return str(message)
 
 
+def _developer_async_enabled() -> bool:
+    """Fire-and-forget mode on AgentCore (opt-out: AGENTCORE_DEVELOPER_ASYNC=false).
+
+    Synchronous InvokeAgentRuntime request/response is capped at ~15 minutes;
+    developer runs regularly exceed that. In async mode the entrypoint acks
+    immediately, the implementation continues on a background thread (session
+    kept alive via HealthyBusy pings), and the orchestrator polls the developer
+    handoff in the run store instead of holding the connection open.
+    """
+    raw = os.getenv("AGENTCORE_DEVELOPER_ASYNC", "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return bool(os.getenv("AGENTCORE_AGENT", "").strip())
+
+
+def _start_developer_pipeline_async(task: str, ctx: dict[str, Any]) -> str | None:
+    """Ack immediately and run the developer pipeline on a background thread.
+
+    Returns the ack text, or None when async is unavailable for this request
+    (disabled, no runId, or not an S3-backed run) so the caller runs sync.
+    """
+    run_id = resolve_run_id(ctx)
+    if not (_developer_async_enabled() and run_id and is_s3_store()):
+        return None
+    try:
+        app = _resolve_target_app(None, ctx)
+    except (ValueError, TargetAppRequiredError):
+        return None  # sync path produces the descriptive usage error
+
+    # Write the in_progress handoff BEFORE acking so the orchestrator's poll
+    # never observes a stale terminal handoff from a previous attempt.
+    ctx = dict(ctx)
+    ctx.setdefault("runId", run_id)
+    handoff = _build_developer_handoff_payload(app, [], ctx, status="in_progress")
+    handoff["asyncAccepted"] = True
+    rel = _write_developer_handoff(app, handoff, context=ctx)
+
+    from _shared.background_tasks import run_in_background
+
+    def _background_run() -> None:
+        # run_task persists the terminal handoff (completed/failed) in its
+        # finally block, so a crash here is still visible to the orchestrator.
+        run_task(task, ctx)
+
+    run_in_background(f"developer-agent:{run_id}", _background_run)
+    logger.info(
+        "[developer-agent] async run accepted: runId=%s app=%s handoff=%s", run_id, app, rel
+    )
+    return (
+        "PIPELINE_ASYNC_STARTED developer-agent\n"
+        f"- runId: {run_id}\n"
+        f"- targetApp: {app}\n"
+        f"- handoff: runs/{run_id}/{rel} (status=in_progress; poll until completed/failed)\n"
+        "Implementation continues in the background on this runtime session."
+    )
+
+
 def _execute_developer_pipeline_message(message: Any) -> str:
     """AgentCore A2A: parse Context, run_task (sets _run_context for S3 writes)."""
     text = _prompt_to_text(message)
@@ -2610,6 +2669,9 @@ def _execute_developer_pipeline_message(message: Any) -> str:
     task, ctx = parse_task_and_context(text)
     if not task.strip():
         task = DEFAULT_PIPELINE_TASK
+    async_ack = _start_developer_pipeline_async(task, ctx)
+    if async_ack is not None:
+        return async_ack
     try:
         summary, written, handoff_rel = run_task(task, ctx or None)
     except (ValueError, TargetAppRequiredError, SystemExit) as exc:

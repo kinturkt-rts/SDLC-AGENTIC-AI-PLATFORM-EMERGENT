@@ -16,7 +16,9 @@ terraform {
 
 locals {
   name       = "sdlc-${var.app_name}-${var.environment}"
-  has_db     = var.db_secret_arn != null
+  # Plan-time literal (var.db_secret_arn is often an unknown resource ARN, which
+  # cannot drive count).
+  has_db     = var.has_database
   # Streamlit serves under baseUrlPath = app_name so the shared ALB can path-route.
   ui_health  = "/${var.app_name}/_stcore/health"
   api_health = "/health"
@@ -58,13 +60,18 @@ locals {
     essential = true
     portMappings = [{ containerPort = var.ui_port, protocol = "tcp" }]
     secrets = []
-    environment = [
-      { name = "API_BASE_URL", value = "http://localhost:${var.api_port}" },
-      { name = "STREAMLIT_SERVER_BASE_URL_PATH", value = var.app_name },
-      { name = "STREAMLIT_SERVER_PORT", value = tostring(var.ui_port) },
-      { name = "STREAMLIT_SERVER_HEADLESS", value = "true" },
-      { name = "STREAMLIT_BROWSER_GATHER_USAGE_STATS", value = "false" },
-    ]
+    # extra_env goes to the UI too: shared secrets (e.g. API_KEY the UI sends as a
+    # header) must match the API container.
+    environment = concat(
+      [
+        { name = "API_BASE_URL", value = "http://localhost:${var.api_port}" },
+        { name = "STREAMLIT_SERVER_BASE_URL_PATH", value = var.app_name },
+        { name = "STREAMLIT_SERVER_PORT", value = tostring(var.ui_port) },
+        { name = "STREAMLIT_SERVER_HEADLESS", value = "true" },
+        { name = "STREAMLIT_BROWSER_GATHER_USAGE_STATS", value = "false" },
+      ],
+      [for k, v in var.extra_env : { name = k, value = v }],
+    )
     logConfiguration = {
       logDriver = "awslogs"
       options = {

@@ -84,17 +84,25 @@ async function loadFirstGitlabHandoff(
       path: `runs/${runId}/handoffs/gitlab.json`,
       loader: () => getRunArtifactJson(runId, 'handoffs/gitlab.json'),
     },
-    {
-      source: 'local',
-      path: `agents/pipeline/${slug}.gitlab-handoff.json`,
-      loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.gitlab-handoff.json`),
-    },
-    {
-      source: 'local',
-      path: `agents/pipeline/runs/${runId}/${slug}/handoffs/gitlab-handoff.json`,
-      loader: () => getRunArtifactJson(runId, `${slug}/handoffs/gitlab-handoff.json`),
-    },
   ];
+  // Legacy slug-keyed files (agents/pipeline/<slug>.gitlab-handoff.json) are only valid
+  // for local-CLI runs. In cloud/S3 mode they are stale repo leftovers from older runs
+  // of the same app slug: reading them here made brand-new runs show "published" with
+  // dead branch URLs and let the publish gate skip gitlab-agent entirely.
+  if (!isS3Store()) {
+    candidates.push(
+      {
+        source: 'local',
+        path: `agents/pipeline/${slug}.gitlab-handoff.json`,
+        loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.gitlab-handoff.json`),
+      },
+      {
+        source: 'local',
+        path: `agents/pipeline/runs/${runId}/${slug}/handoffs/gitlab-handoff.json`,
+        loader: () => getRunArtifactJson(runId, `${slug}/handoffs/gitlab-handoff.json`),
+      },
+    );
+  }
 
   for (const candidate of candidates) {
     const data = await candidate.loader();
@@ -113,17 +121,22 @@ async function loadFirstDeveloperHandoff(
       path: `runs/${runId}/${slug}/handoffs/developer-handoff.json`,
       loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
     },
-    {
-      source: 'local',
-      path: `agents/pipeline/${slug}.developer-handoff.json`,
-      loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.developer-handoff.json`),
-    },
-    {
-      source: 'local',
-      path: `agents/pipeline/runs/${runId}/${slug}/handoffs/developer-handoff.json`,
-      loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
-    },
   ];
+  // Same stale-slug-file hazard as gitlab handoffs: only trust these in local mode.
+  if (!isS3Store()) {
+    candidates.push(
+      {
+        source: 'local',
+        path: `agents/pipeline/${slug}.developer-handoff.json`,
+        loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.developer-handoff.json`),
+      },
+      {
+        source: 'local',
+        path: `agents/pipeline/runs/${runId}/${slug}/handoffs/developer-handoff.json`,
+        loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
+      },
+    );
+  }
 
   for (const candidate of candidates) {
     const data = await candidate.loader();
@@ -171,9 +184,9 @@ export async function resolveProjectRepositoryLink(
     };
   }
 
-  const localGitlab = await readLocalPipelineJson(
-    `agents/pipeline/${normalized}.gitlab-handoff.json`,
-  );
+  const localGitlab = isS3Store()
+    ? null
+    : await readLocalPipelineJson(`agents/pipeline/${normalized}.gitlab-handoff.json`);
   if (localGitlab) {
     const href =
       (typeof localGitlab.branchUrl === 'string' && localGitlab.branchUrl) ||

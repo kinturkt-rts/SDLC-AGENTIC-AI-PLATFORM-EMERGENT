@@ -8,7 +8,7 @@
 # Regenerate per-agent copies: scripts/sync-agentcore-dockerfiles.ps1
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
-ARG AGENTCORE_AGENT=orchestrator-agent
+ARG AGENTCORE_AGENT=product-agent
 ARG INSTALL_NODE=true
 # AWS: run shared gitlab-mcp-server on ECS (HTTP) and set GITLAB_MCP_HTTP_URL on gitlab-agent.
 # Local stdio fallback: build with --build-arg INSTALL_GITLAB_MCP_BINARY=true (gitlab-agent only).

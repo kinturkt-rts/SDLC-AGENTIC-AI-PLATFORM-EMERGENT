@@ -79,8 +79,14 @@ variable "desired_count" {
   default = 1
 }
 
+variable "has_database" {
+  description = "Plan-time flag: app uses Postgres. Must be a literal (not derived from resources) so count expressions stay computable at plan."
+  type        = bool
+  default     = false
+}
+
 variable "db_secret_arn" {
-  description = "Secrets Manager secret holding DATABASE_URL. null = app has no database."
+  description = "Secrets Manager secret holding DATABASE_URL. Required when has_database = true."
   type        = string
   default     = null
 }

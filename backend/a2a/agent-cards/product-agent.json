@@ -1,6 +1,6 @@
 {
   "name": "product-agent",
-  "description": "Writes Product Requirements Documents (PRD) from business briefs. Optionally creates Jira epics and user stories via Atlassian MCP when enabled.",
+  "description": "Turns business briefs into structured product requirements (PRD), with optional Jira epic and user-story creation."
   "url": "http://127.0.0.1:9101/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

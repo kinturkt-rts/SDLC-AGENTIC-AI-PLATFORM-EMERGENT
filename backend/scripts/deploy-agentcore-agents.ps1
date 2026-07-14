@@ -390,6 +390,33 @@ try:
 except ecr.exceptions.ImageAlreadyExistsException:
     print('  :latest already current in $ecrRepo')
 "@
+        # agentcore deploy resets lifecycleConfiguration to the 900s default idle
+        # timeout, which silently kills long developer/orchestrator sessions.
+        # Re-apply the 1h idle timeout after every deploy.
+        python -c @"
+import os, boto3, sys
+profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
+cc = boto3.Session(profile_name=profile, region_name='$Region').client('bedrock-agentcore-control')
+rts = cc.list_agent_runtimes(maxResults=100)['agentRuntimes']
+rt = next((r for r in rts if r['agentRuntimeName'] == '$awsName'), None)
+if rt is None:
+    print('  WARNING: runtime $awsName not found; lifecycle not updated')
+    sys.exit(0)
+full = cc.get_agent_runtime(agentRuntimeId=rt['agentRuntimeId'])
+kwargs = dict(
+    agentRuntimeId=rt['agentRuntimeId'],
+    agentRuntimeArtifact=full['agentRuntimeArtifact'],
+    roleArn=full['roleArn'],
+    networkConfiguration=full['networkConfiguration'],
+    lifecycleConfiguration={'idleRuntimeSessionTimeout': 3600, 'maxLifetime': 28800},
+)
+if full.get('protocolConfiguration'):
+    kwargs['protocolConfiguration'] = full['protocolConfiguration']
+if full.get('environmentVariables'):
+    kwargs['environmentVariables'] = full['environmentVariables']
+cc.update_agent_runtime(**kwargs)
+print('  Lifecycle re-applied: idle=3600s maxLifetime=28800s for $awsName')
+"@
     }
 }
 

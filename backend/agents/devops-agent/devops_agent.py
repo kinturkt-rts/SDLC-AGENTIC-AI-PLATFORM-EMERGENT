@@ -129,7 +129,7 @@ module "app" {{
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
   enable_ui     = {enable_ui}
-{db_module_inputs}}}
+{extra_env_block}{db_module_inputs}}}
 
 {db_resources}output "app_url" {{
   value = "http://${{data.terraform_remote_state.shared.outputs.alb_dns_name}}/{app}/"
@@ -155,6 +155,7 @@ output "cluster_name" {{
 _DB_MODULE_INPUTS_NONE = "  db_secret_arn = null # no database for this app\n"
 
 _DB_MODULE_INPUTS = """\
+  has_database         = true
   db_secret_arn        = aws_secretsmanager_secret.db.arn
   db_security_group_id = {db_sg_expr}
 """
@@ -346,9 +347,21 @@ def render_tf_root(manifest: dict[str, Any]) -> str:
     else:
         db_module_inputs = _DB_MODULE_INPUTS_NONE
         db_resources = ""
+
+    extra_env = manifest.get("extraEnv") or {}
+    if extra_env:
+        def _hcl_str(value: str) -> str:
+            return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+        lines = "\n".join(f"    {k} = {_hcl_str(str(v))}" for k, v in sorted(extra_env.items()))
+        extra_env_block = f"  extra_env = {{\n{lines}\n  }}\n"
+    else:
+        extra_env_block = ""
+
     return _TF_ROOT_TEMPLATE.format(
         app=app,
         enable_ui="true" if manifest.get("enableUi") else "false",
+        extra_env_block=extra_env_block,
         db_module_inputs=db_module_inputs,
         db_resources=db_resources,
     )
@@ -434,6 +447,9 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
             "targetApp": app,
             "tfRoot": f"infrastructure/environments/dev/{app}",
             "manifest": manifest,
+            # top-level so derive_extra_env can reuse the same generated secrets
+            # on redeploys instead of rotating them
+            "extraEnv": manifest.get("extraEnv") or {},
             "tfGeneratedAt": datetime.now(timezone.utc).isoformat(),
             "tfRootPresent": validated,
         },

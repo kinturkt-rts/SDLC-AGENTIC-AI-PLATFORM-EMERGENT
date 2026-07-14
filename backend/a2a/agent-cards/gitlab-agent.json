@@ -1,6 +1,6 @@
 {
   "name": "gitlab-agent",
-  "description": "Publishes SDLC artifacts to GitLab via self-hosted MCP.",
+  "description": "Publishes pipeline artifacts to GitLab — creates feature branches, commits generated files, and opens merge requests."
   "url": "http://127.0.0.1:9110/",
   "version": "1.0.0",
   "capabilities": { "streaming": false },

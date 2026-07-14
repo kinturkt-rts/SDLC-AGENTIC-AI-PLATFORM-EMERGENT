@@ -1,0 +1,20 @@
+﻿{
+    "deployUrl":  "http://sdlc-target-apps-dev-976943026.us-east-2.elb.amazonaws.com/hello-fastapi/",
+    "targetApp":  "hello-fastapi",
+    "prdPath":  "docs/PRD/hello-fastapi.md",
+    "designDocPath":  "docs/design/hello-fastapi.md",
+    "ecsService":  "sdlc-hello-fastapi-dev",
+    "deliveryProfile":  {
+                            "streamlitRequirementsPath":  "ui/requirements.txt",
+                            "streamlitPath":  "ui/streamlit_app.py",
+                            "uiPattern":  null,
+                            "uiRequired":  false,
+                            "requiresReact":  false,
+                            "requiresStreamlit":  false
+                        },
+    "diagramPaths":  [
+                         {
+                             "Length":  41
+                         }
+                     ]
+}

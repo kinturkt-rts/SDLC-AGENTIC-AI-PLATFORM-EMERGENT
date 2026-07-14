@@ -43,9 +43,6 @@ export function parseLogTerminalStatus(
     return /^status:\s*success\b/i.test(trimmed);
   });
 
-  // Only true "pipeline finished" markers count. Step-level markers like
-  // "[apply-rds-local] ok" or a mid-run "status: success" are NOT sufficient — those
-  // just say one substep finished, not that the whole pipeline reached publish.
   if (
     lower.includes('sdlc pipeline completed') ||
     /\[gitlab\]\s+handoff already exists/i.test(log) ||

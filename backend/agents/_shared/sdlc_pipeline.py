@@ -22,6 +22,7 @@ from .artifact_store import (
     is_s3_store,
     materialize_run,
     new_run_id,
+    put_artifact,
     put_context,
     register_pipeline_run,
     repo_root,
@@ -317,6 +318,61 @@ class SdlcPipelineRunner:
             return None
         return self.root / "agents" / "pipeline" / "runs" / self.run_id / "run.json"
 
+    def _default_steps(self) -> list[dict[str, str]]:
+        """Frontend-compatible step skeleton (matches pipeline-run.ts run.json seed)."""
+        opts = self.options
+        return [
+            {
+                "name": "product-agent",
+                "label": "1/6 Product (PRD)",
+                "status": "skipped" if opts.skip_product else "queued",
+            },
+            {
+                "name": "architect-agent",
+                "label": "2/6 Architect (design + diagram)",
+                "status": "skipped" if opts.skip_architect else "queued",
+            },
+            {
+                "name": "database-agent",
+                "label": "3/6 Database (SQL migrations)",
+                "status": "skipped" if opts.skip_db else "queued",
+            },
+            {
+                "name": "developer-agent",
+                "label": "4/6 Developer (FastAPI)",
+                "status": "skipped" if opts.skip_developer else "queued",
+            },
+            {
+                "name": "gitlab-agent",
+                "label": "5/6 GitLab publish",
+                "status": "queued" if _should_run_gitlab(opts) else "skipped",
+            },
+            {
+                "name": "qa-agent",
+                "label": "6/6 QA (optional)",
+                "status": "queued" if _should_run_qa(opts) else "skipped",
+            },
+        ]
+
+    def _mirror_run_json_to_s3(self, data: dict[str, Any]) -> None:
+        """Publish run.json to runs/<runId>/ so the frontend can poll run state.
+
+        This is the async-pipeline status channel: the frontend gets an
+        immediate ack from the orchestrator and then reads this artifact until
+        status turns terminal (completed/failed).
+        """
+        if not self.run_id or not is_s3_store():
+            return
+        try:
+            put_artifact(
+                self.run_id,
+                "run.json",
+                json.dumps(data, indent=2) + "\n",
+                content_type="application/json",
+            )
+        except Exception:
+            logger.warning("Could not mirror run.json to S3", exc_info=True)
+
     def _update_run_json(
         self,
         *,
@@ -325,7 +381,7 @@ class SdlcPipelineRunner:
         error: str | None = None,
         finished: bool = False,
     ) -> None:
-        """Update local run.json so the frontend can track progress."""
+        """Update local run.json (and its S3 mirror) so the frontend can track progress."""
         rj = self._run_json_path()
         if not rj:
             return
@@ -336,6 +392,10 @@ class SdlcPipelineRunner:
             data.setdefault("runId", self.run_id)
             data.setdefault("feature", self.feature)
             data.setdefault("targetApp", self.feature)
+            data.setdefault("startedAt", datetime.now(timezone.utc).isoformat())
+            data.setdefault("status", "running")
+            if not data.get("steps"):
+                data["steps"] = self._default_steps()
             if status:
                 data["status"] = status
             if current_step is not None:
@@ -365,6 +425,7 @@ class SdlcPipelineRunner:
                             step["status"] = "running"
             rj.parent.mkdir(parents=True, exist_ok=True)
             rj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            self._mirror_run_json_to_s3(data)
         except Exception as exc:
             logger.warning("Could not update run.json: %s", exc)
 
@@ -378,6 +439,9 @@ class SdlcPipelineRunner:
             os.environ["PIPELINE_RUN_ID"] = self.run_id
             if is_s3_store():
                 register_pipeline_run(self.run_id, self.feature)
+        # Seed run.json (local + S3 mirror) so frontend polling sees "running"
+        # immediately after the async ack instead of a missing artifact.
+        self._update_run_json(status="running")
 
     def _after_agent_step(self, agent_name: str) -> None:
         """Specialists -> S3; orchestrator -> DynamoDB run index."""
@@ -1050,17 +1114,29 @@ class SdlcPipelineRunner:
         from .pipeline_context import developer_handoff_rel_for_app
 
         rel = developer_handoff_rel_for_app(self.feature)
-        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "900"))
+        # Async developer runs return an ack in seconds and stream work to S3
+        # for as long as the implementation takes, so this poll — not the A2A
+        # response — is the primary completion signal. The stall window must be
+        # generous: LLM turns between file writes (and the final summary turn)
+        # can legitimately go many minutes with no new writtenFiles.
+        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "5400"))
+        poll_interval = float(os.getenv("SDLC_DEVELOPER_HANDOFF_POLL_SEC", "15"))
+        stall_polls = int(os.getenv("SDLC_DEVELOPER_STALL_POLLS", "40"))
         logger.info(
-            "[pipeline] waiting for developer handoff: runs/%s/%s (timeout=%ss)",
+            "[pipeline] waiting for developer handoff: runs/%s/%s "
+            "(timeout=%ss, poll=%ss, stall_polls=%s)",
             self.run_id,
             rel,
             timeout,
+            poll_interval,
+            stall_polls,
         )
         decision, handoff = classify_developer_readiness(
             self.run_id,
             self.feature,
             timeout_sec=timeout,
+            poll_interval_sec=poll_interval,
+            stall_polls=stall_polls,
         )
         if decision == DEV_READY_COMPLETED:
             logger.info("[pipeline] developer handoff ready: runs/%s/%s", self.run_id, rel)
@@ -1261,6 +1337,53 @@ class PipelineStepError(RuntimeError):
 def run_sdlc_pipeline(options: PipelineOptions) -> PipelineResult:
     """Public entry: run the full SDLC chain."""
     return SdlcPipelineRunner(options).run()
+
+
+def mark_run_failed(run_id: str, target_app: str, error: str) -> None:
+    """Force run.json (S3 + local) to a terminal failed state.
+
+    Used by the orchestrator's fire-and-forget wrapper when the background
+    pipeline dies with an unexpected exception — without this the frontend
+    would poll a permanently "running" run.json until its own timeout.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    feature = slugify(target_app)
+    data: dict[str, Any] = {
+        "runId": run_id,
+        "feature": feature,
+        "targetApp": feature,
+        "status": "failed",
+        "error": error,
+        "finishedAt": now,
+    }
+    rj = repo_root() / "agents" / "pipeline" / "runs" / run_id / "run.json"
+    try:
+        if rj.is_file():
+            existing = json.loads(rj.read_text(encoding="utf-8-sig"))
+            existing.update(data)
+            data = existing
+        rj.parent.mkdir(parents=True, exist_ok=True)
+        rj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        logger.warning("mark_run_failed: could not update local run.json", exc_info=True)
+    if is_s3_store():
+        try:
+            from .artifact_store import get_artifact_text
+
+            try:
+                remote = json.loads(get_artifact_text(run_id, "run.json"))
+                remote.update({k: v for k, v in data.items() if k != "steps"})
+                data = remote
+            except FileNotFoundError:
+                pass
+            put_artifact(
+                run_id,
+                "run.json",
+                json.dumps(data, indent=2) + "\n",
+                content_type="application/json",
+            )
+        except Exception:
+            logger.warning("mark_run_failed: could not update S3 run.json", exc_info=True)
 
 
 def options_from_dict(data: dict[str, Any]) -> PipelineOptions:
