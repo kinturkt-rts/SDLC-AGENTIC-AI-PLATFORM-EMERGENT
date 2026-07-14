@@ -1,9 +1,21 @@
+'use client';
+
 import Link from 'next/link';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
+import { LiveRelative } from '@/src/components/common/LiveElapsed';
 import { formatRelative } from '@/src/lib/format';
 import type { LogEntry } from '@/src/types';
 
-export function LogTable({ rows, showRunColumn = true }: { rows: LogEntry[]; showRunColumn?: boolean }) {
+export function LogTable({
+  rows,
+  showRunColumn = true,
+  live = false,
+}: {
+  rows: LogEntry[];
+  showRunColumn?: boolean;
+  /** When true, relative timestamps tick every second. */
+  live?: boolean;
+}) {
   if (rows.length === 0) return null;
 
   return (
@@ -13,7 +25,9 @@ export function LogTable({ rows, showRunColumn = true }: { rows: LogEntry[]; sho
           key={l.id}
           className="flex items-start gap-3 border-b border-white/[0.04] px-3 py-2.5 last:border-0 transition-colors hover:bg-white/[0.02]"
         >
-          <span className="w-32 shrink-0 text-muted-foreground">{formatRelative(l.ts)}</span>
+          <span className="w-32 shrink-0 text-muted-foreground">
+            {live ? <LiveRelative iso={l.ts} live /> : formatRelative(l.ts)}
+          </span>
           <StatusBadge status={l.level} size="sm" className="shrink-0" />
           <span className="w-32 shrink-0 truncate text-teal-400">{l.agent.replace('-agent', '')}</span>
           {showRunColumn ? (

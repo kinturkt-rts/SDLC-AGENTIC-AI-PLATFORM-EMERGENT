@@ -404,7 +404,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               />
             ) : (
               <div className="max-h-[480px] overflow-auto p-2">
-                <LogTable rows={runLogs.slice(0, 80)} showRunColumn={false} />
+                <LogTable rows={runLogs.slice(0, 80)} showRunColumn={false} live={isLive} />
                 {runLogs.length > 80 ? (
                   <p className="px-3 py-2 text-center text-xs text-muted-foreground">
                     Showing 80 of {runLogs.length}.{' '}

@@ -127,7 +127,11 @@ export const useLogs = (filters: LogsFilter, live = false) =>
   useQuery({
     queryKey: [...queryKeys.logs, filters],
     queryFn: () => api.getLogs(filters),
-    refetchInterval: live ? 8000 : 15_000,
+    // Live views (All runs / running run): poll CloudWatch every 8s.
+    // Finished single-run views: still refresh occasionally so late-arriving lines appear.
+    staleTime: live ? 0 : 10_000,
+    refetchInterval: live ? 8_000 : 30_000,
+    refetchOnWindowFocus: true,
   });
 export const useDashboardSummary = () =>
   useQuery({
