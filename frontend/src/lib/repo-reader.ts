@@ -20,10 +20,11 @@ import {
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
 import {
+  developerHandoffExistsForRun,
   developerHandoffSucceededForRun,
-  gitlabHandoffExistsForRun,
   gitlabPublishSucceededForRun,
   resolveProjectRepositoryLink,
+  resolveRunFailureDetail,
 } from './pipeline-handoffs';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
@@ -866,11 +867,17 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     error: enriched.error,
   });
 
+  let reconciledError = reconciled.error ?? enriched.error ?? null;
+  if (reconciled.status === 'failed') {
+    const detail = await resolveRunFailureDetail(runId, slug);
+    if (detail) reconciledError = detail;
+  }
+
   enriched = {
     ...enriched,
     status: reconciled.status as LiveRunState['status'],
     currentStep: reconciled.currentStep,
-    error: reconciled.error ?? enriched.error,
+    error: reconciledError,
   };
 
   if (enriched.steps?.length) {
@@ -1364,19 +1371,17 @@ async function phaseCompletionForRun(
       f.key.startsWith(prefix) ? f.key.slice(prefix.length) : f.key,
     );
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
-    // Implementation/deploy check: prefer the strict "handoff reached success" signal, but
-    // fall back to artifact-existence for historical runs whose handoffs pre-date the
-    // status="completed" schema. Never regress an already-terminated run to "failed"
-    // just because its old handoff format is missing the new marker.
+    // Implementation/deploy: ONLY "handoff succeeded" counts as done while a handoff exists.
+    // Falling back to "any .py file exists" made live runs jump to GitLab while developer
+    // was still writing (status=in_progress). Artifact fallback is only for legacy runs
+    // that never wrote a developer handoff at all.
     const hasAppCode =
       has((r) => r.includes('/app/') && r.endsWith('.py')) ||
       has((r) => r.endsWith('/requirements.txt'));
-    const hasGitlabHandoff =
-      has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
-      has((r) => /(?:^|\/)handoffs\/gitlab\.json$/i.test(r));
-    const [devSuccess, gitlabSuccess] = await Promise.all([
+    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
       developerHandoffSucceededForRun(runId, slug),
       gitlabPublishSucceededForRun(runId, slug),
+      developerHandoffExistsForRun(runId, slug),
     ]);
     return {
       requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
@@ -1384,10 +1389,10 @@ async function phaseCompletionForRun(
         has((r) => r.includes('/design/') && r.endsWith('.md')) ||
         has((r) => r.includes('/diagrams/') && (r.endsWith('.png') || r.endsWith('.svg'))),
       data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
-      implementation: devSuccess || hasAppCode,
+      implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: gitlabSuccess || hasGitlabHandoff || (await gitlabHandoffExistsForRun(runId, slug)),
+      deploy: gitlabSuccess,
     };
   }
 
@@ -1409,12 +1414,10 @@ async function phaseCompletionForRun(
     const rels = await walk(runRoot);
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
     const hasAppCode = has((r) => r.includes('/app/') && r.endsWith('.py'));
-    const hasGitlabHandoff =
-      has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
-      has((r) => /handoffs\/gitlab\.json$/i.test(r));
-    const [devSuccess, gitlabSuccess] = await Promise.all([
+    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
       developerHandoffSucceededForRun(runId, slug),
       gitlabPublishSucceededForRun(runId, slug),
+      developerHandoffExistsForRun(runId, slug),
     ]);
     return {
       requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
@@ -1422,10 +1425,10 @@ async function phaseCompletionForRun(
         has((r) => r.includes('/design/') && r.endsWith('.md')) ||
         has((r) => r.includes('/diagrams/')),
       data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
-      implementation: devSuccess || hasAppCode,
+      implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: gitlabSuccess || hasGitlabHandoff,
+      deploy: gitlabSuccess,
     };
   }
 

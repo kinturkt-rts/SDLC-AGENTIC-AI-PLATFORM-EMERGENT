@@ -249,6 +249,49 @@ export async function developerHandoffSucceededForRun(
   return status === 'completed' || developer.validationStatus === 'passed';
 }
 
+/**
+ * Prefer concrete handoff / run errors over generic "check handoffs" copy.
+ * Returns null when there is nothing more specific than the reconciler's default.
+ */
+export async function resolveRunFailureDetail(
+  runId: string,
+  slug: string,
+): Promise<string | null> {
+  const normalized = slug.trim().toLowerCase();
+  const [developer, gitlab] = await Promise.all([
+    loadFirstDeveloperHandoff(runId, normalized),
+    loadFirstGitlabHandoff(runId, normalized),
+  ]);
+
+  if (developer) {
+    const status = developer.status.trim().toLowerCase();
+    if (developer.error?.trim()) {
+      return `Developer-agent failed: ${developer.error.trim()}`;
+    }
+    if (status === 'failed' || status === 'error' || developer.validationStatus === 'failed') {
+      return 'Developer-agent reported failure (see developer handoff).';
+    }
+    if (status === 'in_progress' || status === 'running') {
+      return (
+        'Developer-agent did not finish (handoff still in_progress — runtime likely timed out ' +
+        'before writing a terminal status).'
+      );
+    }
+  }
+
+  if (gitlab) {
+    const status = (gitlab.status ?? '').toLowerCase();
+    if (gitlab.error?.trim()) {
+      return `GitLab publish failed: ${gitlab.error.trim()}`;
+    }
+    if (status === 'failed' || status === 'error') {
+      return 'GitLab publish reported failure (see GitLab handoff).';
+    }
+  }
+
+  return null;
+}
+
 /** Poll until developer-handoff.json reports success. */
 export async function waitForDeveloperHandoffForRun(
   runId: string,

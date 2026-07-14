@@ -161,12 +161,21 @@ function firstMissingRequired(
 
 function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   const label = PHASE_DISPLAY_LABEL[missing] ?? missing;
+  const agent = PHASE_AGENT[missing];
+  let error = `Pipeline stopped before ${label} finished.`;
+  if (missing === 'implementation') {
+    error =
+      'Developer-agent did not complete successfully. Open the run → developer handoff for the concrete error.';
+  } else if (missing === 'deploy') {
+    error =
+      'GitLab publish did not complete successfully. Open the run → GitLab handoff for the concrete error.';
+  } else if (agent) {
+    error = `Pipeline stopped before ${label} finished (${agent}).`;
+  }
   return {
     status: 'failed',
-    currentStep: PHASE_AGENT[missing] ?? null,
-    error:
-      `Pipeline stopped before ${label} finished. ` +
-      'Check the developer and GitLab handoffs for the failure reason.',
+    currentStep: agent ?? null,
+    error,
   };
 }
 
