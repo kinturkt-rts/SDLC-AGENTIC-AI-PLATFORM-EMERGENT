@@ -91,9 +91,14 @@ DEV_TASK_NO_DB = (
 )
 
 DB_AGENT_TASK = (
-    "Implement data model from designDocPath §3/§6: numbered sql/ migrations, "
-    "dev seed with __BCRYPT_PLACEHOLDER__ for password_hash columns, documented password "
-    "in SQL comment, ### seedCredentials table in HANDOFF.md, stable UUIDs."
+    "Implement data model from designDocPath §3/§6: numbered sql/ migrations, stable UUIDs. "
+    "Whenever any table seeds __BCRYPT_PLACEHOLDER__ in a password_hash/hashed_password column, "
+    "that same table should also have a username or email column as the login identifier, even "
+    "if designDocPath omitted it — a hash with no way to look up which row it belongs to means "
+    "nobody can actually log in and test the app, even though the pipeline itself will still "
+    "seed and hash it correctly. Document the password in a SQL comment, and write a "
+    "'### seedCredentials' table in HANDOFF.md listing every seeded user's login value, "
+    "password, and hash column."
 )
 
 WEB_CRAWLER_TASK = (
@@ -398,15 +403,22 @@ class SdlcPipelineRunner:
                 data["steps"] = self._default_steps()
             if status:
                 data["status"] = status
-            if current_step is not None:
-                data["currentStep"] = current_step
             if error is not None:
                 data["error"] = error
             if finished:
                 data["finishedAt"] = datetime.now(timezone.utc).isoformat()
             if data.get("steps"):
                 agent_order = [s["name"] for s in data["steps"]]
-                current = current_step or data.get("currentStep")
+                # current_step can be an internal-only pseudo-step (e.g. "rds-apply",
+                # "seed-materialize") that runs between database-agent and developer-agent
+                # but isn't one of the 6 UI-facing steps. Only advance the displayed
+                # currentStep/index for a name that's actually in the steps array — an
+                # unrecognized name would otherwise resolve to index -1, and on failure
+                # "i > current_idx" is then true for every step, wiping the whole array
+                # to "queued" even though earlier steps genuinely completed.
+                if current_step is not None and current_step in agent_order:
+                    data["currentStep"] = current_step
+                current = data.get("currentStep")
                 current_idx = agent_order.index(current) if current and current in agent_order else -1
                 for i, step in enumerate(data["steps"]):
                     if step.get("status") == "skipped":

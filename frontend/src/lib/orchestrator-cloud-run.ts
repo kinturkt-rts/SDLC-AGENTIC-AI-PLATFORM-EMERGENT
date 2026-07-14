@@ -406,7 +406,7 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
         if (allowPartial && hasAppCode) {
           await appendLog(
             logPath,
-            '[gitlab-fallback] developer handoff not completed but SDLC_ALLOW_PARTIAL_PUBLISH=true — publishing anyway.\n',
+              '[gitlab-fallback] developer handoff not completed but SDLC_ALLOW_PARTIAL_PUBLISH=true — publishing anyway.\n',
           );
           await invokeGitlabFallback(runId, app, logPath, timeoutSec);
         } else {
@@ -417,7 +417,6 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
         }
       }
     } else {
-      // skipDeveloper=true — orchestrator/gitlab-agent already covered by prior branch.
       await invokeGitlabFallback(runId, app, logPath, timeoutSec);
       developerCompleted = true;
     }

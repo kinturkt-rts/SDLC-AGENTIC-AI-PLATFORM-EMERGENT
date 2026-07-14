@@ -21,6 +21,7 @@ import {
 import { MVP_TIMELINE_PHASES } from './pipeline-phases';
 import {
   developerHandoffExistsForRun,
+  developerHandoffFailedForRun,
   developerHandoffSucceededForRun,
   gitlabPublishSucceededForRun,
   resolveProjectRepositoryLink,
@@ -572,10 +573,7 @@ async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   );
   if (isS3Store()) {
     const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
-    // Prefer S3 when it is terminal and local is still active/missing. The ECS
-    // container (and baked Docker copies of agents/pipeline/runs) can keep a
-    // stale local status=running long after the orchestrator wrote failed/
-    // cancelled to S3 — that made dead runs stick on the Active Runs dashboard.
+
     if (doc && isTerminalLiveStatus(doc.status)) {
       if (!local || !isTerminalLiveStatus(local.status)) {
         return { ...doc, runId: doc.runId || runId };
@@ -829,18 +827,15 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
 
-  // If developer handoff already failed, never keep the run as "running" on
-  // the dashboard even when local run.json is stale.
   if ((enriched.status === 'running' || enriched.status === 'queued') && isS3Store()) {
-    const exists = await developerHandoffExistsForRun(runId, slug);
-    if (exists && !(await developerHandoffSucceededForRun(runId, slug))) {
+    if (await developerHandoffFailedForRun(runId, slug)) {
       enriched = {
         ...enriched,
         status: 'failed',
         currentStep: null,
         error:
           enriched.error ??
-          'developer-agent failed before GitLab publish (handoff status is not completed)',
+          'developer-agent failed before GitLab publish (developer handoff status is failed)',
       };
     }
   }

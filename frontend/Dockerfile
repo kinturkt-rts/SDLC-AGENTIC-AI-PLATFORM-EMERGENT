@@ -1,8 +1,5 @@
 # SDLC control-plane UI (Next.js standalone) + backend read bundle for /api/v1 routes.
-# Build from monorepo root:
-#   docker build -f frontend/Dockerfile -t sdlc-control-plane:local .
 
-# Base image via AWS Public ECR (Docker Hub mirror) — avoids docker.io DNS blocks on some networks.
 ARG NODE_IMAGE=public.ecr.aws/docker/library/node:20-alpine
 
 FROM ${NODE_IMAGE} AS deps

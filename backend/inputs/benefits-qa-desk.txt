@@ -1,0 +1,34 @@
+Internal benefits Q&A desk — upload HR benefit guides and let employees ask grounded questions with citations
+
+Problem:
+Benefits PDFs and annual enrollment guides sit in shared drives. People ask HR the same questions every year, or guess at answers from outdated copies. We want one internal place to upload benefit documents, ask questions in plain English, and get answers based only on those files, with clear citations.
+
+Who uses it:
+- HR contributors upload and manage benefit document collections (health plan, 401k, leave policy, etc.).
+- Employees ask questions against collections they can access.
+- Admins can see a simple audit trail of uploads and questions for demos.
+- Simple username/password sign-in is fine for MVP — no corporate SSO yet.
+
+What the product should do:
+1. Collections — Group related documents (for example "2026 Benefits" or "Leave & PTO"). Name and short description for each.
+2. Upload documents — Add handbook or policy files to a collection. Show whether each file is waiting, processing, ready, or failed.
+3. Chat / Q&A — User picks a collection, asks a question, and gets an answer plus citations (document name and a short snippet). If the docs do not support an answer, say "Not found in documents" — never invent policy.
+4. Document list — See what is in a collection and when it was last updated.
+5. Basic catalog of FAQ topics (CRUD) — HR can maintain a short list of common topic labels (enrollment, dental, parental leave) so demos feel organized; asking still goes through the document-backed chatbot.
+6. Audit trail — Record who uploaded what and who asked which question (success or not found).
+
+Must have for the demo:
+- FastAPI backend with Postgres for app data and search over document text.
+- Amazon Bedrock for answers (and for matching questions to document snippets).
+- Streamlit UI for sign-in, uploads, document list, and chat — the UI only talks to the API; it should not hold the business rules.
+- Role-based access: employees can ask; contributors can upload; admins see audit history.
+- Seed a couple of demo users and at least one sample collection so a walkthrough works without a blank system.
+
+Business rules:
+- Answers must come only from uploaded content — no guessing.
+- Employees must not change collections or see other people’s admin audit detail.
+- Unsupported file types should fail clearly.
+
+Success:
+- HR uploads a benefits PDF, an employee asks a question in Streamlit, and gets a cited answer — or an honest "not found" if the guide does not cover it.
+- A short demo path works from login → upload → ask → see citation, without needing shared Slack threads.

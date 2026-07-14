@@ -327,6 +327,39 @@ def test_update_run_json_terminal_failed_marks_current_step(
     assert statuses["product-agent"] == "completed"
 
 
+def test_update_run_json_internal_pseudo_step_does_not_wipe_prior_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: legal-doc-qa run 1c2fcc05 failed inside "rds-apply" (an internal-only
+    step, not one of the 6 UI steps) and every step - including product/architect/database,
+    which had genuinely completed - showed "queued". Root cause: an unrecognized
+    current_step resolved to index -1, and "i > -1" is true for every step, so the failure
+    branch queued the whole array instead of only the steps after the real failure point."""
+    from _shared import sdlc_pipeline as sp
+
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(sp, "is_s3_store", lambda: False)
+
+    options = sp.PipelineOptions(target_app="async-test-app", run_id="async-run-007")
+    runner = sp.SdlcPipelineRunner(options)
+    runner._update_run_json(status="running", current_step="product-agent")
+    runner._update_run_json(status="running", current_step="architect-agent")
+    runner._update_run_json(status="running", current_step="database-agent")
+    # rds-apply is internal-only - not in the 6-step UI array.
+    runner._update_run_json(current_step="rds-apply")
+    runner._update_run_json(status="failed", error="rds-apply failed (exit 1): ...", finished=True)
+
+    local = tmp_path / "agents" / "pipeline" / "runs" / "async-run-007" / "run.json"
+    data = json.loads(local.read_text(encoding="utf-8"))
+    assert data["status"] == "failed"
+    statuses = {s["name"]: s["status"] for s in data["steps"]}
+    assert statuses["product-agent"] == "completed"
+    assert statuses["architect-agent"] == "completed"
+    assert statuses["database-agent"] == "failed"
+    assert statuses["developer-agent"] == "queued"
+
+
 def test_mark_run_failed_writes_terminal_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

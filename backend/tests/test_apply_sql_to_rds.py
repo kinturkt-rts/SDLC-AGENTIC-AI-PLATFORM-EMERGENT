@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -132,3 +133,28 @@ def test_connection_url_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch
     url = mod._connection_url()
     assert "MyPass%40Database_26" in url
     assert "host.example.com:5432/sdlc_agentic_ai" in url
+
+
+def test_preprocess_seed_sql_gives_each_occurrence_a_distinct_hash() -> None:
+    """Regression: legal-doc-qa run 1c2fcc05 seeded 5 api_keys rows, each with
+    __BCRYPT_PLACEHOLDER__ for key_hash (UNIQUE NOT NULL). A single shared digest
+    reused across all 5 rows collided on the UNIQUE constraint and the whole INSERT
+    failed. Each occurrence must get its own freshly-salted hash."""
+    import bcrypt
+
+    mod = _load_module()
+    sql = (
+        '-- Password for all seed API keys: "LegalQA2024!"\n'
+        "INSERT INTO api_keys (id, key_hash, role) VALUES\n"
+        "    (1, '__BCRYPT_PLACEHOLDER__', 'legal_ops'),\n"
+        "    (2, '__BCRYPT_PLACEHOLDER__', 'reader'),\n"
+        "    (3, '__BCRYPT_PLACEHOLDER__', 'reader');\n"
+    )
+    result = mod._preprocess_seed_sql(sql)
+
+    assert "__BCRYPT_PLACEHOLDER__" not in result
+    hashes = re.findall(r"'(\$2[aby]\$12\$[./A-Za-z0-9]{53})'", result)
+    assert len(hashes) == 3
+    assert len(set(hashes)) == 3, "each occurrence must get a distinct hash (UNIQUE columns)"
+    for digest in hashes:
+        assert bcrypt.checkpw(b"LegalQA2024!", digest.encode("utf-8"))

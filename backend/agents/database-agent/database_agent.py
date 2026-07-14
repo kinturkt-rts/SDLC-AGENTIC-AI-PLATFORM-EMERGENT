@@ -156,7 +156,10 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
   or seed uses `NULL` for it, DDL must **omit** `NOT NULL`. Call `db_validate_sql` before finishing —
   it blocks NULL inserts into NOT NULL columns. `CREATE TABLE IF NOT EXISTS` does not change nullability
   on existing RDS tables; the host apply script reconciles drift, but your schema files must match design.
-- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the password hash column — use the **exact column name from your DDL** (`hashed_password`, `password_hash`, `password`, etc.). See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
+- **JWT users password column (canonical):** always name it `hashed_password` (TEXT NOT NULL).
+  Do **not** use `password_hash`, `password`, or other aliases on new apps — split naming
+  across SQL vs ORM breaks login. Seed, HANDOFF, and developer-agent must reuse this exact name.
+- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the `hashed_password` column. See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 
 ## RDS apply (host — not your job when `applyToRdsAfterWrite` is true)
@@ -214,12 +217,12 @@ Alternatively, use `gen_random_uuid()` as DEFAULT and omit the `id` column from 
 
 ## Seeding credentials — DO NOT invent hashes
 
-When any seed row has a password hash column (`hashed_password`, `password_hash`, `password`, etc.), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
+When any seed row has a password hash column (`hashed_password` — required for new JWT apps), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
 
 ### All three steps are MANDATORY — skipping any one causes silent 401 on RDS
 
 **Step 1 — Sentinel value in every seed user row**
-Insert `'__BCRYPT_PLACEHOLDER__'` in the hash column. Use the **exact column name from your DDL** — never assume `password_hash`; read the `CREATE TABLE` you just wrote.
+Insert `'__BCRYPT_PLACEHOLDER__'` in the `hashed_password` column (canonical name for new apps). Legacy apps may still use `password_hash`; never invent a third name.
 
 ```sql
 INSERT INTO users (id, username, hashed_password, role) VALUES
@@ -254,7 +257,7 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 
 The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
 
-If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and the hash column name from your DDL.
+If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and `hashed_password`.
 
 Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + SQL comment + HANDOFF.md map — all three, every time.
 """

@@ -23,8 +23,6 @@ export interface ReconcileRunResult {
 
 function cloudGitlabFallbackPending(log: string): boolean {
   if (/"skip_gitlab":\s*true/i.test(log)) return false;
-  // If the async status poll (or any other path) already recorded a terminal
-  // failure, gitlab was never reached — do not treat that as "still waiting".
   if (
     /\[status-poll\]\s+status:\s*(failed|cancelled)\b/i.test(log) ||
     /sdlc pipeline failed/i.test(log) ||

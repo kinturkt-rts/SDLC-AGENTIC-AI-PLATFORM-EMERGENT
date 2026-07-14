@@ -199,6 +199,8 @@ Rules — apply to every FR regardless of domain:
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
+      (**JWT users:** password column attribute MUST be `hashed_password` —
+      same name as DDL. Never invent `password_hash` if SQL says `hashed_password`, or the reverse.)
     - `app/routers/<domain>.py` — route handlers with business logic
     - `schemas/<domain>.py` — Pydantic request/response models
     - `app/services/bedrock_client.py` — copy from _template for B+/B++ patterns

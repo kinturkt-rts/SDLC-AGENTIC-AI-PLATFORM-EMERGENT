@@ -387,8 +387,14 @@ def _preprocess_seed_sql(sql: str) -> str:
 
     Eliminates the fragile post-apply UPDATE pass: the hash is embedded directly
     in the INSERT so rows always land with a valid bcrypt string, never a placeholder.
-    All seed users share one hash (same dev password); bcrypt.checkpw still works
-    because the salt is stored in the hash string itself.
+
+    Each occurrence gets its OWN freshly-salted hash of the same documented password —
+    not one shared digest reused everywhere. bcrypt.checkpw still validates every one
+    of them against the same plaintext (the salt lives inside each hash string), so
+    this is free for the common "all seed users share one dev password" case, and it
+    is required whenever the placeholder lands in a column with a UNIQUE constraint
+    (e.g. api_keys.key_hash) — a shared digest would collide and the INSERT would fail
+    with "duplicate key value violates unique constraint".
     """
     placeholder_sq = f"'{_BCRYPT_PLACEHOLDER}'"
     placeholder_dq = f'"{_BCRYPT_PLACEHOLDER}"'
@@ -419,13 +425,18 @@ def _preprocess_seed_sql(sql: str) -> str:
             file=sys.stderr,
         )
 
-    digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
-    result = sql.replace(placeholder_sq, f"'{digest}'").replace(placeholder_dq, f'"{digest}"')
+    def _fresh_hash(_match: re.Match[str], *, quote: str) -> str:
+        digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+        return f"{quote}{digest}{quote}"
+
+    result = re.sub(re.escape(placeholder_sq), lambda m: _fresh_hash(m, quote="'"), sql)
+    result = re.sub(re.escape(placeholder_dq), lambda m: _fresh_hash(m, quote='"'), result)
     replaced = (sql.count(placeholder_sq) + sql.count(placeholder_dq)) - (
         result.count(placeholder_sq) + result.count(placeholder_dq)
     )
     print(
-        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} __BCRYPT_PLACEHOLDER__ occurrence(s) with bcrypt hash",
+        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} __BCRYPT_PLACEHOLDER__ "
+        "occurrence(s), each with its own freshly-salted bcrypt hash",
         file=sys.stderr,
     )
     return result

@@ -2,13 +2,13 @@
 
 Regression coverage for the folder-name mismatch bug: publish-template-to-s3.py
 archives the source directory verbatim as "_template/...", but _extract_tarball
-previously looked for "template/..." after extraction — get_template_dir() always
+previously looked for "template/..." after extraction - get_template_dir() always
 raised on cloud runtimes, silently swallowed by developer_agent's broad except,
 falling back to a local path that doesn't exist in the container. Net effect:
 dev_scaffold never had real template files to copy on AgentCore, every "golden"
 file had to be hand-written by the LLM, and the final structure-validation gate
 failed for files the LLM skipped or got wrong (app/database.py, startup_checks.py,
-routers/health.py) — this was masked for a long time because cloud developer-agent
+routers/health.py) - this was masked for a long time because cloud developer-agent
 invocations used to be killed by the AgentCore 15-minute sync cap before ever
 reaching that final validation gate.
 """

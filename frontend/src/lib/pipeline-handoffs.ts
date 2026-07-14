@@ -249,6 +249,17 @@ export async function developerHandoffSucceededForRun(
   return status === 'completed' || developer.validationStatus === 'passed';
 }
 
+/** True only when developer-agent explicitly failed (not in_progress). */
+export async function developerHandoffFailedForRun(
+  runId: string,
+  slug: string,
+): Promise<boolean> {
+  const developer = await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase());
+  if (!developer) return false;
+  const status = developer.status.trim().toLowerCase();
+  return status === 'failed' || status === 'error' || developer.validationStatus === 'failed';
+}
+
 /**
  * Prefer concrete handoff / run errors over generic "check handoffs" copy.
  * Returns null when there is nothing more specific than the reconciler's default.
@@ -273,7 +284,7 @@ export async function resolveRunFailureDetail(
     }
     if (status === 'in_progress' || status === 'running') {
       return (
-        'Developer-agent did not finish (handoff still in_progress — runtime likely timed out ' +
+        'Developer-agent did not finish (handoff still in_progress - runtime likely timed out ' +
         'before writing a terminal status).'
       );
     }

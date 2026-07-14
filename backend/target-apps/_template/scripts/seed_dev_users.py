@@ -1,7 +1,7 @@
 """Replace bcrypt placeholders in the seed with real hashes.
 
 The database-agent ships seed SQL with `'__BCRYPT_PLACEHOLDER__'` in every
-`password_hash` column. The LLM cannot compute real bcrypt hashes, so the
+`hashed_password` column. The LLM cannot compute real bcrypt hashes, so the
 developer-agent scaffolds this script: it reads the credential mapping below,
 hashes each plaintext with bcrypt at deploy time, and UPDATEs the placeholder
 rows in the live database.
@@ -49,7 +49,7 @@ _LOOKUP_COLUMN = "email"
 
 # ── Table name (defaults match the golden template) ───────────────────────────
 _USERS_TABLE = "users"
-_HASH_COLUMN = "password_hash"
+_HASH_COLUMN = "hashed_password"
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
 
 

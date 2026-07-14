@@ -84,7 +84,7 @@ export const mockAgents: Agent[] = [
     id: 'security-agent',
     name: 'security-agent',
     displayName: 'Security',
-    role: 'Runs security reviews - static analysis, dependency audits, and compliance checks — and raises findings for review.',
+    role: 'Runs security reviews - static analysis, dependency audits, and compliance checks - and raises findings for review.',
     skills: ['SAST', 'dependency scan', 'secret detection', 'policy gates'],
     mcpTools: ['gitlab.security', 'fs.read'],
     mcpServers: ['GitLab'],

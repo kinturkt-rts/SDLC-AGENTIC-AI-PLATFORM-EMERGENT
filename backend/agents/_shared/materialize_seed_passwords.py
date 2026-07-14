@@ -1,12 +1,24 @@
 """Materialize bcrypt password hashes on RDS after seed SQL (no LLM-computed hashes).
 
-Database-agent writes __BCRYPT_PLACEHOLDER__ in seed SQL. This runs automatically after
-scripts/apply_sql_to_rds.py and UPDATEs live rows using bcrypt on a real CPU.
+Database-agent writes __BCRYPT_PLACEHOLDER__ in seed SQL. apply_sql_to_rds.py's own
+pre-apply preprocessing already replaces every occurrence with a freshly-salted bcrypt
+hash directly in the INSERT text, regardless of which table/column it lands in — so by
+the time this module runs, RDS should already have zero placeholders. This module's
+primary job is therefore to VERIFY that against live RDS (schema-agnostic: scans every
+text-like column, not just users.password_hash), and only falls back to hashing rows
+in place if verification finds the preprocessing did not run (e.g. bcrypt missing at
+apply time). Neither path depends on parsing seed SQL for a login-identifying column —
+that used to be required and broke on every schema shape (integer PKs, no login column,
+UNIQUE-constrained hash columns) that database-agent produced but this parser didn't
+anticipate. See _shared/seed_credentials.py for the legacy parser, still used for
+optional HANDOFF.md credential documentation and QA login verification, never as a
+pipeline-blocking gate.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -14,11 +26,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.rds_env import connection_url, load_target_app_env, schema_for_app
-from _shared.seed_credentials import (
-    _PLACEHOLDER,
-    collect_credentials,
-    seed_sql_has_placeholders,
-)
+from _shared.seed_credentials import _PLACEHOLDER
+from _shared.verify_seed_bcrypt import documented_password
 
 import bcrypt
 import psycopg
@@ -29,29 +38,90 @@ def _connect(conn_url: str) -> psycopg.Connection:
     return psycopg.connect(conn_url, autocommit=False)
 
 
-def count_invalid_hashes(
-    target_app: str,
-    repo_root: Path,
-    creds: list[tuple[str, str, str, str]],
-) -> int:
-    if not creds:
-        return 0
+def find_remaining_placeholder_columns(target_app: str) -> list[tuple[str, str]]:
+    """Scan every text-like column in the app's live schema for the literal placeholder.
+
+    Schema-agnostic by construction: it asks Postgres which columns exist and checks
+    each one directly, rather than guessing table/column names or requiring a
+    login-identifying column to exist. Returns [] when apply_sql_to_rds.py's
+    preprocessing already replaced every occurrence (the expected, common case).
+    """
     schema = schema_for_app(target_app)
-    _, hash_col = creds[0][2], creds[0][3]
+    hits: list[tuple[str, str]] = []
     with _connect(connection_url()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                psql.SQL(
-                    "SELECT COUNT(*) FROM {schema}.users "
-                    "WHERE {hash_col} = %s OR {hash_col} NOT LIKE '$2%%'"
-                ).format(
-                    schema=psql.Identifier(schema),
-                    hash_col=psql.Identifier(hash_col),
-                ),
-                (str(_PLACEHOLDER),),
+                """
+                SELECT table_name, column_name FROM information_schema.columns
+                WHERE table_schema = %s AND data_type IN ('text', 'character varying')
+                """,
+                (schema,),
             )
-            row = cur.fetchone()
-    return int(row[0]) if row else 0
+            candidates = cur.fetchall()
+            for table_name, column_name in candidates:
+                cur.execute(
+                    psql.SQL("SELECT EXISTS (SELECT 1 FROM {}.{} WHERE {} = %s)").format(
+                        psql.Identifier(schema),
+                        psql.Identifier(table_name),
+                        psql.Identifier(column_name),
+                    ),
+                    (_PLACEHOLDER,),
+                )
+                if cur.fetchone()[0]:
+                    hits.append((table_name, column_name))
+    return hits
+
+
+def _resolve_fallback_password(app_dir: Path) -> str:
+    sql_dir = app_dir / "db" / "sql"
+    if sql_dir.is_dir():
+        for seed in sorted(sql_dir.glob("*seed*.sql")):
+            if "fix" in seed.name.lower():
+                continue
+            password = documented_password(seed.read_text(encoding="utf-8"))
+            if password:
+                return password
+    return os.environ.get("SDLC_DEFAULT_SEED_PASSWORD", "DevPass123!")
+
+
+def _materialize_columns_in_place(
+    target_app: str,
+    columns: list[tuple[str, str]],
+    password: str,
+) -> None:
+    """Hash each remaining placeholder row in place, one fresh hash per physical row.
+
+    Uses Postgres's built-in `ctid` (physical row identity) instead of a primary key
+    column, so this needs zero knowledge of table shape — no PK type, no login column,
+    no schema-specific parsing. Each row gets its own salted hash so UNIQUE-constrained
+    columns (e.g. api_keys.key_hash) never collide the way a single shared hash would.
+    """
+    schema = schema_for_app(target_app)
+    with _connect(connection_url()) as conn:
+        with conn.cursor() as cur:
+            for table_name, column_name in columns:
+                cur.execute(
+                    psql.SQL("SELECT ctid FROM {}.{} WHERE {} = %s").format(
+                        psql.Identifier(schema),
+                        psql.Identifier(table_name),
+                        psql.Identifier(column_name),
+                    ),
+                    (_PLACEHOLDER,),
+                )
+                rows = cur.fetchall()
+                for (ctid,) in rows:
+                    digest = bcrypt.hashpw(
+                        password.encode("utf-8"), bcrypt.gensalt(rounds=12)
+                    ).decode("utf-8")
+                    cur.execute(
+                        psql.SQL("UPDATE {}.{} SET {} = %s WHERE ctid = %s").format(
+                            psql.Identifier(schema),
+                            psql.Identifier(table_name),
+                            psql.Identifier(column_name),
+                        ),
+                        (digest, ctid),
+                    )
+        conn.commit()
 
 
 def materialize(
@@ -60,6 +130,15 @@ def materialize(
     *,
     strict: bool = True,
 ) -> list[str]:
+    """Ensure no live row in the app's schema still holds the literal placeholder.
+
+    Schema-agnostic: this checks and (if needed) fixes RDS directly via
+    find_remaining_placeholder_columns(), which discovers table/column shape from
+    information_schema rather than assuming a users table with a specific PK type
+    or a login-identifying column. In the common case apply_sql_to_rds.py's own
+    pre-apply preprocessing already replaced every occurrence, so this returns []
+    immediately without touching RDS again.
+    """
     from _shared.pipeline_context import target_app_root_rel
 
     root = repo_root or _REPO_ROOT
@@ -68,45 +147,19 @@ def materialize(
     if not (app_dir / "db").is_dir():
         app_dir = root / "target-apps" / target_app
 
-    creds = collect_credentials(app_dir)
-    if not creds:
-        if seed_sql_has_placeholders(app_dir):
-            return [
-                f"{target_app}: seed SQL has __BCRYPT_PLACEHOLDER__ but no login rows could be "
-                "parsed (check users INSERT columns and password comment in *_seed.sql)"
-            ]
+    remaining = find_remaining_placeholder_columns(target_app)
+    if not remaining:
         return []
 
-    schema = schema_for_app(target_app)
-    updated = 0
+    password = _resolve_fallback_password(app_dir)
+    _materialize_columns_in_place(target_app, remaining, password)
 
-    with _connect(connection_url()) as conn:
-        with conn.cursor() as cur:
-            for lookup_value, plaintext, lookup_col, hash_col in creds:
-                digest = bcrypt.hashpw(
-                    plaintext.encode("utf-8"), bcrypt.gensalt(rounds=12)
-                ).decode("utf-8")
-                cur.execute(
-                    psql.SQL(
-                        "UPDATE {schema}.users "
-                        "SET {hash_col} = %s "
-                        "WHERE {lookup_col} = %s "
-                        "AND ({hash_col} = %s OR {hash_col} NOT LIKE '$2%%')"
-                    ).format(
-                        schema=psql.Identifier(schema),
-                        hash_col=psql.Identifier(hash_col),
-                        lookup_col=psql.Identifier(lookup_col),
-                    ),
-                    (digest, lookup_value, str(_PLACEHOLDER)),
-                )
-                updated += cur.rowcount or 0
-        conn.commit()
-
-    remaining = count_invalid_hashes(target_app, root, creds)
-    if remaining > 0 and strict:
+    still_remaining = find_remaining_placeholder_columns(target_app)
+    if still_remaining and strict:
+        locations = ", ".join(f"{t}.{c}" for t, c in still_remaining)
         return [
-            f"{target_app}: {remaining} user row(s) still have placeholder/invalid password "
-            f"hash after materialize in schema {schema!r} (RDS login will 401)"
+            f"{target_app}: placeholder/invalid password hash still present in "
+            f"{locations} after materialize (RDS login will 401)"
         ]
     return []
 
