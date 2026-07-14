@@ -18,6 +18,8 @@ function Get-AgentCoreBundleFromFolder {
 
 # Agents that need Node.js/npx at runtime (Atlassian mcp-remote, Firecrawl MCP, etc.)
 $NodeInstallAgents = @("product_agent", "web_crawler_agent")
+# Agents that need the terraform CLI at runtime (devops_validate).
+$TerraformInstallAgents = @("devops_agent")
 
 function Set-DockerfileAgentArg {
     param(
@@ -58,8 +60,22 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     Set-Content -Path $DockerfilePath -Value $content -Encoding UTF8 -NoNewline
 }
 
+function Set-DockerfileInstallTerraform {
+    param(
+        [string] $DockerfilePath,
+        [bool] $InstallTerraform
+    )
+    $content = Get-Content -Path $DockerfilePath -Raw -Encoding UTF8
+    if ($InstallTerraform) {
+        $content = $content -replace 'ARG INSTALL_TERRAFORM=false', 'ARG INSTALL_TERRAFORM=true'
+    } else {
+        $content = $content -replace 'ARG INSTALL_TERRAFORM=true', 'ARG INSTALL_TERRAFORM=false'
+    }
+    Set-Content -Path $DockerfilePath -Value $content -Encoding UTF8 -NoNewline
+}
+
 $targets = @(
-    @{ Path = (Join-Path $BackendRoot "Dockerfile"); Bundle = "orchestrator-agent"; InstallNode = $false }
+    @{ Path = (Join-Path $BackendRoot "Dockerfile"); Bundle = "orchestrator-agent"; InstallNode = $false; InstallTerraform = $false }
 )
 $agentcoreDir = Join-Path $BackendRoot ".bedrock_agentcore"
 if (Test-Path $agentcoreDir) {
@@ -69,6 +85,7 @@ if (Test-Path $agentcoreDir) {
             Path = Join-Path $_.FullName "Dockerfile"
             Bundle = Get-AgentCoreBundleFromFolder $folderName
             InstallNode = ($NodeInstallAgents -contains $folderName)
+            InstallTerraform = ($TerraformInstallAgents -contains $folderName)
         }
     }
 }
@@ -79,8 +96,12 @@ foreach ($target in $targets) {
     if ($null -ne $target.InstallNode) {
         Set-DockerfileInstallNode -DockerfilePath $target.Path -InstallNode ([bool]$target.InstallNode)
     }
+    if ($null -ne $target.InstallTerraform) {
+        Set-DockerfileInstallTerraform -DockerfilePath $target.Path -InstallTerraform ([bool]$target.InstallTerraform)
+    }
     $nodeLabel = if ($target.InstallNode) { ", INSTALL_NODE=true" } else { "" }
-    Write-Host "Synced $($target.Path) (AGENTCORE_AGENT=$($target.Bundle)$nodeLabel)"
+    $tfLabel = if ($target.InstallTerraform) { ", INSTALL_TERRAFORM=true" } else { "" }
+    Write-Host "Synced $($target.Path) (AGENTCORE_AGENT=$($target.Bundle)$nodeLabel$tfLabel)"
 }
 
 Write-Host "Done. Agent images: no gitlab-mcp binary unless INSTALL_GITLAB_MCP_BINARY=true."

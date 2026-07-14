@@ -38,6 +38,9 @@ bin/
 # Pipeline runtime (orchestrator subprocess logs, misplaced handoff snapshots)
 backend/agents/pipeline/.logs/
 backend/agents/pipeline/runs/
+backend/agents/pipeline/*-telemetry.json
+# devops handoffs hold generated runtime secrets (extraEnv) — never commit
+backend/agents/pipeline/*.devops-handoff.json
 backend/*/context.json
 backend/.tmp/
 backend/demo-api/

@@ -485,8 +485,9 @@ def run_deploy(app: str, *, plan_only: bool = False, destroy: bool = False) -> i
     return proc.returncode
 
 
-def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
-    agent = Agent(
+def build_devops_agent() -> Agent:
+    """Tooled devops agent — used by serve_a2a and the AgentCore bundle."""
+    return Agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
         description="Generates and validates per-app Terraform deploy roots (ECS Fargate).",
@@ -494,6 +495,10 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
         system_prompt=DEVOPS_SYS_PROMPT,
         tools=[devops_read_file, devops_write_tf, devops_validate],
     )
+
+
+def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
+    agent = build_devops_agent()
     skills = [
         AgentSkill(
             id="delivery",

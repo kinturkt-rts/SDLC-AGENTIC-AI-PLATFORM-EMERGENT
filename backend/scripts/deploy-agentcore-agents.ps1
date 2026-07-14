@@ -196,6 +196,9 @@ $OptionalAgents = @(
         securityGroups = "sg-077b416683295dd42"
     } },
     @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
+    # devops_agent: standalone runtime (not in the pipeline batch / no orchestrator peering).
+    # node=$true only to trigger the per-agent Dockerfile copy (INSTALL_TERRAFORM=true).
+    @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $true; extra = @() },
     @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @(
         "AGENTCORE_WEBCRAWLER_WITH_POSTGRES=false",
         "FIRECRAWL_MCP_COMMAND=firecrawl-mcp",
@@ -254,6 +257,7 @@ $AgentSecretKeys = @{
     orchestrator_agent     = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     orchestrator_agent_vpc = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     security_agent         = @()
+    devops_agent           = @()
     qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
     web_crawler_agent      = @("FIRECRAWL_API_KEY")
 }
