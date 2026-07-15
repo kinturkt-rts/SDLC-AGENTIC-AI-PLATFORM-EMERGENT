@@ -18,7 +18,7 @@ import {
   getRunArtifactJson,
   getS3RunArtifactIndex,
 } from './artifact-store';
-import { MVP_TIMELINE_PHASES } from './pipeline-phases';
+import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
 import {
   developerHandoffExistsForRun,
   developerHandoffFailedForRun,
@@ -70,8 +70,6 @@ import type {
   SdlcPhase,
   StepStatus,
 } from '@/src/types';
-import { mockPipelines } from '@/src/mocks/projects';
-
 const LIST_RUNS_TTL_MS = 30_000;
 const ACTIVITY_CACHE_KEY = 'listRecentActivity';
 const ARTIFACTS_CACHE_KEY = 'listArtifacts';
@@ -1936,7 +1934,20 @@ async function getDashboardSummaryUncached(): Promise<DashboardSummary> {
 }
 
 export async function listPipelines(): Promise<PipelineDefinition[]> {
-  return mockPipelines;
+  // Live MVP definition (not the old multi-recipe mock catalog).
+  return [
+    {
+      id: 'standard-sdlc',
+      name: 'Standard SDLC',
+      description:
+        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish. Fully automated in the current MVP.',
+      phases: MVP_TIMELINE_PHASES.map((phase) => ({
+        phase,
+        agent: PHASE_AGENT[phase],
+        hitl: false,
+      })),
+    },
+  ];
 }
 
 async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> {

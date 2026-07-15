@@ -12,6 +12,7 @@ import {
   ScrollText,
   Settings,
   Coins,
+  Info,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -64,6 +65,9 @@ export const navSections: NavSection[] = [
   },
   {
     title: 'Admin',
-    items: [{ label: 'Settings', href: '/settings', icon: Settings }],
+    items: [
+      { label: 'Settings', href: '/settings', icon: Settings },
+      { label: 'About', href: '/about', icon: Info },
+    ],
   },
 ];

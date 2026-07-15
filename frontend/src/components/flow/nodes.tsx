@@ -3,6 +3,7 @@
 import { Handle, Position } from '@xyflow/react';
 import { Bot, Network, UserCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { phaseDisplayLabel } from '@/src/lib/pipeline-phases';
 
 const edgeHandle = '!h-2 !w-2 !border !border-border !bg-muted-foreground/50';
 // Centered, invisible handle -> edges radiate from the node center (hub/spoke look).
@@ -13,7 +14,7 @@ export function PhaseNode({ data }: { data: { phase: string; agent: string; inde
     <div className="w-[180px] rounded-lg border border-border bg-card p-3 shadow-sm">
       <Handle type="target" position={Position.Left} className={edgeHandle} />
       <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Phase {data.index + 1}</p>
-      <p className="text-sm font-semibold capitalize text-foreground">{data.phase}</p>
+      <p className="text-sm font-semibold text-foreground">{phaseDisplayLabel(data.phase)}</p>
       <div className="mt-1 flex items-center gap-1.5 text-xs text-teal-600 dark:text-teal-400">
         <Bot className="h-3 w-3" />
         <span className="truncate font-mono">{data.agent}</span>

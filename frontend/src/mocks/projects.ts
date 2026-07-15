@@ -85,39 +85,19 @@ export const mockProjects: Project[] = [
   },
 ];
 
+/** MVP delivery pipeline only — matches live AgentCore orchestration. */
 export const mockPipelines: PipelineDefinition[] = [
   {
     id: 'standard-sdlc',
     name: 'Standard SDLC',
-    description: 'Full end-to-end delivery pipeline from requirements to deploy with two HITL gates.',
+    description:
+      'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish. Fully automated in the current MVP.',
     phases: [
-      { phase: 'requirements', agent: 'product-agent', hitl: true },
+      { phase: 'requirements', agent: 'product-agent', hitl: false },
       { phase: 'architecture', agent: 'architect-agent', hitl: false },
       { phase: 'data', agent: 'database-agent', hitl: false },
       { phase: 'implementation', agent: 'developer-agent', hitl: false },
-      { phase: 'qa', agent: 'qa-agent', hitl: false },
-      { phase: 'security', agent: 'security-agent', hitl: true },
-      { phase: 'deploy', agent: 'devops-agent', hitl: false },
-    ],
-  },
-  {
-    id: 'hotfix',
-    name: 'Hotfix',
-    description: 'Expedited path for urgent fixes: implementation, QA, and gated deploy only.',
-    phases: [
-      { phase: 'implementation', agent: 'developer-agent', hitl: false },
-      { phase: 'qa', agent: 'qa-agent', hitl: false },
-      { phase: 'security', agent: 'security-agent', hitl: true },
-      { phase: 'deploy', agent: 'devops-agent', hitl: false },
-    ],
-  },
-  {
-    id: 'research-spike',
-    name: 'Research Spike',
-    description: 'Discovery pipeline that crawls references and produces a PRD + architecture draft.',
-    phases: [
-      { phase: 'requirements', agent: 'product-agent', hitl: true },
-      { phase: 'architecture', agent: 'architect-agent', hitl: false },
+      { phase: 'deploy', agent: 'gitlab-agent', hitl: false },
     ],
   },
 ];
