@@ -1,7 +1,17 @@
 'use client';
 
 import * as React from 'react';
-import { FileBox, FileText, FileCode2, Database, ShieldCheck, GitBranch, Image as ImageIcon, FlaskConical, FileType } from 'lucide-react';
+import {
+  FileBox,
+  FileText,
+  FileCode2,
+  Database,
+  ShieldCheck,
+  GitBranch,
+  Image as ImageIcon,
+  FlaskConical,
+  FileType,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -23,7 +33,7 @@ import { EmptyState } from '@/src/components/common/EmptyState';
 import { useArtifacts, useProjects } from '@/src/lib/queries';
 import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
-import { ARTIFACT_FILTER_KINDS, artifactKindLabel } from '@/src/lib/artifact-kinds';
+import { ARTIFACT_FILTER_KINDS, artifactKindLabel, artifactMatchesKind } from '@/src/lib/artifact-kinds';
 import type { Artifact, ArtifactKind } from '@/src/types';
 
 const KIND_ICON: Record<ArtifactKind, typeof FileBox> = {
@@ -84,12 +94,12 @@ export default function ArtifactsPage() {
     ? projects?.find((p) => p.id === artifactsProjectId)?.name ?? artifactsProjectId
     : 'all projects';
 
-  const kindLabel = FILTER_OPTIONS.find((o) => o.value === kind)?.label ?? 'All kinds';
-
-  const rows = (artifacts ?? [])
-    .filter((a) => !artifactsProjectId || a.projectId === artifactsProjectId)
-    .filter((a) => kind === 'all' || a.kind === kind)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const rows = React.useMemo(() => {
+    return (artifacts ?? [])
+      .filter((a) => !artifactsProjectId || a.projectId === artifactsProjectId)
+      .filter((a) => artifactMatchesKind(a, kind))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [artifacts, artifactsProjectId, kind]);
 
   return (
     <>
@@ -101,12 +111,14 @@ export default function ArtifactsPage() {
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground">Kind</span>
             <Select value={kind} onValueChange={(v) => setKind(v as ArtifactKind | 'all')}>
-              <SelectTrigger className="h-9 w-auto min-w-[7.5rem] border-white/[0.08] bg-white/[0.02] px-2.5">
-                <SelectValue>{kindLabel}</SelectValue>
+              <SelectTrigger className="h-9 w-auto min-w-[8.5rem] border-white/[0.08] bg-white/[0.02] px-2.5">
+                <SelectValue placeholder="All kinds" />
               </SelectTrigger>
               <SelectContent>
                 {FILTER_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

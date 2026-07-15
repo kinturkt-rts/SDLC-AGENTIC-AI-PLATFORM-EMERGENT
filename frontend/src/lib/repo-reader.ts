@@ -1120,12 +1120,53 @@ async function countArtifactsForSlug(slug: string, ctx: PipelineContextFile | nu
 }
 
 function artifactKindForPath(filePath: string): ArtifactKind {
-  const lower = filePath.toLowerCase();
-  if (lower.includes('/prd/') || lower.endsWith('prd.md')) return 'prd';
-  if (lower.includes('/design/') || lower.includes('architecture')) return 'architecture';
-  if (lower.endsWith('.png') || lower.endsWith('.svg')) return 'diagram';
-  if (lower.endsWith('.sql')) return 'migration';
-  if (lower.includes('/tests/')) return 'test';
+  const lower = filePath.replace(/\\/g, '/').toLowerCase().replace(/^\/+/, '');
+  if (
+    lower.startsWith('docs/prd/') ||
+    lower.includes('/docs/prd/') ||
+    lower.includes('/prd/') ||
+    /(^|\/)prd\.md$/.test(lower)
+  ) {
+    return 'prd';
+  }
+  // Prefer path segments over substring matches like "...architecture..." in code filenames.
+  if (
+    lower.startsWith('docs/design/') ||
+    lower.includes('/docs/design/') ||
+    ((lower.startsWith('design/') || lower.includes('/design/')) && lower.endsWith('.md'))
+  ) {
+    return 'architecture';
+  }
+  if (
+    lower.startsWith('docs/generated-diagrams/') ||
+    lower.includes('/docs/generated-diagrams/') ||
+    lower.startsWith('docs/diagrams/') ||
+    lower.includes('/docs/diagrams/') ||
+    lower.endsWith('.png') ||
+    lower.endsWith('.svg') ||
+    lower.endsWith('.jpg') ||
+    lower.endsWith('.jpeg')
+  ) {
+    return 'diagram';
+  }
+  if (lower.endsWith('.sql') || lower.startsWith('db/sql/') || lower.includes('/db/sql/')) {
+    return 'migration';
+  }
+  if (lower.includes('/tests/') || lower.startsWith('tests/') || /(?:^|\/)test_[^/]+\.py$/.test(lower)) {
+    return 'test';
+  }
+  if (
+    lower.endsWith('.py') ||
+    lower.endsWith('.ts') ||
+    lower.endsWith('.tsx') ||
+    lower.startsWith('app/') ||
+    lower.includes('/app/') ||
+    lower.startsWith('ui/') ||
+    lower.includes('/ui/') ||
+    lower.endsWith('requirements.txt')
+  ) {
+    return 'code';
+  }
   return 'doc';
 }
 
@@ -1271,21 +1312,8 @@ async function listArtifactsUncached(): Promise<Artifact[]> {
         const relPath = s3File.key.replace(prefix, '');
         if (isSkippableS3ArtifactRelPath(relPath)) continue;
 
-        let kind: ArtifactKind | undefined;
-        const lower = relPath.toLowerCase();
-        if (lower.includes('/docs/prd/') || lower.startsWith('docs/prd/')) kind = 'prd';
-        else if (lower.includes('/docs/design/') || lower.startsWith('docs/design/')) kind = 'architecture';
-        else if (lower.includes('/docs/generated-diagrams/') || lower.startsWith('docs/generated-diagrams/')) kind = 'diagram';
-        else if (lower.includes('/docs/diagrams/') || lower.startsWith('docs/diagrams/')) kind = 'diagram';
-        else if (lower.includes('/db/sql/') && lower.endsWith('.sql')) kind = 'migration';
-        else if (lower.endsWith('handoff.md')) kind = 'doc';
-        else if (lower.startsWith('target-apps/') && !lower.includes('/db/sql/')) kind = 'code';
-        else if (
-          !lower.startsWith('target-apps/') &&
-          (lower.includes('/app/') || lower.endsWith('.py') || lower.endsWith('requirements.txt'))
-        ) {
-          kind = 'code';
-        } else kind = artifactKindForPath(relPath);
+        // Classify via a single path helper so kind badges and Kind filters stay aligned.
+        const kind = artifactKindForPath(relPath);
 
         const base = path.basename(relPath);
         let imageUrl: string | undefined;

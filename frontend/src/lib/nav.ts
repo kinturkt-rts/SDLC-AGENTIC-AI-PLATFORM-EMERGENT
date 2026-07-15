@@ -32,7 +32,7 @@ export const navSections: NavSection[] = [
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Pipeline Runs', href: '/runs', icon: Workflow },
-      { label: 'HITL Checkpoints', href: '/checkpoints', icon: UserCheck },
+      { label: 'HITL Approved Gates', href: '/checkpoints', icon: UserCheck },
     ],
   },
   {

@@ -39,8 +39,8 @@ export default function CheckpointsPage() {
     <>
       <PageHeader
         eyebrow="Operate"
-        title="HITL Checkpoints"
-        description={`Human-in-the-loop gates for ${projectName} - approve, reject, or clarify before the pipeline continues.`}
+        title="HITL Approved Gates"
+        description={`Human-in-the-loop approval gates for ${projectName} - approve, reject, or clarify before the pipeline continues.`}
       />
 
       {isLoading ? (
@@ -54,7 +54,7 @@ export default function CheckpointsPage() {
               <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">{pending.length}</span>
             </div>
             {pending.length === 0 ? (
-              <EmptyState icon={UserCheck} title="All clear" description="No checkpoints are waiting for human review." />
+              <EmptyState icon={UserCheck} title="All clear" description="No approval gates are waiting for human review." />
             ) : (
               <div className="space-y-3">
                 {pending.map((c) => (

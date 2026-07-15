@@ -929,7 +929,7 @@ export default function DashboardPage() {
           <div className="space-y-2 p-3">
             {pending.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                Not enabled in this MVP. Human-in-the-loop checkpoints will appear here when wired up.
+                Not enabled in this MVP. Human-in-the-loop approved gates will appear here when wired up.
               </p>
             ) : (
               pending.map((c) => (
