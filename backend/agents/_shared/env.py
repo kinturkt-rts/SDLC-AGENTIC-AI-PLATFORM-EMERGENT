@@ -1,13 +1,4 @@
-"""Load repo .env then .env.local.
-
-Priority:
-  1. Merge .env then .env.local into defaults for keys not already in the shell
-  2. .env.local always wins for every key it defines (overrides stale shell exports
-     from placeholder .env, e.g. AWS_PROFILE=your-profile, POSTGRES_MCP_* placeholders)
-  3. If AWS_PROFILE is set (shell or file), do NOT load static AWS_ACCESS_KEY_ID /
-     AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN from files — those expired ASIA* values
-     would override SSO and break Bedrock.
-"""
+"""Load monorepo / backend `.env` and `.env.local` into the process environment."""
 
 from __future__ import annotations
 
@@ -25,6 +16,10 @@ _AWS_STATIC_KEYS = frozenset(
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
     }
+)
+
+_CALLER_SETTABLE_KEYS = frozenset(
+    {"ARTIFACT_STORE", "PRODUCT_ARTIFACT_LAYOUT", "PRODUCT_PRD_LAYOUT"}
 )
 
 
@@ -65,5 +60,7 @@ def load_repo_env() -> None:
             if value is None or not str(value).strip():
                 continue
             if use_profile and key in _AWS_STATIC_KEYS:
+                continue
+            if key in _CALLER_SETTABLE_KEYS and key in os.environ:
                 continue
             os.environ[key] = str(value).strip()

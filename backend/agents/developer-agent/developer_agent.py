@@ -1,15 +1,4 @@
-"""Developer agent - Strands + Bedrock (Claude) + scoped repo file tools
-
-Generates code under target-apps/<service>/ and writes
-agents/pipeline/<app>.developer-handoff.json for qa-agent / devops-agent.
-
-Patterns (legacy code in parens):
-  in-memory    — FastAPI, no DB                 (flat app/)                       (A)
-  postgres     — Postgres CRUD                  (app/ + db models)                (B)
-  postgres-llm — Postgres + Bedrock/LLM         (postgres + app/services/)        (B+)
-  rag          — Local RAG (pgvector)           (postgres-llm + ingestion)        (B++)
-  streamlit    — any backend + Streamlit UI     (backend + ui/streamlit_app.py)   (C)
-"""
+"""Developer agent — Strands + Bedrock; generates target-apps code and developer handoff."""
 
 from __future__ import annotations
 
@@ -242,11 +231,9 @@ Rules — apply to every FR regardless of domain:
     Passing pytest without test_seed_bcrypt.py is a false green for RDS login.
     When seed SQL uses `__BCRYPT_PLACEHOLDER__`, README **Seed Users** (or **Demo accounts**) section:
     - Table: username/email | password | role — use the plaintext from the seed SQL comment / HANDOFF.
-    - Do **not** mention `__BCRYPT_PLACEHOLDER__`, `materialize_seed_passwords.py`, or other pipeline
-      internals in README (those are implementation details, not user docs).
-    - Optional one line in plain English: "Demo logins work after the database seed has been applied
-      to Postgres." If documenting manual RDS setup from repo root: run
-      `python scripts/apply_sql_to_rds.py --target-app <app>` from `backend/` — no placeholder jargon.
+    - Do **not** mention `__BCRYPT_PLACEHOLDER__`, `materialize_seed_passwords.py`,
+      `apply_sql_to_rds.py`, seed-apply notes, or other pipeline internals — README is for app
+      users/dev setup, not the SDLC pipeline.
 
 **Step 4 — configuration and README**
 4a. .env.example only when the service reads env vars. Placeholder values, no real secrets.
@@ -269,7 +256,8 @@ Rules — apply to every FR regardless of domain:
     run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
     streamlit pattern: document UI URL (http://localhost:8501) and `streamlit run` in
     Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
-  passwords (# → %23). Document that pytest uses SQLite — passing tests ≠ RDS proof.
+  passwords (# → %23). Include a pytest command if tests exist; do **not** explain that tests use
+    SQLite / in-memory DB — that is an implementation detail, not user docs.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
     JWT Bearer per Rules); include curl AND one PowerShell `Invoke-RestMethod` example.
     **Role & endpoint quick reference (required when Rules define multiple roles or /portal vs /internal paths):**
@@ -336,8 +324,9 @@ Rules — apply to every FR regardless of domain:
   - `tests/test_seed_bcrypt.py` present and passes
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
-  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder
-    or materialize script names); password matches seed SQL comment exactly
+  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder,
+    apply_sql/materialize script names, seed-apply notes, or SQLite-test notes); password matches
+    seed SQL comment exactly
 
   UI parity (Pattern C / requiresStreamlit only — skip when API-only):
   - `dev_validate_app` must report `UI_PARITY OK`
@@ -637,9 +626,9 @@ If `HANDOFF.md` has `### seedCredentials` or seed SQL uses `'__BCRYPT_PLACEHOLDE
 
 1. Optionally copy `target-apps/_template/scripts/seed_dev_users.py` via `dev_scaffold` and set `_CREDENTIALS` from HANDOFF (local re-seed only).
 2. **Do NOT** tell users to run `seed_dev_users.py` as a required setup step — `scripts/apply_sql_to_rds.py` **automatically** calls `materialize_seed_passwords.py` after seed SQL.
-3. README "Setup": document seed login emails/passwords from HANDOFF in a **Demo accounts** table;
-   optional note that logins work after DB seed is applied to Postgres. Do not expose placeholder
-   sentinels or internal materialize scripts in README.
+3. README "Setup": document seed login emails/passwords from HANDOFF in a **Demo accounts** table
+   only. Do not mention seed-apply scripts, placeholders, materialize steps, or that "logins work
+   after DB seed" — the pipeline handles that; app README is for running the service and demo logins.
 4. Add `bcrypt>=4.0` to `requirements.txt` when the app verifies passwords.
 
 Same sentinel approach for `api_key_hash` or other hash columns documented in HANDOFF.
@@ -696,6 +685,9 @@ These files are COPIED VERBATIM from golden templates in Step 2c — do NOT rege
 | Pytest / validate tool | `tests/conftest.py` sets `APP_ENV=test` and `SKIP_STARTUP_CHECKS=1` so SQLite tests do not trip Postgres fail-fast |
 | Streamlit + API key | When API-key auth: `.env.example` includes `API_KEY=`; README says Streamlit `ui/` reads the same key; never leave `API_KEY=` blank in `.env.example` |
 | Health path | Standardize on `GET /health` (not `/healthz`) unless design explicitly requires another path |
+| Multi-line strings | A single-quoted or double-quoted string literal MUST NOT contain a literal line break — that is a `SyntaxError`. Use an explicit `\n` inside the quotes (`"line one\nline two"`) instead of pasting a real newline into the literal. Applies to error messages, LLM prompts, and any other multi-line text — including inside test files and fixtures |
+| RAG chunk insert without embedding | Every `document_chunks`-style INSERT into a pgvector `embedding` column MUST be preceded by an actual `bedrock.invoke_embed(chunk_text)` call for that exact chunk — never insert a chunk row with `embedding` omitted, `None`, or a placeholder. Postgres raises `DatatypeMismatch` (vector column, non-vector value) if this is skipped, and the upload silently never reaches "ready" |
+| Background-task exception handler that re-commits | If a background task's `except` block itself calls `session.commit()` (e.g. to persist `status="failed"`), call `session.rollback()` FIRST. A DB-level error on the first commit leaves the session/transaction poisoned — a second commit on the same session raises too, the whole exception escapes uncaught, and the record is left stuck at its prior status (e.g. "processing") forever with no error surfaced |
 
 ## Library compatibility rules (detect and avoid - not hardcoded versions)
 
@@ -1740,6 +1732,24 @@ _ROUTER_ANTIPATTERN_RES = (
 )
 
 
+def _scan_python_syntax(service_dir: Path) -> list[str]:
+    """Compile every generated .py file — catches SyntaxError in files the
+    app.main import graph doesn't reach (services only imported by routers
+    other than the one under test, tests/conftest.py, etc.)."""
+    import py_compile
+
+    errors: list[str] = []
+    for path in service_dir.rglob("*.py"):
+        if any(part in _BLOCKED_PATH_PARTS for part in path.parts):
+            continue
+        rel = path.relative_to(service_dir).as_posix()
+        try:
+            py_compile.compile(str(path), doraise=True)
+        except py_compile.PyCompileError as exc:
+            errors.append(f"{rel}: {exc.msg}")
+    return errors
+
+
 def _scan_router_antipatterns(service_dir: Path) -> list[str]:
     """Static scan for FastAPI dependency mistakes that crash at import."""
     errors: list[str] = []
@@ -1829,6 +1839,16 @@ def run_service_validation(
         )
         return _fail("structure", detail)
     _ok("structure")
+
+    syntax_errors = _scan_python_syntax(service_dir)
+    if syntax_errors:
+        detail = (
+            "SYNTAX FAILED — files below don't compile (often a literal newline\n"
+            "pasted inside a \"...\" string instead of \\n — use \\n or triple-quoted\n"
+            "strings for any multi-line text):\n"
+        ) + "\n".join(f"  - {e}" for e in syntax_errors)
+        return _fail("syntax", detail)
+    _ok("syntax")
 
     env_results = _validate_env_example(service_dir)
     if env_results[0].startswith("ENV_EXAMPLE FAILED"):
@@ -2526,15 +2546,33 @@ def run_task(
         agent_error = exc
     finally:
         written = _dedupe_preserve_order(_written_files)
+        # A validation failure with no Python exception used to still write
+        # status="completed" — gitlab-agent (local) and classify_developer_readiness
+        # (cloud) both treat "completed" as "safe to publish", so broken code (missing
+        # imports, syntax errors) flowed straight through to GitLab and devops-agent.
+        # Reuse the same terminal-failure contract classify_developer_readiness already
+        # enforces for status in {"failed", "error"}.
+        validation_failed = (
+            agent_error is None
+            and _auto_validate_enabled()
+            and not _summary_has_validation_passed(summary)
+        )
         try:
             if written:
                 written = _ensure_delivery_files(app, written, context=ctx)
+            handoff_status = "failed" if (agent_error or validation_failed) else "completed"
+            handoff_error = (
+                str(agent_error) if agent_error
+                else "dev_validate_app failed — see summary for VALIDATION FAILED report"
+                if validation_failed
+                else None
+            )
             handoff_rel = _persist_developer_handoff(
                 app,
                 ctx,
                 written,
-                status="failed" if agent_error else "completed",
-                error=str(agent_error) if agent_error else None,
+                status=handoff_status,
+                error=handoff_error,
             )
             if handoff_rel:
                 ctx["developerHandoffPath"] = handoff_rel
@@ -2682,7 +2720,7 @@ def _execute_developer_pipeline_message(message: Any) -> str:
     try:
         summary, written, handoff_rel = run_task(task, ctx or None)
     except (ValueError, TargetAppRequiredError, SystemExit) as exc:
-        app = (ctx or {}).get("targetApp") or "demo-api"
+        app = (ctx or {}).get("targetApp") or "your-app"
         run_id = resolve_run_id(ctx) or "smoke-001"
         root = target_app_root_rel(str(app))
         example = {

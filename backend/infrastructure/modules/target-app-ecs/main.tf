@@ -28,7 +28,12 @@ locals {
       APP_NAME            = var.app_name
       ENVIRONMENT         = var.environment
       SKIP_STARTUP_CHECKS = local.has_db ? "0" : "1"
+      # boto3 region for apps calling AWS services (Bedrock etc.)
+      AWS_REGION         = var.aws_region
+      AWS_DEFAULT_REGION = var.aws_region
     },
+    # api-only apps face the ALB directly; serve_api.py strips this prefix
+    var.enable_ui ? {} : { API_PATH_PREFIX = "/${var.app_name}" },
     var.extra_env,
   )
 
@@ -154,6 +159,26 @@ resource "aws_iam_role_policy" "execution_secrets" {
 resource "aws_iam_role" "task" {
   name               = "${local.name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
+}
+
+resource "aws_iam_role_policy" "task_bedrock" {
+  count = var.enable_bedrock ? 1 : 0
+  name  = "invoke-bedrock"
+  role  = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ]
+      Resource = [
+        "arn:aws:bedrock:*::foundation-model/*",
+        "arn:aws:bedrock:*:*:inference-profile/*"
+      ]
+    }]
+  })
 }
 
 # ── Networking ─────────────────────────────────────────────────────────────────

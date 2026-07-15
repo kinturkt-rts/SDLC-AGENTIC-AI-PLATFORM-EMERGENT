@@ -1,4 +1,4 @@
-"""Product agent - Strands + Bedrock + Atlassian MCP (Jira)"""
+"""Product agent — Strands + Bedrock; PRD authoring and optional Jira."""
 
 import argparse
 import base64

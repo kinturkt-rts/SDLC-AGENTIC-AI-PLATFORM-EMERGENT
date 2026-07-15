@@ -1,12 +1,5 @@
 ﻿# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
 # Prereqs: pip install bedrock-agentcore-starter-toolkit, AWS credentials, Bedrock model access.
-#
-# AgentCore registry names use underscores (database_agent). AGENTCORE_AGENT uses hyphenated
-# bundle keys (database-agent) matching agents/<name>/ and BUNDLE_FACTORIES in a2a_server.py.
-#
-# IMPORTANT: agentcore configure --entrypoint deploy/agentcore/a2a_server.py narrows source_path
-# to deploy/agentcore (~11 KB zip) and CodeBuild fails (COPY agents/ not found). Redeploys should
-# use -SkipConfigure (default for existing agents in .bedrock_agentcore.yaml). First-time setup: -Configure.
 param(
     [string] $Region = "us-east-2",
     [string[]] $Agents = @(),
@@ -326,6 +319,7 @@ foreach ($agent in $TargetAgents) {
     if ($SkipConfigure -and -not (Test-AgentRegisteredInYaml -AwsName $awsName)) {
         Write-Warning "Skipping $awsName - not registered in .bedrock_agentcore.yaml. First-time setup:`n  .\scripts\deploy-agentcore-agents.ps1 -Agents $awsName -Configure`nThen verify source_path is 'backend' (not deploy/agentcore) before redeploying with -SkipConfigure."
         $DeploySkipped += $awsName
+        if ($agent.node) { & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null }
         continue
     }
 
@@ -421,6 +415,15 @@ if full.get('environmentVariables'):
 cc.update_agent_runtime(**kwargs)
 print('  Lifecycle re-applied: idle=3600s maxLifetime=28800s for $awsName')
 "@
+    }
+
+    # Undo the root-Dockerfile copy (line ~319): CodeBuild only reads the ROOT
+    # Dockerfile, not source_path, so node-hack agents (product/web-crawler/devops)
+    # temporarily overwrite it. Restore orchestrator-agent default immediately so a
+    # crash mid-loop or an early exit never leaves Dockerfile pointing at the wrong
+    # bundle for the next `agentcore launch` / local build.
+    if ($agent.node) {
+        & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null
     }
 }
 

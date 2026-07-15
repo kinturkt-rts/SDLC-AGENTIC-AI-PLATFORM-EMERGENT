@@ -1,12 +1,4 @@
-"""Security agent — Strands + Bedrock + scoped scan tools + A2A.
-
-Runs static analysis (bandit), dependency CVE audit (pip-audit), and a regex-based
-secrets scan against target-apps/<service>/, classifies findings by severity, and
-emits a structured handoff for devops-agent / developer-agent.
-
-The agent is intentionally read-only on application code: it never edits app/ or
-tests/. Its only write target is `target-apps/<service>/SECURITY_REPORT.md`.
-"""
+"""Security agent — Strands + Bedrock; static/deps/secrets scans and security report."""
 
 from __future__ import annotations
 

@@ -107,6 +107,20 @@ def ensure_deploy_dockerfiles(app: str) -> list[str]:
     return copied
 
 
+def _uses_bedrock(app_dir: Path) -> bool:
+    """App code references Bedrock (RAG/LLM apps) -> task role needs InvokeModel."""
+    app_pkg = app_dir / "app"
+    if not app_pkg.is_dir():
+        return False
+    for py in app_pkg.rglob("*.py"):
+        try:
+            if "bedrock" in py.read_text(encoding="utf-8", errors="ignore").lower():
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def build_deploy_manifest(app: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Inspect target-apps/<app>/ + pipeline context/handoffs -> deploy manifest."""
     ctx = context or {}
@@ -132,6 +146,7 @@ def build_deploy_manifest(app: str, context: dict[str, Any] | None = None) -> di
         "tfRoot": f"infrastructure/environments/dev/{app}",
         "enableUi": has_ui,
         "hasDatabase": has_db,
+        "usesBedrock": _uses_bedrock(app_dir),
         "dbInstanceIdentifier": db_instance_identifier_from_env() if has_db else None,
         "databaseUrlAvailable": bool(database_url_from_env()) if has_db else False,
         "dockerfiles": {

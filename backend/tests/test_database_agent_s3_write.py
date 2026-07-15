@@ -13,6 +13,10 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _AGENT_PATH = _REPO_ROOT / "agents" / "database-agent" / "database_agent.py"
 
+# Use a fixture slug — never "demo-api" — so a missed monkeypatch cannot recreate
+# the deleted stale target-apps/demo-api/ tree on disk.
+_FIXTURE_APP = "fixture-app"
+
 
 def _load_agent_module():
     sys.modules.pop("database_agent", None)
@@ -25,15 +29,22 @@ def _load_agent_module():
     return module
 
 
+def _isolate_agent_paths(mod, repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep db_write_file off the real target-apps/ tree (module uses Path(__file__), not REPO_ROOT)."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setattr(mod, "_REPO_ROOT", repo_root)
+    monkeypatch.setattr(mod, "_TARGET_APPS", repo_root / "target-apps")
+
+
 def test_db_write_file_rewrites_target_apps_path_in_cloud_s3(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("REPO_ROOT", str(repo_root))
     monkeypatch.setenv("ARTIFACT_STORE", "local")
 
     mod = _load_agent_module()
-    mod._run_context = {"targetApp": "demo-api", "runId": "db-write-cloud-001"}
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
+    mod._run_context = {"targetApp": _FIXTURE_APP, "runId": "db-write-cloud-001"}
     captured: list[str] = []
 
     def _capture_write(rel: str, content: str, *, context: dict | None = None) -> str:
@@ -44,12 +55,12 @@ def test_db_write_file_rewrites_target_apps_path_in_cloud_s3(
         with patch.object(mod, "_is_cloud_store", return_value=True):
             with patch("_shared.pipeline_context._is_cloud_store", return_value=True):
                 result = mod.db_write_file(
-                    "target-apps/demo-api/db/sql/001_users.sql",
+                    f"target-apps/{_FIXTURE_APP}/db/sql/001_users.sql",
                     "CREATE TABLE users (id uuid PRIMARY KEY);",
                 )
 
-    assert "Wrote demo-api/db/sql/001_users.sql" in result
-    assert captured == ["demo-api/db/sql/001_users.sql"]
+    assert f"Wrote {_FIXTURE_APP}/db/sql/001_users.sql" in result
+    assert captured == [f"{_FIXTURE_APP}/db/sql/001_users.sql"]
     mod._run_context = None
 
 
@@ -57,23 +68,23 @@ def test_db_write_file_persists_to_s3_when_run_id_set(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("REPO_ROOT", str(repo_root))
     monkeypatch.setenv("ARTIFACT_STORE", "local")
-    (repo_root / "target-apps" / "demo-api" / "db" / "sql").mkdir(parents=True)
+    (repo_root / "target-apps" / _FIXTURE_APP / "db" / "sql").mkdir(parents=True)
 
     mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
     run_id = "db-write-001"
-    mod._run_context = {"targetApp": "demo-api", "runId": run_id}
+    mod._run_context = {"targetApp": _FIXTURE_APP, "runId": run_id}
 
     result = mod.db_write_file(
-        "target-apps/demo-api/db/sql/001_users.sql",
+        f"target-apps/{_FIXTURE_APP}/db/sql/001_users.sql",
         "CREATE TABLE users (id uuid PRIMARY KEY);",
     )
-    assert "Wrote target-apps/demo-api/db/sql/001_users.sql" in result
+    assert f"Wrote target-apps/{_FIXTURE_APP}/db/sql/001_users.sql" in result
 
     from _shared.artifact_store import get_artifact_text
 
-    stored = get_artifact_text(run_id, "target-apps/demo-api/db/sql/001_users.sql")
+    stored = get_artifact_text(run_id, f"target-apps/{_FIXTURE_APP}/db/sql/001_users.sql")
     assert "CREATE TABLE users" in stored
     mod._run_context = None
 
@@ -85,16 +96,16 @@ def test_build_database_pipeline_agent_calls_run_task(
     import asyncio
     import json
 
-    monkeypatch.setenv("REPO_ROOT", str(repo_root))
     mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
 
     message = (
         "Design database schema\n\nContext:\n"
         + json.dumps(
             {
-                "targetApp": "demo-api",
+                "targetApp": _FIXTURE_APP,
                 "runId": "run-db-a2a",
-                "designDocPath": "docs/design/demo-api.md",
+                "designDocPath": f"docs/design/{_FIXTURE_APP}.md",
             }
         )
     )
@@ -104,7 +115,7 @@ def test_build_database_pipeline_agent_calls_run_task(
         captured["task"] = task
         captured["context"] = context
         captured["kwargs"] = kwargs
-        return ("schema ok", ["target-apps/demo-api/db/sql/001.sql"])
+        return ("schema ok", [f"target-apps/{_FIXTURE_APP}/db/sql/001.sql"])
 
     class FakeShellAgent:
         def __call__(self, *args, **kwargs):
@@ -136,12 +147,12 @@ def test_database_pipeline_surfaces_run_task_errors(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("REPO_ROOT", str(repo_root))
     mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
 
     with patch.object(mod, "run_task", side_effect=RuntimeError("bedrock unavailable")):
         text = mod._execute_database_pipeline_message(
-            "task\n\nContext:\n" + '{"targetApp":"demo-api","runId":"r1"}',
+            "task\n\nContext:\n" + f'{{"targetApp":"{_FIXTURE_APP}","runId":"r1"}}',
         )
 
     assert "Database pipeline could not start" in text
@@ -151,4 +162,5 @@ def test_database_pipeline_surfaces_run_task_errors(
 @pytest.fixture()
 def repo_root(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()
+    (tmp_path / "target-apps").mkdir()
     return tmp_path

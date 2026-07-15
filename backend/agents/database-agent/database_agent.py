@@ -1,4 +1,4 @@
-"""Database agent - Strands + Bedrock; optional MongoDB MCP; RDS apply via host script."""
+"""Database agent — Strands + Bedrock; SQL migrations/seed and DB handoff."""
 
 from __future__ import annotations
 

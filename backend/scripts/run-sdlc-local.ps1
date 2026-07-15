@@ -84,6 +84,20 @@ function Import-RepoEnv {
 }
 Import-RepoEnv
 
+# This script is the LOCAL orchestrator: every agent it spawns must resolve
+# PRD/design/context paths against the local filesystem convention
+# (docs/PRD/<feature>.md), never the S3/cloud-run convention (<slug>/docs/PRD/...).
+# .env/.env.local may default ARTIFACT_STORE=s3 for AgentCore deploys or the
+# frontend's S3 reads — that default is correct for those, but must never leak
+# into a local pipeline run, so force it here regardless of what was loaded above.
+$env:ARTIFACT_STORE = "local"
+# artifact_layout() defaults to the nested "target-app-root" layout (target-apps/<slug>/docs/PRD/...)
+# even outside cloud mode unless told otherwise. Every path check in this script — the
+# PRD existence check below, ContextFile's default agents/pipeline/<feature>.context.json,
+# design doc, scraped-docs dir — assumes the flat legacy "docs" layout. Force it so product-agent
+# (and anything else consulting artifact_layout()) matches what this script actually reads.
+$env:PRODUCT_ARTIFACT_LAYOUT = "docs"
+
 $venvScripts = Join-Path $RepoRoot ".venv\Scripts"
 if (Test-Path $venvScripts) {
     $env:PATH = "$venvScripts;$env:PATH"

@@ -32,6 +32,10 @@ frontend/data/
 .DS_Store
 Thumbs.db
 
+# Stale AgentCore config backups (machine-local OneDrive / path copies)
+*.bak-onedrive
+backend/.bedrock_agentcore.yaml.bak*
+
 # Local MCP binary (GitLab MCP is ECS HTTP; see backend/deploy/gitlab-mcp-server/)
 bin/
 
@@ -48,6 +52,7 @@ backend/incident-triage-bot/
 backend/$null
 
 # Local-only target apps (experimental; not pushed to GitLab)
+backend/target-apps/demo-api/
 backend/target-apps/standup-tracker/
 backend/target-apps/release-notes-bot/
 backend/target-apps/finops-web-app/

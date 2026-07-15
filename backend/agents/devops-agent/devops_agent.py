@@ -1,19 +1,4 @@
-"""DevOps agent — Phase 2: generate per-app Terraform deploy roots and deploy to AWS.
-
-Pipeline position: runs AFTER gitlab-agent (publish stays with gitlab-agent).
-
-What it does per target app:
-  1. Derives a deterministic deploy manifest (_shared/deploy_manifest.py) from
-     target-apps/<app>/ + pipeline context + gitlab/developer handoffs.
-  2. Authors infrastructure/environments/dev/<app>/main.tf (calling the reusable
-     modules/target-app-ecs module), with HashiCorp Terraform MCP available for
-     provider/module doc lookups.
-  3. Validates with `terraform init -backend=false && terraform validate`.
-  4. With --deploy: runs scripts/deploy-target-app.ps1 (build+push+apply+wait) and
-     reports the live ALB URL from agents/pipeline/<app>.devops-handoff.json.
-
-The agent never runs terraform apply itself — the deterministic deploy script does.
-"""
+"""DevOps agent — Strands + Bedrock; Terraform deploy roots and AWS target-app deploy."""
 
 from __future__ import annotations
 
@@ -128,7 +113,8 @@ module "app" {{
   alb_listener_arn      = data.terraform_remote_state.shared.outputs.alb_listener_arn
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
-  enable_ui     = {enable_ui}
+  enable_ui      = {enable_ui}
+  enable_bedrock = {enable_bedrock}
 {extra_env_block}{db_module_inputs}}}
 
 {db_resources}output "app_url" {{
@@ -361,6 +347,7 @@ def render_tf_root(manifest: dict[str, Any]) -> str:
     return _TF_ROOT_TEMPLATE.format(
         app=app,
         enable_ui="true" if manifest.get("enableUi") else "false",
+        enable_bedrock="true" if manifest.get("usesBedrock") else "false",
         extra_env_block=extra_env_block,
         db_module_inputs=db_module_inputs,
         db_resources=db_resources,

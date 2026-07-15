@@ -85,6 +85,12 @@ variable "has_database" {
   default     = false
 }
 
+variable "enable_bedrock" {
+  description = "App calls Amazon Bedrock (RAG/LLM) — grants InvokeModel on the task role."
+  type        = bool
+  default     = false
+}
+
 variable "db_secret_arn" {
   description = "Secrets Manager secret holding DATABASE_URL. Required when has_database = true."
   type        = string

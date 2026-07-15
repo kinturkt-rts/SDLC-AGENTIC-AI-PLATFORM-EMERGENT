@@ -1,9 +1,4 @@
-"""GitLab agent — publishes SDLC artifacts via  MCP after developer-agent.
-
-Deterministic gitlab_commit_create via gitlab-mcp-server.
-Each target app uses branch sdlc/<app>; republishs update files on that branch.
-MR to main is opt-in (--open-mr).
-"""
+"""GitLab agent — publishes SDLC artifacts to a per-app branch via GitLab MCP."""
 
 from __future__ import annotations
 
