@@ -104,6 +104,37 @@ export const api = {
       return undefined;
     }
   },
+  async cancelRun(id: string): Promise<{
+    runId: string;
+    status: 'cancelled';
+    sessionStopped: boolean;
+    message: string;
+    stopError?: string;
+  }> {
+    const res = await fetch(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as {
+      runId?: string;
+      status?: 'cancelled';
+      sessionStopped?: boolean;
+      message?: string;
+      stopError?: string;
+      error?: string;
+    };
+    if (!res.ok) {
+      throw new Error(data.error || `Cancel failed (${res.status})`);
+    }
+    return {
+      runId: data.runId ?? id,
+      status: 'cancelled',
+      sessionStopped: Boolean(data.sessionStopped),
+      message: data.message ?? 'Run cancelled',
+      ...(data.stopError ? { stopError: data.stopError } : {}),
+    };
+  },
   async getRunLogs(runId: string): Promise<LogEntry[]> {
     const data = await httpGet<{ logs: LogEntry[] }>(
       `/api/v1/runs/${encodeURIComponent(runId)}/logs`,

@@ -7,6 +7,7 @@ import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './art
 import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
 import { finalizeRunJson, runOrchestratorCloud } from './orchestrator-cloud-run';
+import { listRuns } from './repo-reader';
 
 const RUNS_CACHE_KEYS = [
   'listRuns',
@@ -24,6 +25,28 @@ const UUID_RE =
 const RUN_ID_RE = /^(?:[a-z][a-z0-9-]{0,62}[a-z0-9]|[0-9a-f-]{36})$/i;
 const MAX_BYTES = 256 * 1024;
 const S3_UPLOAD_TIMEOUT_MS = 45_000;
+const MAX_CONCURRENT_RUNS = Math.max(1, parseInt(process.env.SDLC_MAX_CONCURRENT_RUNS ?? '3', 10) || 3);
+
+/** Active pipeline runs that still occupy a concurrency slot. */
+export async function getActiveRuns() {
+  try {
+    const runs = await listRuns();
+    return runs.filter((r) => r.status === 'running' || r.status === 'paused');
+  } catch {
+    return [];
+  }
+}
+
+/** Returns the conflicting run if this targetApp already has an active pipeline. */
+export async function findRunningTargetApp(targetApp: string) {
+  const slug = targetApp.trim().toLowerCase();
+  const active = await getActiveRuns();
+  return active.find((r) => r.projectId === slug) ?? null;
+}
+
+export function maxConcurrentRuns(): number {
+  return MAX_CONCURRENT_RUNS;
+}
 
 export function validateRunId(runId: string): string | null {
   const id = runId.trim();
@@ -145,6 +168,20 @@ export async function startPipeline(options: {
   const runId = options.runId.trim();
   const inputRel = options.inputFile.trim() || runInputRelPath(feature);
   const repoRoot = getBackendRoot();
+
+  const duplicate = await findRunningTargetApp(feature);
+  if (duplicate && duplicate.id !== runId) {
+    throw new Error(
+      `"${feature}" already has an active pipeline run (${duplicate.id.slice(0, 8)}…). Wait for it to finish or cancel it.`,
+    );
+  }
+  const active = await getActiveRuns();
+  const others = active.filter((r) => r.id !== runId);
+  if (others.length >= MAX_CONCURRENT_RUNS) {
+    throw new Error(
+      `Maximum concurrent runs reached (${others.length}/${MAX_CONCURRENT_RUNS}). Wait for a run to finish or cancel one.`,
+    );
+  }
 
   if (!isS3Store()) {
     const runLocalInput = path.join(

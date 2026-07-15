@@ -61,7 +61,13 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes('not found') ? 404 : message.includes('spawn') ? 500 : 400;
+    const status = message.includes('not found')
+      ? 404
+      : /already has an active pipeline|Maximum concurrent runs/i.test(message)
+        ? 409
+        : message.includes('spawn')
+          ? 500
+          : 400;
     return NextResponse.json({ error: message }, { status });
   }
 }

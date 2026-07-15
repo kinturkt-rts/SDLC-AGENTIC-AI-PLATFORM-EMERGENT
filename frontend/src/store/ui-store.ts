@@ -31,6 +31,10 @@ interface UiState {
   contextProjectId: string | null;
   setContextProjectId: (id: string | null) => void;
 
+  /** HITL checkpoints page - null = all projects (default). */
+  checkpointsProjectId: string | null;
+  setCheckpointsProjectId: (id: string | null) => void;
+
   environment: Environment;
   setEnvironment: (env: Environment) => void;
 
@@ -66,6 +70,9 @@ export const useUiStore = create<UiState>((set) => ({
 
   contextProjectId: null,
   setContextProjectId: (id) => set({ contextProjectId: id }),
+
+  checkpointsProjectId: null,
+  setCheckpointsProjectId: (id) => set({ checkpointsProjectId: id }),
 
   environment: 'dev',
   setEnvironment: (env) => set({ environment: env }),

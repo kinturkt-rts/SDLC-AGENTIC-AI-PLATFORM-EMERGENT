@@ -7,8 +7,8 @@ import {
   gitlabPublishSucceededForRun,
   waitForDeveloperHandoffForRun,
 } from './pipeline-handoffs';
-import { invokeAgentRuntimeA2a } from './agentcore-invoke';
-import { getRunArtifactJson, s3RunHasAppCode } from './artifact-store';
+import { invokeAgentRuntimeA2a, loadRuntimeArn, newRuntimeSessionId } from './agentcore-invoke';
+import { getRunArtifactJson, isS3Store, putRunArtifact, s3RunHasAppCode } from './artifact-store';
 
 const DEV_TASK_DB = [
   'Implement API surface from designDocPath as FastAPI routes.',
@@ -66,11 +66,26 @@ async function appendLog(logPath: string, chunk: string): Promise<void> {
 
 async function updateRunJson(
   runId: string,
-  patch: { status?: string; currentStep?: string; error?: string | null; finished?: boolean },
+  patch: {
+    status?: string;
+    currentStep?: string;
+    error?: string | null;
+    finished?: boolean;
+    orchestratorSessionId?: string;
+    orchestratorRuntimeArn?: string;
+  },
 ): Promise<void> {
   const file = path.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, 'run.json');
   try {
     const data = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
+    // Never clobber a user cancel with a later poll/finalize write.
+    if (
+      String(data.status ?? '').toLowerCase() === 'cancelled' &&
+      patch.status &&
+      patch.status !== 'cancelled'
+    ) {
+      return;
+    }
     if (patch.status) {
       data.status = patch.status;
       if (['completed', 'failed', 'cancelled'].includes(patch.status)) {
@@ -108,7 +123,13 @@ async function updateRunJson(
     }
     if (patch.error !== undefined) data.error = patch.error;
     else if (patch.status === 'completed') data.error = null;
-    await writeFile(file, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+    if (patch.orchestratorSessionId) data.orchestratorSessionId = patch.orchestratorSessionId;
+    if (patch.orchestratorRuntimeArn) data.orchestratorRuntimeArn = patch.orchestratorRuntimeArn;
+    const body = `${JSON.stringify(data, null, 2)}\n`;
+    await writeFile(file, body, 'utf-8');
+    if (isS3Store() && (patch.orchestratorSessionId || patch.status || patch.currentStep)) {
+      await putRunArtifact(runId, 'run.json', body, 'application/json').catch(() => {});
+    }
   } catch {
     // run.json is best-effort for UI
   }
@@ -250,7 +271,7 @@ async function pollRunStatusUntilTerminal(
   runId: string,
   logPath: string,
   timeoutSec: number,
-): Promise<{ status: 'completed' | 'failed' | 'timeout'; error?: string | null }> {
+): Promise<{ status: 'completed' | 'failed' | 'cancelled' | 'timeout'; error?: string | null }> {
   const pollMs = Math.max(2000, envInt('SDLC_PIPELINE_STATUS_POLL_MS', 15000));
   const deadline = Date.now() + timeoutSec * 1000;
   let lastStep: string | null = null;
@@ -272,7 +293,13 @@ async function pollRunStatusUntilTerminal(
         await appendLog(logPath, `[status-poll] status: ${status}\n`);
       }
       if (status === 'completed') return { status: 'completed' };
-      if (status === 'failed' || status === 'cancelled') {
+      if (status === 'cancelled') {
+        return {
+          status: 'cancelled',
+          error: typeof doc.error === 'string' ? doc.error : null,
+        };
+      }
+      if (status === 'failed') {
         return {
           status: 'failed',
           error: typeof doc.error === 'string' ? doc.error : null,
@@ -309,11 +336,26 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
     );
   }
 
+  const orchestratorSessionId = newRuntimeSessionId();
+  const orchestratorRuntimeArn = (await loadRuntimeArn('orchestrator-agent')) || undefined;
   if (!taskOpts.skipGitlab) {
-    await updateRunJson(runId, { status: 'running', currentStep: 'product-agent' });
+    await updateRunJson(runId, {
+      status: 'running',
+      currentStep: 'product-agent',
+      orchestratorSessionId,
+      orchestratorRuntimeArn,
+    });
+  } else {
+    await updateRunJson(runId, {
+      orchestratorSessionId,
+      orchestratorRuntimeArn,
+    });
   }
 
-  const result = await invokeAgentRuntimeA2a('orchestrator-agent', task, { timeoutSec });
+  const result = await invokeAgentRuntimeA2a('orchestrator-agent', task, {
+    timeoutSec,
+    runtimeSessionId: orchestratorSessionId,
+  });
   await appendLog(logPath, `status: ${result.status}\n`);
   if (result.error) await appendLog(logPath, `error: ${result.error}\n`);
   const text = result.text ?? '';
@@ -341,6 +383,13 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
         logPath,
         '[status-poll] Orchestrator reports completed but no GitLab publish handoff found - running fallback verification.\n',
       );
+    } else if (final.status === 'cancelled') {
+      await appendLog(logPath, '[status-poll] Pipeline cancelled.\n');
+      await finalizeRunJson(runId, {
+        status: 'cancelled',
+        error: final.error ?? 'cancelled by user',
+      });
+      return;
     } else if (final.status === 'failed') {
       // "SDLC pipeline failed" is one of parseLogTerminalStatus's recognized markers
       // (run-reconcile.ts) - without it, a reconciler pass driven only by log text (no

@@ -26,6 +26,8 @@ import {
   CheckCircle2,
   Circle,
   RotateCcw,
+  Ban,
+  Loader2,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -44,6 +46,7 @@ import {
   useArtifacts,
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
+import { api } from '@/src/lib/api';
 import { formatRelative, titleCase } from '@/src/lib/format';
 import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
@@ -55,6 +58,7 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
+const MAX_CONCURRENT_RUNS = 3;
 
 function briefUploadBody(feature: string, content: string): string {
   return JSON.stringify({
@@ -377,6 +381,16 @@ function InputRequirementsCard() {
 
   const featureValid = !feature || FEATURE_SLUG_RE.test(feature);
 
+  const activeRuns = React.useMemo(
+    () => (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused'),
+    [runs],
+  );
+  const duplicateApp = React.useMemo(
+    () => (feature ? activeRuns.find((r) => r.projectId === feature) ?? null : null),
+    [activeRuns, feature],
+  );
+  const atCapacity = activeRuns.length >= MAX_CONCURRENT_RUNS;
+
   const clearSavedRunState = React.useCallback(() => {
     setSavedPath(null);
     setSavedRunId(null);
@@ -488,6 +502,18 @@ function InputRequirementsCard() {
       toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
       return;
     }
+    if (duplicateApp) {
+      toast.error(`"${feature}" is already running`, {
+        description: `Run ${duplicateApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
+      });
+      return;
+    }
+    if (atCapacity) {
+      toast.error('Maximum concurrent runs reached', {
+        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+      });
+      return;
+    }
     submitLockRef.current = true;
     setSubmitting(true);
     setSubmitPhase('upload');
@@ -551,6 +577,18 @@ function InputRequirementsCard() {
 
   const handleStart = async () => {
     if (status !== 'saved' || !feature || !savedRunId) return;
+    if (duplicateApp) {
+      toast.error(`"${feature}" is already running`, {
+        description: `Run ${duplicateApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
+      });
+      return;
+    }
+    if (atCapacity) {
+      toast.error('Maximum concurrent runs reached', {
+        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+      });
+      return;
+    }
     setStarting(true);
     try {
       const res = await fetch('/api/v1/runs/start', {
@@ -770,12 +808,34 @@ function InputRequirementsCard() {
               </Link>
             </div>
           ) : null}
+          {duplicateApp ? (
+            <p className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+              <span className="font-semibold">Already running:</span> {feature} has active run{' '}
+              <Link href={`/runs/${duplicateApp.id}`} className="font-mono underline hover:text-amber-100">
+                {duplicateApp.id.slice(0, 8)}…
+              </Link>
+              . Wait or cancel before starting another.
+            </p>
+          ) : atCapacity ? (
+            <p className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+              <span className="font-semibold">At capacity:</span> {activeRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
+              concurrent pipelines active. Wait for one to finish or cancel a run.
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700"
               onClick={handleSubmit}
-              disabled={!content.trim() || !feature || !featureValid || submitting || fileLoading}
+              disabled={
+                !content.trim() ||
+                !feature ||
+                !featureValid ||
+                submitting ||
+                fileLoading ||
+                Boolean(duplicateApp) ||
+                atCapacity
+              }
             >
               <PlayCircle className="h-3.5 w-3.5" />{' '}
               {fileLoading
@@ -812,9 +872,11 @@ function InputRequirementsCard() {
    Main Dashboard
    ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
+  const queryClient = useQueryClient();
   const { data: summary } = useDashboardSummary();
   const { data: runs } = useRuns();
   const { data: checkpoints } = useCheckpoints();
+  const [cancellingId, setCancellingId] = React.useState<string | null>(null);
 
   const activeRuns = (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused');
   const hasActive = activeRuns.length > 0;
@@ -822,6 +884,24 @@ export default function DashboardPage() {
   const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
+
+  const handleCancelActive = async (runId: string) => {
+    if (cancellingId) return;
+    setCancellingId(runId);
+    try {
+      const result = await api.cancelRun(runId);
+      toast.success('Run cancelled', { description: result.message });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
+    } catch (err) {
+      toast.error('Cancel failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -892,26 +972,43 @@ export default function DashboardPage() {
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">No active runs.</p>
             ) : (
               activeRuns.map((run) => (
-                <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
-                  <StatusBadge status={run.status} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">{run.id} · {run.pipeline}</p>
-                  </div>
-                  <div className="hidden text-right sm:block">
-                    <p className="text-[10px] text-muted-foreground">current</p>
-                    <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Timer className="h-3.5 w-3.5" />
-                    <LiveElapsed
-                      startedAt={run.startedAt}
-                      finishedAt={run.finishedAt}
-                      live={run.status === 'running' || run.status === 'paused'}
-                      fallbackSec={run.elapsedSec}
-                    />
-                  </div>
-                </Link>
+                <div key={run.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
+                  <Link href={`/runs/${run.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                    <StatusBadge status={run.status} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">{run.id} · {run.pipeline}</p>
+                    </div>
+                    <div className="hidden text-right sm:block">
+                      <p className="text-[10px] text-muted-foreground">current</p>
+                      <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Timer className="h-3.5 w-3.5" />
+                      <LiveElapsed
+                        startedAt={run.startedAt}
+                        finishedAt={run.finishedAt}
+                        live={run.status === 'running' || run.status === 'paused'}
+                        fallbackSec={run.elapsedSec}
+                      />
+                    </div>
+                  </Link>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 shrink-0 gap-1 px-2 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                    disabled={cancellingId === run.id}
+                    onClick={() => handleCancelActive(run.id)}
+                  >
+                    {cancellingId === run.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Ban className="h-3.5 w-3.5" />
+                    )}
+                    Cancel
+                  </Button>
+                </div>
               ))
             )}
           </div>
