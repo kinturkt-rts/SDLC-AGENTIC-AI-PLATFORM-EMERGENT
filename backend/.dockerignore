@@ -11,6 +11,9 @@
 **/node_modules
 target-apps
 infrastructure
+infrastructure.off
+**/.terraform
+**/.terraform/**
 inputs
 docs
 analysis_results.md

@@ -433,8 +433,10 @@ export async function getRunArtifactJson(
           Key: `${runS3Prefix(runId)}${rel}`,
         }),
       );
-      const raw = await response.Body?.transformToString('utf-8');
+      let raw = await response.Body?.transformToString('utf-8');
       if (!raw) return null;
+      // PowerShell Set-Content -Encoding utf8 writes a BOM; JSON.parse rejects it.
+      if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
       const parsed = JSON.parse(raw) as unknown;
       return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
     } catch {

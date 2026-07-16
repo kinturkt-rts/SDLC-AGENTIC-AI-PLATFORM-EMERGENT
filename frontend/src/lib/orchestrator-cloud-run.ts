@@ -78,10 +78,9 @@ async function updateRunJson(
   const file = path.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, 'run.json');
   try {
     const data = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
-    // Never clobber a user cancel with a later poll/finalize write.
+    // Never clobber a user cancel with a later poll/finalize/currentStep write.
     if (
       String(data.status ?? '').toLowerCase() === 'cancelled' &&
-      patch.status &&
       patch.status !== 'cancelled'
     ) {
       return;
@@ -277,7 +276,22 @@ async function pollRunStatusUntilTerminal(
   let lastStep: string | null = null;
   let lastStatus = '';
 
+  const localRunJson = path.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, 'run.json');
+
   while (Date.now() < deadline) {
+    // Local cancel wins over a later cloud "completed" mirror write.
+    try {
+      const local = JSON.parse(await readFile(localRunJson, 'utf-8')) as RunStatusDoc;
+      if (typeof local.status === 'string' && local.status.toLowerCase() === 'cancelled') {
+        return {
+          status: 'cancelled',
+          error: typeof local.error === 'string' ? local.error : 'cancelled by user',
+        };
+      }
+    } catch {
+      // local run.json may not exist yet
+    }
+
     const doc = (await getRunArtifactJson(runId, 'run.json')) as RunStatusDoc | null;
     if (doc) {
       const status = typeof doc.status === 'string' ? doc.status.toLowerCase() : '';
