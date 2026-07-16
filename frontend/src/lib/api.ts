@@ -185,9 +185,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, config }),
     });
-    const data = await r.json();
+    const text = await r.text();
+    let data: { mcpServers?: McpConfig['mcpServers']; error?: string; errors?: string[] } = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(
+        `Save failed (HTTP ${r.status}). Server returned a non-JSON response — check control-plane logs.`,
+      );
+    }
     if (!r.ok) throw new Error(Array.isArray(data.errors) ? data.errors.join(' ') : data.error || 'Save failed');
-    return { mcpServers: data.mcpServers };
+    return { mcpServers: data.mcpServers ?? {} };
   },
   async deleteMcpServer(name: string): Promise<void> {
     const r = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });

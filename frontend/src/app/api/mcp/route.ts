@@ -12,6 +12,7 @@ export async function GET() {
 }
 
 // POST /api/mcp -> add or update one server entry. Body: { name, config }
+// Partial updates merge into the existing entry (e.g. toggle sends { disabled }).
 export async function POST(request: Request) {
   let body: { name?: string; config?: McpServerConfig };
   try {
@@ -21,14 +22,23 @@ export async function POST(request: Request) {
   }
 
   const name = (body.name ?? '').trim();
-  const config = body.config ?? {};
-  const validation = validateServer(name, config);
-  if (!validation.valid) {
-    return NextResponse.json({ error: 'Validation failed', errors: validation.errors }, { status: 400 });
+  const patch = body.config ?? {};
+  const current = await readConfig();
+  const existing = current.mcpServers[name];
+  const merged: McpServerConfig = existing ? { ...existing, ...patch } : patch;
+
+  const patchKeys = Object.keys(patch);
+  const disabledOnly =
+    !!existing && patchKeys.length === 1 && patchKeys[0] === 'disabled' && typeof patch.disabled === 'boolean';
+
+  if (!disabledOnly) {
+    const validation = validateServer(name, merged);
+    if (!validation.valid) {
+      return NextResponse.json({ error: 'Validation failed', errors: validation.errors }, { status: 400 });
+    }
   }
 
-  const current = await readConfig();
-  current.mcpServers[name] = config;
+  current.mcpServers[name] = merged;
   await writeConfig(current);
   return NextResponse.json({ ok: true, name, mcpServers: current.mcpServers });
 }

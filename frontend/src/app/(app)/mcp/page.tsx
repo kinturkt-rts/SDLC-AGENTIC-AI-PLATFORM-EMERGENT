@@ -146,9 +146,10 @@ export default function McpPage() {
     );
   };
 
-  const toggleDisabled = (name: string, cfg: McpServerConfig, enabled: boolean) => {
+  const toggleDisabled = (name: string, enabled: boolean) => {
+    // Disabled-only patch — server merges into stored entry (avoids re-posting full config).
     saveMutation.mutate(
-      { name, cfg: { ...cfg, disabled: !enabled } },
+      { name, cfg: { disabled: !enabled } },
       { onSuccess: () => toast.success(`${name} ${enabled ? 'enabled' : 'disabled'}`) },
     );
   };
@@ -189,7 +190,7 @@ export default function McpPage() {
                       <p className="font-semibold text-foreground">{name}</p>
                     </div>
                   </div>
-                  <Switch checked={enabled} onCheckedChange={(c) => toggleDisabled(name, cfg, c)} />
+                  <Switch checked={enabled} onCheckedChange={(c) => toggleDisabled(name, c)} />
                 </div>
 
                 <div className="mt-3 space-y-2 text-xs">
