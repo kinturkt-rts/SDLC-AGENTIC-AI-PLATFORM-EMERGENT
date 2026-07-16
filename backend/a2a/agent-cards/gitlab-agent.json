@@ -1,6 +1,6 @@
 {
   "name": "gitlab-agent",
-  "description": "Publishes pipeline artifacts to GitLab — creates feature branches, commits generated files, and opens merge requests."
+  "description": "Publishes pipeline artifacts to GitLab — creates feature branches, commits generated files, and opens merge requests.",
   "url": "http://127.0.0.1:9110/",
   "version": "1.0.0",
   "capabilities": { "streaming": false },

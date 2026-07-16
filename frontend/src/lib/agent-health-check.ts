@@ -14,14 +14,11 @@ export function summarizeAgentHealthCheck(
     latencyMs?: number;
   },
 ): AgentHealthCheckResult {
-  const latency = result.latencyMs ? `${Math.round(result.latencyMs / 1000)}s` : null;
-  const prefix = latency ? `${latency} · ` : '';
-
   if (result.status === 'error') {
     return {
       ok: false,
       title: 'Agent health check failed',
-      description: result.error?.trim() || 'AgentCore invoke failed.',
+      description: result.error?.trim() || 'Could not reach the agent runtime.',
     };
   }
 
@@ -32,7 +29,7 @@ export function summarizeAgentHealthCheck(
     return {
       ok: true,
       title: `${displayName} is reachable`,
-      description: `${prefix}AgentCore runtime responded to health check.`,
+      description: 'Runtime responded to the health check.',
     };
   }
 
@@ -53,7 +50,7 @@ export function summarizeAgentHealthCheck(
     return {
       ok: true,
       title: `${displayName} is reachable`,
-      description: `${prefix}Runtime is online. Pipeline work runs via the orchestrator with full context.`,
+      description: 'Runtime is online. Full pipeline work runs with orchestrator context.',
     };
   }
 
@@ -61,7 +58,7 @@ export function summarizeAgentHealthCheck(
     return {
       ok: true,
       title: `${displayName} is reachable`,
-      description: `${prefix}AgentCore runtime responded (session ready).`,
+      description: 'Runtime responded and is ready.',
     };
   }
 
@@ -69,13 +66,13 @@ export function summarizeAgentHealthCheck(
     return {
       ok: true,
       title: `${displayName} is reachable`,
-      description: `${prefix}${text}`,
+      description: text,
     };
   }
 
   return {
     ok: true,
     title: `${displayName} is reachable`,
-    description: `${prefix}AgentCore runtime responded.`,
+    description: 'Runtime responded to the health check.',
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "security-agent",
-  "description": "Runs security reviews — static analysis, dependency audits, and compliance checks — and raises findings for review."
+  "description": "Runs security reviews — static analysis, dependency audits, and compliance checks — and raises findings for review.",
   "url": "http://127.0.0.1:9106/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

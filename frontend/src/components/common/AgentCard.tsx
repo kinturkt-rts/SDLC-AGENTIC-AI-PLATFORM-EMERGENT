@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Bot, Cpu, Clock, CheckCircle2, Timer } from 'lucide-react';
+import { Bot, Clock, CheckCircle2, Timer } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { StatusBadge } from './StatusBadge';
@@ -104,12 +104,6 @@ export function AgentCard({
             </p>
             <p className="mt-0.5 font-medium text-foreground">{formatRelative(lastActive)}</p>
           </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <Cpu className="h-3.5 w-3.5" /> :{agent.port}
-          </span>
         </div>
       </Card>
     </Link>

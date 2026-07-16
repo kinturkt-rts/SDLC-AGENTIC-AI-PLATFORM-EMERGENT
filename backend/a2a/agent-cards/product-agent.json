@@ -1,6 +1,6 @@
 {
   "name": "product-agent",
-  "description": "Turns business briefs into structured product requirements (PRD), with optional Jira epic and user-story creation."
+  "description": "Turns business briefs into structured product requirements (PRD), with optional Jira epic and user-story creation.",
   "url": "http://127.0.0.1:9101/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

@@ -1,6 +1,6 @@
 {
   "name": "database-agent",
-  "description": "Designs application data schemas, writes SQL migrations and seed data, and hands off DB guidance to the developer agent."
+  "description": "Designs application data schemas, writes SQL migrations and seed data, and hands off DB guidance to the developer agent.",
   "url": "http://127.0.0.1:9108/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

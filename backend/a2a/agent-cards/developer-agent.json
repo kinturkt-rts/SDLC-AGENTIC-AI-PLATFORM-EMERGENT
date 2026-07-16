@@ -1,6 +1,6 @@
 {
   "name": "developer-agent",
-  "description": "Implements backend code generation for the application — API routes, models, schemas, and baseline tests.",
+  "description": "Implements backend code generation for the application - API routes, models, schemas, and baseline tests.",
   "url": "http://127.0.0.1:9103/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

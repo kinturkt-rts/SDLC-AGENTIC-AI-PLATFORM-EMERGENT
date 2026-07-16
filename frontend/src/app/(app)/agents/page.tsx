@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { AgentCard } from '@/src/components/common/AgentCard';
-import { PipelinePositionMap } from '@/src/components/common/PipelinePositionMap';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { useAgents, useRuns } from '@/src/lib/queries';
@@ -199,8 +198,6 @@ export default function AgentsPage() {
         }
       />
 
-      <PipelinePositionMap runs={runs} />
-
       {/* Fleet health strip */}
       <div className="mb-6 flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-card/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
@@ -224,7 +221,7 @@ export default function AgentsPage() {
         <p className="text-xs text-muted-foreground">
           {lastFleetCheckAt
             ? <>Last check {formatRelative(lastFleetCheckAt)}{fleetCheckSummary ? ` · ${fleetCheckSummary}` : ''}</>
-            : 'No fleet check yet — use Test fleet to ping online AgentCore runtimes.'}
+            : 'No fleet check yet — use Test fleet to ping online agents.'}
         </p>
       </div>
 
