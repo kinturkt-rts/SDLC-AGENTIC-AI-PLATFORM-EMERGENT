@@ -385,9 +385,13 @@ function InputRequirementsCard() {
     () => (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused'),
     [runs],
   );
-  const duplicateApp = React.useMemo(
+  const conflictingApp = React.useMemo(
     () => (feature ? activeRuns.find((r) => r.projectId === feature) ?? null : null),
     [activeRuns, feature],
+  );
+  // Hide the yellow banner for the run just started here (teal banner already covers it).
+  const showDuplicateWarning = Boolean(
+    conflictingApp && (!startedRunId || conflictingApp.id !== startedRunId),
   );
   const atCapacity = activeRuns.length >= MAX_CONCURRENT_RUNS;
 
@@ -400,6 +404,7 @@ function InputRequirementsCard() {
 
   const handleClearForm = React.useCallback(() => {
     setContent('');
+    setFeature('');
     setStatus('missing');
     clearSavedRunState();
     toast.message('Cleared', { description: 'Paste or upload a new brief to start another run.' });
@@ -502,9 +507,9 @@ function InputRequirementsCard() {
       toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
       return;
     }
-    if (duplicateApp) {
+    if (conflictingApp) {
       toast.error(`"${feature}" is already running`, {
-        description: `Run ${duplicateApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
+        description: `Run ${conflictingApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
       });
       return;
     }
@@ -577,9 +582,9 @@ function InputRequirementsCard() {
 
   const handleStart = async () => {
     if (status !== 'saved' || !feature || !savedRunId) return;
-    if (duplicateApp) {
+    if (conflictingApp) {
       toast.error(`"${feature}" is already running`, {
-        description: `Run ${duplicateApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
+        description: `Run ${conflictingApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
       });
       return;
     }
@@ -808,16 +813,19 @@ function InputRequirementsCard() {
               </Link>
             </div>
           ) : null}
-          {duplicateApp ? (
-            <p className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+          {showDuplicateWarning && conflictingApp ? (
+            <p className="rounded-lg border border-amber-500/50 bg-amber-100 px-3 py-2 text-xs text-amber-950 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-50">
               <span className="font-semibold">Already running:</span> {feature} has active run{' '}
-              <Link href={`/runs/${duplicateApp.id}`} className="font-mono underline hover:text-amber-100">
-                {duplicateApp.id.slice(0, 8)}…
+              <Link
+                href={`/runs/${conflictingApp.id}`}
+                className="font-mono font-medium text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-100 dark:hover:text-white"
+              >
+                {conflictingApp.id.slice(0, 8)}…
               </Link>
               . Wait or cancel before starting another.
             </p>
           ) : atCapacity ? (
-            <p className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+            <p className="rounded-lg border border-orange-500/50 bg-orange-100 px-3 py-2 text-xs text-orange-950 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-50">
               <span className="font-semibold">At capacity:</span> {activeRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
               concurrent pipelines active. Wait for one to finish or cancel a run.
             </p>
@@ -833,7 +841,7 @@ function InputRequirementsCard() {
                 !featureValid ||
                 submitting ||
                 fileLoading ||
-                Boolean(duplicateApp) ||
+                Boolean(conflictingApp) ||
                 atCapacity
               }
             >
@@ -848,7 +856,7 @@ function InputRequirementsCard() {
                   ? 'Submit & Run Again'
                   : 'Submit & Run Pipeline'}
             </Button>
-            {runTerminal || content.trim() ? (
+            {runTerminal || content.trim() || feature.trim() || startedRunId ? (
               <Button
                 type="button"
                 size="sm"
