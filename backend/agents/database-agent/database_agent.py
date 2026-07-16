@@ -282,8 +282,7 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
         raise ValueError(f"path must stay inside repo: {relative_path}")
     if write:
         under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
-        under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
-        if not (under_target_apps or under_repo_root):
+        if not under_target_apps:
             raise ValueError("writes only allowed under target-apps/")
         return candidate
     allowed = any(str(candidate).startswith(str(prefix.resolve())) for prefix in _READ_PREFIXES)
@@ -349,9 +348,18 @@ def db_read_file(path: str) -> str:
 @tool
 def db_write_file(path: str, content: str) -> str:
     """Write SQL/NoSQL artifacts under the app db tree (cloud: ``<slug>/db/...``)."""
-    artifact_rel = cloud_artifact_rel(path.strip())
+    raw = path.strip()
+    artifact_rel = cloud_artifact_rel(raw)
+    # Cloud/S3 mode: persist via artifact store only. Never materialize stripped
+    # ``<slug>/...`` keys as ``backend/<slug>/...`` on local disk (that created
+    # the stale backend/demo-api/ tree).
+    if _is_cloud_store():
+        if _run_context is not None:
+            write_repo_artifact(artifact_rel, content, context=_run_context)
+        _written_files.append(artifact_rel)
+        return f"Wrote {artifact_rel} ({len(content)} bytes)"
     try:
-        file_path = _resolve_repo_path(artifact_rel if _is_cloud_store() else path, write=True)
+        file_path = _resolve_repo_path(raw, write=True)
     except ValueError as exc:
         return f"Error: {exc}"
     file_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1216,8 +1216,7 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
                 "target-apps/_template is read-only; use dev_scaffold to copy from it"
             )
         under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
-        under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
-        if not (under_target_apps or under_repo_root):
+        if not under_target_apps:
             raise ValueError("writes only allowed under target-apps/")
         return candidate
     allowed = (
