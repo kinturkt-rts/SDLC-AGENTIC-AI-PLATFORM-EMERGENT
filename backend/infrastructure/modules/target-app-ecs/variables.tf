@@ -109,6 +109,12 @@ variable "extra_env" {
   default     = {}
 }
 
+variable "extra_secrets" {
+  description = "Extra env vars sourced from Secrets Manager (env var name -> secret ARN). Use for anything sensitive instead of extra_env."
+  type        = map(string)
+  default     = {}
+}
+
 variable "log_retention_days" {
   type    = number
   default = 7

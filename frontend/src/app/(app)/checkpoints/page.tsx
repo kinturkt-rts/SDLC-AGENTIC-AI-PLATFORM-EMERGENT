@@ -59,7 +59,7 @@ export default function CheckpointsPage() {
               <EmptyState
                 icon={UserCheck}
                 title="All clear"
-                description="No approval gates are waiting for human review. HITL gates are planned for a later stage — this page will list them here when the pipeline requests approval."
+                description="No approval gates are waiting for human review. HITL gates are planned for a later stage - this page will list them here when the pipeline requests approval."
               />
             ) : (
               <div className="space-y-3">

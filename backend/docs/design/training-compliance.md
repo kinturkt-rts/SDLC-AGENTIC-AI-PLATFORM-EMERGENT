@@ -1,56 +1,55 @@
-# Training Compliance MVP — Solution Design
+# Training & Certification Compliance — Solution Design
 
 ## 1. Summary
-Centralises course catalog, employee roster, and completion records for a single org; derives real-time compliance status (current / expired / missing) per employee. Primary DB is PostgreSQL via SQLAlchemy; API is FastAPI REST (JWT-gated); Streamlit provides four role-gated UI screens.
-Diagram: `docs/generated-diagrams/training-compliance.png`
-TBD: identity provider (JWT local auth assumed); validity period unit; expiring-soon window configurability.
+Single-org training compliance app: HR admins manage courses/rosters, managers view team gaps, employees track own status, compliance officers run audits. Postgres (RDS) stores all entities; FastAPI enforces RBAC via JWT; Streamlit provides four role-gated screens. Diagram: `docs/generated-diagrams/training-compliance.png`. TBD: deployment target, password-reset flow, retroactive expiry on validity-period change.
 
 ## 2. Stack
-| Layer | Technology | Path / Notes |
-|-------|------------|--------------|
-| UI | Streamlit | `ui/streamlit_app.py` — calls FastAPI over HTTP port 8501; never imports `app/` |
-| API | FastAPI | `target-apps/training-compliance/app/` — REST + OpenAPI at `/docs` |
-| Auth | JWT Bearer | `python-jose`; `user_id` + `role` claims; local username/password |
-| ORM | SQLAlchemy 2 + Alembic | Migrations in `alembic/versions/` |
-| Database | PostgreSQL (RDS) | Primary relational store |
-| Cache | ElastiCache (Redis) | Dashboard / session caching; reduces RDS reads |
+| Layer | Technology | Path |
+|-------|------------|------|
+| UI | Streamlit | `ui/streamlit_app.py` calls FastAPI over HTTP (port 8501) |
+| API | FastAPI | `target-apps/training-compliance/app/` |
+| Auth | JWT (PyJWT) + bcrypt | `POST /auth/token`; 8 h expiry; role claim re-validated server-side |
+| Database | PostgreSQL (RDS) | SQLAlchemy ORM; `dateutil.relativedelta` for expiry calc |
+| Container | Docker Compose | `docker-compose.yml` — api + db + streamlit services |
 
 ## 3. Data model
-| Table | Columns | Indexes / Constraints |
-|-------|---------|-----------------------|
-| `departments` | `id uuid PK`, `name text UNIQUE NOT NULL` | — |
-| `job_roles` | `id uuid PK`, `name text UNIQUE NOT NULL` | — |
-| `courses` | `id uuid PK`, `name text UNIQUE NOT NULL`, `category enum(safety,security,role_specific)`, `validity_period_months int NULL`, `required_for_all_staff bool DEFAULT false`, `certificate_ref text NULL`, `is_active bool DEFAULT true` | idx on `is_active` |
-| `employees` | `id uuid PK`, `full_name text NOT NULL`, `email text UNIQUE NOT NULL`, `department_id uuid FK(departments)`, `job_role_id uuid FK(job_roles)`, `manager_id uuid FK(employees) NULL`, `is_active bool DEFAULT true` | idx on `manager_id`, `is_active`, `job_role_id` |
-| `role_requirements` | `id uuid PK`, `job_role_id uuid FK(job_roles)`, `course_id uuid FK(courses)` | UNIQUE(`job_role_id`, `course_id`) |
-| `completion_records` | `id uuid PK`, `employee_id uuid FK(employees)`, `course_id uuid FK(courses)`, `completion_date date NOT NULL`, `expiry_date date NULL`, `is_active_record bool DEFAULT true`, `superseded_by_id uuid FK(completion_records) NULL`, `created_at timestamptz DEFAULT now()` | idx on `(employee_id, course_id, is_active_record)` |
-| `users` | `id uuid PK`, `employee_id uuid FK(employees) NULL`, `email text UNIQUE NOT NULL`, `hashed_password text NOT NULL`, `role enum(hr_admin,manager,employee,compliance_officer)` | idx on `email` |
-| `audit_log` | `id uuid PK`, `user_id uuid NOT NULL`, `action text NOT NULL`, `entity text`, `entity_id uuid NULL`, `timestamp timestamptz DEFAULT now()`, `detail jsonb NULL` | idx on `user_id`, `timestamp` |
+| Table | Columns | Indexes / constraints |
+|-------|---------|----------------------|
+| `departments` | `id uuid PK`, `name text UNIQUE` | — |
+| `job_roles` | `id uuid PK`, `name text UNIQUE` | — |
+| `courses` | `id uuid PK`, `name text UNIQUE`, `category enum('safety','security','role_specific')`, `validity_period_months int`, `scope enum('all_staff','role_specific')`, `reference_field text`, `created_at timestamptz` | idx on `scope` |
+| `role_course_requirements` | `id uuid PK`, `job_role_id uuid FK job_roles`, `course_id uuid FK courses`, `assigned_at timestamptz` | UNIQUE(job_role_id, course_id) |
+| `users` | `id uuid PK`, `email text UNIQUE`, `hashed_password text`, `role enum('hr_admin','manager','employee','compliance_officer')`, `employee_id uuid FK employees nullable` | idx on `email` |
+| `employees` | `id uuid PK`, `full_name text`, `email text UNIQUE`, `department_id uuid FK departments`, `job_role_id uuid FK job_roles`, `manager_id uuid FK employees nullable`, `is_active bool DEFAULT true`, `user_account_id uuid FK users nullable` | idx on `manager_id`, `is_active`, `department_id` |
+| `completion_records` | `id uuid PK`, `employee_id uuid FK employees`, `course_id uuid FK courses`, `completion_date date`, `expiry_date date`, `is_superseded bool DEFAULT false`, `recorded_by uuid FK users`, `created_at timestamptz` | idx on `(employee_id, course_id, is_superseded)`; no hard deletes (NFR-10) |
 
 ## 4. API surface
 | Method | Path | Request | Response | Notes |
 |--------|------|---------|----------|-------|
-| GET | `/health` | — | `{"status":"ok"}` | Unauthenticated; FR-12 |
-| POST | `/auth/token` | `{email, password}` | `{access_token, token_type}` | Issues JWT |
-| GET/POST/PATCH | `/courses` / `/courses/{id}` | `CourseIn{name,category,validity_period_months,required_for_all_staff,certificate_ref}` | `CourseOut` | HR admin only; 409 on duplicate name; FR-1 |
-| GET/POST/PATCH | `/employees` / `/employees/{id}` | `EmployeeIn{full_name,email,department_id,job_role_id,manager_id}` | `EmployeeOut` | HR admin CRUD; PATCH `is_active=false` soft-deactivates; FR-2 |
-| GET/POST/DELETE | `/requirements` | `RequirementIn{job_role_id,course_id}` | `RequirementOut` | HR admin only; FR-3 |
-| POST | `/completions` | `CompletionIn{employee_id,course_id,completion_date}` | `CompletionOut` | HR admin (any) or employee (self); supersedes prior active record atomically; FR-4 |
-| GET | `/compliance/employee/{id}` | — | `[{course_id,course_name,status:enum(current,expired,missing),expiry_date}]` | All roles (scoped); FR-5 |
-| GET | `/compliance/team` | — | `[EmployeeComplianceSummary]` | Manager (own team only); FR-6 |
-| GET | `/reports/dashboard` | — | `{overdue:[…],expiring_soon:[…],rate_by_dept:[…],course_gaps:[…]}` | Compliance officer only; FR-7 |
-| GET | `/alerts` | query `?type=overdue\|expiring_soon\|data_quality` | `[AlertItem]` | Manager + compliance officer; FR-9, FR-10 |
+| POST | `/auth/token` | `username`, `password` (form) | `{access_token, token_type, role}` | No auth required |
+| GET | `/health` | — | `{status, version}` | No auth (NFR-9) |
+| GET/POST | `/courses` | POST: `{name,category,scope,validity_period_months,reference_field}` | Course object / list | HR Admin only; 409 on dup name (FR-1) |
+| PUT | `/courses/{id}` | Partial course fields | Updated course | HR Admin; future expiries only (FR-1) |
+| GET/POST | `/employees` | POST: `{full_name,email,department_id,job_role_id,manager_id}` | Employee object / list | HR Admin; GET available to manager/compliance |
+| PATCH | `/employees/{id}` | `{is_active?,...}` | Updated employee | HR Admin; deactivate sets `is_active=false` (FR-2) |
+| GET/POST | `/completions` | POST: `{employee_id,course_id,completion_date}` | Completion / list | HR Admin + self-employee; supersedes prior active record (FR-3) |
+| GET | `/compliance/employee/{id}` | — | `[{course,status,completion_date,expiry_date}]`+`data_quality_warning` | HR Admin + scoped manager/self (FR-5,FR-12) |
+| GET | `/compliance/team` | — | `[{employee,required,complete,expired,missing}]` | Manager sees own direct reports only (FR-6) |
+| GET | `/reports/overdue` | — | `[{employee,course,expiry_date}]` | Compliance Officer + HR Admin (FR-8) |
+| GET | `/reports/expiring-soon` | — | `[{employee,course,expiry_date}]` | 0 < days_remaining ≤ 30 (FR-8) |
+| GET | `/reports/completion-by-department` | — | `[{department,rate_pct}]` | Active employees only (FR-8,FR-11) |
+| GET | `/reports/gap-by-course` | — | `[{course,missing_plus_expired_count}]` | Ranked desc (FR-8) |
 
 ## 5. Rules
-- **Auth**: Every non-`/health` endpoint requires `Authorization: Bearer <JWT>`; missing token → 401 (NFR-3).
-- **RBAC**: `hr_admin` — all write endpoints; `manager` — `/compliance/team`, `/alerts`, `/compliance/employee/{id}` (own team only); `employee` — `/compliance/employee/{own id}`, POST `/completions` (self only); `compliance_officer` — all GET read endpoints, no writes → 403 (FR-8, NFR-4).
-- **Team isolation**: Manager queries filter `employees.manager_id = current_user.employee_id` server-side on every request; cross-team access → 403 (NFR-4).
-- **Recertification atomicity**: Supersede prior `is_active_record=true` row and insert new record in a single DB transaction; prevents duplicate actives (FR-4, NFR-9).
-- **Inactive exclusion**: All compliance queries add `WHERE employees.is_active = true`; inactive employees excluded from rate denominators (FR-2, FR-5).
-- **Audit**: Write operations (POST/PATCH/DELETE on courses, employees, requirements, completions) insert a row to `audit_log`; records are never deleted (NFR-9, NFR-11).
-- **Soft cap warning**: If `COUNT(is_active_record=true) > 20` for an employee, append `data_quality_warning: true` to response; does not block write (FR-10).
-- **Logging**: Every request logged as structured JSON `{timestamp, method, path, status_code, duration_ms, user_id, role}`; no PII beyond `user_id` (NFR-7).
+- **Auth** (FR-9, NFR-3, NFR-4): JWT Bearer required on all routes except `/health` and `/auth/token`; missing/expired token → 401; bcrypt cost≥12; API: `Depends(get_current_user)` on every router; Streamlit: `st.session_state.token` gated at app entry — absent token redirects to login form, login errors shown inline (FR-10).
+- **RBAC** (FR-6, FR-7, FR-8, FR-9, NFR-5): roles `hr_admin|manager|employee|compliance_officer`; API: `Depends(require_role(...))` per endpoint; Streamlit: role-gated tabs — hr_admin=Catalog+Roster+Completions, manager=Team Board, employee=My Trainings, compliance_officer=Dashboard only.
+- **Manager isolation** (FR-6): `GET /compliance/team` and `GET /compliance/employee/{id}` filter by `manager_id = current_user.employee_id`; cross-team ID → 403; enforced in route dependency, not client.
+- **Recertification / supersession** (FR-3, NFR-10): on new completion insert, prior active record for same `(employee_id, course_id)` set `is_superseded=true`; no hard delete; exactly one active record enforced in service layer.
+- **Compliance status calc** (FR-4, FR-5): computed at query time — COMPLETE: `expiry_date >= today`; EXPIRED: `expiry_date < today`; MISSING: required + no non-superseded record; uses `dateutil.relativedelta` for calendar-month arithmetic (NFR-12).
+- **Inactive exclusion** (FR-2, FR-11): all aggregate queries and compliance views apply `WHERE is_active = true`; historical records accessible to HR Admin via `GET /completions?employee_id=`.
+- **Data quality warning** (FR-12): service layer counts non-superseded records per employee; if >20, response includes `data_quality_warning: true`.
+- **Audit / immutability** (NFR-10): `completion_records` has no DELETE route; `recorded_by` FK logged on insert; schema migration forbids cascade-delete on completions.
 
 ## 6. DB delivery
-1. Migration order: `001_create_departments_jobroles.sql`, `002_create_courses.sql`, `003_create_employees.sql`, `004_create_role_requirements.sql`, `005_create_completion_records.sql`, `006_create_users.sql`, `007_create_audit_log.sql`
-2. Seed (`seed.py`): 3 departments, 3 job roles, 6 courses (mix of all-staff + role-specific, varied validity), 15 active employees (current/expired/missing states, ≥3 expiring within 30 days, ≥2 never-started), 1 inactive employee with historical completions, 1 user per role for demo login; post-insert assertion checks all minimum counts (FR-11).
+1. Migration order: `001_departments_jobroles.sql`, `002_courses.sql`, `003_role_course_requirements.sql`, `004_users.sql`, `005_employees.sql`, `006_completion_records.sql`
+2. Seed data (`seed.py` / `make seed`): 3 departments, 3 job roles, 6 courses (3 all-staff, 3 role-specific, mix of categories), 1 compliance-officer user (no employee record), 16 employees (15 active + 1 inactive), completions covering COMPLETE / EXPIRED / MISSING / expiring-within-30-days states per FR-13; idempotent via `INSERT ... ON CONFLICT DO NOTHING`.

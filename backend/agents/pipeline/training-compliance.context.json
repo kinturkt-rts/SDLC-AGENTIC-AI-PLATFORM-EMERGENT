@@ -1,15 +1,16 @@
-{
+﻿{
     "productAgentOutput":  "See prdPath for training-compliance MVP requirements.",
     "targetApp":  "training-compliance",
     "prdPath":  "docs/PRD/training-compliance.md",
     "designDocPath":  "docs/design/training-compliance.md",
+    "productBrief":  "Feature: Training \u0026 Certification Compliance PRD\nMarcus, an HR administrator, faces quarterly audits on employee safety and security training completion. Today the process relies on spreadsheets and inbox searches, leaving managers unable to identify out-of-compliance direct reports until an escalation occurs. This reactive, fragmented approach creates audit risk and operational friction for HR, managers, and compliance officers alike. The proposed solution is a web application — **Training \u0026 Certification Compliance** — that provides a single authoritative system for defining required trainings (course catalog), recording completions with automatic expiry calculation, and surfacing compl...",
     "inputPath":  "inputs/training-compliance.txt",
     "deliveryProfile":  {
                             "streamlitRequirementsPath":  "ui/requirements.txt",
                             "streamlitPath":  "ui/streamlit_app.py",
                             "uiPattern":  "streamlit",
                             "uiRequired":  true,
-                            "requiresReact":  false,
+                            "requiresReact":  true,
                             "requiresStreamlit":  true
                         },
     "diagramPaths":  [

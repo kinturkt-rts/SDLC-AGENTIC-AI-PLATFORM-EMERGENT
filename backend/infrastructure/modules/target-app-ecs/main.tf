@@ -37,15 +37,18 @@ locals {
     var.extra_env,
   )
 
+  extra_secrets_list = [for k, v in var.extra_secrets : { name = k, valueFrom = v }]
+
   api_container = {
     name      = "api"
     image     = "${aws_ecr_repository.api.repository_url}:${var.image_tag}"
     essential = true
     portMappings = [{ containerPort = var.api_port, protocol = "tcp" }]
     environment = [for k, v in local.api_env : { name = k, value = v }]
-    secrets = local.has_db ? [
-      { name = "DATABASE_URL", valueFrom = var.db_secret_arn }
-    ] : []
+    secrets = concat(
+      local.has_db ? [{ name = "DATABASE_URL", valueFrom = var.db_secret_arn }] : [],
+      local.extra_secrets_list,
+    )
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -64,7 +67,7 @@ locals {
     image     = "${coalesce(local.ui_repo_url, "disabled")}:${var.image_tag}"
     essential = true
     portMappings = [{ containerPort = var.ui_port, protocol = "tcp" }]
-    secrets = []
+    secrets = local.extra_secrets_list
     # extra_env goes to the UI too: shared secrets (e.g. API_KEY the UI sends as a
     # header) must match the API container.
     environment = concat(
@@ -143,15 +146,15 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
 }
 
 resource "aws_iam_role_policy" "execution_secrets" {
-  count = local.has_db ? 1 : 0
-  name  = "read-db-secret"
+  count = local.has_db || length(var.extra_secrets) > 0 ? 1 : 0
+  name  = "read-app-secrets"
   role  = aws_iam_role.execution.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [var.db_secret_arn]
+      Resource = concat(local.has_db ? [var.db_secret_arn] : [], values(var.extra_secrets))
     }]
   })
 }
@@ -215,7 +218,7 @@ resource "aws_vpc_security_group_ingress_rule" "task_to_db" {
 
 # ── ALB wiring ─────────────────────────────────────────────────────────────────
 resource "aws_lb_target_group" "app" {
-  name        = substr("${local.name}-tg", 0, 32)
+  name        = trimsuffix(substr("${local.name}-tg", 0, 32), "-")
   port        = local.target_port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id

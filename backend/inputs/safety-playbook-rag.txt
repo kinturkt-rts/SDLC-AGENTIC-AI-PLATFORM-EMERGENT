@@ -1,0 +1,66 @@
+Safety Playbook RAG Desk — hard Streamlit + Postgres pgvector knowledge system
+
+Client story:
+Omar leads EHS (environment, health & safety) at a multi-site manufacturing company.
+Incident response depends on thick PDF playbooks: chemical spill SOPs, lockout/tagout,
+confined-space entry, near-miss investigation templates, and site-specific emergency
+contacts. When something happens on nights or weekends, supervisors guess which binder
+applies or call Omar. He wants an internal desk where playbooks are uploaded once, then
+supervisors ask plain-English questions and get cited answers — plus a structured way to
+log which playbook was used for which incident.
+
+This is a hard MVP on purpose: RAG quality rules, multi-role Streamlit UI, document
+lifecycle, and a light incident-link workflow so agents must combine retrieval with
+ordinary CRUD correctly.
+
+Must deliver:
+- FastAPI + Postgres with pgvector for chunk embeddings and similarity search.
+- Amazon Bedrock for embeddings and grounded answers (mockable in unit tests).
+- PDF upload → parse → chunk → embed → store; chat answers must cite document title,
+  page, and a short quote. If confidence is low: refuse clearly — never invent SOP steps.
+- A Streamlit UI under ui/streamlit_app.py calling the API over HTTP only (never import
+  app/). Streamlit is required — upload, library, ask, and incident-link screens.
+- Local PDF storage for MVP is fine (not S3-required).
+
+What the product should do:
+- Collections / libraries: group playbooks by site or topic (e.g. “Plant A chemicals”,
+  “Corporate LOTO”). Metadata: name, site code, effective date, version label.
+- Document library: upload PDF playbooks; track status waiting → processing → ready | failed;
+  list page count, uploader, last indexed time; soft-delete / supersede with history kept.
+- Ask / chat: user picks one or more collections, asks a question, gets an answer with
+  citations. Support follow-up turns in the same session (keep short conversation history).
+- “Grounded only” mode is mandatory: answers may use only retrieved chunks; if nothing
+  relevant, return “Not found in playbooks” with no fake procedure.
+- Incident linkage (structured, not full EHS suite): create an incident stub (site, when,
+  severity, short description). Users can attach the Q&A session or specific citations
+  used during response so auditors see which SOP text was relied on.
+- Audit trail: uploads, deletes, queries (question hash/text, collections, hit/miss),
+  and incident attachments.
+
+Who uses it:
+- EHS librarian — manage collections, upload/supersede PDFs, see failed ingestions.
+- Shift supervisor — ask questions, browse ready docs, create incident stubs and attach
+  citations; cannot delete corporate playbooks.
+- Plant manager — read-only: recent queries, incidents with attached citations, library
+  coverage by site.
+- Unauthenticated — health check only.
+
+Rules that matter (agents must get these right):
+- Reject non-PDF uploads with a clear error; enforce a sane max file size.
+- Deleting or superseding a document removes/rebuilds its chunks so answers cannot cite
+  retired text as current.
+- Supervisors only see collections for sites they are granted; librarians see all.
+- Chat must not answer from general world knowledge when retrieval is empty or weak.
+- Incident attach requires at least one citation id or session id that already exists.
+- Streamlit role gate: librarians see upload/admin tabs; supervisors see ask + incidents;
+  managers see dashboards — hide unauthorized actions in UI and enforce in API.
+
+Demo data expectations:
+- At least two collections and three ready PDFs (can be small fixture PDFs).
+- Seed Q&A that returns a cited answer for a known SOP question (e.g. spill PPE steps).
+- One incident stub with an attached citation for the audit demo.
+- Seed users/roles so Streamlit can switch personas without hand-editing the DB.
+
+Out of scope:
+- Live IoT sensors, full OSHA case management, mobile offline mode, scanned image-only
+  OCR PDFs, production SSO, automatic multi-language translation.

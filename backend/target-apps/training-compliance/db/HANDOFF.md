@@ -1,6 +1,6 @@
 # Database handoff — training-compliance
 
-_Generated 2026-06-19 16:40 UTC by database-agent._
+_Generated 2026-07-16 19:35 UTC by database-agent._
 
 ## For developer-agent
 
@@ -28,25 +28,33 @@ Add `sqlalchemy`, `psycopg[binary]`, and `alembic` in the service `requirements.
 | Database | `sdlc_agentic_ai` |
 | Endpoint | `agenticaidbinstance.c1u0cggiolxp.us-east-2.rds.amazonaws.com` |
 | SQL artifacts | `target-apps/training-compliance/db/sql/` |
-| RDS apply (last run) | yes — apply_sql_to_rds.py |
+| RDS apply (last run) | not this session |
 | Dev seed rows/table | 5–10 (see `*_seed.sql`) |
 
 ## SQL files (apply order)
 
 1. `target-apps/training-compliance/db/sql/001_create_departments_jobroles.sql`
-2. `target-apps/training-compliance/db/sql/002_create_courses.sql`
-3. `target-apps/training-compliance/db/sql/003_create_employees.sql`
-4. `target-apps/training-compliance/db/sql/004_create_role_requirements.sql`
-5. `target-apps/training-compliance/db/sql/005_create_completion_records.sql`
-6. `target-apps/training-compliance/db/sql/006_create_users.sql`
-7. `target-apps/training-compliance/db/sql/007_create_audit_log.sql`
-8. `target-apps/training-compliance/db/sql/011_seed.sql`
+2. `target-apps/training-compliance/db/sql/001_departments_jobroles.sql`
+3. `target-apps/training-compliance/db/sql/002_courses.sql`
+4. `target-apps/training-compliance/db/sql/002_create_courses.sql`
+5. `target-apps/training-compliance/db/sql/003_create_employees.sql`
+6. `target-apps/training-compliance/db/sql/003_role_course_requirements.sql`
+7. `target-apps/training-compliance/db/sql/004_create_role_requirements.sql`
+8. `target-apps/training-compliance/db/sql/004_users.sql`
+9. `target-apps/training-compliance/db/sql/005_create_completion_records.sql`
+10. `target-apps/training-compliance/db/sql/005_employees.sql`
+11. `target-apps/training-compliance/db/sql/006_completion_records.sql`
+12. `target-apps/training-compliance/db/sql/006_create_users.sql`
+13. `target-apps/training-compliance/db/sql/007_create_audit_log.sql`
+14. `target-apps/training-compliance/db/sql/007_seed.sql`
+15. `target-apps/training-compliance/db/sql/011_seed.sql`
 
 **Connection:** load credentials from env/Key Vault (NFR-5). Use schema `training_compliance` (`search_path` or qualified table names). Do not rely on unqualified `public` for app tables.
 
 ## ORM parity (required for live RDS)
 
 - **ENUM `course_category`** → `sqlalchemy.Enum(..., name='course_category', schema='training_compliance', create_type=False, native_enum=True)` + `.with_variant(String, 'sqlite')` (see `_template/app/models/pg_types.py`).
+- **ENUM `course_scope`** → `sqlalchemy.Enum(..., name='course_scope', schema='training_compliance', create_type=False, native_enum=True)` + `.with_variant(String, 'sqlite')` (see `_template/app/models/pg_types.py`).
 - **ENUM `user_role`** → `sqlalchemy.Enum(..., name='user_role', schema='training_compliance', create_type=False, native_enum=True)` + `.with_variant(String, 'sqlite')` (see `_template/app/models/pg_types.py`).
 - **uuid columns** → `PG_UUID(as_uuid=False).with_variant(String(36), 'sqlite')`; Pydantic response schemas: coerce `UUID` → `str` in `@field_validator`.
 - **Driver/DSN** → `psycopg[binary]` in requirements; `.env.example`: `postgresql+psycopg://...?sslmode=require`; `POSTGRES_SCHEMA=training_compliance` (set search_path in `database.py`, not copied from other apps).
