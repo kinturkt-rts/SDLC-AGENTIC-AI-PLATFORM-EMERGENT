@@ -1,1 +1,0 @@
--- REMOVED: superseded by 002_courses.sql

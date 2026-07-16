@@ -29,7 +29,11 @@ from _shared.artifact_store import (
     resolve_run_id,
     write_repo_artifact,
 )
-from _shared.delivery_profile import build_delivery_profile_from_paths
+from _shared.delivery_profile import (
+    build_delivery_profile_from_paths,
+    merge_delivery_profiles,
+    scan_delivery_text,
+)
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
 load_repo_env()
@@ -689,12 +693,26 @@ def _build_pipeline_context_dict(
     prd_rel: str,
     input_rel: str | None = None,
     prd_markdown: str = "",
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     delivery_profile = build_delivery_profile_from_paths(
         _REPO_ROOT,
         prd_path=prd_rel,
         input_path=input_rel,
+        run_id=run_id,
     )
+    # Harden against S3/local path lag: always OR in-memory PRD + input text scans.
+    extras: list[dict[str, Any]] = [delivery_profile]
+    if prd_markdown.strip():
+        extras.append(scan_delivery_text(prd_markdown))
+    if input_rel and run_id:
+        try:
+            input_text = get_artifact_text(run_id, input_rel)
+            if input_text.strip():
+                extras.append(scan_delivery_text(input_text))
+        except Exception:
+            pass
+    delivery_profile = merge_delivery_profiles(*extras)
     ctx: dict[str, Any] = {
         "targetApp": slug,
         "prdPath": prd_rel,
@@ -707,6 +725,7 @@ def _build_pipeline_context_dict(
         ctx["productBrief"] = product_brief
     if input_rel:
         ctx["inputPath"] = input_rel
+        ctx["inputFile"] = input_rel
     return ctx
 
 
@@ -788,13 +807,14 @@ def run_prd_from_context(
     if input_file:
         input_rel = str(input_file).replace("\\", "/").lstrip("/")
 
+    run_id = resolve_run_id(ctx)
     pipeline_ctx = _build_pipeline_context_dict(
         slug=slug,
         prd_rel=prd_rel,
         input_rel=input_rel,
         prd_markdown=prd_markdown,
+        run_id=run_id,
     )
-    run_id = resolve_run_id(ctx)
     if run_id:
         pipeline_ctx["runId"] = run_id
     write_repo_artifact(ctx_path_rel, json.dumps(pipeline_ctx, indent=2) + "\n", context=ctx)
