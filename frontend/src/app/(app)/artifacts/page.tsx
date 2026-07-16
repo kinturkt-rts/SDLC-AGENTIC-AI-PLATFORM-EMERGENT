@@ -54,10 +54,14 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
 ];
 
 export default function ArtifactsPage() {
-  const { data: artifacts, isLoading } = useArtifacts();
   const { data: projects } = useProjects();
   const artifactsProjectId = useUiStore((s) => s.artifactsProjectId);
   const [kind, setKind] = React.useState<ArtifactKind | 'all'>('all');
+  // Server filters too — client filter is a second guard if an old tab somehow sticks around.
+  const { data: artifacts, isLoading } = useArtifacts({
+    projectId: artifactsProjectId,
+    kind,
+  });
   const [preview, setPreview] = React.useState<Artifact | null>(null);
   const [previewText, setPreviewText] = React.useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);

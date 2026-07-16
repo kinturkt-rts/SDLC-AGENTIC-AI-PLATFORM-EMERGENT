@@ -106,13 +106,21 @@ export const useAgentMessages = (correlationId?: string, live = false) =>
     staleTime: 10_000,
     refetchInterval: live ? 8_000 : false,
   });
-export const useArtifacts = (poll = false) =>
-  useQuery({
-    queryKey: queryKeys.artifacts,
-    queryFn: api.getArtifacts,
-    staleTime: 120_000,
+export const useArtifacts = (
+  pollOrFilters: boolean | { projectId?: string | null; kind?: string; poll?: boolean } = false,
+) => {
+  const filters =
+    typeof pollOrFilters === 'boolean' ? { poll: pollOrFilters } : pollOrFilters;
+  const projectId = filters.projectId ?? null;
+  const kind = filters.kind ?? 'all';
+  const poll = filters.poll ?? false;
+  return useQuery({
+    queryKey: [...queryKeys.artifacts, projectId ?? 'all', kind],
+    queryFn: () => api.getArtifacts({ projectId, kind }),
+    staleTime: 30_000,
     refetchInterval: poll ? 30_000 : false,
   });
+};
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });
 export const useMcpServers = () => useQuery({ queryKey: queryKeys.mcp, queryFn: api.getMcpServers });

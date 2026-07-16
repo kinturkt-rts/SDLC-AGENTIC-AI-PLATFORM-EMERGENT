@@ -162,8 +162,12 @@ export const api = {
     const data = await httpGet<{ messages: AgentMessage[] }>(`/api/v1/agent-messages${qs}`);
     return data.messages;
   },
-  async getArtifacts(): Promise<Artifact[]> {
-    const data = await httpGet<{ artifacts: Artifact[] }>('/api/v1/artifacts');
+  async getArtifacts(filters?: { projectId?: string | null; kind?: string }): Promise<Artifact[]> {
+    const qs = new URLSearchParams();
+    if (filters?.projectId) qs.set('project', filters.projectId);
+    if (filters?.kind && filters.kind !== 'all') qs.set('kind', filters.kind);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const data = await httpGet<{ artifacts: Artifact[] }>(`/api/v1/artifacts${suffix}`);
     return data.artifacts;
   },
   async getCheckpoints(): Promise<HITLCheckpoint[]> {
