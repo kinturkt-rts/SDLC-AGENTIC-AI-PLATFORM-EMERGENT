@@ -283,7 +283,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">Pipeline cancelled</p>
                 <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-                  {run.error ?? 'This run was cancelled. The concurrency slot is free for a new submit.'}
+                  {run.error ?? 'This run was cancelled. You can start a new pipeline when ready.'}
                 </p>
               </div>
             </Card>

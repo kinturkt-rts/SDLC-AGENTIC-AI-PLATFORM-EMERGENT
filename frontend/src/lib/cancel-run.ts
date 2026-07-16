@@ -85,17 +85,19 @@ export async function cancelPipelineRun(runId: string): Promise<CancelRunResult>
   }
 
   const now = new Date().toISOString();
+  // User-facing copy only — keep AgentCore/session internals out of the UI.
+  const userError = sessionStopped
+    ? 'Cancelled by user'
+    : sessionId
+      ? 'Cancelled by user. Cloud work may take a moment to stop.'
+      : 'Cancelled by user. Cloud work may take a moment to stop.';
   const next: RunJsonDoc = {
     ...doc,
     runId: doc.runId || id,
     status: 'cancelled',
     finishedAt: now,
     currentStep: null,
-    error: sessionStopped
-      ? 'Cancelled by user (orchestrator session stopped)'
-      : sessionId
-        ? `Cancelled by user (session stop failed: ${stopError ?? 'unknown'})`
-        : 'Cancelled by user (no orchestrator session id stored - UI slot freed; cloud work may finish shortly)',
+    error: userError,
   };
   if (Array.isArray(next.steps)) {
     next.steps = next.steps.map((step) =>
@@ -107,10 +109,8 @@ export async function cancelPipelineRun(runId: string): Promise<CancelRunResult>
   invalidateRunsCache();
 
   const message = sessionStopped
-    ? 'Run cancelled and orchestrator session stopped'
-    : sessionId
-      ? 'Run marked cancelled; could not stop AgentCore session (slot freed anyway)'
-      : 'Run marked cancelled (slot freed). No session id was stored for this run - new runs will hard-stop.';
+    ? 'This run was cancelled.'
+    : 'This run was cancelled. Any remaining cloud work should stop shortly.';
 
   return {
     runId: id,

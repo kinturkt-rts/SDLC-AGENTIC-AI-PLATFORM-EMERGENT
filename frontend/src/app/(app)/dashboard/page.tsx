@@ -898,7 +898,9 @@ export default function DashboardPage() {
     setCancellingId(runId);
     try {
       const result = await api.cancelRun(runId);
-      toast.success('Run cancelled', { description: result.message });
+      toast.success('Run cancelled', {
+        description: result.message || 'This run was cancelled.',
+      });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
       await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
