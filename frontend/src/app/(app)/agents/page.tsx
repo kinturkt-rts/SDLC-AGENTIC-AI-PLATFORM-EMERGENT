@@ -221,7 +221,7 @@ export default function AgentsPage() {
         <p className="text-xs text-muted-foreground">
           {lastFleetCheckAt
             ? <>Last check {formatRelative(lastFleetCheckAt)}{fleetCheckSummary ? ` · ${fleetCheckSummary}` : ''}</>
-            : 'No fleet check yet — use Test fleet to ping online agents.'}
+            : 'No fleet check yet - use Test fleet to ping online agents.'}
         </p>
       </div>
 

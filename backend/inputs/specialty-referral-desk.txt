@@ -1,0 +1,51 @@
+Specialty Referral Desk — patients, referring clinics, specialist handoffs, and follow-up
+
+Client story:
+A mid-size family clinic sends patients to outside specialists every week. Today it is fax
+coversheets and sticky notes. The office manager wants a desk tool to log each referral,
+track whether the specialist visit happened, and chase open loops — not a full EHR.
+
+MVP:
+- Patients: name, date of birth, preferred phone, optional MRN-style chart number.
+- Referring providers (doctors/NPs at this clinic) and destination specialties
+  (cardiology, ortho, dermatology, etc.).
+- Referral records: patient, referring provider, specialty, reason for referral (short text),
+  urgency (routine / soon / urgent), created date, and lifecycle status from drafted through
+  scheduled, completed, cancelled, or lost-to-follow-up.
+- Optional specialist practice name and appointment date once known.
+- Staff can add follow-up notes and mark when the visit was confirmed completed.
+- Queue views: open referrals by urgency; referrals waiting more than N days without an
+  appointment date; completed this month.
+- Audit trail of status changes and note additions.
+
+Personas (who needs what):
+- Referral coordinator — create referrals, update status, add appointment details, notes.
+- Clinician (referring provider) — see their own open referrals; add clinical reason notes;
+  cannot cancel another provider’s referral.
+- Clinic manager — all referrals, queues, and monthly completion counts; can reassign
+  coordinator ownership if needed.
+- Public/unauthenticated — health check only.
+
+Business rules worth getting right:
+- Cannot mark completed without either an appointment date or an explicit “completed without
+  scheduled date” note (rare path — require a reason).
+- Urgent referrals should surface on a priority board if still open after 3 business days
+  without an appointment date.
+- Cancelling requires a short reason; cancelled and completed are terminal.
+- Lost-to-follow-up only allowed from open states after staff confirms outreach attempts
+  (capture a brief outreach note).
+- Same patient can have multiple referrals; do not block duplicates, but show prior open
+  referrals for that patient on the detail screen as a warning.
+
+Demo data expectations:
+- Several providers, specialties, ~20 patients, ~30 referrals across statuses.
+- Mix of urgent and routine; at least two “stuck” open referrals for the chase queue.
+- A few completed referrals with appointment dates and notes.
+
+UI expectation:
+- Simple web UI: open queue, patient/referral detail, manager summary counts.
+  API is the source of truth.
+
+Out of scope:
+- Insurance authorizations, clinical document upload, e-prescribing, patient portal login,
+  HIPAA compliance program beyond basic access roles

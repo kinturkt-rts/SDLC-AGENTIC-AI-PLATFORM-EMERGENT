@@ -1,0 +1,44 @@
+Wholesale Order Desk — restaurant buyers place produce orders; warehouse confirms and fulfills
+
+Client story:
+Leo runs a regional produce wholesaler. Restaurants text or email orders, and his warehouse
+team retypes them into a shared sheet. Mistakes are common (wrong case size, cut-off missed,
+substitutions forgotten). He wants a calm order desk where buyers place orders before a daily
+cut-off, and the warehouse can confirm, substitute, or short-ship with a clear trail.
+
+What the product should do:
+- Maintain a catalog of items restaurants can order (name, unit like case or each, pack size,
+  and whether the item is available this week).
+- Let each restaurant (buyer account) place an order for a delivery day, with line items and
+  quantities.
+- Enforce a daily order cut-off time; after cut-off, new orders for that delivery day are blocked
+  or go into a “late / needs review” pile for staff.
+- Warehouse staff review each order: confirm as-is, suggest a substitution when something is
+  out, or mark a line as short (couldn’t fill full quantity).
+- Buyers see order status: draft → submitted → confirmed → out for delivery → delivered
+  (or cancelled).
+- Simple order history so a restaurant can reorder last week’s list with edits.
+- Staff can see today’s open orders and which ones still need confirmation.
+
+Who uses it:
+- Restaurant buyer — browse available items, build and submit orders, see status and history.
+- Warehouse clerk — confirm orders, substitutions, short fills, mark out for delivery.
+- Wholesale manager — read-only overview of today’s book and problem orders.
+
+Rules that matter in real life:
+- Buyers can only order items marked available for the chosen delivery day.
+- After submit, buyers should not freely edit line items; they request a cancel or staff adjusts.
+- Substitutions need both a reason and the replacement item noted so the restaurant isn’t surprised.
+- Short-ships keep the original ask and the filled quantity visible.
+- Cut-off is a business rule, not a suggestion — late orders need deliberate staff acceptance.
+
+Demo data expectations:
+- A handful of restaurants, a catalog of ~20 items with mixed availability.
+- Several orders across statuses for the same delivery day.
+- At least one substitution and one short-ship for demo conversations.
+
+Out of scope:
+- Online payments, route optimization, inventory counting in the cooler, SMS notifications
+
+Target app slug: wholesale-order-desk
+Output directory: target-apps/wholesale-order-desk/
