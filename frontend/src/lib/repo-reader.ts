@@ -48,9 +48,11 @@ import {
   parseCloudWatchActivityLine,
 } from './cloudwatch-activity';
 import { filterLiveRuns, isRecentLiveTs } from './live-activity';
+import { listAgentMessagesFromRuns } from './agent-messages';
 import type {
   Agent,
   AgentAvailability,
+  AgentMessage,
   AgentName,
   Artifact,
   ArtifactKind,
@@ -1914,6 +1916,12 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
       usedByAgents: usedBy,
     };
   });
+}
+
+/** Live orchestration-bus view derived from pipeline run steps (read-only). */
+export async function listAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
+  const runs = await listRuns();
+  return listAgentMessagesFromRuns(runs, { correlationId, maxRuns: 25 });
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {

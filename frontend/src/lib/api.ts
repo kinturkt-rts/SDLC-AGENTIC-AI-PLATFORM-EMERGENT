@@ -6,7 +6,6 @@
 //
 // The control plane NEVER executes agents. It only reads platform state.
 
-import { mockAgentMessages } from '@/src/mocks';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PlatformSettings } from '@/src/lib/platform-settings';
 import type { PipelineTelemetrySummary, TelemetryOverviewRow } from '@/src/lib/pipeline-telemetry';
@@ -159,8 +158,9 @@ export const api = {
     return data.activity;
   },
   async getAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
-    const all = mockAgentMessages;
-    return correlationId ? all.filter((m) => m.correlationId === correlationId) : all;
+    const qs = correlationId ? `?correlationId=${encodeURIComponent(correlationId)}` : '';
+    const data = await httpGet<{ messages: AgentMessage[] }>(`/api/v1/agent-messages${qs}`);
+    return data.messages;
   },
   async getArtifacts(): Promise<Artifact[]> {
     const data = await httpGet<{ artifacts: Artifact[] }>('/api/v1/artifacts');

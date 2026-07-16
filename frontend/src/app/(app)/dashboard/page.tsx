@@ -940,7 +940,7 @@ export default function DashboardPage() {
                 <HeroStatCard icon={Activity} label="Active Runs" value={activeRuns.length} sub="currently executing" accent="glow-blue-sm" iconAccent="bg-blue-500/10 text-blue-400 ring-blue-500/20" href="/runs" />
                 <HeroStatCard icon={UserCheck} label="Pending Approvals" value={summary.pendingApprovals} sub="awaiting human review" accent="" iconAccent="bg-amber-500/10 text-amber-400 ring-amber-500/20" href="/checkpoints" />
                 <HeroStatCard icon={Bot} label="Agents Online" value={`${summary.agentsOnline}/8`} sub="specialist agents" accent="" iconAccent="bg-emerald-500/10 text-emerald-400 ring-emerald-500/20" href="/agents" />
-                <HeroStatCard icon={Plug} label="MCP Healthy" value={`${summary.mcpHealthy}/${summary.mcpTotal}`} sub="integration servers" accent="" iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20" href="/mcp" />
+                <HeroStatCard icon={Plug} label="MCP Servers" value={`${summary.mcpTotal}`} sub="configured integrations" accent="" iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20" href="/mcp" />
               </>
             ) : (
               Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[104px] w-full rounded-xl" />)

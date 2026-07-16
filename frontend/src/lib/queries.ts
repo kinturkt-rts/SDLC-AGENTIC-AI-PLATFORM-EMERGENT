@@ -99,8 +99,13 @@ export const useRunHandoffs = (id: string, live = false) =>
     enabled: !!id,
     refetchInterval: live ? 4000 : false,
   });
-export const useAgentMessages = (correlationId?: string) =>
-  useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
+export const useAgentMessages = (correlationId?: string, live = false) =>
+  useQuery({
+    queryKey: queryKeys.messages(correlationId),
+    queryFn: () => api.getAgentMessages(correlationId),
+    staleTime: 10_000,
+    refetchInterval: live ? 8_000 : false,
+  });
 export const useArtifacts = (poll = false) =>
   useQuery({
     queryKey: queryKeys.artifacts,
