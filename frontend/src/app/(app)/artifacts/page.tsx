@@ -21,13 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { useArtifacts, useProjects } from '@/src/lib/queries';
@@ -53,11 +46,32 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
   ...ARTIFACT_FILTER_KINDS.map((k) => ({ value: k, label: artifactKindLabel(k) })),
 ];
 
+/** Final gate before a card can render — never trust a single filter path alone. */
+function passesFilters(
+  artifact: Artifact,
+  projectId: string | null,
+  kind: ArtifactKind | 'all',
+): boolean {
+  if (projectId && artifact.projectId !== projectId) return false;
+  if (!artifactMatchesKind(artifact, kind)) return false;
+  if (kind === 'prd' || kind === 'architecture') {
+    const lower = artifact.path.toLowerCase();
+    if (
+      lower.endsWith('.py') ||
+      lower.endsWith('.ts') ||
+      lower.endsWith('.js') ||
+      lower.includes('/app/')
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export default function ArtifactsPage() {
   const { data: projects } = useProjects();
   const artifactsProjectId = useUiStore((s) => s.artifactsProjectId);
   const [kind, setKind] = React.useState<ArtifactKind | 'all'>('all');
-  // Server filters too — client filter is a second guard if an old tab somehow sticks around.
   const { data: artifacts, isLoading } = useArtifacts({
     projectId: artifactsProjectId,
     kind,
@@ -81,7 +95,11 @@ export default function ArtifactsPage() {
     fetch(`/api/v1/repo-asset?path=${encodeURIComponent(preview.path)}`)
       .then((res) => (res.ok ? res.text() : Promise.reject(new Error('preview failed'))))
       .then((text) => {
-        if (!cancelled) setPreviewText(text.length > 20000 ? text.slice(0, 20000) + '\n\n... (truncated for preview)' : text);
+        if (!cancelled) {
+          setPreviewText(
+            text.length > 20000 ? text.slice(0, 20000) + '\n\n... (truncated for preview)' : text,
+          );
+        }
       })
       .catch(() => {
         if (!cancelled) setPreviewText('Preview unavailable for this artifact.');
@@ -98,11 +116,15 @@ export default function ArtifactsPage() {
     ? projects?.find((p) => p.id === artifactsProjectId)?.name ?? artifactsProjectId
     : 'all projects';
 
+  const kindLabel = FILTER_OPTIONS.find((o) => o.value === kind)?.label ?? 'All kinds';
+
   const rows = React.useMemo(() => {
-    return (artifacts ?? [])
-      .filter((a) => !artifactsProjectId || a.projectId === artifactsProjectId)
-      .filter((a) => artifactMatchesKind(a, kind))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const filtered: Artifact[] = [];
+    for (const a of artifacts ?? []) {
+      if (passesFilters(a, artifactsProjectId, kind)) filtered.push(a);
+    }
+    filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return filtered;
   }, [artifacts, artifactsProjectId, kind]);
 
   return (
@@ -110,37 +132,54 @@ export default function ArtifactsPage() {
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description={`Deliverables across ${projectName} - PRDs, design docs, architecture diagrams, SQL, and application code`}
+        description={
+          <>
+            <span>
+              Showing {isLoading ? '…' : rows.length} {kindLabel.toLowerCase()}
+              {kind === 'all' ? ' artifacts' : ''} for {projectName}.
+            </span>
+            <span className="mt-1 block text-[11px] text-muted-foreground/70">
+              Filter build Jul 16 — if you still see Code under PRD, hard-refresh (Ctrl+Shift+R).
+            </span>
+          </>
+        }
         actions={
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">Kind</span>
-            <Select value={kind} onValueChange={(v) => setKind(v as ArtifactKind | 'all')}>
-              <SelectTrigger className="h-9 w-auto min-w-[8.5rem] border-white/[0.08] bg-white/[0.02] px-2.5">
-                <SelectValue placeholder="All kinds" />
-              </SelectTrigger>
-              <SelectContent>
-                {FILTER_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <label htmlFor="artifact-kind-filter" className="text-xs font-medium text-muted-foreground">
+              Kind
+            </label>
+            <select
+              id="artifact-kind-filter"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as ArtifactKind | 'all')}
+              className="h-9 min-w-[8.5rem] rounded-md border border-white/[0.08] bg-white/[0.02] px-2.5 text-sm text-foreground outline-none focus:border-teal-500/40"
+            >
+              {FILTER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
         }
       />
 
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}</div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full rounded-xl" />
+          ))}
+        </div>
       ) : rows.length === 0 ? (
         <EmptyState icon={FileBox} title="No artifacts" description="No artifacts of this kind." />
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {rows.map((a) => {
-            const Icon = KIND_ICON[a.kind];
+            if (!passesFilters(a, artifactsProjectId, kind)) return null;
+            const Icon = KIND_ICON[a.kind] ?? FileBox;
             return (
               <Card
-                key={a.id}
+                key={`${kind}-${artifactsProjectId ?? 'all'}-${a.id}`}
                 onClick={() => setPreview(a)}
                 className="overflow-hidden border-white/[0.06] bg-card/80 p-4 transition-all duration-300 cursor-pointer hover:border-teal-500/30 hover:bg-card hover:shadow-lg"
               >
@@ -161,9 +200,11 @@ export default function ArtifactsPage() {
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5 text-xs text-muted-foreground">
                   <span>{a.producedBy}</span>
-                  <span>{a.sizeKb} KB &middot; {formatRelative(a.createdAt)}</span>
+                  <span>
+                    {a.sizeKb} KB &middot; {formatRelative(a.createdAt)}
+                  </span>
                 </div>
-                {(a.preview || a.imageUrl || a.path.startsWith('runs/')) ? (
+                {a.preview || a.imageUrl || a.path.startsWith('runs/') ? (
                   <p className="mt-2 text-[11px] font-medium text-teal-400">Click to preview</p>
                 ) : null}
               </Card>
@@ -176,15 +217,13 @@ export default function ArtifactsPage() {
         <DialogContent className="max-w-2xl border-white/[0.08] bg-card">
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
-            <DialogDescription>{preview?.path} &middot; produced by {preview?.producedBy}</DialogDescription>
+            <DialogDescription>
+              {preview?.path} &middot; produced by {preview?.producedBy}
+            </DialogDescription>
           </DialogHeader>
           {preview?.imageUrl ? (
             <div className="overflow-hidden rounded-lg border border-white/[0.06] bg-muted/20 p-2">
-              <img
-                src={preview.imageUrl}
-                alt={preview.name}
-                className="w-full rounded-md object-contain"
-              />
+              <img src={preview.imageUrl} alt={preview.name} className="w-full rounded-md object-contain" />
             </div>
           ) : previewLoading ? (
             <p className="text-sm text-muted-foreground">Loading preview…</p>
