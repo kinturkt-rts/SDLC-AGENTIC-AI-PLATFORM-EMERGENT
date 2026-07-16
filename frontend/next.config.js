@@ -1,5 +1,8 @@
 const nextConfig = {
   output: 'standalone',
+  env: {
+    NEXT_PUBLIC_UI_BUILD_AT: new Date().toISOString(),
+  },
   images: {
     unoptimized: true,
     remotePatterns: [

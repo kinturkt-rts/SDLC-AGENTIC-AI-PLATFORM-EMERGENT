@@ -1,5 +1,6 @@
 'use client';
 
+import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { PanelLeftClose, PanelLeft } from 'lucide-react';
@@ -8,10 +9,28 @@ import { BrandMark } from '@/src/components/common/BrandMark';
 import { navSections } from '@/src/lib/nav';
 import { useUiStore } from '@/src/store/ui-store';
 
+function formatBuildStamp(): string | null {
+  const iso = process.env.NEXT_PUBLIC_UI_BUILD_AT;
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggle = useUiStore((s) => s.toggleSidebar);
+  // Client-only: local-time formatting during SSR would mismatch hydration.
+  const [buildStamp, setBuildStamp] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setBuildStamp(formatBuildStamp());
+  }, []);
 
   return (
     <aside
@@ -84,7 +103,15 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* ── Collapse Toggle ───────────────────── */}
+      {/* ── Build stamp + Collapse Toggle ─────── */}
+      {!collapsed && buildStamp && (
+        <p
+          title="When this UI bundle was built. If this looks old, hard-refresh (Ctrl+Shift+R)."
+          className="px-4 pb-1.5 text-[10px] text-muted-foreground/40"
+        >
+          UI build {buildStamp}
+        </p>
+      )}
       <button
         onClick={toggle}
         className="flex h-11 items-center gap-3 border-t border-sidebar-border px-4 text-[13px] text-muted-foreground/60 transition-colors hover:text-sidebar-foreground"

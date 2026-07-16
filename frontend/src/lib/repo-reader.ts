@@ -17,6 +17,7 @@ import {
   getS3RunEarliestModifiedMs,
   getRunArtifactJson,
   getS3RunArtifactIndex,
+  isHiddenAppSlug,
 } from './artifact-store';
 import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
 import {
@@ -574,6 +575,15 @@ async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   if (isS3Store()) {
     const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
 
+    // Prefer cancel from either side — cloud finalize can overwrite S3 to
+    // "completed" after the user already cancelled locally (or vice versa).
+    if (local?.status === 'cancelled') {
+      return { ...local, runId: local.runId || runId };
+    }
+    if (doc?.status === 'cancelled') {
+      return { ...doc, runId: doc.runId || runId };
+    }
+
     if (doc && isTerminalLiveStatus(doc.status)) {
       if (!local || !isTerminalLiveStatus(local.status)) {
         return { ...doc, runId: doc.runId || runId };
@@ -747,6 +757,11 @@ async function latestUuidRunMtime(runId: string): Promise<string> {
 
 function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   const next: LiveRunState = { ...live, steps: live.steps ? [...live.steps] : live.steps };
+
+  // User cancel is sticky — log success/failure markers must not resurrect the run.
+  if (next.status === 'cancelled') {
+    return next;
+  }
 
   const terminal = parseLogTerminalStatus(log);
   if (terminal?.status === 'completed') {
@@ -1013,7 +1028,7 @@ async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
         const live = await readUuidRunState(runId);
         if (!live) return null;
         const slug = featureSlugFromLive(live);
-        if (!slug) return null;
+        if (!slug || isHiddenAppSlug(slug)) return null;
         return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId });
       }),
     );
