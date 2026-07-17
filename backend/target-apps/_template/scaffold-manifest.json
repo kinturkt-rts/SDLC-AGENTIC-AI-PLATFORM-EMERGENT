@@ -51,6 +51,22 @@
         "ui/streamlit_app.py",
         "ui/requirements.txt"
       ]
+    },
+    "F": {
+      "copy_verbatim": [
+        "frontend/index.html",
+        "frontend/package.json",
+        "frontend/vite.config.ts",
+        "frontend/tsconfig.json",
+        "frontend/tsconfig.app.json",
+        "frontend/tsconfig.node.json",
+        "frontend/.gitignore",
+        "frontend/.env",
+        "frontend/src/main.tsx",
+        "frontend/src/api.ts",
+        "frontend/src/App.tsx",
+        "frontend/src/index.css"
+      ]
     }
   },
   "customize_after_scaffold": [

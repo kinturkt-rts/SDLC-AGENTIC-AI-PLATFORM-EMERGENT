@@ -133,6 +133,8 @@ class PipelineOptions:
     skip_gitlab: bool = False
     with_qa: bool = False
     skip_qa: bool = False
+    with_frontend: bool = False
+    skip_frontend: bool = False
     with_jira: bool = False
     jira_project: str = ""
     jira_sprint: int = 0
@@ -192,6 +194,8 @@ def planned_steps(options: PipelineOptions) -> list[str]:
         steps.append("database-agent")
     if not options.skip_developer:
         steps.append("developer-agent")
+    if _should_run_frontend(options):
+        steps.append("frontend-agent")
     if _should_run_gitlab(options):
         steps.append("gitlab-agent")
     if _should_run_qa(options):
@@ -215,6 +219,9 @@ def _should_run_gitlab(options: PipelineOptions) -> bool:
 
 def _should_run_qa(options: PipelineOptions) -> bool:
     return options.with_qa and not options.skip_qa and not options.skip_developer
+
+def _should_run_frontend(options: PipelineOptions) -> bool:
+    return options.with_frontend and not options.skip_frontend
 
 
 class SdlcPipelineRunner:
@@ -275,7 +282,10 @@ class SdlcPipelineRunner:
 
             if not self.options.skip_verify and not self.options.skip_developer:
                 self._step_verify()
-
+            
+            if _should_run_frontend(self.options):
+                self._step_frontend()
+            
             if _should_run_gitlab(self.options):
                 self._step_gitlab()
 
@@ -1032,6 +1042,28 @@ class SdlcPipelineRunner:
         self.agents_run.append("qa-agent")
         self.artifacts["QA"] = qa_handoff_rel_for_app(self.feature)
         self._after_agent_step("qa-agent")
+    
+    def _step_frontend(self) -> None:
+        if self.transport == "local":
+            self._run_python(
+                [
+                    "agents/frontend-agent/frontend_agent.py",
+                    "--target-app",
+                    self.feature,
+                    "--context-file",
+                    self.context_file,
+                ],
+                step="frontend-agent",
+            )
+        else:
+            self._invoke_a2a(
+                "frontend-agent",
+                f"Generate the React frontend for {self.feature} from the OpenAPI spec.",
+                step="frontend-agent",
+            )
+        self.agents_run.append("frontend-agent")
+        self.artifacts["Frontend"] = f"{target_app_root_rel(self.feature)}/frontend/"
+        self._after_agent_step("frontend-agent")
 
     def _sync_delivery_profile(self, input_file: str = "") -> None:
         args = [

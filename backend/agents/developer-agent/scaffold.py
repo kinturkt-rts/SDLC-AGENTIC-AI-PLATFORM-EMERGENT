@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-_VALID_PATTERNS = ("B", "B+", "B++", "C")
+_VALID_PATTERNS = ("B", "B+", "B++", "C", "F")
 
 
 def load_manifest(manifest_path: Path) -> dict[str, Any]:
