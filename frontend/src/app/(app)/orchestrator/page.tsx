@@ -33,8 +33,8 @@ export default function OrchestratorPage() {
     <>
       <PageHeader
         eyebrow="Design"
-        title="Orchestrator"
-        description="How the orchestrator hands work to specialist agents. The message log is built from live pipeline runs - assign, progress, and result for each phase."
+        title="Orchestrator Handoffs"
+        description="The orchestrator hands each SDLC phase to one specialist agent, then waits for it to report progress and a result before moving on. This page shows who is assigned to what right now, live while a pipeline runs."
         actions={
           <Button asChild variant="outline" size="sm" className="gap-1.5 border-white/[0.08]">
             <Link href="/orchestrator/messages">Message log <ArrowRight className="h-4 w-4" /></Link>
