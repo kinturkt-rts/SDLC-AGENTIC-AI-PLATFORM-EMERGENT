@@ -452,3 +452,16 @@
 .login-checkbox-native {
   accent-color: #22d3ee;
 }
+
+/* Sonner defaults the close control to top-left; move it top-right like most apps. */
+[data-sonner-toast][data-close-button='true'] {
+  padding-inline-end: 2.5rem !important;
+}
+
+[data-sonner-toast] [data-close-button] {
+  left: auto !important;
+  right: 0.5rem !important;
+  top: 0.5rem !important;
+  transform: none !important;
+  border-radius: 0.375rem;
+}
