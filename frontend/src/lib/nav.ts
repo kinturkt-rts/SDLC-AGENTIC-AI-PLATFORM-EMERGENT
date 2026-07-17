@@ -12,6 +12,7 @@ import {
   ScrollText,
   Settings,
   Coins,
+  Info,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -32,7 +33,7 @@ export const navSections: NavSection[] = [
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Pipeline Runs', href: '/runs', icon: Workflow },
-      { label: 'HITL Checkpoints', href: '/checkpoints', icon: UserCheck },
+      { label: 'HITL Approved Gates', href: '/checkpoints', icon: UserCheck },
     ],
   },
   {
@@ -64,6 +65,9 @@ export const navSections: NavSection[] = [
   },
   {
     title: 'Admin',
-    items: [{ label: 'Settings', href: '/settings', icon: Settings }],
+    items: [
+      { label: 'Settings', href: '/settings', icon: Settings },
+      { label: 'About', href: '/about', icon: Info },
+    ],
   },
 ];

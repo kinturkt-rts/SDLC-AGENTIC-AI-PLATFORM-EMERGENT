@@ -26,6 +26,10 @@ MONGODB_MCP_COMMAND = os.getenv("MONGODB_MCP_COMMAND", "npx")
 MONGODB_MCP_ARGS = os.getenv("MONGODB_MCP_ARGS", "-y mongodb-mcp-server")
 FIRECRAWL_MCP_COMMAND = os.getenv("FIRECRAWL_MCP_COMMAND", "npx")
 FIRECRAWL_MCP_ARGS = os.getenv("FIRECRAWL_MCP_ARGS", "-y firecrawl-mcp")
+TERRAFORM_MCP_COMMAND = os.getenv("TERRAFORM_MCP_COMMAND", "docker")
+TERRAFORM_MCP_ARGS = os.getenv(
+    "TERRAFORM_MCP_ARGS", "run -i --rm hashicorp/terraform-mcp-server:latest"
+)
 
 
 def firecrawl_api_key() -> str:
@@ -274,10 +278,35 @@ def mongodb_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
 
     return MCPClient(transport, prefix="mongodb", startup_timeout=120)
 
+def terraform_mcp_client(*, cwd: str | Path | None = None) -> MCPClient:
+    """HashiCorp Terraform MCP Server — registry/provider docs for accurate TF authoring.
+
+    Knowledge server (module/provider doc lookup); it does not run plan/apply.
+    Default transport is `docker run -i --rm hashicorp/terraform-mcp-server:latest`
+    (see config/mcp/servers.json), so Docker must be running.
+    """
+
+    args = shlex.split(TERRAFORM_MCP_ARGS)
+    if not args:
+        raise ValueError("TERRAFORM_MCP_ARGS must provide at least one arg")
+
+    def transport() -> object:
+        return stdio_client(
+            StdioServerParameters(
+                command=TERRAFORM_MCP_COMMAND,
+                args=args,
+                env={**os.environ},
+            )
+        )
+
+    return MCPClient(transport, prefix="terraform", startup_timeout=120)
+
+
 MCP_FACTORIES: dict[str, Callable[[], MCPClient]] = {
     "atlassian": atlassian_mcp_client,
     "postgres": postgres_mcp_client,
     "mongodb": mongodb_mcp_client,
     "supabase": supabase_mcp_client,
     "firecrawl": firecrawl_mcp_client,
+    "terraform": terraform_mcp_client,
 }

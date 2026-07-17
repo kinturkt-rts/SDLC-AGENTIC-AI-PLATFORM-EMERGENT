@@ -1,0 +1,5 @@
+We need a simple guest visit log for the front desk so people stop writing visitor names in a shared notebook.
+
+Front desk staff should record each visit with visitor name, company (optional), who they are here to see, purpose of visit, check-in time, and optional check-out time. The team needs to list visits, filter by host name or date, update a row when checkout happens, and delete mistaken entries.
+
+First version is a FastAPI + Postgres CRUD service only — no login screens, no AI, no fancy UI. A shared API key for writes is fine; Swagger at /docs is enough for the demo. Goal is a clean, searchable log of who visited and who they met.

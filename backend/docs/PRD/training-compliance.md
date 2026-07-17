@@ -2,11 +2,11 @@
 
 ## 1. Overview
 
-Marcus, an HR administrator, currently tracks mandatory training completions through spreadsheets and inbox searches. This creates blind spots: managers cannot see which direct reports are out of compliance until an issue is escalated, and quarterly audits are time-consuming and error-prone. There is no single authoritative source for course requirements, completion records, or expiry status across the organization.
+Marcus (HR) and his organization face a recurring audit burden: determining who has completed mandatory safety and security training is currently a manual process of spreadsheet reconciliation and inbox searches. Managers have no proactive visibility into their teams' compliance status, and findings only surface when someone escalates a problem. This creates audit risk, administrative overhead, and gaps in workforce safety and security posture.
 
-The proposed solution is a web application (API-first, Streamlit UI) that centralizes the course catalog, employee roster, and completion records. It calculates compliance status in real time — distinguishing between "never taken," "current," and "expired" — and surfaces role-gated views so HR, managers, employees, and compliance officers each see exactly the data they need without being able to corrupt records outside their authority.
+The Training & Certification Compliance system provides a single authoritative platform where HR administrators define a course catalog with validity rules and role-based requirements, record employee completions, and expose tailored compliance views to each actor (employee, manager, compliance officer, and HR admin). The system calculates expiry dates automatically, maintains a historical record of all completions, and surfaces missing or expiring required courses before they become audit findings.
 
-The MVP covers course catalog management, a role-to-course requirement matrix, completion recording with automatic expiry calculation, recertification logic, and four distinct role-gated UI screens. Inactive employees are excluded from live compliance counts while their history is preserved. Email/SMS, LMS integration, and multi-tenancy are out of scope.
+The MVP delivers a FastAPI backend with a Streamlit front-end segmented by role, seeded with realistic demo data, and enforces strict data isolation so managers see only their own teams, employees see only their own records, and compliance officers have org-wide read access without write privileges.
 
 ---
 
@@ -14,27 +14,25 @@ The MVP covers course catalog management, a role-to-course requirement matrix, c
 
 | Goal | Metric | Target | Notes |
 |------|--------|--------|-------|
-| Eliminate spreadsheet-based compliance tracking | % of completion records entered via application vs. spreadsheet | 100 % within target org after rollout | Baseline is 0 % |
-| Reduce audit preparation time | Hours HR spends preparing quarterly compliance report | ≤ 1 hour (vs. current baseline TBD) | Measured via HR self-report |
-| Surface at-risk employees before expiry | % of expiring-within-30-days completions visible to manager before expiry date | 100 % | System-calculated; verified by QA |
-| Manager self-service compliance visibility | % of managers able to view their own team dashboard without HR assistance | 100 % | Usability test criterion |
-| Data integrity on inactive employees | Inactive employees excluded from compliance rate calculations | 0 false inclusions | Automated test on compliance percentage endpoint |
-| Demo readiness | Seed data covers all required scenario types | 6+ courses, 15+ employees, 3+ departments, mixed states | Verified by seeding script |
+| Eliminate manual spreadsheet auditing | Time HR spends assembling quarterly compliance report | < 30 minutes end-to-end using the system | Baseline TBD from current process |
+| Give managers proactive visibility | % of overdue items discovered before escalation | ≥ 90 % caught in-system, not via escalation | Tracked via compliance view usage |
+| Accurate expiry tracking | % of completion records with correct computed expiry date | 100 % | Verified by automated test suite |
+| Role-based data isolation | Zero cross-team data leakage incidents | 0 incidents in QA acceptance and production audit logs | Enforced at API layer |
+| Demo readiness | Compliance officer dashboard shows all required states | All four states (compliant, missing, expiring-soon, expired) visible in demo dataset | Verified against seed data spec |
+| System availability for quarterly audits | Uptime during business hours | ≥ 99.5 % monthly | (Assumption) |
 
 ---
 
 ## 3. Non-Goals / Out of Scope
 
 - LMS integration, SCORM content hosting, or video delivery
-- Email or SMS reminder notifications (in-app alerts only)
-- External certificate file storage beyond a free-text or URL reference field
-- Multi-language / internationalization
-- Multi-tenant architecture (single organization deployment)
-- Role or department hierarchy beyond one manager-per-employee relationship
-- Retroactive penalty when a job role's required course list changes
-- Automated payroll or HR system sync (roster is managed manually in this application)
+- Email or SMS reminder notifications (in-app alert surface only)
+- External certificate file storage beyond a simple URL/reference string field
+- Multi-language or internationalisation
+- Multi-tenant architecture (single organisation deployment)
+- Automated retroactive recalculation of requirements when a course is removed from a role (forward-only rule changes)
+- Payment processing or subscription billing
 - Mobile-native application
-- Payment or billing features
 
 ---
 
@@ -42,11 +40,11 @@ The MVP covers course catalog management, a role-to-course requirement matrix, c
 
 | Persona | Need | Primary use case |
 |---------|------|------------------|
-| HR Administrator (Marcus) | Define course catalog, manage roster, record completions for any employee, run full org view | Creates a new mandatory course, assigns it to a job role, records batch completions after a training session, deactivates a departed employee |
-| Manager | Monitor own team's compliance without accessing other departments or editing catalog | Opens team board each Monday; sees who has expired or expiring requirements; drills into an individual employee's status |
-| Employee | View personal required trainings, completion dates, and expiry status | Logs in before a team meeting to confirm which courses are current and which need renewal |
-| Compliance Officer | Read-only org-wide dashboards for audit evidence and gap analysis | Pulls quarterly report showing completion rate by department, overdue counts, and courses with the most gaps |
-| Ops / Unauthenticated | Confirm the service is running (health check endpoint) | Monitoring tool pings `/health` to verify uptime |
+| HR Administrator (Marcus) | Define courses, manage roster, record any completion, support audits | Create/edit course catalog; add employees; record completions on behalf of staff; deactivate leavers; export-ready compliance overview |
+| Manager | Monitor own team's training status without affecting other teams | View team compliance board filtered to direct reports; identify who is missing or expiring within 30 days |
+| Employee | Know what training is required of them and what is outstanding | View personal required-vs-completed dashboard; see expiry dates and missing items |
+| Compliance Officer | Produce org-wide audit evidence without risk of data mutation | Read-only dashboard: completion rate by department, overdue list, expiring-within-30-days list, worst-gap courses |
+| Ops / Unauthenticated | Confirm service health for infrastructure monitoring | GET /health returns 200 OK with no authentication |
 
 ---
 
@@ -54,18 +52,19 @@ The MVP covers course catalog management, a role-to-course requirement matrix, c
 
 | ID | Description | Priority | Acceptance criteria (Given / When / Then) |
 |----|-------------|----------|-------------------------------------------|
-| FR-1 | **Course catalog — CRUD** HR admin can create, update, and deactivate a course with fields: name (unique), category (safety \| security \| role-specific), validity period in months (nullable for one-time-only), required-for-all-staff flag, and an optional certificate reference field. | P0 | **Given** an authenticated HR admin; **When** they submit a valid course creation request; **Then** the course is persisted, returned with a system-generated ID, and appears in the catalog list. **When** they attempt to create a duplicate course name; **Then** the API returns HTTP 409. |
-| FR-2 | **Employee roster — CRUD** HR admin can create, update, and soft-deactivate employees. Employee record includes: full name, email (unique), department, job role, manager (reference to another employee record), and active/inactive flag. Deactivation does not delete the record or its completion history. | P0 | **Given** an authenticated HR admin; **When** they deactivate an employee; **Then** the employee's `active` flag is set to `false`, all prior completion records are retained, and the employee no longer appears in active compliance counts or manager team views. |
-| FR-3 | **Role-to-course requirement matrix** HR admin can assign one or more courses as mandatory for a given job role. Changing the matrix affects only future compliance evaluations for employees currently in that role; no retroactive penalty is applied for removed courses. | P0 | **Given** course C is added as mandatory for role R; **When** the compliance status for employee E (role R, no completion for C) is evaluated; **Then** E's status for C is "missing." **Given** course C is subsequently removed from role R's requirements; **When** E's compliance is re-evaluated; **Then** C no longer appears as a gap for E. |
-| FR-4 | **Record training completion** HR admin (for any employee) or Employee (for themselves only) can record a completion with: employee, course, completion date. The system calculates expiry date as `completion_date + validity_period_months` (null expiry if the course has no validity period). A new completion for the same employee + course replaces the prior active record (recertification); the old record is preserved in history. | P0 | **Given** employee E has an existing active completion for course C with expiry date D; **When** a new completion is recorded for E + C with completion date D2 > D; **Then** the new record becomes the active completion, the expiry is recalculated from D2, and the original record is marked superseded but retained. |
-| FR-5 | **Per-employee compliance view** The system derives a compliance status per required course for each active employee: `current` (active non-expired completion exists), `expired` (completion exists but expiry date < today), or `missing` (no current non-expired completion). Courses required for the employee's role and all-staff courses are included; courses not applicable to the role are excluded. | P0 | **Given** today is T; **When** the compliance endpoint for employee E is called; **Then** each applicable course appears exactly once with the correct status; inapplicable courses do not appear; inactive employees return HTTP 403 or empty active compliance (no contribution to percentages). |
-| FR-6 | **Manager team compliance view** An authenticated manager can retrieve the compliance summary for all active employees where `manager_id` equals their own employee ID. The response must not include employees from other managers' teams. | P0 | **Given** manager M1 is authenticated; **When** they request the team compliance endpoint; **Then** only employees whose `manager` field references M1 are returned; a request including a different manager's employee ID returns HTTP 403 or an empty result for that employee. |
-| FR-7 | **Compliance officer org-wide dashboard** A read-only compliance officer role can retrieve: (a) count and list of employees with at least one overdue required course, (b) employees with at least one required course expiring within the next 30 days, (c) completion rate (% employees fully current / total active employees) broken down by department, (d) courses ranked by number of active employees missing or expired. | P0 | **Given** seed data with known overdue/expiring states; **When** the dashboard endpoint is called by a compliance officer; **Then** overdue and expiring counts match expected values from seed data; completion rate per department is correct to ± 0; compliance officer cannot call any write endpoint (returns HTTP 403). |
-| FR-8 | **Role-gated Streamlit UI** The Streamlit application provides four authenticated screens gated by role: (1) HR admin — catalog management, roster management, record completion; (2) Manager — team compliance board (own team only); (3) Employee — "My Trainings" view (required courses, status, expiry dates); (4) Compliance Officer — org-wide dashboard and alert panels. Unauthenticated users are redirected to a login screen. The Streamlit app communicates exclusively via the FastAPI REST API; it never imports application modules directly. | P0 | **Given** a user with role "manager" logs in; **When** they navigate the UI; **Then** only the team board screen is accessible; catalog management and other teams' data are not visible or reachable. **Given** an unauthenticated session; **When** any protected screen is accessed; **Then** the user is redirected to the login page. |
-| FR-9 | **In-app compliance alerts** The system exposes an alerts endpoint (and surfaces results in the Compliance Officer and Manager UIs) that flags: (a) any active employee with at least one expired required course, (b) any employee marked inactive who has open compliance ownership items (informational — to prompt HR to reassign or archive). Inactive employees are excluded from active compliance counts automatically. | P1 | **Given** employee E has an expired required course; **When** the alerts endpoint is called; **Then** E appears in the overdue alert list. **Given** employee E is deactivated; **When** compliance percentages are computed; **Then** E is not counted in the denominator or numerator. |
-| FR-10 | **Soft cap data-quality flag** The system flags any employee who has more than 20 active (non-superseded) course completion records. This flag is surfaced as a warning in the HR admin view and via the alerts endpoint; it does not block further record creation. | P2 | **Given** employee E has 21 non-superseded completion records; **When** the HR admin views E's record or calls the alerts endpoint; **Then** a data-quality warning is returned indicating the soft cap is exceeded. **Given** E has exactly 20 records; **Then** no warning is returned. |
-| FR-11 | **Demo / seed data script** A runnable seed script populates: at least 6 courses spanning all-staff and role-specific categories, at least 3 job roles, at least 3 departments, at least 15 active employees with mixed compliance states (current, expired, missing), at least 3 employees with completions expiring within 30 days, at least 2 employees with never-started required courses, and at least 1 inactive employee with historical completion records. | P0 | **Given** a clean database; **When** the seed script is executed; **Then** all counts above are met, the compliance officer dashboard returns non-zero values for overdue and expiring-soon lists, and no errors are raised. |
-| FR-12 | **Health check endpoint** An unauthenticated `GET /health` endpoint returns HTTP 200 with a JSON body indicating service status. | P0 | **Given** the service is running; **When** `GET /health` is called without authentication; **Then** HTTP 200 and `{"status": "ok"}` (or equivalent) are returned within 500 ms. |
+| FR-1 | **Course catalog management** — HR admin can create, edit, and soft-delete a course with fields: name, category (`safety` \| `security` \| `role-specific`), validity period in months, required-for-all-staff flag, and an optional reference/notes field. | P0 | **Given** an authenticated HR admin; **When** they POST `/courses` with all required fields; **Then** the course is persisted, returned with a generated ID, and appears in GET `/courses`. Editing any field updates the record. A soft-deleted course is excluded from active catalog queries but its completion history is retained. |
+| FR-2 | **Required-course matrix** — HR admin can assign one or more courses as mandatory for a given job role; assignments can be removed without retroactive effect. | P0 | **Given** an existing course and job role; **When** HR admin creates a role-course assignment; **Then** any active employee with that job role appears as "missing" in compliance views if they have no current non-expired completion. **When** an assignment is removed; **Then** employees previously missing that course are no longer penalised going forward; historical completions are unchanged. |
+| FR-3 | **Employee roster management** — HR admin can create and update employee records containing: full name, department, manager (foreign key to another employee), job role, and active/inactive flag. Deactivating an employee preserves all history but removes them from active compliance counts and manager team totals. | P0 | **Given** an authenticated HR admin; **When** they PATCH an employee's `active` flag to `false`; **Then** that employee no longer appears in compliance percentage calculations, manager team boards, or the compliance officer's active overdue lists; their completion history remains queryable via HR admin views. |
+| FR-4 | **Record and recertify training completions** — HR admin or an employee (for themselves only) can submit a completion record containing employee ID, course ID, and completion date. The system computes and stores `expiry_date = completion_date + validity_period_months`. A new submission for the same employee + course supersedes the prior active record (prior record archived, not deleted). | P0 | **Given** an employee with an existing completion for Course X; **When** a new completion is submitted for the same employee + course; **Then** the prior completion record is marked archived, the new record is active, and `expiry_date` equals `completion_date` plus the course's validity period in whole months. **Given** a course with `validity_period = 0` or null (no expiry); **When** a completion is recorded; **Then** `expiry_date` is null and the record never transitions to expired state. |
+| FR-5 | **Compliance status derivation** — For each required course per active employee, the system derives one of four statuses: `compliant` (active completion, expiry_date > today or null), `expiring_soon` (active completion, expiry_date within 30 calendar days), `expired` (active completion, expiry_date ≤ today), `missing` (no active completion). | P0 | **Given** today's date and an employee's completion records; **When** compliance status is queried; **Then** each required course maps to exactly one of the four states using the stated rules. A course with no completion returns `missing`. A course with expiry_date = today returns `expired`. A course with expiry_date = today + 30 returns `expiring_soon`. |
+| FR-6 | **Employee self-view** — An authenticated employee can view only their own required courses, completion dates, expiry dates, and current compliance status. They cannot view or modify other employees' records. | P0 | **Given** an authenticated employee; **When** they GET `/me/compliance`; **Then** the response contains only records scoped to their own employee ID. **When** they attempt GET `/employees/{other_id}/compliance`; **Then** the API returns HTTP 403. |
+| FR-7 | **Manager team-compliance view** — An authenticated manager can view a compliance summary for all active employees whose `manager_id` equals the manager's own employee ID. They cannot view employees in other managers' teams or modify any catalog/roster records. | P0 | **Given** an authenticated manager; **When** they GET `/manager/team-compliance`; **Then** only employees with `manager_id = <current_user_employee_id>` and `active = true` are returned. **When** they attempt to POST or PATCH any course, roster, or completion record for an employee not in their team; **Then** the API returns HTTP 403. |
+| FR-8 | **HR admin full access** — An HR admin role has unrestricted read and write access to course catalog, required-course matrix, employee roster, and completion records for any employee. | P0 | **Given** an authenticated HR admin; **When** they attempt any CRUD operation on any resource; **Then** the operation succeeds subject only to business-rule validation (e.g., duplicate detection), not permission denial. |
+| FR-9 | **Compliance officer org-wide read-only dashboard data** — An authenticated compliance officer can retrieve: (a) org-wide completion rate by department, (b) list of all active employees with at least one `overdue` required course, (c) list of active employees with at least one `expiring_soon` course, (d) worst-gap courses ranked by count of `missing` + `expired` active employees. All endpoints are GET-only for this role. | P0 | **Given** an authenticated compliance officer; **When** they call any dashboard endpoint; **Then** data covers all active employees across all departments. **When** they attempt any POST/PATCH/DELETE; **Then** the API returns HTTP 403. |
+| FR-10 | **Inactive employee exclusion** — Inactive employees are excluded from all compliance percentage calculations, manager team views, and compliance officer active-overdue and expiring-soon lists. | P0 | **Given** an employee with `active = false`; **When** any compliance aggregate or list endpoint is called; **Then** that employee does not appear in returned counts or lists. Their historical records remain accessible to HR admin via explicit employee-detail endpoints. |
+| FR-11 | **Streamlit role-gated UI** — The Streamlit application presents four distinct screen sets gated by authenticated role: HR admin (catalog management, roster management, record completions), Manager (team board), Employee (my trainings), Compliance Officer (org dashboard). The UI communicates exclusively via the REST API and never imports application modules directly. | P1 | **Given** a user logs in with manager credentials; **When** the Streamlit session starts; **Then** only manager-scoped screens are rendered and HR/compliance officer screens are not accessible in the UI navigation. Each role's screens successfully render data from their respective API endpoints without error. |
+| FR-12 | **Soft cap data-quality flag** — The system flags (via an API response field and UI indicator) any employee who has more than 20 active completion records. | P2 | **Given** an employee with 21 or more active (non-archived) completion records; **When** their record is fetched by HR admin; **Then** the response includes `data_quality_flag: "excess_active_records"`. No records are deleted or blocked; it is advisory only. |
+| FR-13 | **Demo seed data** — The system ships with a seed script that creates ≥ 6 courses (mix of all-staff and role-specific), ≥ 3 job roles, ≥ 3 departments, ≥ 15 active employees with mixed compliance states, at least one inactive employee with historical completions, several expiring-within-30-days records, and several never-started required courses. | P1 | **Given** a fresh database; **When** the seed script is executed; **Then** the compliance officer dashboard shows all four compliance statuses populated, at least one department below 80 % completion rate, and the inactive employee is absent from active compliance counts. |
 
 ---
 
@@ -73,17 +72,18 @@ The MVP covers course catalog management, a role-to-course requirement matrix, c
 
 | ID | Category | Target | Measurement / verification | Notes |
 |----|----------|--------|---------------------------|-------|
-| NFR-1 | Performance | API p95 response time ≤ 500 ms for all read endpoints under expected load | Load test with realistic seed data (15–100 employees); measure p95 latency | (Assumption) — no explicit SLA stated in brief |
-| NFR-2 | Performance | Compliance status computation for a single employee ≤ 200 ms | Unit + integration test timing assertions | (Assumption) |
-| NFR-3 | Security / Auth | All non-health endpoints require a valid JWT Bearer token; role claim enforced server-side on every request | Automated tests: call each protected endpoint without token → expect HTTP 401; call with wrong role → expect HTTP 403 | Auth mechanism assumed JWT; scheme to be confirmed — see Open Questions |
-| NFR-4 | Security / Privacy | Managers cannot retrieve any data for employees outside their direct team, enforced at the API layer (not only UI) | Integration test: manager token calls endpoint with another manager's employee ID; expect HTTP 403 or empty result | Critical business rule |
-| NFR-5 | Availability | Service available ≥ 99 % during business hours | Uptime monitoring via `/health` check; alert on consecutive failures | (Assumption) — deployment target TBD |
-| NFR-6 | Scalability | Data model and queries support at least 500 employees and 50 courses without schema changes | Query explain-plan review; optional load test at 500-employee scale | (Assumption) — org size not stated in brief |
-| NFR-7 | Observability | All API requests logged with: timestamp, method, path, response status, latency, authenticated user ID (no PII in logs beyond user ID) | Log output verified in local and CI runs; structured JSON logging preferred | (Assumption) |
-| NFR-8 | Observability | Application exposes a `/metrics` endpoint or equivalent for error rate and request count | Verified by calling endpoint; or confirmed via structured log aggregation | (Assumption) — tooling TBD |
-| NFR-9 | Data Integrity | Completion records are never hard-deleted; deactivation and recertification use soft-delete / superseded flags | Database-level audit: verify record count is non-decreasing after deactivation and recertification operations | Core business rule |
-| NFR-10 | Operability | Application configured entirely via environment variables (database URL, secret key, token expiry); no secrets in source code | Code review; `.env.example` provided; CI scan for hardcoded credentials | (Assumption) |
-| NFR-11 | Compliance / Data Retention | Historical completion records retained indefinitely (no automatic purge) within the deployment's storage | No scheduled deletion jobs; verified by schema review | Aligns with audit requirement |
+| NFR-1 | Performance | P95 API response time ≤ 500 ms for all read endpoints under normal load | Load test with 50 concurrent users; check P95 in test report | (Assumption) |
+| NFR-2 | Performance | Compliance status computation for an org of ≤ 500 employees returns within 2 seconds | Automated integration test with seed dataset at scale boundary | (Assumption) |
+| NFR-3 | Security / Auth | All non-health endpoints require a valid authentication token (JWT Bearer or API key); unauthenticated requests return HTTP 401 | Automated test suite: call every protected endpoint without token, assert 401 | (Assumption — token mechanism TBD, see Open Questions) |
+| NFR-4 | Security / Authorisation | Role-based access control enforced at the API layer; UI role-gating is supplementary only | Penetration / boundary test: manager token calling HR-only endpoint returns 403; employee token calling manager endpoint returns 403 | Roles: `hr_admin`, `manager`, `employee`, `compliance_officer` |
+| NFR-5 | Security / Data privacy | No employee PII is logged in plain text in application logs | Code review + log audit in CI; confirm log output contains only IDs, not names or emails | (Assumption) |
+| NFR-6 | Availability | Service uptime ≥ 99.5 % during business hours (Mon–Fri 07:00–19:00 local) | Uptime monitor alert threshold; reviewed monthly | (Assumption) |
+| NFR-7 | Scalability | Data model and queries support ≥ 500 employees, ≥ 100 courses, ≥ 10 000 completion records without schema changes | Query-plan review; integration test at stated data volume | (Assumption — single-org deployment) |
+| NFR-8 | Observability | Structured JSON logs for every API request including: timestamp, method, path, status code, response time ms, authenticated user role (not name) | Log output verified in CI; sample log line validated against schema | (Assumption) |
+| NFR-9 | Observability | `/health` endpoint returns `{"status": "ok"}` with HTTP 200 within 200 ms; no auth required | Automated health-check test in CI and ops monitoring | |
+| NFR-10 | Compliance / Data retention | Completion history (including archived/superseded records) is never hard-deleted via normal application operations; only explicit admin purge (out of scope for MVP) could remove records | Unit test: recertification flow confirms prior record status = `archived`, not deleted; row count unchanged | Business rule: audit trail must survive recertification |
+| NFR-11 | Operability | Application deployable via a single `docker compose up` command with environment variables for secrets; seed script executable via one documented command | Verified by running documented setup steps on a clean environment in CI | (Assumption) |
+| NFR-12 | Compliance / Business rules | Expiry date computation uses calendar-month arithmetic (not 30-day approximation) matching the validity_period_months field | Unit tests covering month-boundary edge cases (e.g., Jan 31 + 1 month = Feb 28/29) | |
 
 ---
 
@@ -91,59 +91,57 @@ The MVP covers course catalog management, a role-to-course requirement matrix, c
 
 ### Core Entities
 
-| Entity | Key Fields |
-|--------|-----------|
-| `Course` | `id`, `name` (unique), `category` (enum: safety / security / role-specific), `validity_period_months` (nullable), `required_for_all_staff` (bool), `certificate_reference_field` (text, optional), `is_active` (bool) |
-| `JobRole` | `id`, `name` (unique) |
-| `Department` | `id`, `name` |
-| `Employee` | `id`, `full_name`, `email` (unique), `department_id` (FK), `job_role_id` (FK), `manager_id` (FK → Employee, nullable), `is_active` (bool) |
-| `RoleRequirement` | `id`, `job_role_id` (FK), `course_id` (FK) — composite unique |
-| `CompletionRecord` | `id`, `employee_id` (FK), `course_id` (FK), `completion_date` (date), `expiry_date` (date, nullable), `is_active_record` (bool — false when superseded), `superseded_by_id` (FK → CompletionRecord, nullable), `created_at` |
-| `User` | `id`, `employee_id` (FK, nullable for service accounts), `role` (enum: hr_admin / manager / employee / compliance_officer), `hashed_password` |
+| Entity | Key fields | Notes |
+|--------|-----------|-------|
+| `Course` | `id`, `name`, `category` (enum: safety/security/role_specific), `validity_period_months` (nullable), `required_for_all` (bool), `is_active` (soft-delete), `reference_notes` | validity_period_months = null → no expiry |
+| `JobRole` | `id`, `name` | e.g., Engineer, Analyst, Manager |
+| `Department` | `id`, `name` | e.g., Engineering, Operations, HR |
+| `RoleCourseRequirement` | `id`, `job_role_id`, `course_id`, `assigned_at`, `removed_at` (nullable) | Soft-removal preserves history; active = removed_at IS NULL |
+| `Employee` | `id`, `full_name`, `email`, `department_id`, `job_role_id`, `manager_id` (self-FK, nullable), `active` (bool), `created_at` | manager_id = null for top-level employees |
+| `CompletionRecord` | `id`, `employee_id`, `course_id`, `completion_date`, `expiry_date` (computed, stored), `status` (enum: active/archived), `recorded_by_employee_id`, `created_at` | Only one `active` record per employee+course at a time |
+| `User` | `id`, `employee_id` (FK, nullable for system accounts), `role` (enum: hr_admin/manager/employee/compliance_officer), `hashed_credential` | Auth identity linked to employee record |
 
-### Compliance Status Derivation (computed, not stored)
-
-- **current**: `CompletionRecord` with `is_active_record = true` AND (`expiry_date IS NULL` OR `expiry_date >= today`)
-- **expired**: `CompletionRecord` with `is_active_record = true` AND `expiry_date < today`
-- **missing**: No `CompletionRecord` with `is_active_record = true` for the applicable course
-
-Applicable courses = courses where `required_for_all_staff = true` OR course is in `RoleRequirement` for employee's `job_role_id`.
+### Derived / Computed Concepts
+- **Compliance status** per employee+course: derived at query time from `CompletionRecord.expiry_date` vs today; not stored as a column to avoid staleness.
+- **Team compliance summary**: aggregated at request time by filtering `Employee.manager_id`.
 
 ### External Integrations
-
-| System | Scope | Notes |
-|--------|-------|-------|
-| None in MVP | — | LMS, HRIS, email, and SSO are explicitly out of scope |
-| FastAPI REST API | Internal | Streamlit UI communicates with FastAPI only via HTTP; no direct DB access from UI layer |
+- **None in MVP.** LMS, HRIS, and SCORM systems are explicitly out of scope.
+- The `reference_notes` field on `Course` and a `certificate_reference` free-text field on `CompletionRecord` can store external URLs/IDs as plain strings for future use.
 
 ### API Structure
-
 - Base path: `target-apps/training-compliance/`
-- OpenAPI spec auto-generated by FastAPI at `/docs` and `/openapi.json`
-- Key route groups: `/health`, `/auth`, `/courses`, `/employees`, `/roles`, `/requirements`, `/completions`, `/compliance`, `/reports`, `/alerts`
+- Framework: FastAPI
+- OpenAPI schema auto-generated at `/docs` and `/openapi.json`
+- Key route groups: `/health`, `/auth`, `/courses`, `/job-roles`, `/departments`, `/role-requirements`, `/employees`, `/completions`, `/compliance/me`, `/manager/team-compliance`, `/reports/org` (compliance officer)
 
 ---
 
 ## 8. Analytics & Observability
 
-**Structured Logging**
-- Every API request logged as JSON: `timestamp`, `method`, `path`, `status_code`, `duration_ms`, `user_id`, `role`.
-- No PII (names, emails) written to logs; use `user_id` only.
-- Error responses log full exception traceback at ERROR level (server-side only).
+### Logging
+- Structured JSON logs on every HTTP request: `timestamp`, `method`, `path`, `status_code`, `duration_ms`, `user_role`, `user_id` (opaque ID, not PII name).
+- Business events logged at INFO level: course created/updated, employee activated/deactivated, completion recorded/archived.
+- Errors logged at ERROR level with stack trace; no PII in log payloads.
 
-**Key Business Metrics to Track**
-| Metric | How surfaced |
-|--------|-------------|
-| Org-wide compliance rate (% employees fully current) | `/reports/compliance-rate` endpoint; Compliance Officer dashboard |
-| Employees overdue (≥ 1 expired required course) | `/alerts/overdue` endpoint |
-| Employees expiring within 30 days | `/alerts/expiring-soon?days=30` endpoint |
-| Completion rate by department | `/reports/by-department` endpoint |
-| Courses with most gaps | `/reports/course-gaps` endpoint |
-| Data-quality flags (>20 active records) | `/alerts/data-quality` endpoint |
+### Key Metrics (in-app, no external APM assumed for MVP)
+| Metric | Surface |
+|--------|---------|
+| Org-wide completion rate % | Compliance officer dashboard |
+| Completion rate % by department | Compliance officer dashboard |
+| Count of employees with ≥ 1 overdue required course | Compliance officer dashboard |
+| Count of employees expiring within 30 days | Compliance officer dashboard |
+| Worst-gap courses (missing + expired count, ranked) | Compliance officer dashboard |
+| Team compliance % | Manager team board |
+| Individual compliance status per course | Employee self-view and HR admin view |
 
-**Operational Alerts (Assumption)**
-- Monitoring system (TBD) polls `/health` every 60 seconds; pages on-call if two consecutive failures occur.
-- Application logs shipped to a log aggregator (tooling TBD); alert on error rate > 5 % over 5-minute window.
+### Alerts (In-App Only)
+- Badge / banner on manager board when ≥ 1 direct report has an expired required course.
+- Banner on compliance officer dashboard when org-wide completion rate drops below a configurable threshold (default 80 %, assumption).
+- Data quality indicator on employee detail when `data_quality_flag` is set (FR-12).
+
+### Health Check
+- `GET /health` → `{"status": "ok", "db": "ok"}` — checks database connectivity; no auth required.
 
 ---
 
@@ -151,14 +149,13 @@ Applicable courses = courses where `required_for_all_staff = true` OR course is 
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Compliance status computed incorrectly (expiry date off-by-one, timezone handling) | Audit failure; regulatory exposure | Comprehensive unit tests covering boundary dates (today = expiry date is "current"), UTC-normalized date storage, explicit test cases in CI |
-| Manager data isolation breach (sees other team's data) | Privacy violation; trust loss | Server-side enforcement of `manager_id` filter on every query; integration tests specifically asserting cross-team data is blocked |
-| Inactive employees incorrectly counted in compliance percentages | Misleading audit report | Automated test validates denominator excludes inactive; seed data includes inactive employee to exercise this path |
-| Role changes causing retroactive compliance gaps | User confusion; incorrect remediation | Business rule explicitly implemented: requirement matrix is evaluated at query time against current role; no historical penalty; documented in UI |
-| Recertification creates duplicate active records | Data integrity issue | Database constraint or application-layer enforcement: before inserting new completion, supersede existing active record for same employee + course atomically |
-| Seed data does not cover all compliance states | Demo failure during stakeholder review | Seed script has assertion checks post-insert to verify minimum counts; run in CI |
-| Streamlit UI imports app modules directly (coupling) | Breaks separation of concerns; hidden failures in API | Code review gate: Streamlit files must only use `requests` / `httpx`; import linting rule or test |
-| Authentication token not validated server-side on write endpoints | Privilege escalation | Every endpoint has an explicit role guard; automated security test suite covers each endpoint × each unauthorized role |
+| Compliance status computed incorrectly at month boundaries (e.g., leap years, month-end dates) | Audit findings, loss of trust | Unit-test calendar-month arithmetic with ≥ 10 edge cases; use a well-tested date library; store computed `expiry_date` at write time so reads are deterministic |
+| Manager-scoping bypass: employee in two managers' teams or manager_id manipulation | Data privacy, compliance breach | Enforce `manager_id` filter exclusively at API layer; UI role-gating is defence-in-depth only; add integration test asserting cross-team 403s |
+| Inactive employee data leaking into active compliance counts | Incorrect audit numbers | Centralise `active = true` filter in a shared query utility; test all aggregate endpoints with seeded inactive employees |
+| Recertification race condition: two completions submitted simultaneously supersede each other incorrectly | Duplicate active records, incorrect compliance state | Use database transaction with row-level lock or unique constraint on (employee_id, course_id, status=active); test concurrent submission scenario |
+| Seed data not representative enough to demonstrate all dashboard states | Poor demo / stakeholder confidence | Enumerate required demo states in FR-13 acceptance criteria; verify seed script in CI against that checklist |
+| Auth token mechanism not decided before development starts | Blocked API integration with Streamlit | Resolve in kickoff (see Open Questions OQ-1); default to JWT Bearer if no decision made within one sprint |
+| Growing completion history slows compliance aggregate queries over time | Degraded UX at audit time | Index `(employee_id, course_id, status)` on CompletionRecord; benchmark at 10 000 records before MVP release |
 
 ---
 
@@ -166,18 +163,16 @@ Applicable courses = courses where `required_for_all_staff = true` OR course is 
 
 | # | Question | Suggested owner |
 |---|----------|-----------------|
-| 1 | What identity provider or auth mechanism should be used? (Local username/password with JWT assumed for MVP — confirm before implementation) | HR stakeholder + Engineering lead |
-| 2 | Is `completion_date` always self-reported, or will there be bulk import from training vendors in a future phase? (Affects data model extensibility) | Marcus (HR) |
-| 3 | What is the expected maximum number of employees in the organization? (Affects indexing strategy and pagination defaults) | HR / IT |
-| 4 | Should the compliance officer role be a separate login account or a flag on an existing employee record? | Marcus (HR) |
-| 5 | What is the deployment target — local Docker, cloud PaaS, on-premise server? (Affects NFR-5 availability design) | Engineering / IT Ops |
-| 6 | Is the `validity_period_months` always in whole months, or do some courses use days/weeks? (Affects expiry date calculation precision) | Marcus (HR) |
-| 7 | Are there courses required for all staff AND also have additional role-specific completions (i.e., can a course be both flags simultaneously)? | Marcus (HR) |
-| 8 | Should the "expiring within 30 days" window be configurable (e.g., some orgs want 60 days)? | Compliance Officer |
-| 9 | Is there a need for manager delegation (e.g., acting manager while primary manager is on leave)? | HR stakeholder |
-| 10 | Should the certificate reference field store a URL, a document ID, or free text? Are there access control requirements on that reference? | Marcus (HR) + Legal/Compliance |
-| 11 | What happens if an employee changes job roles? Should their prior role's completed-but-no-longer-required courses remain visible in history? | Marcus (HR) |
-| 12 | Is multi-factor authentication required given this is a compliance system handling audit-relevant data? | IT Security |
+| OQ-1 | What authentication mechanism should be used? Options: JWT (self-issued), OAuth2/OIDC (SSO), or simple API-key per user. Impacts Streamlit session design. | Tech lead + HR stakeholder |
+| OQ-2 | Should employees be able to self-record completions, or is that exclusively an HR admin action? (Brief implies HR admin records on behalf of anyone; employee self-service is ambiguous.) | HR (Marcus) |
+| OQ-3 | What is the configurable threshold for the org-wide completion-rate alert banner? Is 80 % the right default? | Compliance officer persona |
+| OQ-4 | Should `validity_period_months = 0` mean "no expiry" or "expires immediately"? The brief uses null for no-expiry; clarify whether 0 is a valid input or a validation error. | Tech lead |
+| OQ-5 | Is there a requirement to export compliance data (CSV, PDF) for audit submission, or is the on-screen view sufficient for the quarterly audit? | HR (Marcus) |
+| OQ-6 | How should role-course requirements behave when a course is soft-deleted? Should existing requirements be automatically removed, or block deletion if active requirements exist? | Tech lead + HR |
+| OQ-7 | Should managers also have a `manager` job role, or is the `manager_id` foreign key on Employee independent of the job role field? (An employee can be both a manager of others and hold a non-manager job role.) | HR (Marcus) |
+| OQ-8 | What is the expected deployment environment — local Docker only, or a cloud host? Affects NFR-6 uptime monitoring approach. | Engineering lead |
+| OQ-9 | Is there a maximum lookback period for historical completion records visible to the compliance officer, or should all-time history be queryable? | Compliance officer persona |
+| OQ-10 | Should the "expiring within 30 days" window be configurable per course or fixed org-wide? | HR (Marcus) |
 
 ---
 
@@ -185,31 +180,31 @@ Applicable courses = courses where `required_for_all_staff = true` OR course is 
 
 | Concern | Choice | Implementation notes |
 |---------|--------|---------------------|
-| Client UI | **Streamlit** | Role-gated screens: HR Catalog & Roster, Manager Team Board, Employee "My Trainings", Compliance Officer Dashboard. Login screen for unauthenticated sessions. |
-| API | **FastAPI** under `target-apps/training-compliance/` | REST + OpenAPI; auto-docs at `/docs`; all business logic lives here |
-| UI location | `target-apps/training-compliance/ui/streamlit_app.py` | Communicates with API via HTTP (`requests` or `httpx`) only — **never** imports `app/` or any FastAPI module directly |
-| Auth for UI | JWT Bearer token (Assumption) | Streamlit stores token in `st.session_state`; token sent as `Authorization: Bearer <token>` header on every API call; login screen collects credentials and calls `/auth/token` |
-| Role enforcement | Server-side (API layer) — UI reflects role but does not gate security | UI hides irrelevant screens per role for UX; API rejects unauthorized calls regardless of UI state |
-| Seed / demo data | `target-apps/training-compliance/seed.py` | Idempotent script; verifies post-insert counts; runnable via `python seed.py` |
-| Directory structure | `target-apps/training-compliance/` root contains `app/` (FastAPI), `ui/` (Streamlit), `seed.py`, `requirements.txt`, `.env.example`, `README.md` | Standard layout per project conventions |
+| Client UI | **Streamlit** | Role-gated screens: HR catalog & roster, manager team board, employee "my trainings", compliance officer dashboard. Login screen determines role from auth response and conditionally renders screen set. |
+| API | FastAPI under `target-apps/training-compliance/` | REST + OpenAPI; auto-docs at `/docs`. Route groups per section 7. |
+| UI location | `target-apps/training-compliance/ui/streamlit_app.py` | HTTP client (e.g., `httpx` or `requests`) to API only — never import `app/` or internal modules from Streamlit layer. |
+| Auth for UI | Matches API auth mechanism (JWT Bearer, per OQ-1) | Streamlit stores token in `st.session_state`; passed as `Authorization: Bearer <token>` header on every API call. Token cleared on logout or session expiry. |
+| Role-gating in UI | Server-enforced (API 403) + client-side nav filtering | On login, Streamlit reads `role` from auth response and renders only that role's sidebar navigation. API enforcement is the authoritative gate. |
+| Demo data | Seed script at `target-apps/training-compliance/scripts/seed_demo_data.py` | Satisfies FR-13 spec: ≥ 6 courses, ≥ 3 roles, ≥ 3 depts, ≥ 15 employees, mixed compliance states, one inactive employee. |
+| Health check | `GET /health` — no auth | Returns `{"status": "ok", "db": "ok"}` for ops monitoring. |
+| Deployment | `docker compose up` from `target-apps/training-compliance/` | Separate services: `api` (FastAPI/Uvicorn), `ui` (Streamlit), `db` (PostgreSQL or SQLite for MVP — see OQ-8). Environment variables for secrets via `.env` file. |
 
 ---
 
 ## Appendix: Assumptions
 
-- **Authentication**: JWT Bearer token with local username/password for MVP. No external SSO or OAuth provider assumed. Token contains `user_id` and `role` claims.
-- **Database**: A relational database (e.g., SQLite for local dev / PostgreSQL for production) is assumed. ORM-based access (e.g., SQLAlchemy). No NoSQL or document store required.
-- **Timezone handling**: All dates stored as UTC. `today` for expiry comparisons is evaluated server-side in UTC. Client displays dates in local timezone (Streamlit).
-- **One manager per employee**: The data model supports a single `manager_id` per employee. Matrix/dotted-line reporting is out of scope.
-- **Validity period in whole months**: `expiry_date = completion_date + relativedelta(months=validity_period_months)`. Confirmed as assumption pending Open Question 6.
-- **All-staff courses apply regardless of job role**: If `required_for_all_staff = true`, the course appears in every active employee's compliance view independent of role matrix.
-- **Compliance rate definition**: `(active employees with zero missing/expired required courses) / (total active employees) × 100`. Employees with no required courses count as fully compliant.
-- **Recertification atomicity**: Superseding the prior active record and inserting the new record occur in a single database transaction to prevent duplicate active records.
-- **User accounts are separate from employee records**: A `User` table holds credentials and role; it references the `Employee` table. Not every user need have an employee record (e.g., a system admin), but in practice all four named personas correspond to employee records.
-- **Soft cap of 20 active records is advisory only**: It does not block writes or trigger any automated action beyond a warning flag.
-- **Performance targets** (p95 ≤ 500 ms, compliance computation ≤ 200 ms) are reasonable defaults for an internal tool at the stated scale; no explicit SLA was provided.
-- **Availability target** (99 % during business hours) is a reasonable default for an internal compliance tool; no explicit uptime requirement was stated.
-- **Expiring-soon window** defaults to 30 days as stated in the brief; assumed to be hardcoded for MVP (configurable in a later phase).
-- **No bulk import in MVP**: Completions are entered individually via the UI or API; CSV import is not in scope unless added as a future requirement.
-- **No pagination specified**: API endpoints will return paginated results (default page size 50) to support future scale; pagination parameters are optional for MVP with small seed data.
-- **Certificate reference field**: Free-text / URL string, no access control or storage integration required in MVP.
+- **Authentication token format**: JWT Bearer token is assumed as the default; final decision pending OQ-1. If a simpler API-key approach is chosen, the Streamlit session design adapts accordingly.
+- **Database**: PostgreSQL is assumed for production-like deployments; SQLite may be acceptable for local demo runs — to be confirmed via OQ-8.
+- **No expiry = validity_period_months IS NULL**: A null value means the course never expires. Zero is treated as a validation error until OQ-4 is resolved.
+- **"Expiring soon" window is fixed at 30 calendar days** for the MVP; configurability deferred unless OQ-10 is resolved before development.
+- **Employee self-recording completions is not permitted in MVP** unless OQ-2 resolves otherwise; only HR admin records completions on behalf of any employee.
+- **Calendar-month arithmetic**: `expiry_date` is computed as `completion_date` plus `validity_period_months` calendar months using standard date library semantics (e.g., Jan 31 + 1 month = last day of February).
+- **Single organisation deployment**: No multi-tenancy; all data belongs to one organisation. Isolation is role-based, not tenant-based.
+- **Org-wide completion-rate alert threshold defaults to 80 %** pending confirmation from OQ-3.
+- **P95 latency target of 500 ms** and **99.5 % availability** are reasonable defaults for an internal compliance tool; not stated in the brief.
+- **User accounts are pre-provisioned by HR admin**: There is no self-registration flow in MVP. HR admin creates employee records; a linked user account is created separately or simultaneously (mechanism TBD with OQ-1).
+- **`manager_id` and job role are independent fields**: An employee can hold any job role and simultaneously be listed as the manager of other employees without those being the same concept (pending OQ-7 confirmation).
+- **Soft-deleted courses block new completions** but existing completion history and active role-requirements referencing them require explicit handling (see OQ-6).
+- **No file upload**: The `certificate_reference` field on CompletionRecord is a plain text/URL string; no binary storage is provided.
+- **Streamlit runs as a separate process/container** from the FastAPI service and communicates only over HTTP; no shared in-process state.
+- **Demo seed script is idempotent**: Re-running it on a populated database does not duplicate records (uses upsert or clears and re-seeds).

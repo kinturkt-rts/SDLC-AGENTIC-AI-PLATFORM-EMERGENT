@@ -60,8 +60,10 @@ function parseDeveloperHandoff(
   const files = Array.isArray(data.writtenFiles) ? data.writtenFiles : [];
   return {
     targetApp: String(data.targetApp ?? ''),
+    status: String(data.status ?? 'unknown'),
     writtenFilesCount: files.length,
     validationStatus: parseValidationStatus(data),
+    error: typeof data.error === 'string' ? data.error : null,
     source,
     path: artifactPath,
   };
@@ -82,17 +84,25 @@ async function loadFirstGitlabHandoff(
       path: `runs/${runId}/handoffs/gitlab.json`,
       loader: () => getRunArtifactJson(runId, 'handoffs/gitlab.json'),
     },
-    {
-      source: 'local',
-      path: `agents/pipeline/${slug}.gitlab-handoff.json`,
-      loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.gitlab-handoff.json`),
-    },
-    {
-      source: 'local',
-      path: `agents/pipeline/runs/${runId}/${slug}/handoffs/gitlab-handoff.json`,
-      loader: () => getRunArtifactJson(runId, `${slug}/handoffs/gitlab-handoff.json`),
-    },
   ];
+  // Legacy slug-keyed files (agents/pipeline/<slug>.gitlab-handoff.json) are only valid
+  // for local-CLI runs. In cloud/S3 mode they are stale repo leftovers from older runs
+  // of the same app slug: reading them here made brand-new runs show "published" with
+  // dead branch URLs and let the publish gate skip gitlab-agent entirely.
+  if (!isS3Store()) {
+    candidates.push(
+      {
+        source: 'local',
+        path: `agents/pipeline/${slug}.gitlab-handoff.json`,
+        loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.gitlab-handoff.json`),
+      },
+      {
+        source: 'local',
+        path: `agents/pipeline/runs/${runId}/${slug}/handoffs/gitlab-handoff.json`,
+        loader: () => getRunArtifactJson(runId, `${slug}/handoffs/gitlab-handoff.json`),
+      },
+    );
+  }
 
   for (const candidate of candidates) {
     const data = await candidate.loader();
@@ -111,17 +121,22 @@ async function loadFirstDeveloperHandoff(
       path: `runs/${runId}/${slug}/handoffs/developer-handoff.json`,
       loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
     },
-    {
-      source: 'local',
-      path: `agents/pipeline/${slug}.developer-handoff.json`,
-      loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.developer-handoff.json`),
-    },
-    {
-      source: 'local',
-      path: `agents/pipeline/runs/${runId}/${slug}/handoffs/developer-handoff.json`,
-      loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
-    },
   ];
+  // Same stale-slug-file hazard as gitlab handoffs: only trust these in local mode.
+  if (!isS3Store()) {
+    candidates.push(
+      {
+        source: 'local',
+        path: `agents/pipeline/${slug}.developer-handoff.json`,
+        loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.developer-handoff.json`),
+      },
+      {
+        source: 'local',
+        path: `agents/pipeline/runs/${runId}/${slug}/handoffs/developer-handoff.json`,
+        loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
+      },
+    );
+  }
 
   for (const candidate of candidates) {
     const data = await candidate.loader();
@@ -169,9 +184,9 @@ export async function resolveProjectRepositoryLink(
     };
   }
 
-  const localGitlab = await readLocalPipelineJson(
-    `agents/pipeline/${normalized}.gitlab-handoff.json`,
-  );
+  const localGitlab = isS3Store()
+    ? null
+    : await readLocalPipelineJson(`agents/pipeline/${normalized}.gitlab-handoff.json`);
   if (localGitlab) {
     const href =
       (typeof localGitlab.branchUrl === 'string' && localGitlab.branchUrl) ||
@@ -220,7 +235,75 @@ export async function developerHandoffExistsForRun(runId: string, slug: string):
   return (await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase())) !== null;
 }
 
-/** Poll until developer-handoff.json exists (cloud runs can finish developer after orchestrator HTTP returns). */
+/** True only when developer-agent reached a successful terminal handoff. */
+export async function developerHandoffSucceededForRun(
+  runId: string,
+  slug: string,
+): Promise<boolean> {
+  const developer = await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase());
+  if (!developer) return false;
+  const status = developer.status.trim().toLowerCase();
+  if (status === 'failed' || status === 'error' || developer.validationStatus === 'failed') {
+    return false;
+  }
+  return status === 'completed' || developer.validationStatus === 'passed';
+}
+
+/** True only when developer-agent explicitly failed (not in_progress). */
+export async function developerHandoffFailedForRun(
+  runId: string,
+  slug: string,
+): Promise<boolean> {
+  const developer = await loadFirstDeveloperHandoff(runId, slug.trim().toLowerCase());
+  if (!developer) return false;
+  const status = developer.status.trim().toLowerCase();
+  return status === 'failed' || status === 'error' || developer.validationStatus === 'failed';
+}
+
+/**
+ * Prefer concrete handoff / run errors over generic "check handoffs" copy.
+ * Returns null when there is nothing more specific than the reconciler's default.
+ */
+export async function resolveRunFailureDetail(
+  runId: string,
+  slug: string,
+): Promise<string | null> {
+  const normalized = slug.trim().toLowerCase();
+  const [developer, gitlab] = await Promise.all([
+    loadFirstDeveloperHandoff(runId, normalized),
+    loadFirstGitlabHandoff(runId, normalized),
+  ]);
+
+  if (developer) {
+    const status = developer.status.trim().toLowerCase();
+    if (developer.error?.trim()) {
+      return `Developer-agent failed: ${developer.error.trim()}`;
+    }
+    if (status === 'failed' || status === 'error' || developer.validationStatus === 'failed') {
+      return 'Developer-agent reported failure (see developer handoff).';
+    }
+    if (status === 'in_progress' || status === 'running') {
+      return (
+        'Developer-agent did not finish (handoff still in_progress - runtime likely timed out ' +
+        'before writing a terminal status).'
+      );
+    }
+  }
+
+  if (gitlab) {
+    const status = (gitlab.status ?? '').toLowerCase();
+    if (gitlab.error?.trim()) {
+      return `GitLab publish failed: ${gitlab.error.trim()}`;
+    }
+    if (status === 'failed' || status === 'error') {
+      return 'GitLab publish reported failure (see GitLab handoff).';
+    }
+  }
+
+  return null;
+}
+
+/** Poll until developer-handoff.json reports success. */
 export async function waitForDeveloperHandoffForRun(
   runId: string,
   slug: string,
@@ -232,7 +315,7 @@ export async function waitForDeveloperHandoffForRun(
   const normalized = slug.trim().toLowerCase();
 
   while (Date.now() < deadline) {
-    if (await developerHandoffExistsForRun(runId, normalized)) return true;
+    if (await developerHandoffSucceededForRun(runId, normalized)) return true;
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   return false;

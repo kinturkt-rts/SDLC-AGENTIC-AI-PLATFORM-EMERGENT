@@ -6,7 +6,6 @@
 //
 // The control plane NEVER executes agents. It only reads platform state.
 
-import { mockAgentMessages } from '@/src/mocks';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PlatformSettings } from '@/src/lib/platform-settings';
 import type { PipelineTelemetrySummary, TelemetryOverviewRow } from '@/src/lib/pipeline-telemetry';
@@ -104,6 +103,37 @@ export const api = {
       return undefined;
     }
   },
+  async cancelRun(id: string): Promise<{
+    runId: string;
+    status: 'cancelled';
+    sessionStopped: boolean;
+    message: string;
+    stopError?: string;
+  }> {
+    const res = await fetch(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as {
+      runId?: string;
+      status?: 'cancelled';
+      sessionStopped?: boolean;
+      message?: string;
+      stopError?: string;
+      error?: string;
+    };
+    if (!res.ok) {
+      throw new Error(data.error || `Cancel failed (${res.status})`);
+    }
+    return {
+      runId: data.runId ?? id,
+      status: 'cancelled',
+      sessionStopped: Boolean(data.sessionStopped),
+      message: data.message ?? 'Run cancelled',
+      ...(data.stopError ? { stopError: data.stopError } : {}),
+    };
+  },
   async getRunLogs(runId: string): Promise<LogEntry[]> {
     const data = await httpGet<{ logs: LogEntry[] }>(
       `/api/v1/runs/${encodeURIComponent(runId)}/logs`,
@@ -128,11 +158,16 @@ export const api = {
     return data.activity;
   },
   async getAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
-    const all = mockAgentMessages;
-    return correlationId ? all.filter((m) => m.correlationId === correlationId) : all;
+    const qs = correlationId ? `?correlationId=${encodeURIComponent(correlationId)}` : '';
+    const data = await httpGet<{ messages: AgentMessage[] }>(`/api/v1/agent-messages${qs}`);
+    return data.messages;
   },
-  async getArtifacts(): Promise<Artifact[]> {
-    const data = await httpGet<{ artifacts: Artifact[] }>('/api/v1/artifacts');
+  async getArtifacts(filters?: { projectId?: string | null; kind?: string }): Promise<Artifact[]> {
+    const qs = new URLSearchParams();
+    if (filters?.projectId) qs.set('project', filters.projectId);
+    if (filters?.kind && filters.kind !== 'all') qs.set('kind', filters.kind);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const data = await httpGet<{ artifacts: Artifact[] }>(`/api/v1/artifacts${suffix}`);
     return data.artifacts;
   },
   async getCheckpoints(): Promise<HITLCheckpoint[]> {
@@ -154,9 +189,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, config }),
     });
-    const data = await r.json();
+    const text = await r.text();
+    let data: { mcpServers?: McpConfig['mcpServers']; error?: string; errors?: string[] } = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(
+        `Save failed (HTTP ${r.status}). Server returned a non-JSON response — check control-plane logs.`,
+      );
+    }
     if (!r.ok) throw new Error(Array.isArray(data.errors) ? data.errors.join(' ') : data.error || 'Save failed');
-    return { mcpServers: data.mcpServers };
+    return { mcpServers: data.mcpServers ?? {} };
   },
   async deleteMcpServer(name: string): Promise<void> {
     const r = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });

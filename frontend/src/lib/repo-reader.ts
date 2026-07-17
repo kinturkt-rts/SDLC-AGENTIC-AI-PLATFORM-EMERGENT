@@ -17,9 +17,17 @@ import {
   getS3RunEarliestModifiedMs,
   getRunArtifactJson,
   getS3RunArtifactIndex,
+  isHiddenAppSlug,
 } from './artifact-store';
-import { MVP_TIMELINE_PHASES } from './pipeline-phases';
-import { gitlabHandoffExistsForRun, resolveProjectRepositoryLink } from './pipeline-handoffs';
+import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
+import {
+  developerHandoffExistsForRun,
+  developerHandoffFailedForRun,
+  developerHandoffSucceededForRun,
+  gitlabPublishSucceededForRun,
+  resolveProjectRepositoryLink,
+  resolveRunFailureDetail,
+} from './pipeline-handoffs';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
@@ -41,9 +49,11 @@ import {
   parseCloudWatchActivityLine,
 } from './cloudwatch-activity';
 import { filterLiveRuns, isRecentLiveTs } from './live-activity';
+import { listAgentMessagesFromRuns } from './agent-messages';
 import type {
   Agent,
   AgentAvailability,
+  AgentMessage,
   AgentName,
   Artifact,
   ArtifactKind,
@@ -63,8 +73,6 @@ import type {
   SdlcPhase,
   StepStatus,
 } from '@/src/types';
-import { mockPipelines } from '@/src/mocks/projects';
-
 const LIST_RUNS_TTL_MS = 30_000;
 const ACTIVITY_CACHE_KEY = 'listRecentActivity';
 const ARTIFACTS_CACHE_KEY = 'listArtifacts';
@@ -556,16 +564,36 @@ async function listUuidRunIds(): Promise<string[]> {
   }
 }
 
+function isTerminalLiveStatus(status: string | undefined | null): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
 async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   const local = await readJson<LiveRunState>(
     repoPath('agents', 'pipeline', 'runs', runId, 'run.json'),
   );
-  if (local) return local;
   if (isS3Store()) {
-    const doc = await getRunArtifactJson(runId, 'run.json');
-    if (doc) return doc as unknown as LiveRunState;
+    const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
+
+    // Prefer cancel from either side — cloud finalize can overwrite S3 to
+    // "completed" after the user already cancelled locally (or vice versa).
+    if (local?.status === 'cancelled') {
+      return { ...local, runId: local.runId || runId };
+    }
+    if (doc?.status === 'cancelled') {
+      return { ...doc, runId: doc.runId || runId };
+    }
+
+    if (doc && isTerminalLiveStatus(doc.status)) {
+      if (!local || !isTerminalLiveStatus(local.status)) {
+        return { ...doc, runId: doc.runId || runId };
+      }
+    }
+    if (local) return local;
+    if (doc) return { ...doc, runId: doc.runId || runId };
+    return null;
   }
-  return null;
+  return local;
 }
 
 async function readPipelineLog(runId: string): Promise<string | null> {
@@ -730,6 +758,11 @@ async function latestUuidRunMtime(runId: string): Promise<string> {
 function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   const next: LiveRunState = { ...live, steps: live.steps ? [...live.steps] : live.steps };
 
+  // User cancel is sticky — log success/failure markers must not resurrect the run.
+  if (next.status === 'cancelled') {
+    return next;
+  }
+
   const terminal = parseLogTerminalStatus(log);
   if (terminal?.status === 'completed') {
     next.status = 'completed';
@@ -809,6 +842,19 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
 
+  if ((enriched.status === 'running' || enriched.status === 'queued') && isS3Store()) {
+    if (await developerHandoffFailedForRun(runId, slug)) {
+      enriched = {
+        ...enriched,
+        status: 'failed',
+        currentStep: null,
+        error:
+          enriched.error ??
+          'developer-agent failed before GitLab publish (developer handoff status is failed)',
+      };
+    }
+  }
+
   const needsHeavy = runNeedsHeavyProbe(enriched, log);
   const terminalFromLog = log ? parseLogTerminalStatus(log) : null;
   const isTerminal =
@@ -861,11 +907,17 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     error: enriched.error,
   });
 
+  let reconciledError = reconciled.error ?? enriched.error ?? null;
+  if (reconciled.status === 'failed') {
+    const detail = await resolveRunFailureDetail(runId, slug);
+    if (detail) reconciledError = detail;
+  }
+
   enriched = {
     ...enriched,
     status: reconciled.status as LiveRunState['status'],
     currentStep: reconciled.currentStep,
-    error: reconciled.error ?? enriched.error,
+    error: reconciledError,
   };
 
   if (enriched.steps?.length) {
@@ -932,9 +984,16 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     pipeline: 'Standard SDLC',
     status: reconciled.status,
     currentPhase:
-      reconciled.status === 'completed' || reconciled.status === 'failed' ? null : currentPhase,
+      reconciled.status === 'completed' ||
+      reconciled.status === 'failed' ||
+      reconciled.status === 'cancelled'
+        ? null
+        : currentPhase,
     currentAgent:
-      reconciled.status === 'completed' || reconciled.status === 'failed' || !currentAgentName
+      reconciled.status === 'completed' ||
+      reconciled.status === 'failed' ||
+      reconciled.status === 'cancelled' ||
+      !currentAgentName
         ? null
         : (currentAgentName as AgentName),
     startedAt: timings.startedAt,
@@ -969,7 +1028,7 @@ async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
         const live = await readUuidRunState(runId);
         if (!live) return null;
         const slug = featureSlugFromLive(live);
-        if (!slug) return null;
+        if (!slug || isHiddenAppSlug(slug)) return null;
         return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId });
       }),
     );
@@ -996,26 +1055,45 @@ async function latestPipelineMtime(slug: string): Promise<string> {
 }
 
 async function inferPipelineStatus(slug: string, runId?: string): Promise<RunStatus> {
-  if (runId && UUID_RE.test(runId)) {
-    const uuidLive = await readUuidRunState(runId);
-    if (uuidLive?.status) {
-      if (uuidLive.status === 'cancelled') return 'cancelled';
-      if (uuidLive.status === 'failed') return 'failed';
-      if (uuidLive.status === 'completed') return 'completed';
-      if (uuidLive.status === 'running') return 'running';
-      if (uuidLive.status === 'queued') return 'queued';
+  // Prefer the newest UUID run and reconcile it the same way as /runs.
+  // Raw run.json often stays "queued"/"running" after AgentCore returns, which made
+  // the Projects page look permanently stale.
+  let candidateRunId = runId && UUID_RE.test(runId) ? runId : undefined;
+  if (!candidateRunId) {
+    const slugLive = await readRunState(slug);
+    const slugRunId = slugLive?.runId?.trim();
+    if (slugRunId && UUID_RE.test(slugRunId)) {
+      candidateRunId = slugRunId;
     }
   }
 
+  if (candidateRunId) {
+    const live = await readUuidRunState(candidateRunId);
+    const run = await buildPipelineRunFromLive(
+      slug,
+      live
+        ? { ...live, runId: live.runId || candidateRunId }
+        : {
+            runId: candidateRunId,
+            feature: slug,
+            targetApp: slug,
+            status: 'queued',
+            triggeredBy: 'frontend',
+          },
+    );
+    return run.status;
+  }
+
   const live = await readRunState(slug);
-  if (live) {
-    if (!runId || !live.runId || live.runId === runId) {
-      if (live.status === 'cancelled') return 'cancelled';
-      if (live.status === 'failed') return 'failed';
-      if (live.status === 'completed') return 'completed';
-      if (live.status === 'running') return 'running';
-      if (live.status === 'queued') return 'queued';
-    }
+  if (live?.status === 'cancelled' || live?.status === 'failed' || live?.status === 'completed') {
+    return live.status;
+  }
+
+  // Slug-keyed handoff files under agents/pipeline/ are legacy local-CLI artifacts.
+  // In S3 mode they are stale repo leftovers baked into the image; never let them
+  // mark a cloud project as completed when no UUID run is known.
+  if (isS3Store()) {
+    return live?.status === 'running' ? live.status : 'queued';
   }
   if (await handoffExists(slug, 'gitlab-handoff.json')) return 'completed';
   if (await handoffExists(slug, 'developer-handoff.json')) return 'completed';
@@ -1026,10 +1104,7 @@ async function inferPipelineStatus(slug: string, runId?: string): Promise<RunSta
   ) {
     return 'completed';
   }
-  if (isS3Store()) {
-    if (runId) return 'queued';
-    return 'queued';
-  }
+  if (live?.status === 'running') return live.status;
   if (await readContextFile(slug)) return 'queued';
   return 'queued';
 }
@@ -1060,12 +1135,53 @@ async function countArtifactsForSlug(slug: string, ctx: PipelineContextFile | nu
 }
 
 function artifactKindForPath(filePath: string): ArtifactKind {
-  const lower = filePath.toLowerCase();
-  if (lower.includes('/prd/') || lower.endsWith('prd.md')) return 'prd';
-  if (lower.includes('/design/') || lower.includes('architecture')) return 'architecture';
-  if (lower.endsWith('.png') || lower.endsWith('.svg')) return 'diagram';
-  if (lower.endsWith('.sql')) return 'migration';
-  if (lower.includes('/tests/')) return 'test';
+  const lower = filePath.replace(/\\/g, '/').toLowerCase().replace(/^\/+/, '');
+  if (
+    lower.startsWith('docs/prd/') ||
+    lower.includes('/docs/prd/') ||
+    lower.includes('/prd/') ||
+    /(^|\/)prd\.md$/.test(lower)
+  ) {
+    return 'prd';
+  }
+  // Prefer path segments over substring matches like "...architecture..." in code filenames.
+  if (
+    lower.startsWith('docs/design/') ||
+    lower.includes('/docs/design/') ||
+    ((lower.startsWith('design/') || lower.includes('/design/')) && lower.endsWith('.md'))
+  ) {
+    return 'architecture';
+  }
+  if (
+    lower.startsWith('docs/generated-diagrams/') ||
+    lower.includes('/docs/generated-diagrams/') ||
+    lower.startsWith('docs/diagrams/') ||
+    lower.includes('/docs/diagrams/') ||
+    lower.endsWith('.png') ||
+    lower.endsWith('.svg') ||
+    lower.endsWith('.jpg') ||
+    lower.endsWith('.jpeg')
+  ) {
+    return 'diagram';
+  }
+  if (lower.endsWith('.sql') || lower.startsWith('db/sql/') || lower.includes('/db/sql/')) {
+    return 'migration';
+  }
+  if (lower.includes('/tests/') || lower.startsWith('tests/') || /(?:^|\/)test_[^/]+\.py$/.test(lower)) {
+    return 'test';
+  }
+  if (
+    lower.endsWith('.py') ||
+    lower.endsWith('.ts') ||
+    lower.endsWith('.tsx') ||
+    lower.startsWith('app/') ||
+    lower.includes('/app/') ||
+    lower.startsWith('ui/') ||
+    lower.includes('/ui/') ||
+    lower.endsWith('requirements.txt')
+  ) {
+    return 'code';
+  }
   return 'doc';
 }
 
@@ -1211,21 +1327,8 @@ async function listArtifactsUncached(): Promise<Artifact[]> {
         const relPath = s3File.key.replace(prefix, '');
         if (isSkippableS3ArtifactRelPath(relPath)) continue;
 
-        let kind: ArtifactKind | undefined;
-        const lower = relPath.toLowerCase();
-        if (lower.includes('/docs/prd/') || lower.startsWith('docs/prd/')) kind = 'prd';
-        else if (lower.includes('/docs/design/') || lower.startsWith('docs/design/')) kind = 'architecture';
-        else if (lower.includes('/docs/generated-diagrams/') || lower.startsWith('docs/generated-diagrams/')) kind = 'diagram';
-        else if (lower.includes('/docs/diagrams/') || lower.startsWith('docs/diagrams/')) kind = 'diagram';
-        else if (lower.includes('/db/sql/') && lower.endsWith('.sql')) kind = 'migration';
-        else if (lower.endsWith('handoff.md')) kind = 'doc';
-        else if (lower.startsWith('target-apps/') && !lower.includes('/db/sql/')) kind = 'code';
-        else if (
-          !lower.startsWith('target-apps/') &&
-          (lower.includes('/app/') || lower.endsWith('.py') || lower.endsWith('requirements.txt'))
-        ) {
-          kind = 'code';
-        } else kind = artifactKindForPath(relPath);
+        // Classify via a single path helper so kind badges and Kind filters stay aligned.
+        const kind = artifactKindForPath(relPath);
 
         const base = path.basename(relPath);
         let imageUrl: string | undefined;
@@ -1343,22 +1446,28 @@ async function phaseCompletionForRun(
       f.key.startsWith(prefix) ? f.key.slice(prefix.length) : f.key,
     );
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
-    const deployFromIndex =
-      has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
-      has((r) => /(?:^|\/)handoffs\/gitlab\.json$/i.test(r));
-    const deployDone = deployFromIndex || (await gitlabHandoffExistsForRun(runId, slug));
+    // Implementation/deploy: ONLY "handoff succeeded" counts as done while a handoff exists.
+    // Falling back to "any .py file exists" made live runs jump to GitLab while developer
+    // was still writing (status=in_progress). Artifact fallback is only for legacy runs
+    // that never wrote a developer handoff at all.
+    const hasAppCode =
+      has((r) => r.includes('/app/') && r.endsWith('.py')) ||
+      has((r) => r.endsWith('/requirements.txt'));
+    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
+      developerHandoffSucceededForRun(runId, slug),
+      gitlabPublishSucceededForRun(runId, slug),
+      developerHandoffExistsForRun(runId, slug),
+    ]);
     return {
       requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
       architecture:
         has((r) => r.includes('/design/') && r.endsWith('.md')) ||
         has((r) => r.includes('/diagrams/') && (r.endsWith('.png') || r.endsWith('.svg'))),
       data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
-      implementation:
-        has((r) => r.includes('/app/') && r.endsWith('.py')) ||
-        has((r) => r.endsWith('/requirements.txt')),
+      implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: deployDone,
+      deploy: gitlabSuccess,
     };
   }
 
@@ -1379,18 +1488,22 @@ async function phaseCompletionForRun(
     };
     const rels = await walk(runRoot);
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
+    const hasAppCode = has((r) => r.includes('/app/') && r.endsWith('.py'));
+    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
+      developerHandoffSucceededForRun(runId, slug),
+      gitlabPublishSucceededForRun(runId, slug),
+      developerHandoffExistsForRun(runId, slug),
+    ]);
     return {
       requirements: has((r) => r.includes('/PRD/') && r.endsWith('.md')) || !!ctx?.prdPath,
       architecture:
         has((r) => r.includes('/design/') && r.endsWith('.md')) ||
         has((r) => r.includes('/diagrams/')),
       data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
-      implementation: has((r) => r.includes('/app/') && r.endsWith('.py')),
+      implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy:
-        has((r) => r.toLowerCase().includes('gitlab-handoff')) ||
-        has((r) => /handoffs\/gitlab\.json$/i.test(r)),
+      deploy: gitlabSuccess,
     };
   }
 
@@ -1820,6 +1933,12 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
   });
 }
 
+/** Live orchestration-bus view derived from pipeline run steps (read-only). */
+export async function listAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
+  const runs = await listRuns();
+  return listAgentMessagesFromRuns(runs, { correlationId, maxRuns: 25 });
+}
+
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   return cachedAsync(DASHBOARD_CACHE_KEY, HEAVY_LIST_TTL_MS, getDashboardSummaryUncached);
 }
@@ -1838,7 +1957,20 @@ async function getDashboardSummaryUncached(): Promise<DashboardSummary> {
 }
 
 export async function listPipelines(): Promise<PipelineDefinition[]> {
-  return mockPipelines;
+  // Live MVP definition (not the old multi-recipe mock catalog).
+  return [
+    {
+      id: 'standard-sdlc',
+      name: 'Standard SDLC',
+      description:
+        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish. Fully automated in the current MVP.',
+      phases: MVP_TIMELINE_PHASES.map((phase) => ({
+        phase,
+        agent: PHASE_AGENT[phase],
+        hitl: false,
+      })),
+    },
+  ];
 }
 
 async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> {

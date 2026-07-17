@@ -9,17 +9,27 @@ from _shared.verify_seed_bcrypt import documented_password, first_seed_username
 
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
 _SEED_CREDENTIALS_HEADER = re.compile(r"^###\s*seedCredentials\s*$", re.MULTILINE | re.IGNORECASE)
+
+# Users PK is either a UUID string or an auto-increment integer — both are valid
+# schema designs database-agent produces; the leading tuple value must match either.
+_PK_LITERAL = r"(?:'[0-9a-f-]{36}'|\d+)"
 _USER_INSERT_USERNAME = re.compile(
-    r"\('[0-9a-f-]{36}',\s*'([^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
+    rf"\(\s*{_PK_LITERAL}\s*,\s*'([^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
     re.IGNORECASE,
 )
 _USER_INSERT_EMAIL = re.compile(
-    r"\('[0-9a-f-]{36}',\s*'[0-9a-f-]{36}',\s*'([^']+@[^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
+    rf"\(\s*{_PK_LITERAL}\s*,\s*{_PK_LITERAL}\s*,\s*'([^']+@[^']+)',\s*'(?:__BCRYPT_PLACEHOLDER__|\$2[aby]\$12\$[^']*)'",
     re.IGNORECASE,
 )
 _USERS_INSERT_HEADER = re.compile(
     r"INSERT\s+INTO\s+(?:\S+\.)?users\s*\(([^)]+)\)",
     re.IGNORECASE,
+)
+_USERS_INSERT_STATEMENT = re.compile(
+    r"INSERT\s+INTO\s+(?:\S+\.)?users\s*"
+    r"\((?=[^)]*\b(?:password_hash|hashed_password)\b)[^)]*\)\s*"
+    r"VALUES\b(?P<values>.*?)(?:;|$)",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -99,7 +109,7 @@ def _parse_users_insert_rows(
         ):
             in_users_block = False
             continue
-        if not stripped.startswith("('"):
+        if not stripped.startswith("("):
             if stripped and not stripped.startswith("--"):
                 in_users_block = False
             continue
@@ -135,6 +145,36 @@ def users_table_layout(seed_path: Path) -> tuple[str, str] | None:
     return None
 
 
+def hash_column_and_password(app_dir: Path) -> tuple[str, str] | None:
+    """Resolve (hash_col, documented_password) without requiring a username/email column.
+
+    Some database-agent schemas seed a users table with a password hash but no
+    login-identifying column (e.g. just ``display_name`` + ``role``) — there is no
+    per-row lookup key, but apply_sql_to_rds.py's own pre-apply preprocessing already
+    fills every ``__BCRYPT_PLACEHOLDER__`` with one shared hash of the documented
+    password (same assumption: all seed users share one dev password). This lets
+    materialize_seed_passwords.py recognize that case as already-materialized (or
+    blanket-fixable) instead of hard-failing the whole pipeline over a missing column
+    it never actually needed.
+    """
+    sql_dir = app_dir / "db" / "sql"
+    if not sql_dir.is_dir():
+        return None
+    for seed in sorted(sql_dir.glob("*seed*.sql")):
+        if "fix" in seed.name.lower():
+            continue
+        cols = _users_insert_columns(seed)
+        if not cols:
+            continue
+        hash_col = next((c for c in cols if c in ("password_hash", "hashed_password")), None)
+        if not hash_col:
+            continue
+        password = documented_password(seed.read_text(encoding="utf-8"))
+        if password:
+            return hash_col, password
+    return None
+
+
 def parse_handoff_credentials(handoff_path: Path) -> list[tuple[str, str, str, str]]:
     if not handoff_path.is_file():
         return []
@@ -155,7 +195,7 @@ def parse_handoff_credentials(handoff_path: Path) -> list[tuple[str, str, str, s
         if len(parts) >= 3 and parts[0] and parts[2]:
             lookup = parts[0]
             lookup_col = "email" if "@" in lookup else "username"
-            hash_col = "hashed_password" if "@" in lookup else "password_hash"
+            hash_col = "hashed_password"
             rows.append((lookup, parts[2], lookup_col, hash_col))
     return rows
 
@@ -189,8 +229,8 @@ def collect_credentials(app_dir: Path) -> list[tuple[str, str, str, str]]:
     sql_dir = app_dir / "db" / "sql"
     creds = parse_handoff_credentials(handoff)
     if creds:
-        # Override hash_col from the actual seed SQL — parse_handoff_credentials guesses
-        # "password_hash" for username apps but many apps use "hashed_password" instead.
+        # Override hash_col from the actual seed SQL — handoff defaults to
+        # "hashed_password"; older apps may still use "password_hash".
         if sql_dir.is_dir():
             for seed in sorted(sql_dir.glob("*seed*.sql")):
                 if "fix" in seed.name.lower():
@@ -211,6 +251,14 @@ def collect_credentials(app_dir: Path) -> list[tuple[str, str, str, str]]:
 
 
 def seed_sql_has_placeholders(app_dir: Path) -> bool:
+    """True when any seed file has the literal placeholder token, in any table/column.
+
+    Deliberately not scoped to the users table: materialize_seed_passwords.py's
+    find_remaining_placeholder_columns() checks every text/varchar column on RDS, so
+    the pre-check that decides whether to bother running it must be equally broad —
+    narrowing this to "looks like a users INSERT" previously let placeholders in other
+    tables (e.g. api_keys.key_hash) skip the post-apply safety-net scan entirely.
+    """
     sql_dir = app_dir / "db" / "sql"
     if not sql_dir.is_dir():
         return False
@@ -218,6 +266,6 @@ def seed_sql_has_placeholders(app_dir: Path) -> bool:
         if "fix" in seed.name.lower():
             continue
         text = seed.read_text(encoding="utf-8")
-        if f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text:
+        if _PLACEHOLDER in text:
             return True
     return False

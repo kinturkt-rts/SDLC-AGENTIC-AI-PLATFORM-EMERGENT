@@ -25,7 +25,6 @@ export interface ActivityFeedItem {
   ts: string;
   href: string;
   accent: string;
-  /** Live streams only — no synthesized lifecycle rows in the dashboard feed. */
   stream?: 'cloudwatch' | 'artifact' | 'pipeline-log';
 }
 

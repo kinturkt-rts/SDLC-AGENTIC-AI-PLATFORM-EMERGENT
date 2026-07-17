@@ -15,6 +15,7 @@ from _shared.delivery_profile import (  # noqa: E402
     design_doc_includes_streamlit,
     merge_delivery_profiles,
     scan_delivery_text,
+    sync_context_delivery_profile,
     verify_app_artifacts,
     verify_design_doc,
 )
@@ -32,6 +33,23 @@ def test_scan_ignores_negated_streamlit() -> None:
     )
     assert profile["requiresStreamlit"] is False
     assert profile["uiRequired"] is False
+
+
+def test_scan_streamlit_not_killed_by_http_client_to_api_only() -> None:
+    """PRD architecture rows often say 'HTTP client to API only' while requiring Streamlit."""
+    profile = scan_delivery_text(
+        "| UI location | `ui/streamlit_app.py` | http client to api only — "
+        "never import `app/` from streamlit; enforced by ci lint check |"
+    )
+    assert profile["requiresStreamlit"] is True
+    assert profile["uiPattern"] == "streamlit"
+
+
+def test_scan_api_only_app_still_false() -> None:
+    profile = scan_delivery_text(
+        "Deliver as API-only app. FastAPI + Postgres. No Streamlit UI folder."
+    )
+    assert profile["requiresStreamlit"] is False
 
 
 def test_merge_profiles_or_flags() -> None:
@@ -84,6 +102,27 @@ def test_build_delivery_profile_from_input_file(tmp_path: Path) -> None:
     brief.write_text("Stack: FastAPI + Streamlit UI for client portal\n", encoding="utf-8")
     profile = build_delivery_profile_from_paths(tmp_path, input_path=str(brief))
     assert profile["requiresStreamlit"] is True
+
+
+def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
+    brief = tmp_path / "inputs" / "prior-auth.txt"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("Must ship Streamlit UI at ui/streamlit_app.py\n", encoding="utf-8")
+    prd = tmp_path / "docs" / "PRD" / "app.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text(
+        "| UI | Streamlit | http client to api only — never import app/ from streamlit |\n",
+        encoding="utf-8",
+    )
+    ctx_path = tmp_path / "context.json"
+    ctx_path.write_text(
+        '{"prdPath": "docs/PRD/app.md", "inputFile": "inputs/prior-auth.txt"}\n',
+        encoding="utf-8",
+    )
+    profile = sync_context_delivery_profile(tmp_path, ctx_path)
+    assert profile["requiresStreamlit"] is True
+    synced = __import__("json").loads(ctx_path.read_text(encoding="utf-8"))
+    assert synced["inputPath"] == "inputs/prior-auth.txt"
 
 
 def test_design_doc_includes_streamlit() -> None:

@@ -605,10 +605,128 @@ def test_step_developer_a2a_waits_for_handoff(
         patch.object(runner, "_invoke_a2a") as invoke_mock,
         patch.object(runner, "_wait_for_developer_handoff") as wait_mock,
         patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_ensure_developer_telemetry"),
         patch.object(runner, "_after_agent_step"),
     ):
         runner._step_developer()
 
     invoke_mock.assert_called_once()
     wait_mock.assert_called_once()
+    assert "developer-agent" in runner.agents_run
+
+
+def _make_a2a_developer_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "demo-api"
+    runner.root = repo_root
+    runner.context = {"targetApp": "demo-api", "runId": run_id}
+    runner.options = PipelineOptions(target_app="demo-api", transport="a2a")
+    runner.agents_run = []
+    runner.artifacts = {}
+    return runner
+
+
+def test_step_developer_retries_with_fallback_model(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First developer failure retries once with the lightweight fallback model."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("SDLC_DEVELOPER_RETRY_ATTEMPTS", "1")
+    monkeypatch.setenv("DEVELOPER_AGENT_FALLBACK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+
+    runner = _make_a2a_developer_runner(repo_root, "run-dev-retry-001")
+
+    calls: list[dict] = []
+
+    def invoke_side_effect(agent_name, task, **kwargs):
+        calls.append({"task": task, **kwargs})
+        if len(calls) == 1:
+            raise PipelineStepError("developer-agent A2A failed: boom")
+
+    with (
+        patch.object(runner, "_hydrate_run_context"),
+        patch.object(runner, "_invoke_a2a", side_effect=invoke_side_effect),
+        patch.object(runner, "_wait_for_developer_handoff"),
+        patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_ensure_developer_telemetry"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_developer()
+
+    assert len(calls) == 2
+    assert calls[0].get("extra_context") is None
+    assert calls[1]["extra_context"] == {"codingModelOverride": "us.anthropic.claude-sonnet-4-6"}
+    assert "RETRY NOTE" in calls[1]["task"]
+    assert "developer-agent" in runner.agents_run
+
+
+def test_step_developer_fails_after_all_retry_attempts(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When every attempt fails the step raises with the attempt count."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("SDLC_DEVELOPER_RETRY_ATTEMPTS", "1")
+
+    runner = _make_a2a_developer_runner(repo_root, "run-dev-retry-002")
+
+    with (
+        patch.object(runner, "_hydrate_run_context"),
+        patch.object(
+            runner,
+            "_invoke_a2a",
+            side_effect=PipelineStepError("developer-agent A2A failed: boom"),
+        ) as invoke_mock,
+        patch.object(runner, "_wait_for_developer_handoff"),
+        patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_ensure_developer_telemetry"),
+        patch.object(runner, "_after_agent_step"),
+        pytest.raises(PipelineStepError, match="failed after 2 attempt"),
+    ):
+        runner._step_developer()
+
+    assert invoke_mock.call_count == 2
+    assert "developer-agent" not in runner.agents_run
+
+
+def test_step_developer_handoff_timeout_triggers_retry(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing developer handoff (timeout) also re-invokes the developer agent."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("SDLC_DEVELOPER_RETRY_ATTEMPTS", "1")
+
+    runner = _make_a2a_developer_runner(repo_root, "run-dev-retry-003")
+
+    wait_results = [PipelineStepError("developer-agent handoff not ready"), None]
+
+    def wait_side_effect():
+        result = wait_results.pop(0)
+        if result is not None:
+            raise result
+
+    with (
+        patch.object(runner, "_hydrate_run_context"),
+        patch.object(runner, "_invoke_a2a") as invoke_mock,
+        patch.object(runner, "_wait_for_developer_handoff", side_effect=wait_side_effect),
+        patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_ensure_developer_telemetry"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_developer()
+
+    assert invoke_mock.call_count == 2
     assert "developer-agent" in runner.agents_run

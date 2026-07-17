@@ -1,8 +1,4 @@
-"""QA agent — Strands + Bedrock + scoped test tools + A2A.
-
-Runs developer baseline pytest suites under target-apps/<service>/, reports failures,
-adds edge-case tests, and emits a structured handoff for devops-agent / developer-agent.
-"""
+"""QA agent — Strands + Bedrock; runs pytest and writes quality handoff."""
 
 from __future__ import annotations
 

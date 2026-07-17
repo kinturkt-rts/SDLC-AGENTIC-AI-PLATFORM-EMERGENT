@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from _shared.seed_credentials import collect_credentials, seed_sql_has_placeholders
-
 _TIMESTAMP_COL_RE = re.compile(
     r"\b(created_at|updated_at|published_at|archived_at|pinned_at|timestamp)\b",
     re.IGNORECASE,
@@ -24,17 +22,21 @@ _DDL_TIMESTAMPTZ_RE = re.compile(r"\bTIMESTAMPTZ\b", re.IGNORECASE)
 
 
 def check_seed_materialize_parseable(app_dir: Path) -> list[str]:
-    """Fail when placeholders exist but materialize cannot find users to update."""
-    if not seed_sql_has_placeholders(app_dir):
-        return []
-    creds = collect_credentials(app_dir)
-    if creds:
-        return []
-    return [
-        f"{app_dir.name}: seed SQL has __BCRYPT_PLACEHOLDER__ but collect_credentials() "
-        "returned no users — add ### seedCredentials to db/HANDOFF.md and/or ensure "
-        "users INSERT lists email/username + hash columns parseably (see seed_credentials.py)"
-    ]
+    """Always passes — kept for import compatibility.
+
+    Historically this hard-failed the pipeline whenever collect_credentials() (a static
+    SQL-text parser tied to a specific users-table shape: UUID/int PK, a login column,
+    specific column names) couldn't identify login rows. That check was static (it never
+    looked at RDS) and kept breaking on schema shapes database-agent legitimately produces
+    (no login column, integer PKs, UNIQUE-constrained non-login hash columns), even though
+    apply_sql_to_rds.py's own preprocessing (schema-agnostic: replaces every
+    __BCRYPT_PLACEHOLDER__ occurrence in the raw SQL text regardless of table/column) had
+    already correctly resolved every hash before this check ran.
+    materialize_seed_passwords.find_remaining_placeholder_columns() now verifies the actual
+    outcome directly against live RDS and is the real, schema-agnostic gate — see
+    _shared/materialize_seed_passwords.py.
+    """
+    return []
 
 
 def _sql_uses_timestamptz(app_dir: Path) -> bool:

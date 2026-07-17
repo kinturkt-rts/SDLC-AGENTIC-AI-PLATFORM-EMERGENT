@@ -1,4 +1,4 @@
-import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
+import { MVP_TIMELINE_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
@@ -23,6 +23,13 @@ export interface ReconcileRunResult {
 
 function cloudGitlabFallbackPending(log: string): boolean {
   if (/"skip_gitlab":\s*true/i.test(log)) return false;
+  if (
+    /\[status-poll\]\s+status:\s*(failed|cancelled)\b/i.test(log) ||
+    /sdlc pipeline failed/i.test(log) ||
+    /developer-agent failed/i.test(log)
+  ) {
+    return false;
+  }
   if (!/--- gitlab ---/i.test(log)) return true;
   return !(
     /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log) ||
@@ -45,8 +52,6 @@ export function parseLogTerminalStatus(
 
   if (
     lower.includes('sdlc pipeline completed') ||
-    orchestratorStatusSuccess ||
-    /\[apply-rds-local\]\s+ok\b/i.test(log) ||
     /\[gitlab\]\s+handoff already exists/i.test(log) ||
     /\[gitlab-fallback\]\s+cloud gitlab-agent succeeded/i.test(log)
   ) {
@@ -55,6 +60,16 @@ export function parseLogTerminalStatus(
 
   if (/\[cloud-invoke\]\s+failed/i.test(log)) {
     return { status: 'failed', error: 'Cloud orchestrator invoke failed' };
+  }
+
+  if (
+    /\[gitlab-fallback\]\s+developer-agent did not reach a completed handoff/i.test(log) ||
+    /\[dev-fallback\]\s+handoff status after wait:\s*not completed/i.test(log)
+  ) {
+    return {
+      status: 'failed',
+      error: 'developer-agent did not reach a completed handoff after retries',
+    };
   }
 
   const errLine = log
@@ -128,18 +143,87 @@ export function firstIncompleteMvpPhase(
   return null;
 }
 
-/** Derive truthful run status from logs, S3 artifacts, and last activity - not stale run.json alone. */
+/** Compute effective phaseDone honoring parsed skip flags. */
+function effectivePhaseDone(
+  phaseDone: Record<SdlcPhase, boolean>,
+  skipFlags: Partial<Record<SdlcPhase, boolean>>,
+): Record<SdlcPhase, boolean> {
+  const out = { ...phaseDone };
+  for (const key of Object.keys(skipFlags) as SdlcPhase[]) {
+    if (skipFlags[key]) out[key] = true;
+  }
+  return out;
+}
+
+function firstMissingRequired(
+  phaseDone: Record<SdlcPhase, boolean>,
+  skipFlags: Partial<Record<SdlcPhase, boolean>>,
+): SdlcPhase | null {
+  for (const phase of MVP_TIMELINE_PHASES) {
+    if (skipFlags[phase]) continue;
+    if (!phaseDone[phase]) return phase;
+  }
+  return null;
+}
+
+function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
+  const label = PHASE_DISPLAY_LABEL[missing] ?? missing;
+  const agent = PHASE_AGENT[missing];
+  let error = `Pipeline stopped before ${label} finished.`;
+  if (missing === 'implementation') {
+    error =
+      'Developer-agent did not complete successfully. Open the run and check the developer handoff for the concrete error.';
+  } else if (missing === 'deploy') {
+    error =
+      'GitLab publish did not complete successfully. Open the run and check the GitLab handoff for the concrete error.';
+  } else if (agent) {
+    error = `Pipeline stopped before ${label} finished (${agent}).`;
+  }
+  return {
+    status: 'failed',
+    currentStep: agent ?? null,
+    error,
+  };
+}
+
+/**
+ * Derive truthful run status from verified evidence, not just whatever run.json / logs claim.
+ *
+ * Rules (in order):
+ *   1. User cancel is sticky — never upgrade `cancelled` to completed/failed from
+ *      artifacts or log success markers. Cancel is an explicit operator decision.
+ *   2. VERIFIED SUCCESS - every non-skipped required MVP phase has real artifacts →
+ *      completed. This is the ONLY path to a green pipeline (except cancel above).
+ *   3. Explicit failure signals (log/run.json) → failed.
+ *   4. Claimed completion (from run.json OR a "pipeline completed" log line) that
+ *      CANNOT be verified against artifacts → failed with the first missing phase named,
+ *      as long as we have some evidence the run actually started in the artifact store.
+ *      This is how a run that silently died mid-way stops showing as "green".
+ *   5. Claimed completion with NO artifact evidence at all (very old runs whose S3
+ *      lifecycle has purged everything) → trust the recorded status; we have no way to
+ *      disprove it and downgrading them all to failed would be dishonest.
+ *   6. Otherwise fall through to active/stalled logic.
+ */
 export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult {
+  const skipFlags = parseLogSkipFlags(input.logText);
+  const effectiveDone = effectivePhaseDone(input.phaseDone, skipFlags);
+  const missingRequired = firstMissingRequired(input.phaseDone, skipFlags);
+  const verifiedComplete = missingRequired === null;
+  const hasAnyEvidence = MVP_TIMELINE_PHASES.some((p) => input.phaseDone[p]);
   const terminal = parseLogTerminalStatus(input.logText);
-  if (terminal?.status === 'completed') {
-    return { status: 'completed', currentStep: null };
+
+  // Cancel must win over artifact/log "success" — otherwise a cancelled run that
+  // already had (or later gained) MVP artifacts flips green on the dashboard.
+  if (input.status === 'cancelled') {
+    return {
+      status: 'cancelled',
+      currentStep: null,
+      error: input.error ?? undefined,
+    };
   }
 
-  if (mvpPipelineComplete(input.phaseDone)) {
-    const skipGitlab = parseLogSkipFlags(input.logText).deploy === true;
-    if (skipGitlab || input.phaseDone.deploy) {
-      return { status: 'completed', currentStep: null };
-    }
+  if (verifiedComplete) {
+    return { status: 'completed', currentStep: null };
   }
 
   if (terminal?.status === 'failed') {
@@ -150,7 +234,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     };
   }
 
-  if (input.status === 'completed' || input.status === 'failed' || input.status === 'cancelled') {
+  if (input.status === 'failed') {
     return {
       status: input.status,
       currentStep: null,
@@ -158,9 +242,21 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     };
   }
 
+  const claimsCompleted = input.status === 'completed' || terminal?.status === 'completed';
+  if (claimsCompleted) {
+    // Claimed completion but at least one required phase is unverifiable.
+    // If there is *any* evidence in the artifact store for this run, the pipeline
+    // clearly ran but didn't finish → mark it failed with the missing phase named.
+    // If there is no evidence at all (old run, artifacts pruned), trust run.json.
+    if (hasAnyEvidence && missingRequired) {
+      return partialCompletionFailure(missingRequired);
+    }
+    return { status: 'completed', currentStep: null };
+  }
+
   const idleMs = Date.now() - lastRunActivityMs(input);
   const isActiveStatus = input.status === 'running' || input.status === 'queued';
-  const anyProgress = MVP_TIMELINE_PHASES.some((phase) => input.phaseDone[phase]);
+  const anyProgress = hasAnyEvidence;
   const idleThresholdMs = anyProgress ? RUN_LIVE_IDLE_MS : RUN_NO_PROGRESS_IDLE_MS;
 
   if (isActiveStatus && idleMs > idleThresholdMs) {
@@ -174,7 +270,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   if (isActiveStatus) {
-    const phase = firstIncompleteMvpPhase(input.phaseDone);
+    const phase = firstIncompleteMvpPhase(effectiveDone);
     return {
       status: 'running',
       currentStep: phase ? PHASE_AGENT[phase] : null,

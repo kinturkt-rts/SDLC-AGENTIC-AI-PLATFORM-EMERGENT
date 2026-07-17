@@ -25,11 +25,14 @@ _STREAMLIT_MARKERS = (
 )
 _REACT_MARKERS = ("react", "next.js", "nextjs", "vite", "frontend/")
 
+# Explicit Streamlit omissions only. Do NOT treat bare "api only" as a negation —
+# PRDs routinely say "HTTP client to API only" while still requiring Streamlit UI.
 _STREAMLIT_NEGATED = re.compile(
     r"\b(?:no|without|not|omit)\s+(?:\w+\s+){0,2}streamlit\b|"
-    r"\bapi[- ]only\b|"
     r"\bno\s+ui\s+folder\b|"
-    r"streamlit/react\s+ui",
+    r"streamlit/react\s+ui|"
+    r"\bapi[- ]only\s+(?:app|delivery|service|backend|mode)\b|"
+    r"\b(?:deliver|ship|build)\s+(?:as\s+)?api[- ]only\b",
     re.IGNORECASE,
 )
 _REACT_NEGATED = re.compile(
@@ -37,12 +40,20 @@ _REACT_NEGATED = re.compile(
     r"streamlit/react\s+ui",
     re.IGNORECASE,
 )
+_API_ONLY_DELIVERY = re.compile(
+    r"\bapi[- ]only\s+(?:app|delivery|service|backend|mode)\b|"
+    r"\b(?:deliver|ship|build)\s+(?:as\s+)?api[- ]only\b",
+    re.IGNORECASE,
+)
 
 
 def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pattern[str]) -> bool:
+    has_marker = any(marker in text_lower for marker in markers)
+    if not has_marker:
+        return False
     if negated.search(text_lower):
         return False
-    return any(marker in text_lower for marker in markers)
+    return True
 
 
 def scan_delivery_text(text: str) -> dict[str, Any]:
@@ -50,12 +61,18 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
     lower = text.lower()
     requires_streamlit = _feature_required(lower, _STREAMLIT_MARKERS, _STREAMLIT_NEGATED)
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
+    api_only_delivery = bool(_API_ONLY_DELIVERY.search(lower)) and not requires_streamlit
     ui_required = (
         requires_streamlit
         or requires_react
-        or "web ui" in lower
-        or "browser ui" in lower
-        or "client-facing portal" in lower and "api only" not in lower
+        or (
+            not api_only_delivery
+            and (
+                "web ui" in lower
+                or "browser ui" in lower
+                or "client-facing portal" in lower
+            )
+        )
     )
     ui_pattern: str | None = None
     if requires_streamlit:
@@ -207,15 +224,23 @@ def sync_context_delivery_profile(
     """Merge deliveryProfile into pipeline context from PRD + input brief."""
     context = load_context(context_path)
     run_id = context.get("runId") or context.get("run_id") or None
+    resolved_input = (
+        input_path
+        or context.get("inputPath")
+        or context.get("input_path")
+        or context.get("inputFile")
+        or context.get("input_file")
+    )
     profile = build_delivery_profile_from_paths(
         repo_root,
         prd_path=context.get("prdPath") or context.get("prd_path"),
-        input_path=input_path or context.get("inputPath") or context.get("input_path"),
+        input_path=resolved_input,
         run_id=run_id,
     )
     context["deliveryProfile"] = profile
-    if input_path:
-        context["inputPath"] = input_path
+    if resolved_input:
+        context["inputPath"] = str(resolved_input).replace("\\", "/").lstrip("/")
+        context.setdefault("inputFile", context["inputPath"])
     context_path.write_text(json.dumps(context, indent=2) + "\n", encoding="utf-8")
     return profile
 

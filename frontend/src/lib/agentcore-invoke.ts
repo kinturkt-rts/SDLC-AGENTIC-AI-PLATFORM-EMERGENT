@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import {
   BedrockAgentCoreClient,
   InvokeAgentRuntimeCommand,
+  StopRuntimeSessionCommand,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { loadBackendEnv } from './backend-env';
@@ -15,7 +16,13 @@ export interface AgentCoreInvokeResult {
   error?: string;
   agentName: string;
   runtimeArn?: string;
+  runtimeSessionId?: string;
   response?: unknown;
+}
+
+/** AgentCore requires session ids 33–256 chars; UUID hex + trailing digit satisfies that. */
+export function newRuntimeSessionId(): string {
+  return `${randomUUID().replace(/-/g, '')}0`;
 }
 
 function a2aMessageSendPayload(messageText: string): Uint8Array {
@@ -147,7 +154,7 @@ export async function loadAgentRuntimeMeta(
 export async function invokeAgentRuntimeA2a(
   agentName: string,
   messageText: string,
-  options?: { timeoutSec?: number },
+  options?: { timeoutSec?: number; runtimeSessionId?: string },
 ): Promise<AgentCoreInvokeResult> {
   const timeoutSec = options?.timeoutSec ?? 900;
   const readTimeoutMs = Math.max(timeoutSec * 1000, 60_000);
@@ -161,7 +168,7 @@ export async function invokeAgentRuntimeA2a(
     };
   }
 
-  const sessionId = `${randomUUID().replace(/-/g, '')}0`;
+  const sessionId = options?.runtimeSessionId?.trim() || newRuntimeSessionId();
   const client = agentCoreClient(readTimeoutMs);
 
   try {
@@ -193,6 +200,7 @@ export async function invokeAgentRuntimeA2a(
         status: 'error',
         agentName,
         runtimeArn: arn,
+        runtimeSessionId: sessionId,
         error: `HTTP ${statusCode}: ${bodyText.slice(0, 500)}`,
       };
     }
@@ -206,6 +214,7 @@ export async function invokeAgentRuntimeA2a(
           status: 'success',
           agentName,
           runtimeArn: arn,
+          runtimeSessionId: sessionId,
           text: bodyText,
           response: { raw: bodyText },
         };
@@ -216,6 +225,7 @@ export async function invokeAgentRuntimeA2a(
       status: 'success',
       agentName,
       runtimeArn: arn,
+      runtimeSessionId: sessionId,
       text: extractTextFromA2aJsonrpc(parsed),
       response: parsed,
     };
@@ -225,7 +235,42 @@ export async function invokeAgentRuntimeA2a(
       status: 'error',
       agentName,
       runtimeArn: arn,
+      runtimeSessionId: sessionId,
       error: message,
     };
+  }
+}
+
+/** Hard-stop an AgentCore runtime session (cuts further pipeline work on that session). */
+export async function stopRuntimeSession(
+  agentName: string,
+  runtimeSessionId: string,
+  runtimeArn?: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const sessionId = runtimeSessionId.trim();
+  if (!sessionId) return { ok: false, error: 'runtimeSessionId is required' };
+
+  const arn = runtimeArn?.trim() || (await loadRuntimeArn(agentName));
+  if (!arn) {
+    return { ok: false, error: `No runtimeArn for ${agentName}` };
+  }
+
+  try {
+    const client = agentCoreClient(60_000);
+    await client.send(
+      new StopRuntimeSessionCommand({
+        agentRuntimeArn: arn,
+        runtimeSessionId: sessionId,
+        qualifier: 'DEFAULT',
+      }),
+    );
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Already gone / unknown session is still a successful cancel from the UI POV.
+    if (/not.?found|does not exist|ResourceNotFound|ConflictException/i.test(message)) {
+      return { ok: true, error: message };
+    }
+    return { ok: false, error: message };
   }
 }

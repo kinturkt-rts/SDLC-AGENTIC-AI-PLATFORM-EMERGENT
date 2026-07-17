@@ -1,0 +1,42 @@
+Home Care Visit Scheduler — clients, caregivers, weekly visits, and missed-visit follow-up
+
+Client story:
+Maya runs a small home-care agency (about 25 caregivers). Scheduling is spreadsheets and
+group chats. Families call when someone doesn’t show up, and Maya can’t see at a glance who
+is overbooked or which clients still need a visit this week. She wants a simple office tool —
+not a hospital system.
+
+What the product should do:
+- Keep a list of clients (name, address, preferred visit days, notes about care needs).
+- Keep a caregiver roster (name, skills like mobility help or medication reminders, and whether
+  they are active this week).
+- Plan visits: who goes where, on which day and time window (morning / afternoon / evening),
+  and how long the visit should take.
+- Caregivers mark visits as completed and leave a short note about what happened.
+- Office staff can cancel or reschedule visits, and reassign a different caregiver when needed.
+- Flag problems: double-booked caregivers, clients with no visit scheduled this week, and
+  visits that were planned but never marked complete by end of day.
+- A light “today board” so the coordinator sees everyone’s load and open gaps.
+
+Who uses it:
+- Care coordinator — clients, schedule, assign/reassign, cancel, follow up on misses.
+- Caregiver — see my visits for today/this week; mark complete with a short note.
+- Agency owner — read-only view of the week and problem flags (no editing the schedule).
+
+Rules that matter in real life:
+- A caregiver should not be scheduled for two overlapping visits.
+- Only active caregivers can be assigned.
+- Completed visits should not be casually rewritten; coordinators may add a follow-up note.
+- Cancelled visits stay in history so the family conversation is auditable.
+- Prefer showing “who still needs coverage this week” without burying people in reports.
+
+Demo data expectations:
+- Several clients and caregivers with different skills.
+- A week’s worth of visits across statuses (planned, completed, cancelled, missed).
+- At least one double-book risk or missed visit to show on the board.
+
+Out of scope:
+- GPS tracking, payroll, billing families, clinical charting, mobile app for caregivers
+
+Target app slug: home-care-visit-scheduler
+Output directory: target-apps/home-care-visit-scheduler/

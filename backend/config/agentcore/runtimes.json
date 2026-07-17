@@ -114,9 +114,12 @@
       "notes": "Standalone Firecrawl MCP runtime (not wired to orchestrator MVP chain). Requires Node in image (INSTALL_NODE=true). Scraped markdown stored under runs/<runId>/<app>/docs/PRD/scraped/ in ARTIFACT_S3_BUCKET."
     },
     "devops-agent": {
-      "deployed": false,
-      "runtimeArn": "",
-      "invokeUrl": ""
+      "deployed": true,
+      "awsName": "devops_agent",
+      "runtimeId": "devops_agent-te3iEnDzLz",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/devops_agent-te3iEnDzLz",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fdevops_agent-te3iEnDzLz/invocations",
+      "notes": "STANDALONE runtime (deployed 2026-07-14) — deliberately NOT wired into the orchestrator MVP chain or AGENTCORE_A2A_PEER_URLS. Image includes terraform CLI (INSTALL_TERRAFORM=true) + infrastructure/ tree, so it can generate and validate per-app Terraform roots in-cloud. It CANNOT run docker builds or terraform apply from AgentCore — actual deploys stay local via scripts/deploy-target-app.ps1 (run-sdlc-local.ps1 -WithDeploy) until the CodeBuild-based cloud deploy path is built. Manifest derivation in-cloud sees the image's baked target-apps state, not S3 artifacts — S3-aware manifests are a future item."
     },
     "security-agent": {
       "deployed": false,

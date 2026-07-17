@@ -110,10 +110,13 @@ def _extract_tarball(archive_bytes: bytes, dest: Path) -> Path:
                 raise RuntimeError(f"unsafe tarball member: {member.name}")
         tf.extractall(dest)  # noqa: S202 - members validated above
     tarball_path.unlink(missing_ok=True)
-    template_dir = dest / "template"
+    # publish-template-to-s3.py preserves the source folder name verbatim
+    # (target-apps/_template -> archived as "_template/..."), so the extracted
+    # root is "_template", not "template".
+    template_dir = dest / "_template"
     if not (template_dir / "scaffold-manifest.json").is_file():
         raise RuntimeError(
-            f"template tarball missing template/scaffold-manifest.json under {dest}"
+            f"template tarball missing _template/scaffold-manifest.json under {dest}"
         )
     return template_dir
 
@@ -124,7 +127,7 @@ def _cache_dir_for_version(version: str) -> Path:
 
 def _is_cache_valid(cache_dir: Path, expected_sha: str | None) -> bool:
     marker = cache_dir / ".version"
-    template_dir = cache_dir / "template"
+    template_dir = cache_dir / "_template"
     if not (template_dir / "scaffold-manifest.json").is_file():
         return False
     if not marker.is_file():
@@ -145,7 +148,7 @@ def _fetch_and_extract(version: str) -> Path:
     cache_dir = _cache_dir_for_version(version)
     if _is_cache_valid(cache_dir, expected_sha):
         logger.info("template cache hit: version=%s dir=%s", version, cache_dir)
-        return cache_dir / "template"
+        return cache_dir / "_template"
 
     logger.info(
         "downloading template from s3://%s/%s (version=%s)",

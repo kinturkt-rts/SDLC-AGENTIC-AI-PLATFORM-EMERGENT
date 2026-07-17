@@ -26,6 +26,8 @@ import {
   CheckCircle2,
   Circle,
   RotateCcw,
+  Ban,
+  Loader2,
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -35,7 +37,6 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import {
   useDashboardSummary,
@@ -45,7 +46,9 @@ import {
   useArtifacts,
 } from '@/src/lib/queries';
 import { queryKeys } from '@/src/lib/queries';
-import { formatRelative, formatDuration, titleCase } from '@/src/lib/format';
+import { api } from '@/src/lib/api';
+import { formatRelative, titleCase } from '@/src/lib/format';
+import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
@@ -55,6 +58,7 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
+const MAX_CONCURRENT_RUNS = 3;
 
 function briefUploadBody(feature: string, content: string): string {
   return JSON.stringify({
@@ -192,7 +196,7 @@ function LiveActivityFeed({ poll, hasActiveRuns }: { poll: boolean; hasActiveRun
         ) : items.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             {hasActiveRuns
-              ? 'Pipeline running — waiting for agent output…'
+              ? 'Pipeline running - waiting for agent output…'
               : 'No active pipelines. Submit a run to see live agent activity here.'}
           </p>
         ) : (
@@ -370,14 +374,26 @@ function InputRequirementsCard() {
   const [submitPhase, setSubmitPhase] = React.useState<'idle' | 'upload' | 'start'>('idle');
   const [starting, setStarting] = React.useState(false);
   const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
-  const [withJira, setWithJira] = React.useState(false);
-  const [jiraProject, setJiraProject] = React.useState('');
   const [fileLoading, setFileLoading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadSeqRef = React.useRef(0);
   const submitLockRef = React.useRef(false);
 
   const featureValid = !feature || FEATURE_SLUG_RE.test(feature);
+
+  const activeRuns = React.useMemo(
+    () => (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused'),
+    [runs],
+  );
+  const conflictingApp = React.useMemo(
+    () => (feature ? activeRuns.find((r) => r.projectId === feature) ?? null : null),
+    [activeRuns, feature],
+  );
+  // Hide the yellow banner for the run just started here (teal banner already covers it).
+  const showDuplicateWarning = Boolean(
+    conflictingApp && (!startedRunId || conflictingApp.id !== startedRunId),
+  );
+  const atCapacity = activeRuns.length >= MAX_CONCURRENT_RUNS;
 
   const clearSavedRunState = React.useCallback(() => {
     setSavedPath(null);
@@ -388,6 +404,7 @@ function InputRequirementsCard() {
 
   const handleClearForm = React.useCallback(() => {
     setContent('');
+    setFeature('');
     setStatus('missing');
     clearSavedRunState();
     toast.message('Cleared', { description: 'Paste or upload a new brief to start another run.' });
@@ -490,11 +507,18 @@ function InputRequirementsCard() {
       toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
       return;
     }
-    if (withJira && !jiraProject.trim()) {
-      toast.error('Enter a Jira project key (e.g. SAAP) or turn off Create Jira backlog');
+    if (conflictingApp) {
+      toast.error(`"${feature}" is already running`, {
+        description: `Run ${conflictingApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
+      });
       return;
     }
-
+    if (atCapacity) {
+      toast.error('Maximum concurrent runs reached', {
+        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+      });
+      return;
+    }
     submitLockRef.current = true;
     setSubmitting(true);
     setSubmitPhase('upload');
@@ -524,8 +548,6 @@ function InputRequirementsCard() {
             targetApp: submitFeature,
             runId: uploadData.runId,
             inputFile: uploadData.inputPath ?? uploadData.inputFile,
-            withJira,
-            jiraProject: withJira ? jiraProject.trim().toUpperCase() : undefined,
           }),
         },
         30_000,
@@ -560,6 +582,18 @@ function InputRequirementsCard() {
 
   const handleStart = async () => {
     if (status !== 'saved' || !feature || !savedRunId) return;
+    if (conflictingApp) {
+      toast.error(`"${feature}" is already running`, {
+        description: `Run ${conflictingApp.id.slice(0, 8)}… is in progress. Wait for it to finish or cancel it.`,
+      });
+      return;
+    }
+    if (atCapacity) {
+      toast.error('Maximum concurrent runs reached', {
+        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+      });
+      return;
+    }
     setStarting(true);
     try {
       const res = await fetch('/api/v1/runs/start', {
@@ -569,8 +603,6 @@ function InputRequirementsCard() {
           targetApp: feature,
           runId: savedRunId,
           inputFile: savedPath ?? `inputs/${feature}.txt`,
-          withJira,
-          jiraProject: withJira ? jiraProject.trim().toUpperCase() : undefined,
         }),
       });
       const startParsed = await readJsonResponse<BriefUploadResponse>(res);
@@ -661,31 +693,6 @@ function InputRequirementsCard() {
             {!featureValid && (
               <p className="text-[10px] text-red-400/80">lowercase letters, digits, dashes; starts with a letter</p>
             )}
-          </div>
-          <div className="space-y-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
-            <div className="flex items-center justify-between gap-2">
-              <label htmlFor="with-jira" className="text-[11px] font-medium text-foreground">
-                Create Jira backlog
-              </label>
-              <Switch id="with-jira" checked={withJira} onCheckedChange={setWithJira} />
-            </div>
-            {withJira ? (
-              <div className="space-y-1">
-                <label htmlFor="jira-project" className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Jira project key
-                </label>
-                <Input
-                  id="jira-project"
-                  value={jiraProject}
-                  onChange={(e) => setJiraProject(e.target.value.toUpperCase())}
-                  placeholder="SAAP"
-                  className="h-8 border-white/[0.08] bg-white/[0.02] font-mono text-xs uppercase"
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  After the PRD is generated, creates one epic and five user stories in this project.
-                </p>
-              </div>
-            ) : null}
           </div>
           <input ref={fileInputRef} type="file" accept=".txt,text/plain" className="hidden" onChange={handleUpload} />
           <button
@@ -806,12 +813,37 @@ function InputRequirementsCard() {
               </Link>
             </div>
           ) : null}
+          {showDuplicateWarning && conflictingApp ? (
+            <p className="rounded-lg border border-amber-500/50 bg-amber-100 px-3 py-2 text-xs text-amber-950 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-50">
+              <span className="font-semibold">Already running:</span> {feature} has active run{' '}
+              <Link
+                href={`/runs/${conflictingApp.id}`}
+                className="font-mono font-medium text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-100 dark:hover:text-white"
+              >
+                {conflictingApp.id.slice(0, 8)}…
+              </Link>
+              . Wait or cancel before starting another.
+            </p>
+          ) : atCapacity ? (
+            <p className="rounded-lg border border-orange-500/50 bg-orange-100 px-3 py-2 text-xs text-orange-950 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-50">
+              <span className="font-semibold">At capacity:</span> {activeRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
+              concurrent pipelines active. Wait for one to finish or cancel a run.
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700"
               onClick={handleSubmit}
-              disabled={!content.trim() || !feature || !featureValid || submitting || fileLoading}
+              disabled={
+                !content.trim() ||
+                !feature ||
+                !featureValid ||
+                submitting ||
+                fileLoading ||
+                Boolean(conflictingApp) ||
+                atCapacity
+              }
             >
               <PlayCircle className="h-3.5 w-3.5" />{' '}
               {fileLoading
@@ -824,7 +856,7 @@ function InputRequirementsCard() {
                   ? 'Submit & Run Again'
                   : 'Submit & Run Pipeline'}
             </Button>
-            {runTerminal || content.trim() ? (
+            {runTerminal || content.trim() || feature.trim() || startedRunId ? (
               <Button
                 type="button"
                 size="sm"
@@ -848,9 +880,11 @@ function InputRequirementsCard() {
    Main Dashboard
    ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
+  const queryClient = useQueryClient();
   const { data: summary } = useDashboardSummary();
   const { data: runs } = useRuns();
   const { data: checkpoints } = useCheckpoints();
+  const [cancellingId, setCancellingId] = React.useState<string | null>(null);
 
   const activeRuns = (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused');
   const hasActive = activeRuns.length > 0;
@@ -858,6 +892,26 @@ export default function DashboardPage() {
   const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
+
+  const handleCancelActive = async (runId: string) => {
+    if (cancellingId) return;
+    setCancellingId(runId);
+    try {
+      const result = await api.cancelRun(runId);
+      toast.success('Run cancelled', {
+        description: result.message || 'This run was cancelled.',
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
+    } catch (err) {
+      toast.error('Cancel failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -886,7 +940,7 @@ export default function DashboardPage() {
                 <HeroStatCard icon={Activity} label="Active Runs" value={activeRuns.length} sub="currently executing" accent="glow-blue-sm" iconAccent="bg-blue-500/10 text-blue-400 ring-blue-500/20" href="/runs" />
                 <HeroStatCard icon={UserCheck} label="Pending Approvals" value={summary.pendingApprovals} sub="awaiting human review" accent="" iconAccent="bg-amber-500/10 text-amber-400 ring-amber-500/20" href="/checkpoints" />
                 <HeroStatCard icon={Bot} label="Agents Online" value={`${summary.agentsOnline}/8`} sub="specialist agents" accent="" iconAccent="bg-emerald-500/10 text-emerald-400 ring-emerald-500/20" href="/agents" />
-                <HeroStatCard icon={Plug} label="MCP Healthy" value={`${summary.mcpHealthy}/${summary.mcpTotal}`} sub="integration servers" accent="" iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20" href="/mcp" />
+                <HeroStatCard icon={Plug} label="MCP Servers" value={`${summary.mcpTotal}`} sub="configured integrations" accent="" iconAccent="bg-teal-500/10 text-teal-400 ring-teal-500/20" href="/mcp" />
               </>
             ) : (
               Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[104px] w-full rounded-xl" />)
@@ -928,20 +982,43 @@ export default function DashboardPage() {
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">No active runs.</p>
             ) : (
               activeRuns.map((run) => (
-                <Link key={run.id} href={`/runs/${run.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
-                  <StatusBadge status={run.status} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">{run.id} · {run.pipeline}</p>
-                  </div>
-                  <div className="hidden text-right sm:block">
-                    <p className="text-[10px] text-muted-foreground">current</p>
-                    <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Timer className="h-3.5 w-3.5" /> {formatDuration(run.elapsedSec)}
-                  </div>
-                </Link>
+                <div key={run.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
+                  <Link href={`/runs/${run.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                    <StatusBadge status={run.status} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">{run.id} · {run.pipeline}</p>
+                    </div>
+                    <div className="hidden text-right sm:block">
+                      <p className="text-[10px] text-muted-foreground">current</p>
+                      <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Timer className="h-3.5 w-3.5" />
+                      <LiveElapsed
+                        startedAt={run.startedAt}
+                        finishedAt={run.finishedAt}
+                        live={run.status === 'running' || run.status === 'paused'}
+                        fallbackSec={run.elapsedSec}
+                      />
+                    </div>
+                  </Link>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 shrink-0 gap-1 px-2 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                    disabled={cancellingId === run.id}
+                    onClick={() => handleCancelActive(run.id)}
+                  >
+                    {cancellingId === run.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Ban className="h-3.5 w-3.5" />
+                    )}
+                    Cancel
+                  </Button>
+                </div>
               ))
             )}
           </div>
@@ -959,7 +1036,7 @@ export default function DashboardPage() {
           <div className="space-y-2 p-3">
             {pending.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-                Not enabled in this MVP. Human-in-the-loop checkpoints will appear here when wired up.
+                Not enabled in this MVP. Human-in-the-loop approved gates will appear here when wired up.
               </p>
             ) : (
               pending.map((c) => (

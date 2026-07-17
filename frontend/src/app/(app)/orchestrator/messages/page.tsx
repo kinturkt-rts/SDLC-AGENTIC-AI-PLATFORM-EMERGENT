@@ -16,7 +16,7 @@ import {
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { MessageTypeBadge } from '@/src/components/common/MessageTypeBadge';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
-import { useAgentMessages } from '@/src/lib/queries';
+import { useAgentMessages, useRuns } from '@/src/lib/queries';
 import { formatRelative } from '@/src/lib/format';
 import type { AgentMessage } from '@/src/types';
 
@@ -31,7 +31,9 @@ export default function MessagesPage() {
 function MessagesInner() {
   const searchParams = useSearchParams();
   const initial = searchParams.get('correlationId') ?? 'all';
-  const { data: all, isLoading } = useAgentMessages();
+  const { data: runs } = useRuns();
+  const hasLiveRuns = (runs ?? []).some((r) => r.status === 'running' || r.status === 'paused');
+  const { data: all, isLoading } = useAgentMessages(undefined, hasLiveRuns);
   const [correlationId, setCorrelationId] = React.useState<string>(initial);
 
   React.useEffect(() => {
@@ -71,7 +73,7 @@ function MessagesInner() {
       <PageHeader
         eyebrow="Design"
         title="Agent Messages"
-        description="The orchestration bus: task.assign / task.result / hitl.request events exchanged between agents. Filter by correlationId to follow a single delegation thread."
+        description="Live handoff log from pipeline runs: when the orchestrator assigns a phase, the specialist reports progress or completion. Filter by thread to follow one phase."
         actions={
           <Select value={correlationId} onValueChange={setCorrelationId}>
             <SelectTrigger className="h-9 w-[220px]"><SelectValue placeholder="correlationId" /></SelectTrigger>

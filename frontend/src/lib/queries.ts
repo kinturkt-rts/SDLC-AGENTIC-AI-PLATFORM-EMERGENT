@@ -38,20 +38,35 @@ export const useAgents = () =>
   });
 export const useAgent = (id: string) =>
   useQuery({ queryKey: queryKeys.agent(id), queryFn: () => api.getAgent(id), enabled: !!id });
-export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryFn: api.getProjects });
+export const useProjects = () =>
+  useQuery({
+    queryKey: queryKeys.projects,
+    queryFn: api.getProjects,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
 export const useProject = (id: string) =>
-  useQuery({ queryKey: queryKeys.project(id), queryFn: () => api.getProject(id), enabled: !!id });
+  useQuery({
+    queryKey: queryKeys.project(id),
+    queryFn: () => api.getProject(id),
+    enabled: !!id,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
 export const usePipelines = () => useQuery({ queryKey: queryKeys.pipelines, queryFn: api.getPipelines });
 export const useRuns = () =>
   useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.getRuns,
-    staleTime: 30_000,
+    staleTime: 10_000,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 15_000;
-      return false;
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 8_000;
+      return 20_000;
     },
+    refetchOnWindowFocus: true,
   });
 export const useRun = (id: string) =>
   useQuery({
@@ -84,15 +99,28 @@ export const useRunHandoffs = (id: string, live = false) =>
     enabled: !!id,
     refetchInterval: live ? 4000 : false,
   });
-export const useAgentMessages = (correlationId?: string) =>
-  useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
-export const useArtifacts = (poll = false) =>
+export const useAgentMessages = (correlationId?: string, live = false) =>
   useQuery({
-    queryKey: queryKeys.artifacts,
-    queryFn: api.getArtifacts,
-    staleTime: 120_000,
+    queryKey: queryKeys.messages(correlationId),
+    queryFn: () => api.getAgentMessages(correlationId),
+    staleTime: 10_000,
+    refetchInterval: live ? 8_000 : false,
+  });
+export const useArtifacts = (
+  pollOrFilters: boolean | { projectId?: string | null; kind?: string; poll?: boolean } = false,
+) => {
+  const filters =
+    typeof pollOrFilters === 'boolean' ? { poll: pollOrFilters } : pollOrFilters;
+  const projectId = filters.projectId ?? null;
+  const kind = filters.kind ?? 'all';
+  const poll = filters.poll ?? false;
+  return useQuery({
+    queryKey: [...queryKeys.artifacts, projectId ?? 'all', kind],
+    queryFn: () => api.getArtifacts({ projectId, kind }),
+    staleTime: 30_000,
     refetchInterval: poll ? 30_000 : false,
   });
+};
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });
 export const useMcpServers = () => useQuery({ queryKey: queryKeys.mcp, queryFn: api.getMcpServers });
@@ -112,7 +140,11 @@ export const useLogs = (filters: LogsFilter, live = false) =>
   useQuery({
     queryKey: [...queryKeys.logs, filters],
     queryFn: () => api.getLogs(filters),
-    refetchInterval: live ? 8000 : 15_000,
+    // Live views (All runs / running run): poll CloudWatch every 8s.
+    // Finished single-run views: still refresh occasionally so late-arriving lines appear.
+    staleTime: live ? 0 : 10_000,
+    refetchInterval: live ? 8_000 : 30_000,
+    refetchOnWindowFocus: true,
   });
 export const useDashboardSummary = () =>
   useQuery({

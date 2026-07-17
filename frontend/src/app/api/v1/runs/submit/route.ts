@@ -74,6 +74,10 @@ export async function POST(request: Request) {
       submittedAt: new Date().toISOString(),
     });
   } catch (err) {
-    return NextResponse.json({ error: formatSubmitError(err) }, { status: 500 });
+    const message = formatSubmitError(err);
+    const status = /already has an active pipeline|Maximum concurrent runs/i.test(message)
+      ? 409
+      : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

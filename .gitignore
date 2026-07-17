@@ -32,12 +32,19 @@ frontend/data/
 .DS_Store
 Thumbs.db
 
+# Stale AgentCore config backups (machine-local OneDrive / path copies)
+*.bak-onedrive
+backend/.bedrock_agentcore.yaml.bak*
+
 # Local MCP binary (GitLab MCP is ECS HTTP; see backend/deploy/gitlab-mcp-server/)
 bin/
 
 # Pipeline runtime (orchestrator subprocess logs, misplaced handoff snapshots)
 backend/agents/pipeline/.logs/
 backend/agents/pipeline/runs/
+backend/agents/pipeline/*-telemetry.json
+# devops handoffs hold generated runtime secrets (extraEnv) — never commit
+backend/agents/pipeline/*.devops-handoff.json
 backend/*/context.json
 backend/.tmp/
 backend/demo-api/
@@ -45,6 +52,7 @@ backend/incident-triage-bot/
 backend/$null
 
 # Local-only target apps (experimental; not pushed to GitLab)
+backend/target-apps/demo-api/
 backend/target-apps/standup-tracker/
 backend/target-apps/release-notes-bot/
 backend/target-apps/finops-web-app/
@@ -53,7 +61,6 @@ backend/target-apps/lunch-learn-app/
 backend/target-apps/meeting-assistant/
 backend/target-apps/rag-app-streamlit/
 backend/target-apps/rag-pdf-system/
-backend/target-apps/template/
 backend/target-apps/test-dev/
 backend/target-apps/test-medium-app/
 

@@ -25,16 +25,10 @@ function saveNotified(ids: Set<string>) {
   }
 }
 
-/**
- * App-shell-level watcher: fires a toast the first time any run is observed as
- * "failed", regardless of which page the user is currently on (dashboard, logs,
- * artifacts, ...). Piggybacks entirely on the existing useRuns() polling query -
- * no new network calls, no change to polling cadence. "Already notified" run ids
- * are kept in sessionStorage so a page refresh doesn't re-toast the same failure.
- */
 export function RunFailureWatcher() {
   const { data: runs } = useRuns();
   const notifiedRef = React.useRef<Set<string> | null>(null);
+  const baselinedRef = React.useRef(false);
   if (notifiedRef.current === null) {
     notifiedRef.current = loadNotified();
   }
@@ -43,6 +37,21 @@ export function RunFailureWatcher() {
     if (!runs?.length) return;
     const notified = notifiedRef.current;
     if (!notified) return;
+
+    // Seed already-failed runs without toasting (login / cold start).
+    if (!baselinedRef.current) {
+      let seeded = false;
+      for (const run of runs) {
+        if (run.status === 'failed' && !notified.has(run.id)) {
+          notified.add(run.id);
+          seeded = true;
+        }
+      }
+      if (seeded) saveNotified(notified);
+      baselinedRef.current = true;
+      return;
+    }
+
     let changed = false;
     for (const run of runs) {
       if (run.status === 'failed' && !notified.has(run.id)) {

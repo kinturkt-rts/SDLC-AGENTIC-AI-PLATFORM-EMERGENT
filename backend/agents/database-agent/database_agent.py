@@ -1,4 +1,4 @@
-"""Database agent - Strands + Bedrock; optional MongoDB MCP; RDS apply via host script."""
+"""Database agent — Strands + Bedrock; SQL migrations/seed and DB handoff."""
 
 from __future__ import annotations
 
@@ -156,7 +156,10 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
   or seed uses `NULL` for it, DDL must **omit** `NOT NULL`. Call `db_validate_sql` before finishing —
   it blocks NULL inserts into NOT NULL columns. `CREATE TABLE IF NOT EXISTS` does not change nullability
   on existing RDS tables; the host apply script reconciles drift, but your schema files must match design.
-- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the password hash column — use the **exact column name from your DDL** (`hashed_password`, `password_hash`, `password`, etc.). See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
+- **JWT users password column (canonical):** always name it `hashed_password` (TEXT NOT NULL).
+  Do **not** use `password_hash`, `password`, or other aliases on new apps — split naming
+  across SQL vs ORM breaks login. Seed, HANDOFF, and developer-agent must reuse this exact name.
+- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the `hashed_password` column. See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 
 ## RDS apply (host — not your job when `applyToRdsAfterWrite` is true)
@@ -214,12 +217,12 @@ Alternatively, use `gen_random_uuid()` as DEFAULT and omit the `id` column from 
 
 ## Seeding credentials — DO NOT invent hashes
 
-When any seed row has a password hash column (`hashed_password`, `password_hash`, `password`, etc.), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
+When any seed row has a password hash column (`hashed_password` — required for new JWT apps), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
 
 ### All three steps are MANDATORY — skipping any one causes silent 401 on RDS
 
 **Step 1 — Sentinel value in every seed user row**
-Insert `'__BCRYPT_PLACEHOLDER__'` in the hash column. Use the **exact column name from your DDL** — never assume `password_hash`; read the `CREATE TABLE` you just wrote.
+Insert `'__BCRYPT_PLACEHOLDER__'` in the `hashed_password` column (canonical name for new apps). Legacy apps may still use `password_hash`; never invent a third name.
 
 ```sql
 INSERT INTO users (id, username, hashed_password, role) VALUES
@@ -254,7 +257,7 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 
 The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
 
-If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and the hash column name from your DDL.
+If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and `hashed_password`.
 
 Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + SQL comment + HANDOFF.md map — all three, every time.
 """
@@ -279,8 +282,7 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
         raise ValueError(f"path must stay inside repo: {relative_path}")
     if write:
         under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
-        under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
-        if not (under_target_apps or under_repo_root):
+        if not under_target_apps:
             raise ValueError("writes only allowed under target-apps/")
         return candidate
     allowed = any(str(candidate).startswith(str(prefix.resolve())) for prefix in _READ_PREFIXES)
@@ -346,9 +348,18 @@ def db_read_file(path: str) -> str:
 @tool
 def db_write_file(path: str, content: str) -> str:
     """Write SQL/NoSQL artifacts under the app db tree (cloud: ``<slug>/db/...``)."""
-    artifact_rel = cloud_artifact_rel(path.strip())
+    raw = path.strip()
+    artifact_rel = cloud_artifact_rel(raw)
+    # Cloud/S3 mode: persist via artifact store only. Never materialize stripped
+    # ``<slug>/...`` keys as ``backend/<slug>/...`` on local disk (that created
+    # the stale backend/demo-api/ tree).
+    if _is_cloud_store():
+        if _run_context is not None:
+            write_repo_artifact(artifact_rel, content, context=_run_context)
+        _written_files.append(artifact_rel)
+        return f"Wrote {artifact_rel} ({len(content)} bytes)"
     try:
-        file_path = _resolve_repo_path(artifact_rel if _is_cloud_store() else path, write=True)
+        file_path = _resolve_repo_path(raw, write=True)
     except ValueError as exc:
         return f"Error: {exc}"
     file_path.parent.mkdir(parents=True, exist_ok=True)

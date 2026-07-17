@@ -1,4 +1,4 @@
-"""Web crawler agent - Strands + Bedrock + Firecrawl MCP + Postgres MCP"""
+"""Web crawler agent — Strands + Bedrock; Firecrawl scrape and optional Postgres persist."""
 
 from __future__ import annotations
 

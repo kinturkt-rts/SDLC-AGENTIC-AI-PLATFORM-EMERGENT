@@ -1,0 +1,46 @@
+Apartment Maintenance Desk — tenants report issues; property staff triage and close the loop
+
+Client story:
+Jordan manages three apartment buildings. Tenants text photos of leaks and broken appliances;
+vendors get verbal instructions; nobody can answer “is unit 4B’s oven still open?” without
+digging through messages. He wants a shared maintenance desk: tenants submit requests,
+staff prioritize and schedule, and everyone sees status without another group chat.
+
+What the product should do:
+- Tenants (or staff on their behalf) submit a maintenance request: building/unit, category
+  (plumbing, electrical, appliance, general), urgency (routine vs emergency), description,
+  and optional preferred access window.
+- Staff triage the queue: acknowledge, set priority, assign to an internal tech or external
+  vendor, and schedule a visit window.
+- Status that tenants understand: submitted → acknowledged → scheduled → in progress →
+  completed / cancelled. Emergency requests should stand out on the queue.
+- Capture a short completion note when work is done (and optionally “tenant not home /
+  reschedule needed”).
+- Building managers see open work by building and aging requests that sat too long.
+- Keep a history so disputes (“we never fixed that”) have a timeline.
+
+Who uses it:
+- Tenant — submit requests for their unit; see status of their open and recent requests.
+- Maintenance coordinator — triage, assign, schedule, cancel, mark complete.
+- Building manager — view their buildings’ open work and aging; limited edit (notes / escalate).
+- Vendor (optional lightweight) — see jobs assigned to them and mark in progress / done.
+
+Rules that matter in real life:
+- Tenants only see and create requests for units they are associated with.
+- Emergency should not silently sit in the same pile as routine — surface and age differently.
+- Once completed, the request is mostly locked; staff may add a follow-up note if something
+  reopens the issue (prefer opening a linked follow-up request rather than rewriting history).
+- Cancelling needs a reason (duplicate, tenant withdrew, unable to access, etc.).
+- “Too long open” should be obvious for coordinators without exporting a spreadsheet.
+
+Demo data expectations:
+- Multiple buildings and units, several tenants.
+- A queue with mixed urgencies and statuses, including at least one aging emergency and one
+  completed job with notes.
+- Assignments to both an internal tech and an external vendor.
+
+Out of scope:
+- Rent payments, lease documents, smart locks, full vendor marketplace, photo storage vault
+
+Target app slug: apartment-maintenance-desk
+Output directory: target-apps/apartment-maintenance-desk/

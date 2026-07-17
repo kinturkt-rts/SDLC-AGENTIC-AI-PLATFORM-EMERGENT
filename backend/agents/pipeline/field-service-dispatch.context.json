@@ -1,8 +1,10 @@
-{
+﻿{
     "productAgentOutput":  "See prdPath for field-service-dispatch MVP requirements.",
     "targetApp":  "field-service-dispatch",
     "prdPath":  "docs/PRD/field-service-dispatch.md",
     "designDocPath":  "docs/design/field-service-dispatch.md",
+    "gitlabProject":  "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps",
+    "productBrief":  "Feature: Field Service Dispatch — Product Requirements Document\nDana\u0027s HVAC shop operates a 15-technician field service team whose dispatch workflow today relies on a shared whiteboard and group text threads. This creates coordination failures: unclear assignment ownership, no audit trail for disputes, no systematic SLA visibility, and no structured workload view for the owner. The tool must replace that informal system without the complexity or cost of enterprise platforms like Salesforce. The proposed solution is a lightweight, role-aware web application backed by a FastAPI REST service and a Streamlit dispatcher board. It manages customer records, work orders, technician rosters, and d...",
     "inputPath":  "inputs/field-service-dispatch.txt",
     "deliveryProfile":  {
                             "streamlitRequirementsPath":  "ui/requirements.txt",
@@ -12,7 +14,12 @@
                             "requiresReact":  false,
                             "requiresStreamlit":  true
                         },
+    "mergeRequestUrl":  null,
     "diagramPaths":  [
-                         "docs/generated-diagrams/field-service-dispatch.png"
-                     ]
+                         {
+                             "Length":  50
+                         }
+                     ],
+    "featureBranch":  "sdlc/field-service-dispatch",
+    "mergeRequestIid":  null
 }

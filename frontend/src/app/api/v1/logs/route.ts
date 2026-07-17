@@ -48,6 +48,6 @@ export async function GET(request: Request) {
     }
   }
 
-  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 240, limit, mvpOnly: true });
+  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 15, limit, mvpOnly: true });
   return NextResponse.json({ logs, source: 'cloudwatch' });
 }

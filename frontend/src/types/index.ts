@@ -124,8 +124,10 @@ export interface GitlabHandoffInfo {
 /** Developer contract written after implementation (for QA / GitLab publish). */
 export interface DeveloperHandoffInfo {
   targetApp: string;
+  status: string;
   writtenFilesCount: number;
   validationStatus?: 'passed' | 'failed' | null;
+  error?: string | null;
   source: 's3' | 'local';
   path: string;
 }

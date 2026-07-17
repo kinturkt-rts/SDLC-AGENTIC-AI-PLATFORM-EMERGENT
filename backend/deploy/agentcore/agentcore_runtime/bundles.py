@@ -87,11 +87,21 @@ def orchestrator_agent_bundle() -> BundleFactory:
 
 def devops_agent_bundle() -> BundleFactory:
     mod = import_agent_module("devops-agent")
-    return _runner_bundle(
-        "devops-agent",
-        system_prompt=mod.DEVOPS_SYS_PROMPT,
-        mcp_names=(),
-    )
+
+    skills = [
+        AgentSkill(
+            id="deploy_target_app",
+            name="deploy_target_app",
+            description="Generate + validate per-app Terraform deploy roots (ECS Fargate + shared ALB).",
+            tags=["devops", "terraform", "ecs", "deploy"],
+        )
+    ]
+
+    @contextmanager
+    def factory() -> Iterator[AgentBundle]:
+        yield mod.build_devops_agent(), skills
+
+    return factory
 
 
 def security_agent_bundle() -> BundleFactory:

@@ -1,15 +1,4 @@
-"""Developer agent - Strands + Bedrock (Claude) + scoped repo file tools
-
-Generates code under target-apps/<service>/ and writes
-agents/pipeline/<app>.developer-handoff.json for qa-agent / devops-agent.
-
-Patterns (legacy code in parens):
-  in-memory    — FastAPI, no DB                 (flat app/)                       (A)
-  postgres     — Postgres CRUD                  (app/ + db models)                (B)
-  postgres-llm — Postgres + Bedrock/LLM         (postgres + app/services/)        (B+)
-  rag          — Local RAG (pgvector)           (postgres-llm + ingestion)        (B++)
-  streamlit    — any backend + Streamlit UI     (backend + ui/streamlit_app.py)   (C)
-"""
+"""Developer agent — Strands + Bedrock; generates target-apps code and developer handoff."""
 
 from __future__ import annotations
 
@@ -199,6 +188,8 @@ Rules — apply to every FR regardless of domain:
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
+      (**JWT users:** password column attribute MUST be `hashed_password` —
+      same name as DDL. Never invent `password_hash` if SQL says `hashed_password`, or the reverse.)
     - `app/routers/<domain>.py` — route handlers with business logic
     - `schemas/<domain>.py` — Pydantic request/response models
     - `app/services/bedrock_client.py` — copy from _template for B+/B++ patterns
@@ -240,11 +231,9 @@ Rules — apply to every FR regardless of domain:
     Passing pytest without test_seed_bcrypt.py is a false green for RDS login.
     When seed SQL uses `__BCRYPT_PLACEHOLDER__`, README **Seed Users** (or **Demo accounts**) section:
     - Table: username/email | password | role — use the plaintext from the seed SQL comment / HANDOFF.
-    - Do **not** mention `__BCRYPT_PLACEHOLDER__`, `materialize_seed_passwords.py`, or other pipeline
-      internals in README (those are implementation details, not user docs).
-    - Optional one line in plain English: "Demo logins work after the database seed has been applied
-      to Postgres." If documenting manual RDS setup from repo root: run
-      `python scripts/apply_sql_to_rds.py --target-app <app>` from `backend/` — no placeholder jargon.
+    - Do **not** mention `__BCRYPT_PLACEHOLDER__`, `materialize_seed_passwords.py`,
+      `apply_sql_to_rds.py`, seed-apply notes, or other pipeline internals — README is for app
+      users/dev setup, not the SDLC pipeline.
 
 **Step 4 — configuration and README**
 4a. .env.example only when the service reads env vars. Placeholder values, no real secrets.
@@ -267,7 +256,8 @@ Rules — apply to every FR regardless of domain:
     run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
     streamlit pattern: document UI URL (http://localhost:8501) and `streamlit run` in
     Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
-  passwords (# → %23). Document that pytest uses SQLite — passing tests ≠ RDS proof.
+  passwords (# → %23). Include a pytest command if tests exist; do **not** explain that tests use
+    SQLite / in-memory DB — that is an implementation detail, not user docs.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
     JWT Bearer per Rules); include curl AND one PowerShell `Invoke-RestMethod` example.
     **Role & endpoint quick reference (required when Rules define multiple roles or /portal vs /internal paths):**
@@ -334,8 +324,9 @@ Rules — apply to every FR regardless of domain:
   - `tests/test_seed_bcrypt.py` present and passes
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
-  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder
-    or materialize script names); password matches seed SQL comment exactly
+  - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder,
+    apply_sql/materialize script names, seed-apply notes, or SQLite-test notes); password matches
+    seed SQL comment exactly
 
   UI parity (Pattern C / requiresStreamlit only — skip when API-only):
   - `dev_validate_app` must report `UI_PARITY OK`
@@ -635,9 +626,9 @@ If `HANDOFF.md` has `### seedCredentials` or seed SQL uses `'__BCRYPT_PLACEHOLDE
 
 1. Optionally copy `target-apps/_template/scripts/seed_dev_users.py` via `dev_scaffold` and set `_CREDENTIALS` from HANDOFF (local re-seed only).
 2. **Do NOT** tell users to run `seed_dev_users.py` as a required setup step — `scripts/apply_sql_to_rds.py` **automatically** calls `materialize_seed_passwords.py` after seed SQL.
-3. README "Setup": document seed login emails/passwords from HANDOFF in a **Demo accounts** table;
-   optional note that logins work after DB seed is applied to Postgres. Do not expose placeholder
-   sentinels or internal materialize scripts in README.
+3. README "Setup": document seed login emails/passwords from HANDOFF in a **Demo accounts** table
+   only. Do not mention seed-apply scripts, placeholders, materialize steps, or that "logins work
+   after DB seed" — the pipeline handles that; app README is for running the service and demo logins.
 4. Add `bcrypt>=4.0` to `requirements.txt` when the app verifies passwords.
 
 Same sentinel approach for `api_key_hash` or other hash columns documented in HANDOFF.
@@ -694,6 +685,9 @@ These files are COPIED VERBATIM from golden templates in Step 2c — do NOT rege
 | Pytest / validate tool | `tests/conftest.py` sets `APP_ENV=test` and `SKIP_STARTUP_CHECKS=1` so SQLite tests do not trip Postgres fail-fast |
 | Streamlit + API key | When API-key auth: `.env.example` includes `API_KEY=`; README says Streamlit `ui/` reads the same key; never leave `API_KEY=` blank in `.env.example` |
 | Health path | Standardize on `GET /health` (not `/healthz`) unless design explicitly requires another path |
+| Multi-line strings | A single-quoted or double-quoted string literal MUST NOT contain a literal line break — that is a `SyntaxError`. Use an explicit `\n` inside the quotes (`"line one\nline two"`) instead of pasting a real newline into the literal. Applies to error messages, LLM prompts, and any other multi-line text — including inside test files and fixtures |
+| RAG chunk insert without embedding | Every `document_chunks`-style INSERT into a pgvector `embedding` column MUST be preceded by an actual `bedrock.invoke_embed(chunk_text)` call for that exact chunk — never insert a chunk row with `embedding` omitted, `None`, or a placeholder. Postgres raises `DatatypeMismatch` (vector column, non-vector value) if this is skipped, and the upload silently never reaches "ready" |
+| Background-task exception handler that re-commits | If a background task's `except` block itself calls `session.commit()` (e.g. to persist `status="failed"`), call `session.rollback()` FIRST. A DB-level error on the first commit leaves the session/transaction poisoned — a second commit on the same session raises too, the whole exception escapes uncaught, and the record is left stuck at its prior status (e.g. "processing") forever with no error surfaced |
 
 ## Library compatibility rules (detect and avoid - not hardcoded versions)
 
@@ -1203,6 +1197,11 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     raw = relative_path.strip().replace("\\", "/")
     if not raw:
         raise ValueError("path is required")
+    # Normalize whitespace around path segments (LLM-authored paths occasionally carry
+    # a stray space, e.g. "_template /scaffold-manifest.json") — an un-stripped segment
+    # defeats exact-match guards downstream (_validate_dev_write_path's "_template" check)
+    # and previously let a write land as a bogus top-level runs/<runId>/_template /... key.
+    raw = "/".join(seg.strip() for seg in raw.split("/"))
     candidate = (
         (_REPO_ROOT / raw).resolve()
         if not Path(raw).is_absolute()
@@ -1211,9 +1210,13 @@ def _resolve_repo_path(relative_path: str, *, write: bool) -> Path:
     if not str(candidate).startswith(str(_REPO_ROOT.resolve())):
         raise ValueError(f"path must stay inside repo: {relative_path}")
     if write:
+        template_root = (_TARGET_APPS / "_template").resolve()
+        if candidate == template_root or template_root in candidate.parents:
+            raise ValueError(
+                "target-apps/_template is read-only; use dev_scaffold to copy from it"
+            )
         under_target_apps = str(candidate).startswith(str(_TARGET_APPS.resolve()))
-        under_repo_root = _is_cloud_store() and str(candidate).startswith(str(_REPO_ROOT.resolve()))
-        if not (under_target_apps or under_repo_root):
+        if not under_target_apps:
             raise ValueError("writes only allowed under target-apps/")
         return candidate
     allowed = (
@@ -1241,6 +1244,11 @@ def _service_dir(service: str) -> Path:
 
 def _ensure_service_exists(service: str) -> Path:
     """Ensure target-apps/<service>/ exists. Layout is design-driven — no auto-copy."""
+    requested = service.strip().replace("\\", "/").strip("/").casefold()
+    if requested in {"_template", "template", "target-apps/_template"}:
+        raise ValueError(
+            "target-apps/_template is a read-only scaffold source, not a target service"
+        )
     dest = _service_dir(service)
     dest.mkdir(parents=True, exist_ok=True)
     return dest
@@ -1257,6 +1265,11 @@ _VERBATIM_SCAFFOLD_SUFFIXES = (
 def _validate_dev_write_path(file_path: Path) -> str | None:
     """Return an error string if this path must not be written by developer-agent."""
     parts = set(file_path.parts)
+    if "_template" in {part.strip().casefold() for part in file_path.parts}:
+        return (
+            "Error: target-apps/_template is read-only; "
+            "call dev_scaffold to copy template files into the target app"
+        )
     if parts & _BLOCKED_PATH_PARTS:
         return "Error: cannot write under .venv/, node_modules/, or cache directories"
     name = file_path.name
@@ -1362,7 +1375,10 @@ def dev_list_tree(service: str, subpath: str = "") -> str:
         ]
         return "\n".join(paths) if paths else "(no files)"
 
-    root = _ensure_service_exists(service)
+    try:
+        root = _ensure_service_exists(service)
+    except ValueError as exc:
+        return f"Error: {exc}"
     base = (root / subpath).resolve()
     if not str(base).startswith(str(root.resolve())):
         return "Error: subpath escapes service directory"
@@ -1387,8 +1403,8 @@ def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
         pattern: B | B+ | B++ | C
         force: when True, overwrite existing scaffold files from _template/
     """
-    dest = _ensure_service_exists(service)
     try:
+        dest = _ensure_service_exists(service)
         result = scaffold_service(
             template_dir=_TEMPLATE_DIR,
             service_dir=dest,
@@ -1715,6 +1731,24 @@ _ROUTER_ANTIPATTERN_RES = (
 )
 
 
+def _scan_python_syntax(service_dir: Path) -> list[str]:
+    """Compile every generated .py file — catches SyntaxError in files the
+    app.main import graph doesn't reach (services only imported by routers
+    other than the one under test, tests/conftest.py, etc.)."""
+    import py_compile
+
+    errors: list[str] = []
+    for path in service_dir.rglob("*.py"):
+        if any(part in _BLOCKED_PATH_PARTS for part in path.parts):
+            continue
+        rel = path.relative_to(service_dir).as_posix()
+        try:
+            py_compile.compile(str(path), doraise=True)
+        except py_compile.PyCompileError as exc:
+            errors.append(f"{rel}: {exc.msg}")
+    return errors
+
+
 def _scan_router_antipatterns(service_dir: Path) -> list[str]:
     """Static scan for FastAPI dependency mistakes that crash at import."""
     errors: list[str] = []
@@ -1804,6 +1838,16 @@ def run_service_validation(
         )
         return _fail("structure", detail)
     _ok("structure")
+
+    syntax_errors = _scan_python_syntax(service_dir)
+    if syntax_errors:
+        detail = (
+            "SYNTAX FAILED — files below don't compile (often a literal newline\n"
+            "pasted inside a \"...\" string instead of \\n — use \\n or triple-quoted\n"
+            "strings for any multi-line text):\n"
+        ) + "\n".join(f"  - {e}" for e in syntax_errors)
+        return _fail("syntax", detail)
+    _ok("syntax")
 
     env_results = _validate_env_example(service_dir)
     if env_results[0].startswith("ENV_EXAMPLE FAILED"):
@@ -2245,11 +2289,14 @@ def _persist_developer_handoff(
     written: list[str],
     *,
     status: str,
+    error: str | None = None,
 ) -> str | None:
-    """Write developer-handoff.json when at least one file was produced."""
-    if not written:
+    """Write a terminal developer handoff, including failures with no output files."""
+    if not written and status != "failed":
         return None
     handoff = _build_developer_handoff_payload(app, written, ctx, status=status)
+    if error:
+        handoff["error"] = error
     rel = _write_developer_handoff(app, handoff, context=ctx)
     logger.info(
         "[developer-agent] handoff persisted: %s (%d files, status=%s)",
@@ -2304,14 +2351,21 @@ class _DeveloperCallbackHandler:
                 self.telemetry.record_usage(usage)
 
 
-def _coding_model_id() -> str:
+def _coding_model_id(ctx: dict[str, Any] | None = None) -> str:
+    """Model for this run; pipeline retries pass codingModelOverride (Sonnet fallback)."""
+    if ctx:
+        override = str(ctx.get("codingModelOverride") or "").strip()
+        if override:
+            return override
     return coding_model_id()
 
 
-def _coding_model() -> BedrockModel:
+def _coding_model(ctx: dict[str, Any] | None = None) -> BedrockModel:
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
+    model_id = _coding_model_id(ctx)
+    is_override = model_id != coding_model_id()
     model_kwargs: dict[str, Any] = {
-        "model_id": _coding_model_id(),
+        "model_id": model_id,
         "region_name": os.getenv("AWS_REGION", "us-east-2"),
         "max_tokens": _max_output_tokens(),
         "streaming": True,
@@ -2323,7 +2377,9 @@ def _coding_model() -> BedrockModel:
             retries={"mode": "standard", "max_attempts": 2},
         ),
     }
-    if _thinking_enabled():
+    # Thinking budgets are tuned for the primary coding model; skip them on the
+    # Sonnet fallback override unless that model also has thinking enabled.
+    if _thinking_enabled() and not is_override:
         # "adaptive" thinking is only supported on Claude 4.5+; Sonnet 4 requires "enabled"|"disabled".
         model_kwargs["additional_request_fields"] = {
             "thinking": {"type": "enabled", "budget_tokens": _thinking_budget_tokens()},
@@ -2347,7 +2403,7 @@ def _build_agent(
             "Patterns: in-memory, postgres, postgres-llm, rag, streamlit "
             "(legacy aliases: A, B, B+, B++, C)."
         ),
-        model=_coding_model(),
+        model=_coding_model(ctx),
         system_prompt=_build_system_prompt(ctx),
         tools=[dev_list_tree, dev_scaffold, dev_read_file, dev_write_file, dev_write_files, dev_validate_app],
         callback_handler=_DeveloperCallbackHandler(
@@ -2484,7 +2540,7 @@ def run_task(
         telemetry = RunTelemetry(
             AGENT_NAME,
             target_app=app,
-            model_id=_coding_model_id(),
+            model_id=_coding_model_id(ctx),
             run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
         )
         agent = _build_agent(ctx, telemetry=telemetry)
@@ -2494,19 +2550,50 @@ def run_task(
         agent_error = exc
     finally:
         written = _dedupe_preserve_order(_written_files)
-        if written:
-            try:
+        # A validation failure with no Python exception used to still write
+        # status="completed" — gitlab-agent (local) and classify_developer_readiness
+        # (cloud) both treat "completed" as "safe to publish", so broken code (missing
+        # imports, syntax errors) flowed straight through to GitLab and devops-agent.
+        # Reuse the same terminal-failure contract classify_developer_readiness already
+        # enforces for status in {"failed", "error"}.
+        validation_failed = (
+            agent_error is None
+            and _auto_validate_enabled()
+            and not _summary_has_validation_passed(summary)
+        )
+        try:
+            if written:
                 written = _ensure_delivery_files(app, written, context=ctx)
+            handoff_status = "failed" if (agent_error or validation_failed) else "completed"
+            handoff_error = (
+                str(agent_error) if agent_error
+                else "dev_validate_app failed — see summary for VALIDATION FAILED report"
+                if validation_failed
+                else None
+            )
+            handoff_rel = _persist_developer_handoff(
+                app,
+                ctx,
+                written,
+                status=handoff_status,
+                error=handoff_error,
+            )
+            if handoff_rel:
+                ctx["developerHandoffPath"] = handoff_rel
+        except Exception as exc:
+            logger.exception("[developer-agent] failed to finalize developer handoff")
+            if agent_error is None:
+                agent_error = exc
+            try:
                 handoff_rel = _persist_developer_handoff(
                     app,
                     ctx,
                     written,
-                    status="failed" if agent_error else "completed",
+                    status="failed",
+                    error=str(agent_error),
                 )
-                if handoff_rel:
-                    ctx["developerHandoffPath"] = handoff_rel
             except Exception:
-                logger.exception("[developer-agent] failed to persist developer handoff")
+                logger.exception("[developer-agent] failed to persist failure handoff")
         # Telemetry must persist even when the agent run fails — tokens were billed
         # either way, and the control-plane cost breakdown needs every agent reported.
         if telemetry is not None:
@@ -2562,6 +2649,65 @@ def _prompt_to_text(message: Any) -> str:
     return str(message)
 
 
+def _developer_async_enabled() -> bool:
+    """Fire-and-forget mode on AgentCore (opt-out: AGENTCORE_DEVELOPER_ASYNC=false).
+
+    Synchronous InvokeAgentRuntime request/response is capped at ~15 minutes;
+    developer runs regularly exceed that. In async mode the entrypoint acks
+    immediately, the implementation continues on a background thread (session
+    kept alive via HealthyBusy pings), and the orchestrator polls the developer
+    handoff in the run store instead of holding the connection open.
+    """
+    raw = os.getenv("AGENTCORE_DEVELOPER_ASYNC", "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return bool(os.getenv("AGENTCORE_AGENT", "").strip())
+
+
+def _start_developer_pipeline_async(task: str, ctx: dict[str, Any]) -> str | None:
+    """Ack immediately and run the developer pipeline on a background thread.
+
+    Returns the ack text, or None when async is unavailable for this request
+    (disabled, no runId, or not an S3-backed run) so the caller runs sync.
+    """
+    run_id = resolve_run_id(ctx)
+    if not (_developer_async_enabled() and run_id and is_s3_store()):
+        return None
+    try:
+        app = _resolve_target_app(None, ctx)
+    except (ValueError, TargetAppRequiredError):
+        return None  # sync path produces the descriptive usage error
+
+    # Write the in_progress handoff BEFORE acking so the orchestrator's poll
+    # never observes a stale terminal handoff from a previous attempt.
+    ctx = dict(ctx)
+    ctx.setdefault("runId", run_id)
+    handoff = _build_developer_handoff_payload(app, [], ctx, status="in_progress")
+    handoff["asyncAccepted"] = True
+    rel = _write_developer_handoff(app, handoff, context=ctx)
+
+    from _shared.background_tasks import run_in_background
+
+    def _background_run() -> None:
+        # run_task persists the terminal handoff (completed/failed) in its
+        # finally block, so a crash here is still visible to the orchestrator.
+        run_task(task, ctx)
+
+    run_in_background(f"developer-agent:{run_id}", _background_run)
+    logger.info(
+        "[developer-agent] async run accepted: runId=%s app=%s handoff=%s", run_id, app, rel
+    )
+    return (
+        "PIPELINE_ASYNC_STARTED developer-agent\n"
+        f"- runId: {run_id}\n"
+        f"- targetApp: {app}\n"
+        f"- handoff: runs/{run_id}/{rel} (status=in_progress; poll until completed/failed)\n"
+        "Implementation continues in the background on this runtime session."
+    )
+
+
 def _execute_developer_pipeline_message(message: Any) -> str:
     """AgentCore A2A: parse Context, run_task (sets _run_context for S3 writes)."""
     text = _prompt_to_text(message)
@@ -2572,10 +2718,13 @@ def _execute_developer_pipeline_message(message: Any) -> str:
     task, ctx = parse_task_and_context(text)
     if not task.strip():
         task = DEFAULT_PIPELINE_TASK
+    async_ack = _start_developer_pipeline_async(task, ctx)
+    if async_ack is not None:
+        return async_ack
     try:
         summary, written, handoff_rel = run_task(task, ctx or None)
     except (ValueError, TargetAppRequiredError, SystemExit) as exc:
-        app = (ctx or {}).get("targetApp") or "demo-api"
+        app = (ctx or {}).get("targetApp") or "your-app"
         run_id = resolve_run_id(ctx) or "smoke-001"
         root = target_app_root_rel(str(app))
         example = {

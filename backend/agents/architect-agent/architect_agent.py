@@ -1,4 +1,4 @@
-"""Architect agent - Strands + Bedrock + AWS Diagram MCP"""
+"""Architect agent — Strands + Bedrock; design docs and architecture diagrams."""
 
 import argparse
 import json

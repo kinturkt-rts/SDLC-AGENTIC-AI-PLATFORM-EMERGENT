@@ -1,0 +1,64 @@
+Prior Auth Workbench — hard Streamlit + FastAPI desk for utilization management
+
+Client story:
+Nadia runs utilization management at a mid-size health plan. Prior-authorization requests
+arrive by fax, portal PDF, and phone notes. Nurses triage into work queues; physicians
+decide approve / deny / request more info; providers call constantly asking “where is my PA?”
+Today the truth is three spreadsheets and a shared inbox. Nadia wants one calm workbench
+with clear ownership, SLA clocks, and an audit trail — not a full claims adjudication system.
+
+This is a hard MVP: multi-role RBAC, a non-trivial case lifecycle, concurrent ownership rules,
+and a real Streamlit UI that must stay in sync with the API.
+
+Must deliver:
+- FastAPI + Postgres backend (SQLAlchemy / psycopg).
+- A Streamlit UI under ui/streamlit_app.py that calls the API over HTTP only (never import
+  app/). Streamlit is required for demo — not Phase 2.
+- Role-based login gate in Streamlit (dev-style credentials / API key + role is fine; no SSO).
+
+What the product should do:
+- Providers (or intake staff on their behalf) submit prior-auth cases with: member ID,
+  member DOB, requesting provider NPI/name, service codes (CPT/HCPCS list), diagnosis codes
+  (ICD-10 list), requested start date, urgency (standard / expedited), and free-text clinical
+  rationale.
+- Cases move through a strict lifecycle:
+  draft → submitted → nurse_review → (optional) physician_review → approved | denied |
+  info_requested → (from info_requested) resubmitted → closed.
+- Expedited cases have a shorter SLA clock than standard; the board must show time remaining
+  and highlight breaches.
+- Nurses can claim a case (exclusive ownership), release it, or escalate to physician review
+  with a required rationale.
+- Physicians can approve (with optional limitations text), deny (with denial reason codes +
+  narrative), or send back for more information (checklist of missing items).
+- When info is requested, providers attach a response note and move the case to resubmitted;
+  history of prior request/response rounds must remain visible.
+- Leadership gets a read-only ops board: open by stage, SLA breaches, nurse/physician workload,
+  approve/deny rates for the last 7 and 30 days.
+- Full audit log: who changed status, claimed/released, and edited clinical fields.
+
+Who uses it:
+- Intake clerk — create drafts, submit, add documents/notes; cannot decide authorize/deny.
+- UM nurse — claim queue, nurse_review, escalate, request info; cannot final-approve.
+- Medical director / physician reviewer — physician_review decisions only on escalated cases.
+- Provider portal user — see only their org’s cases; submit and respond to info requests.
+- Ops manager — read-only dashboards and audit; can reassign ownership when a nurse is out.
+
+Rules that matter (agents must get these right):
+- Cannot skip nurse_review for standard cases; expedited may go nurse → physician faster but
+  still cannot jump straight from submitted to approved.
+- Only the current owner (or ops manager reassignment) may mutate an in-flight case.
+- Denied and approved are terminal except for a documented reopen path that ops manager
+  alone can trigger with a reason (creates a linked child case — do not rewrite history).
+- Info_requested blocks further clinical edits by nurses until provider resubmits.
+- SLA clocks pause while status is info_requested; resume on resubmitted.
+- Providers never see other providers’ member clinical rationales.
+- Every status transition writes an immutable audit row.
+
+Demo data expectations:
+- Mix of standard and expedited cases across stages, including at least one SLA breach.
+- At least one case with two info-request rounds.
+- Seed users for each role so Streamlit can demo role-gated tabs without manual SQL.
+
+Out of scope:
+- Real EDI 278 / clearinghouse integration, payment, full medical coding AI, EHR embeds,
+  production SSO, SMS/email notifications.

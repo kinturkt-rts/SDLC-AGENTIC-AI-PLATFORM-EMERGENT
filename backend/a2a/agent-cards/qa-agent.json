@@ -1,6 +1,6 @@
 {
   "name": "qa-agent",
-  "description": "Authors tests and reports quality metrics via GitLab.",
+  "description": "Authors and runs automated tests, then reports quality findings and regressions for each pipeline run.",
   "url": "http://127.0.0.1:9104/",
   "version": "1.0.0",
   "protocolVersion": "0.3.0",

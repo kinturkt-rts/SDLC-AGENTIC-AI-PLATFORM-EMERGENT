@@ -26,6 +26,25 @@ def test_put_and_get_artifact_local(repo_root: Path, monkeypatch: pytest.MonkeyP
     assert body.decode("utf-8") == "# Demo PRD\n"
 
 
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "_template/app/main.py",
+        "target-apps/_template/scaffold-manifest.json",
+    ],
+)
+def test_put_artifact_rejects_template_paths(
+    rel: str,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    from _shared.artifact_store import put_artifact
+
+    with pytest.raises(ValueError, match="Templates belong under templates"):
+        put_artifact("run-template-leak", rel, "must not be stored")
+
+
 def test_put_and_get_context_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     from _shared.artifact_store import get_context, put_context
@@ -276,3 +295,123 @@ def test_wait_for_developer_handoff_local(repo_root: Path, monkeypatch: pytest.M
     found = wait_for_developer_handoff(run_id, "demo-app", timeout_sec=1.0)
     assert found == rel
     assert developer_handoff_exists(run_id, "demo-app") is True
+
+
+def test_wait_for_developer_handoff_ignores_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _shared.artifact_store import wait_for_developer_handoff
+    from _shared.pipeline_context import developer_handoff_rel_for_app
+
+    responses = iter(
+        [
+            '{"status": "in_progress"}',
+            '{"status": "completed"}',
+        ]
+    )
+    with (
+        patch("_shared.artifact_store.get_artifact_text", side_effect=lambda *_: next(responses)),
+        patch("time.sleep"),
+    ):
+        rel = wait_for_developer_handoff(
+            "run-in-progress",
+            "demo-app",
+            timeout_sec=1.0,
+            poll_interval_sec=0.01,
+        )
+    assert rel == developer_handoff_rel_for_app("demo-app")
+
+
+def test_wait_for_developer_handoff_surfaces_failure() -> None:
+    from _shared.artifact_store import wait_for_developer_handoff
+
+    with patch(
+        "_shared.artifact_store.get_artifact_text",
+        return_value='{"status": "failed", "error": "model timeout"}',
+    ):
+        with pytest.raises(RuntimeError, match="model timeout"):
+            wait_for_developer_handoff("run-failed", "demo-app", timeout_sec=1.0)
+
+
+def test_classify_developer_readiness_completed() -> None:
+    from _shared.artifact_store import DEV_READY_COMPLETED, classify_developer_readiness
+
+    with patch(
+        "_shared.artifact_store.get_artifact_text",
+        return_value='{"status": "completed", "writtenFiles": ["a.py"]}',
+    ):
+        decision, handoff = classify_developer_readiness(
+            "run-1", "demo-app", timeout_sec=1.0, poll_interval_sec=0.01
+        )
+    assert decision == DEV_READY_COMPLETED
+    assert handoff is not None
+
+
+def test_classify_developer_readiness_failed() -> None:
+    from _shared.artifact_store import DEV_READY_FAILED, classify_developer_readiness
+
+    with patch(
+        "_shared.artifact_store.get_artifact_text",
+        return_value='{"status": "failed", "error": "boom"}',
+    ):
+        decision, handoff = classify_developer_readiness(
+            "run-2", "demo-app", timeout_sec=1.0, poll_interval_sec=0.01
+        )
+    assert decision == DEV_READY_FAILED
+    assert (handoff or {}).get("error") == "boom"
+
+
+def test_classify_developer_readiness_partial_when_stalled_with_artifacts() -> None:
+    """A stalled in_progress handoff with delivered app files publishes best-effort."""
+    from _shared.artifact_store import DEV_READY_PARTIAL, classify_developer_readiness
+
+    with (
+        patch(
+            "_shared.artifact_store.get_artifact_text",
+            return_value='{"status": "in_progress", "writtenFiles": ["target-apps/demo-app/app/main.py"]}',
+        ),
+        patch(
+            "_shared.artifact_store.list_run_artifact_keys",
+            return_value=["demo-app/app/main.py", "demo-app/requirements.txt"],
+        ),
+        patch("time.sleep"),
+    ):
+        decision, handoff = classify_developer_readiness(
+            "run-3", "demo-app", timeout_sec=5.0, poll_interval_sec=0.01, stall_polls=2
+        )
+    assert decision == DEV_READY_PARTIAL
+    assert (handoff or {}).get("status") == "in_progress"
+
+
+def test_classify_developer_readiness_missing_without_artifacts() -> None:
+    """In_progress handoff but no publishable app files blocks publish."""
+    from _shared.artifact_store import DEV_READY_MISSING, classify_developer_readiness
+
+    with (
+        patch(
+            "_shared.artifact_store.get_artifact_text",
+            return_value='{"status": "in_progress", "writtenFiles": []}',
+        ),
+        patch("_shared.artifact_store.list_run_artifact_keys", return_value=["demo-app/db/HANDOFF.md"]),
+        patch("time.sleep"),
+    ):
+        decision, _ = classify_developer_readiness(
+            "run-4", "demo-app", timeout_sec=5.0, poll_interval_sec=0.01, stall_polls=2
+        )
+    assert decision == DEV_READY_MISSING
+
+
+def test_run_has_publishable_app_artifacts() -> None:
+    from _shared.artifact_store import run_has_publishable_app_artifacts
+
+    with patch(
+        "_shared.artifact_store.list_run_artifact_keys",
+        return_value=["demo-app/app/routers/x.py", "demo-app/db/HANDOFF.md"],
+    ):
+        assert run_has_publishable_app_artifacts("run-5", "demo-app") is True
+
+    with patch(
+        "_shared.artifact_store.list_run_artifact_keys",
+        return_value=["demo-app/db/HANDOFF.md", "_template/app/main.py"],
+    ):
+        assert run_has_publishable_app_artifacts("run-6", "demo-app") is False

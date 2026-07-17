@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 export function PageHeader({
@@ -10,10 +11,10 @@ export function PageHeader({
 }: {
   eyebrow?: string;
   title: string;
-  description?: string;
-  actions?: React.ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
   /** Full-width filter row below the title (use for multi-control toolbars). */
-  toolbar?: React.ReactNode;
+  toolbar?: ReactNode;
   className?: string;
 }) {
   return (
@@ -30,9 +31,9 @@ export function PageHeader({
           </div>
           {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
         </div>
-        {description && (
-          <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</p>
-        )}
+        {description ? (
+          <div className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</div>
+        ) : null}
         {toolbar && <div className="flex flex-wrap items-center gap-2">{toolbar}</div>}
       </div>
       <div className="mt-4 h-px bg-gradient-to-r from-teal-500/20 via-border to-transparent" />

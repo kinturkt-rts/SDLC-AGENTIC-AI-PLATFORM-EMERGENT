@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -89,6 +90,38 @@ def test_sql_files_need_pgvector_false_for_plain_tables(tmp_path: Path) -> None:
     assert mod._sql_files_need_pgvector([sql_dir / "002_create_users.sql"]) is False
 
 
+def test_sql_files_need_pgtrgm_detects_trigram_index(tmp_path: Path) -> None:
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "003_add_indexes.sql").write_text(
+        "CREATE INDEX idx_recipes_name ON recipes USING gin (name gin_trgm_ops);",
+        encoding="utf-8",
+    )
+    assert mod._sql_files_need_pgtrgm([sql_dir / "003_add_indexes.sql"]) is True
+
+
+def test_ensure_pgtrgm_relocates_extension_to_public() -> None:
+    mod = _load_module()
+
+    class FakeCursor:
+        schemas = iter(["old_app_schema", "public"])
+
+        def __init__(self) -> None:
+            self.executed: list[str] = []
+
+        def execute(self, stmt: str) -> None:
+            self.executed.append(str(stmt))
+
+        def fetchone(self) -> tuple[str] | None:
+            return (next(self.schemas),)
+
+    cur = FakeCursor()
+    mod._ensure_pgtrgm_extension(cur, verbose=False)
+
+    assert "ALTER EXTENSION pg_trgm SET SCHEMA public" in cur.executed
+
+
 def test_connection_url_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://bad:pass@word@host:5432/db")
     monkeypatch.setenv("POSTGRES_MCP_DB_ENDPOINT", "host.example.com")
@@ -100,3 +133,28 @@ def test_connection_url_prefers_postgres_mcp_env(monkeypatch: pytest.MonkeyPatch
     url = mod._connection_url()
     assert "MyPass%40Database_26" in url
     assert "host.example.com:5432/sdlc_agentic_ai" in url
+
+
+def test_preprocess_seed_sql_gives_each_occurrence_a_distinct_hash() -> None:
+    """Regression: legal-doc-qa run 1c2fcc05 seeded 5 api_keys rows, each with
+    __BCRYPT_PLACEHOLDER__ for key_hash (UNIQUE NOT NULL). A single shared digest
+    reused across all 5 rows collided on the UNIQUE constraint and the whole INSERT
+    failed. Each occurrence must get its own freshly-salted hash."""
+    import bcrypt
+
+    mod = _load_module()
+    sql = (
+        '-- Password for all seed API keys: "LegalQA2024!"\n'
+        "INSERT INTO api_keys (id, key_hash, role) VALUES\n"
+        "    (1, '__BCRYPT_PLACEHOLDER__', 'legal_ops'),\n"
+        "    (2, '__BCRYPT_PLACEHOLDER__', 'reader'),\n"
+        "    (3, '__BCRYPT_PLACEHOLDER__', 'reader');\n"
+    )
+    result = mod._preprocess_seed_sql(sql)
+
+    assert "__BCRYPT_PLACEHOLDER__" not in result
+    hashes = re.findall(r"'(\$2[aby]\$12\$[./A-Za-z0-9]{53})'", result)
+    assert len(hashes) == 3
+    assert len(set(hashes)) == 3, "each occurrence must get a distinct hash (UNIQUE columns)"
+    for digest in hashes:
+        assert bcrypt.checkpw(b"LegalQA2024!", digest.encode("utf-8"))

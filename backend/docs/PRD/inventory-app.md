@@ -2,11 +2,11 @@
 
 ## 1. Overview
 
-Inventory Desk is a minimal, production-shaped REST API that enables a small warehouse team to manage a product catalog and track real-time stock levels. The shop manager (admin role) owns the catalog structure — creating categories and products, adjusting prices, and removing zero-stock items — while staff members can browse inventory and record stock movements such as sales and restocks. All interaction is via the documented REST API (Swagger UI) with no browser front-end in the MVP.
+Small warehouse teams currently manage stock levels in disconnected spreadsheets, causing stale data and a general lack of trust in the numbers. Sales and restocks are recorded in multiple places, making it impossible for the shop manager to get a reliable picture of on-hand stock or identify items running critically low before a stockout occurs.
 
-The primary purpose of this application is to serve as an end-to-end SDLC showcase, exercising the full pipeline from product definition through database design, backend development, and automated QA. It is deliberately minimal but real: persisted data, JWT-based authentication, role enforcement, and transactional stock logic are all required from day one.
+The Inventory Desk is a lightweight, role-aware REST API (with Swagger UI for demo use) that gives the shop manager a single authoritative catalog and gives warehouse staff a controlled way to log every stock movement. All changes flow through recorded adjustments rather than direct edits, leaving a complete audit trail of who changed what and when.
 
-The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x, and Postgres, deployed under `target-apps/inventory-app/`. A seeded admin and staff user enable immediate demo and testing. The final `handoff_json` must include a `deploymentHandoff` block for the downstream devops-agent.
+The MVP targets internal team use only — no public-facing UI is required in v1. A browser or mobile front-end, email alerts, barcode scanning, and multi-warehouse support are explicitly deferred to future releases.
 
 ---
 
@@ -14,27 +14,26 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | Goal | Metric | Target | Notes |
 |------|--------|--------|-------|
-| Functional login and role enforcement | Auth tests pass: admin full access, staff restricted, anonymous blocked | 100 % of defined auth test cases green | Verified by pytest suite |
-| Complete CRUD for catalog entities | All 13 API contracts return correct status codes and payloads | 0 schema or status-code mismatches in QA run | Verified by TestClient |
-| Transactional stock accuracy | `adjust-stock` atomically updates `qty_on_hand` and inserts `stock_movements` row | No qty drift detected across 1 000 sequential calls in load test | Checked via movement-history sum |
-| Negative-stock prevention | `adjust-stock` with result < 0 returns HTTP 422 | 100 % of negative-result attempts rejected | pytest negative-stock test |
-| Delete guard | `DELETE /products/{id}` returns 409 when `qty_on_hand > 0` | 100 % enforcement; 204 only when qty = 0 | pytest delete-blocked test |
-| Pagination shape | Every list endpoint returns `{items, total, limit, offset}` | Schema validation passes for all list responses | Pydantic response model check |
-| SDLC artefact completeness | database-agent SQL + seed + HANDOFF.md; developer-agent README + curl examples; handoff_json with deploymentHandoff | All artefacts present and parseable at project close | Manual artefact review |
+| Single source of truth for stock levels | % of stock adjustments recorded through the system (vs. spreadsheet) | 100 % within 2 weeks of go-live | Baseline is 0 % today |
+| Reliable, trusted inventory numbers | Discrepancy rate between system quantity and physical count | < 2 % variance at first physical stocktake | Measured at first audit |
+| Low-stock visibility | Time for manager to identify all low-stock items | < 60 seconds via filtered endpoint | Threshold: ≤ 5 units |
+| Role-based access enforced | Unauthorised staff attempts to create/edit catalog that are rejected | 100 % rejection rate | Verified by automated tests |
+| Demo-ready end-to-end journey | Manager creates category + product → staff records sale → manager views updated quantity and movement history — without error | Completable in < 5 minutes by a new user | Key acceptance scenario |
 
 ---
 
 ## 3. Non-Goals / Out of Scope
 
-- Streamlit, React, or any browser UI (deferred to a future phase)
-- OAuth 2.0, OpenID Connect, or SSO integration
-- Redis-backed sessions or token revocation lists
-- Password-reset / email notification flows
-- AWS Bedrock, S3, or any cloud-managed AI/ML service
-- Docker / container orchestration (delegated to devops-agent in a later pipeline stage)
-- Multi-tenancy or multi-warehouse support
-- Soft-delete or audit log beyond `stock_movements`
-- User management endpoints (create/update/deactivate users via API) — users are seeded in dev SQL only
+- Customer-facing or public web UI (deferred to a later phase)
+- Browser-based or mobile application front-end
+- Email or push notifications / alerts
+- Barcode or QR-code scanning
+- Multi-warehouse / multi-location support
+- Supplier management or purchase-order workflows
+- Financial reporting, invoicing, or accounting integrations
+- User self-registration (accounts are created by an administrator)
+- Automated reorder or procurement triggering
+- Data import from existing spreadsheets (manual entry only for MVP)
 
 ---
 
@@ -42,10 +41,9 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | Persona | Need | Primary use case |
 |---------|------|------------------|
-| Admin (shop manager) | Maintain accurate product catalog and pricing; remove obsolete SKUs | Signs in → creates/updates categories and products → adjusts stock → deletes zero-qty products |
-| Staff (warehouse worker) | See current inventory at a glance; record daily sales and restocks | Signs in → lists products (with low-stock filter) → posts adjust-stock movement → reviews movement history |
-| Anonymous / health-check caller | Confirm service is live (load balancer, monitoring agent) | Calls `GET /health` without credentials; expects `{"status":"ok"}` |
-| Developer / Demo attendee | Explore the API surface interactively via Swagger UI | Opens `/docs`; authenticates via Authorize button; exercises all endpoints |
+| Shop Manager (admin role) | Maintain an accurate, organised product catalog and monitor stock health | Signs in, creates/edits/removes categories and products, reviews low-stock list, views full movement history |
+| Warehouse Staff (staff role) | Quickly look up products and record every stock movement accurately | Signs in, searches for a product by SKU or name, records a sale / restock / correction with a reason and optional note |
+| Ops / DevOps | Confirm the service is healthy without authenticating | Calls the unauthenticated health-check endpoint from a monitoring tool |
 
 ---
 
@@ -53,18 +51,16 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | ID | Description | Priority | Acceptance criteria (Given / When / Then) |
 |----|-------------|----------|-------------------------------------------|
-| FR-1 | **Health endpoint** — `GET /health` returns service status with no authentication required. | P0 | **Given** no `Authorization` header, **When** `GET /health` is called, **Then** HTTP 200 with body `{"status":"ok","service":"inventory-desk"}` is returned within 500 ms. |
-| FR-2 | **JWT login** — `POST /auth/login` validates username + password and issues a signed JWT. | P0 | **Given** valid seeded credentials `{username, password}`, **When** `POST /auth/login` is called, **Then** HTTP 200 with `{access_token, token_type:"bearer", role, expires_in}` is returned; token is HS256-signed with `JWT_SECRET_KEY`; wrong password returns 401; `is_active=false` user returns 401. |
-| FR-3 | **Role-based access control** — protected routes enforce admin vs. staff permissions. | P0 | **Given** a staff JWT, **When** `POST /categories` is called, **Then** HTTP 403 is returned. **Given** no token, **When** any protected route is called, **Then** HTTP 401 is returned. **Given** an admin JWT, **When** the same admin-only route is called, **Then** the request succeeds. |
-| FR-4 | **Category CRUD** — admin can create, read, update categories; staff can read only. | P0 | **Given** an admin JWT, **When** `POST /categories` with `{name}` is called, **Then** HTTP 201 is returned with a new category including auto-generated slug (if omitted) and UUID. **When** `PATCH /categories/{id}` uses a slug already in use, **Then** HTTP 409 is returned. `GET /categories/{id}` returns `product_count`. |
-| FR-5 | **Product CRUD** — admin can create, read, update, and delete products; staff can read only. | P0 | **Given** an admin JWT, **When** `POST /products` references an unknown `category_id`, **Then** HTTP 404. **When** `POST /products` uses a duplicate `sku`, **Then** HTTP 409. `PATCH /products/{id}` may update `name`, `price`, `category_id` but never `qty_on_hand` directly. `DELETE /products/{id}` returns 204 when `qty_on_hand=0`, 409 otherwise. |
-| FR-6 | **Adjust-stock transaction** — `POST /products/{id}/adjust-stock` atomically updates `qty_on_hand` and inserts a `stock_movements` row; available to admin and staff. | P0 | **Given** a valid JWT (admin or staff), **When** `POST /products/{id}/adjust-stock` with `{delta, reason, note?}` is called, **Then** `qty_on_hand` is incremented by `delta` and a `stock_movements` row is inserted with `performed_by` set to the caller's user ID, both in one transaction. **When** the resulting `qty_on_hand` would be < 0, **Then** HTTP 422 is returned and neither the product row nor the movement row is modified. |
-| FR-7 | **Stock movement history** — `GET /products/{id}/movements` returns paginated history newest-first for admin and staff. | P1 | **Given** a valid JWT, **When** `GET /products/{id}/movements` is called, **Then** HTTP 200 with `{items, total, limit, offset}` where items are ordered by `created_at DESC`. Pagination honours `?limit=` and `?offset=` query params. |
-| FR-8 | **Product list filtering** — `GET /products` supports filtering by `category_id`, `sku`, and `low_stock=true` (qty ≤ 5). | P1 | **Given** a valid JWT, **When** `GET /products?low_stock=true` is called, **Then** only products with `qty_on_hand <= 5` are returned in the `items` array. Combining filters is additive (AND). Response shape is `{items, total, limit, offset}`. |
-| FR-9 | **Pagination on all list endpoints** — `/categories` and `/products` support `?limit=` and `?offset=` and return the standard envelope. | P1 | **Given** a valid JWT, **When** any list endpoint is called with `?limit=5&offset=10`, **Then** at most 5 items are returned and `total` reflects the full unfiltered (or filtered) count, not just the page size. |
-| FR-10 | **Seeded users and dev documentation** — database-agent provides DDL, seed SQL with hashed passwords, and HANDOFF.md; developer-agent provides README with curl login examples and local/AWS run sections. | P0 | **Given** a fresh Postgres schema `inventory_app`, **When** DDL + seed SQL are applied, **Then** the two seed users (`admin/Admin123!`, `staff/Staff123!`) can authenticate via `POST /auth/login`. README curl examples execute successfully against a locally running instance. `handoff_json` contains a `deploymentHandoff` key. |
-| FR-11 | **Password hashing** — passwords are never stored in plaintext; bcrypt via passlib is used. | P0 | **Given** the `users` table, **When** inspected directly in Postgres, **Then** no row's `password_hash` column contains a plaintext password; all values are valid bcrypt hashes verifiable by passlib `verify()`. |
-| FR-12 | **Inactive user block** — a user with `is_active=false` cannot authenticate. | P1 | **Given** a user row with `is_active=false`, **When** `POST /auth/login` is called with correct credentials, **Then** HTTP 401 is returned. |
+| FR-1 | **User authentication** — Users sign in with username and password and receive a bearer token. Only active accounts may authenticate. | P0 | **Given** a seeded active manager account; **When** correct credentials are posted to `POST /auth/token`; **Then** the response is HTTP 200 with a valid JWT. **Given** an inactive account; **When** credentials are submitted; **Then** the response is HTTP 401 and no token is issued. |
+| FR-2 | **Role-based access control** — The system enforces two roles: `manager` and `staff`. Staff may not create, update, or delete categories or products. | P0 | **Given** a staff-role token; **When** a `POST /categories` or `POST /products` request is made; **Then** the response is HTTP 403. **Given** a manager-role token; **When** the same requests are made with valid payloads; **Then** the response is HTTP 201. |
+| FR-3 | **Category management** — Managers can create, rename, and delete product categories (e.g. Beverages, Snacks, Supplies). | P0 | **Given** a manager token; **When** `POST /categories` is called with a unique name; **Then** HTTP 201 is returned and the category appears in `GET /categories`. **When** `DELETE /categories/{id}` is called for a category that still has products; **Then** HTTP 409 is returned and the category is not deleted. |
+| FR-4 | **Product management** — Managers can create, edit, and delete products. Each product must have a name, SKU (unique), price, category, and current quantity on hand. A product may only be deleted when its quantity is exactly zero. | P0 | **Given** a manager token; **When** `POST /products` is called with a duplicate SKU; **Then** HTTP 409 is returned. **When** `DELETE /products/{id}` is called on a product with quantity > 0; **Then** HTTP 409 is returned. **When** called on a product with quantity = 0; **Then** HTTP 200 (or 204) and the product no longer appears in `GET /products`. |
+| FR-5 | **Stock adjustment** — Both managers and staff can submit stock adjustments with a reason (`sale`, `restock`, or `manual_adjustment`) and an optional free-text note. Quantity must never drop below zero; the API must reject any adjustment that would cause a negative quantity. | P0 | **Given** a staff token and a product with quantity 3; **When** `POST /products/{id}/adjustments` is called with `delta: -5`; **Then** HTTP 422 is returned and quantity remains 3. **When** called with `delta: -2`; **Then** HTTP 201 is returned and quantity is now 1. |
+| FR-6 | **Audit trail** — Every stock adjustment is persisted with: the acting user's ID, timestamp (UTC), reason, delta, resulting quantity, and optional note. The audit log is immutable (no delete or edit of adjustment records). | P0 | **Given** a recorded adjustment; **When** `GET /products/{id}/adjustments` is called; **Then** the response includes `user_id`, `timestamp`, `reason`, `delta`, `quantity_after`, and `note` for every adjustment in ascending time order. **When** a `DELETE` or `PATCH` on an adjustment endpoint is attempted; **Then** HTTP 405 is returned. |
+| FR-7 | **Product search and browse** — Users can list products filtered by category, SKU (exact), or name (partial, case-insensitive). Results flag items with quantity ≤ 5 as low-stock. | P1 | **Given** products with names "Cola 330ml" and "Cola 500ml"; **When** `GET /products?name=cola` is called; **Then** both products are returned. **Given** a product with quantity 4; **Then** its response payload includes `"low_stock": true`. **Given** a product with quantity 6; **Then** `"low_stock": false`. |
+| FR-8 | **Low-stock summary endpoint** — A dedicated endpoint returns only products at or below the low-stock threshold (≤ 5 units) to support the manager's daily review. | P1 | **Given** mixed-quantity products; **When** `GET /products?low_stock=true` is called with a valid token; **Then** only products with quantity ≤ 5 are returned and all returned products have `"low_stock": true`. |
+| FR-9 | **Seed data** — On first startup the system seeds at least one active manager account and one active staff account with known demo credentials documented in the README. Seed data must not be re-applied if the records already exist. | P0 | **Given** a fresh database; **When** the application starts; **Then** `GET /users` (manager token) returns at least one manager and one staff user. **When** the application is restarted; **Then** no duplicate seed records are created. |
+| FR-10 | **Health-check endpoint** — An unauthenticated endpoint reports service and database liveness for operations monitoring. | P1 | **Given** no authentication header; **When** `GET /health` is called; **Then** HTTP 200 is returned with a payload indicating service status. **Given** the database is unreachable; **Then** HTTP 503 is returned. |
 
 ---
 
@@ -72,48 +68,40 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | ID | Category | Target | Measurement / verification | Notes |
 |----|----------|--------|---------------------------|-------|
-| NFR-1 | Security | Passwords stored as bcrypt hashes; JWT signed HS256 with secret from env; secret never hardcoded | Code review + passlib verify in test; `JWT_SECRET_KEY` absent from source files (grep CI check) | `JWT_SECRET_KEY` loaded via pydantic-settings from env / `.env` |
-| NFR-2 | Security | 401 on missing/invalid/expired token; 403 on insufficient role; no sensitive data in error bodies | pytest auth suite covering all negative paths | Token expiry default 60 min (configurable via `JWT_EXPIRE_MINUTES`) |
-| NFR-3 | Performance | `GET /products` (≤ 1 000 rows) responds in < 300 ms p95 on local Postgres | Manual timing or pytest-benchmark run during QA | (Assumption) — no explicit SLA in brief |
-| NFR-4 | Availability | Service restarts within 30 s on crash (process supervisor or platform restart policy) | Observed during devops-agent phase | (Assumption) — target availability ≥ 99 % in production |
-| NFR-5 | Scalability | Schema and ORM designed for single-instance Postgres with connection pooling via SQLAlchemy; no shared mutable state in application layer | Code review: no module-level mutable caches | Horizontal scaling deferred; foundation must not preclude it |
-| NFR-6 | Observability | All unhandled exceptions logged with stack trace at ERROR level; all requests logged at INFO with method, path, status code, and latency | Log output visible in stdout during pytest run; spot-check during demo | (Assumption) — structured JSON logging preferred but not mandated in brief |
-| NFR-7 | Compliance / Data retention | `stock_movements` rows are append-only (no DELETE or UPDATE exposed via API); DDL should not include a delete route for movements | Verified by absence of any `DELETE /movements` endpoint; FK `ON DELETE CASCADE` from products reviewed | Movements cascade-delete only when parent product is deleted (qty must be 0 first) |
-| NFR-8 | Operability | `.env.example` present with all required keys; README documents local setup in ≤ 5 commands | Reviewer can stand up app from README alone on a clean machine | Keys: `DATABASE_URL`, `POSTGRES_SCHEMA`, `JWT_SECRET_KEY`, `JWT_EXPIRE_MINUTES`, `PORT` |
-| NFR-9 | Testability | pytest suite covers: login (admin + staff), role 403, adjust-stock qty update, negative-stock 422, delete blocked (qty > 0), pagination shape, 401 without token | `pytest` exits 0 with all test cases passing; coverage ≥ 80 % of `app/` lines | (Assumption) on coverage threshold |
-| NFR-10 | Data integrity | `qty_on_hand` never goes negative; `adjust-stock` uses a database transaction (SELECT FOR UPDATE or equivalent) | Concurrent test: two simultaneous depleting adjusts on qty=1 → exactly one succeeds, one returns 422 | (Assumption) — serialisation strategy left to developer-agent |
+| NFR-1 | Security — Authentication | Passwords stored as salted hashes (bcrypt or Argon2); plaintext passwords never persisted or logged | Code review + automated test asserting raw password is not present in DB | (Assumption: bcrypt minimum cost factor 12) |
+| NFR-2 | Security — Secrets | All secrets (JWT secret key, DB credentials) read from environment variables or a `.env` file excluded from source control; no hardcoded credentials in code | CI lint step (e.g. `detect-secrets`) fails the build on secret literals | Stated constraint in brief |
+| NFR-3 | Security — Transport | All API traffic served over HTTPS in any non-local environment | TLS certificate present; HTTP requests redirect to HTTPS | (Assumption) |
+| NFR-4 | Performance — Latency | p95 response time ≤ 300 ms for all list/search endpoints under typical internal load | Load test with realistic concurrent users (assumption: ≤ 20 simultaneous) | (Assumption: internal team ≤ 20 users) |
+| NFR-5 | Availability | Service uptime ≥ 99.5 % during warehouse operating hours | Uptime measured by health-check monitor | (Assumption: single-instance deployment acceptable for MVP) |
+| NFR-6 | Data Integrity | Quantity can never be persisted below zero; enforced at both application and database constraint levels | Integration test attempting negative-balance adjustment; DB check constraint verified | Stated business rule |
+| NFR-7 | Scalability | Application is stateless (JWT-based auth) so horizontal scaling requires only adding instances and a shared DB | Architecture review; no server-side session storage | (Assumption: relational DB such as PostgreSQL or SQLite for MVP) |
+| NFR-8 | Observability | Structured logs (JSON) emitted for every request (method, path, status, latency) and every stock adjustment event | Log output verified in staging; no plaintext credential leakage in logs | (Assumption) |
+| NFR-9 | Compliance / Data Retention | Audit-trail records retained indefinitely (no auto-purge) for MVP; retention policy to be reviewed before production rollout | DB schema has no TTL/cascade-delete on adjustment records; verified by schema inspection | Based on audit-trail requirement |
+| NFR-10 | Operability | Service starts with a single command (`docker compose up` or equivalent); README documents all env vars and demo credentials | Verified by a new team member following README from a clean clone | (Assumption: Docker-based local setup) |
 
 ---
 
 ## 7. Data & Integrations
 
-### Core Entities (Postgres schema `inventory_app`)
+### Core Entities
 
-| Entity | Key columns | Notes |
-|--------|-------------|-------|
-| `users` | `id uuid PK`, `username text UNIQUE`, `password_hash text`, `role enum(admin,staff)`, `is_active bool`, `created_at timestamptz` | Seeded in dev SQL only; no user-management API in MVP |
-| `categories` | `id uuid PK`, `name text(1–80)`, `slug text UNIQUE`, `created_at timestamptz` | Slug auto-generated from name if not supplied |
-| `products` | `id uuid PK`, `category_id uuid FK→categories ON DELETE RESTRICT`, `sku text UNIQUE`, `name text(1–120)`, `unit_price numeric(10,2) ≥ 0`, `qty_on_hand int ≥ 0 DEFAULT 0`, `created_at/updated_at timestamptz` | `qty_on_hand` mutated only via adjust-stock |
-| `stock_movements` | `id uuid PK`, `product_id uuid FK→products ON DELETE CASCADE`, `delta int`, `reason enum(sale,restock,adjustment)`, `note text(max 500) nullable`, `performed_by uuid FK→users nullable`, `created_at timestamptz` | Append-only; no update/delete API |
+| Entity | Key Attributes | Notes |
+|--------|---------------|-------|
+| `User` | `id`, `username`, `hashed_password`, `role` (`manager`\|`staff`), `is_active`, `created_at` | Roles drive all access decisions |
+| `Category` | `id`, `name` (unique), `created_at`, `updated_at` | Cannot be deleted while products are assigned |
+| `Product` | `id`, `name`, `sku` (unique), `price`, `quantity_on_hand`, `category_id`, `is_active`, `created_at`, `updated_at` | `quantity_on_hand` is read-only except via Adjustment; deletable only when quantity = 0 |
+| `Adjustment` | `id`, `product_id`, `user_id`, `delta` (positive or negative integer), `reason` (enum: `sale`, `restock`, `manual_adjustment`), `note` (nullable text), `quantity_after`, `created_at` | Immutable after creation |
 
-### File Layout
-
-| Path | Owner | Contents |
-|------|-------|----------|
-| `target-apps/inventory-app/db/sql/` | database-agent | DDL migrations, seed SQL (dev only) |
-| `target-apps/inventory-app/db/HANDOFF.md` | database-agent | Schema notes, seed instructions, open items for developer-agent |
-| `target-apps/inventory-app/app/routers/` | developer-agent | `auth.py`, `health.py`, `categories.py`, `products.py` |
-| `target-apps/inventory-app/app/models/` | developer-agent | SQLAlchemy ORM models |
-| `target-apps/inventory-app/app/schemas/` | developer-agent | Pydantic v2 request/response models |
-| `target-apps/inventory-app/app/services/auth.py` | developer-agent | JWT encode/decode, password verify |
-| `target-apps/inventory-app/app/dependencies.py` | developer-agent | `get_current_user`, `require_admin` FastAPI dependencies |
-| `target-apps/inventory-app/.env.example` | developer-agent | All required env keys with placeholder values |
-| `target-apps/inventory-app/README.md` | developer-agent | Setup, curl examples, local + AWS sections |
+### Computed / Derived
+- `low_stock` flag: `quantity_on_hand ≤ 5` (threshold configurable via env var in later versions).
 
 ### External Integrations
+- **None for MVP.** The system is standalone; no third-party APIs, ERPs, or spreadsheet connectors are required in v1.
 
-- **Postgres** — sole external dependency; connection via `DATABASE_URL` env var using SQLAlchemy 2.x sync engine + psycopg driver; `search_path` set to `inventory_app` schema.
-- No third-party APIs, message queues, object storage, or caching layers in MVP.
+### API Surface
+- RESTful API built with FastAPI under `target-apps/inventory-desk/`
+- OpenAPI / Swagger UI enabled at `/docs` for demo purposes
+- Auth via JWT Bearer tokens (`Authorization: Bearer <token>`)
 
 ---
 
@@ -121,13 +109,12 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | Concern | Approach |
 |---------|----------|
-| Request logging | FastAPI middleware logs method, path, status code, and elapsed ms to stdout on every request |
-| Error logging | Unhandled exceptions caught by global exception handler; logged at ERROR with full traceback; safe error message returned to client (no stack trace in response body) |
-| Auth events | Failed login attempts (401/403) logged at WARNING with username (not password) and remote IP |
-| Stock movement audit | `stock_movements` table itself is the audit log; `performed_by` links action to user; `GET /products/{id}/movements` surfaces history |
-| Health signal | `GET /health` usable as liveness probe by load balancer or uptime monitor |
-| Test observability | pytest output captures log lines; failing tests surface log context for diagnosis |
-| Future (out of scope now) | Structured JSON logs, distributed tracing, Prometheus metrics — recommended for devops-agent phase |
+| **Request logging** | Every HTTP request logged with: timestamp (UTC), method, path, response status, latency (ms), and authenticated user ID (if present). No request bodies logged to avoid credential leakage. |
+| **Adjustment events** | Each stock adjustment written to the `Adjustment` table serves as the primary event log. No separate event bus needed for MVP. |
+| **Error logging** | Unhandled exceptions logged at `ERROR` level with stack trace; 4xx errors logged at `WARNING` level. |
+| **Health metrics** | `/health` endpoint exposes DB connectivity status; can be polled by any uptime monitor (e.g. UptimeRobot, internal Prometheus scrape). |
+| **Low-stock alerts** | Out of scope for v1; low-stock endpoint provides the data needed for a human-initiated daily review. |
+| **Log format** | Structured JSON to stdout; compatible with log aggregation tools (e.g. Loki, CloudWatch) for future wiring. |
 
 ---
 
@@ -135,13 +122,12 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Race condition on `adjust-stock` causes qty to go negative | Data integrity violation; business loss | Use `SELECT … FOR UPDATE` or atomic `UPDATE products SET qty_on_hand = qty_on_hand + $delta WHERE id=$id AND qty_on_hand + $delta >= 0` with row-count check; wrap in explicit transaction |
-| Seed credentials left in production database | Security breach | Document prominently in README and HANDOFF.md that seed SQL is dev-only; seed file excluded from production migration path; warn in `.env.example` |
-| `JWT_SECRET_KEY` accidentally committed to source control | Token forgery; full account takeover | `.env` in `.gitignore`; `.env.example` uses placeholder; CI grep check for hardcoded secrets |
-| Slug collision on category rename/create | 409 errors confusing users | Auto-slugify is deterministic; PATCH validates uniqueness before write; 409 response includes conflicting slug |
-| `ON DELETE RESTRICT` on `category_id` blocks category deletion | Admin confusion | Document in README and Swagger description; expose `product_count` on `GET /categories/{id}` so admin can see dependency before attempting delete |
-| SQLAlchemy session leaks under test | Flaky tests; connection pool exhaustion | Use per-test transaction rollback fixture; close session in `finally` block |
-| pytest targeting production DB | Data loss in shared environment | `DATABASE_URL` for tests points to a separate test schema or local Postgres; documented in README |
+| Staff bypass the API and edit DB directly, breaking the audit trail | High — invalidates audit integrity | Document DB access policy; restrict DB credentials to application service account only; consider DB-level triggers as a future hardening step |
+| Incorrect delta sign (e.g. staff enters positive delta for a sale) | Medium — incorrect stock level | API validates `reason` + `delta` sign pairing (e.g. `sale` must have negative delta); clear Swagger examples included |
+| Demo seed credentials left active in production | High — unauthorised access | README instructs operators to rotate seed passwords before any production promotion; seed passwords read from env vars |
+| Concurrent adjustments on the same product create race conditions | Medium — incorrect final quantity | DB-level row locking or optimistic concurrency (e.g. version column) on `Product.quantity_on_hand` during adjustment write |
+| SQLite (if chosen for MVP) not suitable for concurrent writes at scale | Low for internal MVP, medium if usage grows | Abstract DB layer so migration to PostgreSQL requires only a connection-string change; (Assumption: MVP may start with SQLite) |
+| Secrets accidentally committed to source control | High — credential exposure | Pre-commit hook using `detect-secrets`; `.env` in `.gitignore`; CI secret-scan gate |
 
 ---
 
@@ -149,16 +135,16 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | # | Question | Suggested owner |
 |---|----------|-----------------|
-| 1 | What is the default page size (`limit`) for list endpoints when the query param is omitted — e.g. 20 or 50? | PM / developer-agent |
-| 2 | Should slug auto-generation handle Unicode/accented characters (transliteration) or reject non-ASCII names? | PM |
-| 3 | Is `performed_by` nullable to support system-generated movements (e.g. bulk import), or should it always be required when an API caller is present? | PM / developer-agent |
-| 4 | What token expiry should be used in production, and will refresh tokens be needed before the devops-agent phase? | PM / security reviewer |
-| 5 | Should `DELETE /products/{id}` also cascade-delete the product's `stock_movements` (currently yes via FK) — is losing movement history acceptable on product removal? | PM |
-| 6 | Is there a maximum `delta` value (positive or negative) that should be validated on adjust-stock, or is any integer valid as long as qty_on_hand ≥ 0 after the operation? | PM |
-| 7 | Should the `GET /products` list include `qty_on_hand` in the summary item, or only in the detail endpoint? | PM / developer-agent |
-| 8 | What Postgres version is targeted in the production environment (relevant for UUID generation strategy and `timestamptz` defaults)? | devops-agent |
-| 9 | Are there any data-retention requirements for `stock_movements` (e.g. purge after N months)? | PM / compliance |
-| 10 | Should the `handoff_json` `deploymentHandoff` block include a specific cloud target (e.g. AWS ECS, EC2, Lambda) or remain cloud-agnostic? | PM / devops-agent |
+| 1 | Which database engine should be used for v1 — SQLite (zero-infra) or PostgreSQL (production-grade)? | Engineering lead |
+| 2 | What is the exact low-stock threshold — is 5 units fixed or should it be configurable per product or category? | Shop manager |
+| 3 | Should the manager be able to create and deactivate user accounts through the API, or is user management handled out-of-band (e.g. CLI / DB seed scripts only)? | Shop manager + Engineering |
+| 4 | Are there any data-retention or audit-log compliance requirements (e.g. legal hold, minimum retention period) beyond "keep everything"? | Business / legal stakeholder |
+| 5 | What are the expected operating hours and acceptable maintenance windows for the service? | Ops / warehouse manager |
+| 6 | Should `price` support decimal values (e.g. £1.99) and which currency/locale should be used for display? | Shop manager |
+| 7 | Is a soft-delete (deactivation) required for products, or is hard-delete (quantity = 0 guard) sufficient? | Shop manager |
+| 8 | What deployment environment is targeted for v1 — local Docker, a cloud VM, a PaaS? This affects HTTPS, secrets management, and HA requirements. | Engineering lead / IT ops |
+| 9 | Should the `manual_adjustment` reason require manager approval, or can staff submit corrections freely? | Shop manager |
+| 10 | Will demo/seed credentials be rotated before go-live, and who is responsible for initial user provisioning in production? | Shop manager + IT ops |
 
 ---
 
@@ -166,29 +152,29 @@ The application is built with Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x,
 
 | Concern | Choice | Implementation notes |
 |---------|--------|---------------------|
-| Client UI | API-only (Swagger / OpenAPI) | MVP explicitly excludes any browser UI; Swagger UI at `/docs` is the demo surface; ReDoc available at `/redoc` |
-| API framework | FastAPI under `target-apps/inventory-app/` | Auto-generates OpenAPI 3.x spec; Swagger UI enabled in dev/demo; should be disabled or restricted in production |
-| API base path | `/` (no version prefix in MVP) | Version prefix (`/v1/`) recommended for production but out of scope |
-| Auth for API | JWT Bearer — `Authorization: Bearer <token>` | HS256 signed; `JWT_SECRET_KEY` from env; `JWT_EXPIRE_MINUTES` configurable (default 60) |
-| DB access | SQLAlchemy 2.x sync engine + psycopg; SessionLocal from `_template` pattern | `search_path` set to `inventory_app`; connection string from `DATABASE_URL` env var |
-| Schema location | `target-apps/inventory-app/db/sql/` | database-agent owns DDL and seed files |
-| Server | uvicorn on `PORT` (default 8000) | Single worker in dev; worker count and process management deferred to devops-agent |
-| Test runner | pytest + FastAPI `TestClient` | Prefer Postgres test schema with rollback fixture; SQLite fallback only if Postgres unavailable in CI |
-| Artefact handoff | `handoff_json` with `deploymentHandoff` key | Required for devops-agent pipeline stage; developer-agent must populate before closing ticket |
+| Client UI | API-only (Swagger / OpenAPI) — no web UI required for v1 | Brief explicitly states "Swagger is fine; no customer-facing web UI required yet" |
+| API framework | FastAPI under `target-apps/inventory-desk/` | REST + OpenAPI; Swagger UI auto-enabled at `/docs`, ReDoc at `/redoc` |
+| Auth mechanism | JWT Bearer tokens | `POST /auth/token` issues token; all protected routes require `Authorization: Bearer <token>` header |
+| Secrets management | Environment variables / `.env` file (excluded from source control) | Document all required vars in README; provide `.env.example` template |
+| Seed data | Startup script / Alembic seed migration | At least one `manager` and one `staff` account; credentials documented in README and sourced from env vars |
+| Database migrations | Alembic (or equivalent) | Schema versioned; reproducible from scratch with one command |
+| Local dev startup | `docker compose up` (Assumption) | Single command brings up API + DB; README documents full setup |
+| Future UI | Browser / mobile UI noted as nice-to-have | FastAPI CORS settings pre-configured to allow future front-end origin; no Streamlit needed for this project |
 
 ---
 
 ## Appendix: Assumptions
 
-- Default pagination `limit` is assumed to be **20** unless PM specifies otherwise (Open Question 1).
-- The `GET /categories` list endpoint returns a `product_count` field per item, consistent with `GET /categories/{id}` — this is inferred from the spirit of the brief but not explicitly stated for the list response.
-- Slug auto-generation uses ASCII-safe lowercasing and hyphenation (e.g. `"Fresh Produce"` → `"fresh-produce"`); handling of non-ASCII characters is deferred (Open Question 2).
-- `performed_by` is populated from the authenticated user's ID on every API-initiated adjust-stock call; it is nullable in the DDL to support future non-API movements (Open Question 3).
-- Concurrent adjust-stock calls are serialised at the row level using a database-level atomic update; the specific locking strategy (`SELECT FOR UPDATE` vs. conditional `UPDATE`) is left to the developer-agent.
-- Test database is a separate Postgres schema (`inventory_app_test`) or the same Postgres instance with transaction rollback per test; SQLite is a last resort.
-- Swagger UI is enabled in all environments for the purpose of this SDLC showcase; production hardening (disabling docs, rate limiting) is out of scope.
-- No maximum `delta` constraint is applied beyond the `qty_on_hand >= 0` post-condition (Open Question 6).
-- `unit_price` of `0.00` is valid (free/sample items); the constraint is `>= 0` as stated.
-- `updated_at` on `products` is automatically maintained via an application-layer or DB trigger `ON UPDATE`; implementation detail left to developer-agent.
-- The `handoff_json` structure and schema follow the existing pipeline convention established by the `_template` project; developer-agent must conform to that schema.
-- Production deployment target is assumed to be an AWS environment (inferred from README "local/AWS sections" mention) but remains cloud-agnostic until devops-agent confirms (Open Question 10).
+- **Database:** SQLite is assumed acceptable for the MVP due to zero-infrastructure overhead; the data layer will be abstracted to allow migration to PostgreSQL without application-logic changes.
+- **JWT expiry:** Access tokens expire after 8 hours by default (one working shift); no refresh-token flow is required for MVP.
+- **Low-stock threshold:** Fixed at ≤ 5 units for MVP as stated in the brief; making it configurable per product is deferred.
+- **Price precision:** `price` is stored as a decimal with two decimal places (e.g. `NUMERIC(10,2)`); currency is assumed to be a single locale (not multi-currency).
+- **User management:** No self-registration; user accounts are created via seed scripts or a CLI helper by the manager/admin. A future CRUD `/users` endpoint for the manager role is desirable but not scoped for MVP.
+- **Deployment environment:** A single-instance Docker-based deployment on an internal server or local machine is assumed for v1; no high-availability or auto-scaling infrastructure is required yet.
+- **HTTPS:** Assumed required for any deployment beyond a developer's local machine; TLS termination may be handled by a reverse proxy (e.g. Nginx, Caddy).
+- **Concurrency control:** Optimistic locking (version/ETag) or a `SELECT FOR UPDATE` pattern will be applied to prevent race conditions on `quantity_on_hand` during concurrent adjustments.
+- **Adjustment sign convention:** A `sale` reason must carry a negative delta; a `restock` must carry a positive delta; `manual_adjustment` may be either sign. The API will validate this pairing.
+- **Inactive user check:** `is_active` flag is checked at login time only; existing tokens are not revoked immediately when a user is deactivated (token expiry provides eventual revocation for MVP).
+- **Category deletion guard:** Deleting a category with associated products returns HTTP 409; products must be reassigned or deleted first.
+- **Audit log immutability:** No `UPDATE` or `DELETE` operations are exposed on `Adjustment` records at the API or database level.
+- **Demo seed passwords:** Sourced from environment variables (not hardcoded) and documented in `.env.example`; operators must rotate them before promoting to any production environment.

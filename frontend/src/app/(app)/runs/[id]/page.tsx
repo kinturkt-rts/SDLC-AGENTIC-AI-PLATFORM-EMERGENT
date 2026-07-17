@@ -22,8 +22,10 @@ import {
   ScrollText,
   ExternalLink,
   GitBranch,
+  Ban,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,10 +34,22 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { LogTable } from '@/src/components/logs/LogTable';
-import { useRun, useRunEvents, useRunHandoffs, useRunLogs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
+import { useRouter } from 'next/navigation';
+import {
+  queryKeys,
+  useRun,
+  useRunEvents,
+  useRunHandoffs,
+  useRunLogs,
+  useArtifacts,
+  useCheckpoints,
+} from '@/src/lib/queries';
+import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
+import { LiveRunMonitoringLine } from '@/src/components/common/LiveElapsed';
 import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
+import { useUiStore } from '@/src/store/ui-store';
 import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
 
 const STEP_ICON: Record<StepStatus, typeof Clock> = {
@@ -121,6 +135,8 @@ function RunEventItem({ event }: { event: RunEvent }) {
 }
 
 export default function RunDetailPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const { data: run, isLoading } = useRun(params.id);
   const isLive = run?.status === 'running' || run?.status === 'paused';
   const { data: events } = useRunEvents(params.id, isLive);
@@ -128,8 +144,28 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const { data: handoffs } = useRunHandoffs(params.id, isLive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
+  const setArtifactsProjectId = useUiStore((s) => s.setArtifactsProjectId);
 
   const [hitlOverride, setHitlOverride] = React.useState<Record<string, 'approved' | 'rejected'>>({});
+  const [cancelling, setCancelling] = React.useState(false);
+
+  const handleCancel = async () => {
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      const result = await api.cancelRun(params.id);
+      toast.success('Run cancelled', { description: result.message });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.run(params.id) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    } catch (err) {
+      toast.error('Cancel failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   if (!isLoading && !run) {
     return (
@@ -157,15 +193,30 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     toast.success(`Checkpoint ${decision}`, { description: `${title} - recorded locally (mock).` });
   };
 
-  const controls = <StatusBadge status={status} />;
+  const controls = (
+    <div className="flex items-center gap-2">
+      {(status === 'running' || status === 'paused') ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 border-red-500/30 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+          onClick={handleCancel}
+          disabled={cancelling}
+        >
+          {cancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+          Cancel
+        </Button>
+      ) : null}
+      <StatusBadge status={status} />
+    </div>
+  );
 
-  const runDescription = run
-    ? status === 'running' || status === 'paused'
-      ? `Started ${formatRelative(run.startedAt)} · live for ${formatDuration(run.elapsedSec)} · monitoring only (runs on AgentCore)`
-      : `Started ${formatRelative(run.startedAt)}${
+  const runDescription =
+    run && status !== 'running' && status !== 'paused'
+      ? `Started ${formatRelative(run.startedAt)}${
           run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
         }`
-    : undefined;
+      : undefined;
 
   return (
     <>
@@ -176,7 +227,13 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
       <PageHeader
         eyebrow={run ? `${run.id} \u00b7 ${run.pipeline}` : params.id}
         title={run?.projectName ?? params.id}
-        description={runDescription}
+        description={
+          run && (status === 'running' || status === 'paused') ? (
+            <LiveRunMonitoringLine startedAt={run.startedAt} live />
+          ) : (
+            runDescription
+          )
+        }
         actions={isLoading ? null : controls}
       />
 
@@ -213,6 +270,20 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                 <p className="text-sm font-medium text-foreground">Pipeline failed</p>
                 <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
                   {run.error ?? 'See the phase timeline and event stream below for details.'}
+                </p>
+              </div>
+            </Card>
+          ) : null}
+
+          {status === 'cancelled' ? (
+            <Card className="flex items-start gap-3 border-amber-500/30 bg-amber-500/[0.05] p-4">
+              <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                <Ban className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">Pipeline cancelled</p>
+                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                  {run.error ?? 'This run was cancelled. You can start a new pipeline when ready.'}
                 </p>
               </div>
             </Card>
@@ -257,8 +328,16 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                     <ExternalLink className="h-3 w-3 opacity-70" />
                   </a>
                 ) : null}
-                <Button asChild variant="outline" size="sm" className="h-8 border-white/[0.08]">
-                  <Link href="/artifacts">Browse artifacts</Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/[0.08]"
+                  onClick={() => {
+                    if (run?.projectId) setArtifactsProjectId(run.projectId);
+                    router.push('/artifacts');
+                  }}
+                >
+                  Browse artifacts
                 </Button>
               </div>
             </Card>
@@ -386,7 +465,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               />
             ) : (
               <div className="max-h-[480px] overflow-auto p-2">
-                <LogTable rows={runLogs.slice(0, 80)} showRunColumn={false} />
+                <LogTable rows={runLogs.slice(0, 80)} showRunColumn={false} live={isLive} />
                 {runLogs.length > 80 ? (
                   <p className="px-3 py-2 text-center text-xs text-muted-foreground">
                     Showing 80 of {runLogs.length}.{' '}

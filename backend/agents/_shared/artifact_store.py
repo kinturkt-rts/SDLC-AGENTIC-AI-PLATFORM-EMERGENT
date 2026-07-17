@@ -111,6 +111,11 @@ def put_artifact(
 ) -> str:
     """Store artifact bytes; returns stored relative path."""
     rel = rel_path.lstrip("/").replace("\\", "/")
+    if rel == "_template" or rel.startswith("_template/") or rel.startswith("target-apps/_template/"):
+        raise ValueError(
+            f"Refusing to store scaffold template as a run artifact: {rel}. "
+            "Templates belong under templates/<version>/, not runs/<runId>/."
+        )
     body = content.encode("utf-8") if isinstance(content, str) else content
 
     if is_s3_store():
@@ -612,15 +617,131 @@ def wait_for_developer_handoff(
     timeout_sec: float = 300.0,
     poll_interval_sec: float = 5.0,
 ) -> str:
-    """Poll until developer-handoff.json exists; return the relative artifact path."""
+    """Poll until developer-handoff.json reports completion.
+
+    Incremental handoffs use ``status=in_progress`` while files stream to the run
+    store. Their mere existence must not release GitLab publishing.
+    """
+    import time
+
     rel = developer_handoff_rel_for_slug(target_app)
-    wait_for_run_artifact(
-        run_id,
-        rel,
-        timeout_sec=timeout_sec,
-        poll_interval_sec=poll_interval_sec,
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    last_status = "missing"
+    while time.monotonic() < deadline:
+        try:
+            handoff = json.loads(get_artifact_text(run_id, rel))
+        except FileNotFoundError:
+            handoff = None
+        if isinstance(handoff, dict):
+            last_status = str(handoff.get("status") or "unknown").strip().lower()
+            if last_status == "completed":
+                return rel
+            if last_status in {"failed", "error"}:
+                detail = str(handoff.get("error") or "developer-agent reported failure")
+                raise RuntimeError(detail)
+        time.sleep(max(0.5, poll_interval_sec))
+    raise TimeoutError(
+        f"Timed out after {timeout_sec}s waiting for completed developer handoff "
+        f"at runs/{run_id}/{rel} (last status: {last_status})"
     )
-    return rel
+
+
+def run_has_publishable_app_artifacts(run_id: str, target_app: str) -> bool:
+    """True when the run store holds delivered FastAPI app artifacts for the app.
+
+    Used to decide whether GitLab publish may proceed even if the developer-agent
+    never wrote a terminal handoff (e.g. its runtime was killed mid-run). App code
+    already streamed to the run store is publishable regardless of handoff status.
+    """
+    from .pipeline_context import slugify
+
+    slug = slugify(target_app)
+    app_marker = f"{slug}/app/".lower()
+    req_marker = f"{slug}/requirements.txt".lower()
+    try:
+        keys = list_run_artifact_keys(run_id)
+    except Exception:
+        return False
+    for key in keys:
+        lower = key.lower()
+        if lower.endswith(req_marker):
+            return True
+        if app_marker in lower and lower.endswith(".py"):
+            return True
+    return False
+
+
+# Developer readiness decisions for gating GitLab publish.
+DEV_READY_COMPLETED = "completed"
+DEV_READY_FAILED = "failed"
+DEV_READY_PARTIAL = "partial"
+DEV_READY_MISSING = "missing"
+
+
+def classify_developer_readiness(
+    run_id: str,
+    target_app: str,
+    *,
+    timeout_sec: float = 900.0,
+    poll_interval_sec: float = 5.0,
+    stall_polls: int = 6,
+) -> tuple[str, dict[str, Any] | None]:
+    """Decide whether GitLab publish may proceed for a run.
+
+    Returns ``(decision, handoff)`` where decision is one of:
+      - ``completed``: developer wrote a terminal completed handoff — publish.
+      - ``failed``:    developer wrote a terminal failed/error handoff — block and
+                       surface the error (nothing trustworthy to publish).
+      - ``partial``:   developer stopped before a terminal handoff (in_progress or
+                       missing) but publishable app artifacts already landed in the
+                       run store — publish best-effort rather than discarding work.
+      - ``missing``:   no terminal handoff and no publishable artifacts — block.
+
+    ``stall_polls`` lets a dead developer (in_progress handoff whose file count has
+    stopped growing) resolve to ``partial`` quickly instead of blocking the whole
+    timeout — a still-writing developer keeps advancing its file count and is not
+    treated as stalled.
+    """
+    import time
+
+    rel = developer_handoff_rel_for_slug(target_app)
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    last_count = -1
+    stable = 0
+
+    def _read() -> dict[str, Any] | None:
+        try:
+            parsed = json.loads(get_artifact_text(run_id, rel))
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _non_terminal(handoff: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
+        if run_has_publishable_app_artifacts(run_id, target_app):
+            return DEV_READY_PARTIAL, handoff
+        return DEV_READY_MISSING, handoff
+
+    while time.monotonic() < deadline:
+        handoff = _read()
+        if handoff is not None:
+            status = str(handoff.get("status") or "unknown").strip().lower()
+            if status == "completed":
+                return DEV_READY_COMPLETED, handoff
+            if status in {"failed", "error"}:
+                return DEV_READY_FAILED, handoff
+            count = len(handoff.get("writtenFiles") or [])
+            if count == last_count:
+                stable += 1
+            else:
+                stable = 0
+                last_count = count
+            if stable >= max(1, stall_polls):
+                return _non_terminal(handoff)
+        time.sleep(max(0.5, poll_interval_sec))
+
+    return _non_terminal(_read())
 
 
 def put_handoff(run_id: str, name: str, handoff: dict[str, Any]) -> str:

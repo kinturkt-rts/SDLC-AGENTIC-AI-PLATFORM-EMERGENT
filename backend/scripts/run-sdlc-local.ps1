@@ -11,6 +11,11 @@
 #
 #   -WithWebCrawler                      # scrape URLs into Postgres (optional step 2b)
 #
+# AWS deploy (opt-in step 7, after gitlab publish):
+#   -WithDeploy                          # devops-agent: Terraform root + ECS Fargate deploy -> live ALB URL
+#   -DeployPlanOnly                      # with -WithDeploy: terraform plan only, no AWS changes
+#   Needs: Docker Desktop running, terraform on PATH, AWS SSO session (see infrastructure/README.md)
+#
 # Opt-out (skip steps):
 #   -SkipDb -SkipPostgres                 # no database-agent, no RDS apply
 #   -SkipGitlab                           # skip gitlab-agent publish (default is ON after developer)
@@ -45,7 +50,10 @@ param(
     [ValidateSet("", "concise", "user-story")]
     [string] $JiraStoryTitleStyle = "",
     [switch] $WithPostgres,
-    [switch] $WithQa
+    [switch] $WithQa,
+    [switch] $WithDeploy,
+    [switch] $SkipDeploy,
+    [switch] $DeployPlanOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +83,20 @@ function Import-RepoEnv {
     }
 }
 Import-RepoEnv
+
+# This script is the LOCAL orchestrator: every agent it spawns must resolve
+# PRD/design/context paths against the local filesystem convention
+# (docs/PRD/<feature>.md), never the S3/cloud-run convention (<slug>/docs/PRD/...).
+# .env/.env.local may default ARTIFACT_STORE=s3 for AgentCore deploys or the
+# frontend's S3 reads — that default is correct for those, but must never leak
+# into a local pipeline run, so force it here regardless of what was loaded above.
+$env:ARTIFACT_STORE = "local"
+# artifact_layout() defaults to the nested "target-app-root" layout (target-apps/<slug>/docs/PRD/...)
+# even outside cloud mode unless told otherwise. Every path check in this script — the
+# PRD existence check below, ContextFile's default agents/pipeline/<feature>.context.json,
+# design doc, scraped-docs dir — assumes the flat legacy "docs" layout. Force it so product-agent
+# (and anything else consulting artifact_layout()) matches what this script actually reads.
+$env:PRODUCT_ARTIFACT_LAYOUT = "docs"
 
 $venvScripts = Join-Path $RepoRoot ".venv\Scripts"
 if (Test-Path $venvScripts) {
@@ -136,6 +158,38 @@ if ($runGitlab) {
     } elseif (-not $GitlabProject -and -not $env:GITLAB_PROJECT_PATH -and -not $env:GITLAB_PROJECT_ID) {
         Write-Warning "Skipping gitlab-agent: set GITLAB_PROJECT_PATH in .env or pass -GitlabProject."
         $runGitlab = $false
+    }
+}
+
+# AWS deploy is opt-in (-WithDeploy) and never blocks the rest of the pipeline.
+# Works in resume runs too (-SkipDeveloper): it deploys whatever is in target-apps/<app>/.
+$runDeploy = $WithDeploy -and (-not $SkipDeploy)
+if ($runDeploy) {
+    $dockerOk = $false
+    try {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        docker version --format '{{.Server.Version}}' 2>$null | Out-Null
+        $dockerOk = ($LASTEXITCODE -eq 0)
+    } catch {
+        $dockerOk = $false
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if (-not $dockerOk) {
+        Write-Warning "Skipping deploy: Docker daemon not running (start Docker Desktop, then re-run with -SkipProduct ... -WithDeploy)."
+        $runDeploy = $false
+    } else {
+        $tfCmd = Get-Command terraform -ErrorAction SilentlyContinue
+        if (-not $tfCmd) {
+            $wingetTf = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\Hashicorp.Terraform_Microsoft.Winget.Source_8wekyb3d8bbwe"
+            if (Test-Path (Join-Path $wingetTf "terraform.exe")) {
+                $env:PATH = "$env:PATH;$wingetTf"
+            } else {
+                Write-Warning "Skipping deploy: terraform not found (winget install HashiCorp.Terraform)."
+                $runDeploy = $false
+            }
+        }
     }
 }
 
@@ -528,7 +582,32 @@ if ($runGitlab) {
     }
 }
 
-# 7) QA -> pytest (Phase 3 - opt-in via -WithQa)
+# 7) DevOps-agent -> Terraform root + ECS Fargate deploy (opt-in via -WithDeploy)
+if ($runDeploy) {
+    $deployMode = if ($DeployPlanOnly) { "terraform plan only" } else { "build + deploy to ECS" }
+    Write-Host "`n=== 7/7 devops-agent ($deployMode) ===" -ForegroundColor Green
+    $devopsArgs = @(
+        "agents/devops-agent/devops_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile
+    )
+    if ($DeployPlanOnly) { $devopsArgs += "--plan-only" } else { $devopsArgs += "--deploy" }
+    if ((Invoke-PipelinePython -ArgumentList $devopsArgs) -ne 0) {
+        Write-Warning "devops-agent reported issues - app may not be live (see agents/pipeline/$Feature.devops-handoff.json)."
+    }
+    $devopsHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.devops-handoff.json"
+    if (Test-Path $devopsHandoff) {
+        $devopsJson = Get-Content $devopsHandoff -Raw | ConvertFrom-Json
+        if ($devopsJson.appUrl) {
+            Update-Context @{
+                deployUrl  = $devopsJson.appUrl
+                ecsService = $devopsJson.ecsService
+            }
+        }
+    }
+}
+
+# QA -> pytest (opt-in via -WithQa)
 if ($runQa) {
     Write-Host "`n=== qa-agent (pytest) ===" -ForegroundColor Green
     if ((Invoke-PipelinePython -ArgumentList @(
@@ -558,6 +637,21 @@ if ($runGitlab) {
     }
 }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
+if ($runDeploy) {
+    $devopsHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.devops-handoff.json"
+    $deployUrl = $null
+    if (Test-Path $devopsHandoff) {
+        try { $deployUrl = (Get-Content $devopsHandoff -Raw | ConvertFrom-Json).appUrl } catch {}
+    }
+    if ($deployUrl) {
+        Write-Host "  Deploy:  agents/pipeline/$Feature.devops-handoff.json"
+        Write-Host "  Live UI: $deployUrl" -ForegroundColor Yellow
+    } elseif ($DeployPlanOnly) {
+        Write-Host "  Deploy:  terraform plan only (no AWS changes)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Deploy:  no appUrl in handoff - deploy may have failed" -ForegroundColor Yellow
+    }
+}
 
 if ($pipelineAgentsRun.Count -gt 0) {
     Write-Host "`n=== Pipeline token usage ===" -ForegroundColor Cyan

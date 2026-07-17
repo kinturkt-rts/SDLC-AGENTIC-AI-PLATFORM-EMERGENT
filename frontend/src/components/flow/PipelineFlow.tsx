@@ -45,17 +45,17 @@ export function PipelineFlow({ pipeline }: { pipeline: PipelineDefinition }) {
 
   const { nodes, edges } = React.useMemo(() => buildGraph(pipeline), [pipeline]);
 
-  if (!mounted) return <Skeleton className="h-[420px] w-full rounded-lg" />;
+  if (!mounted) return <Skeleton className="h-[280px] w-full rounded-lg" />;
 
   return (
-    <div className="h-[420px] w-full overflow-hidden rounded-lg border border-border bg-card">
+    <div className="h-[280px] w-full overflow-hidden rounded-lg border border-border bg-card">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={pipelineNodeTypes}
         colorMode={resolvedTheme === 'light' ? 'light' : 'dark'}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: 0.15 }}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}

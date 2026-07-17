@@ -1,54 +1,52 @@
 # Inventory Desk — Solution Design
 
 ## 1. Summary
-Single-tenant warehouse inventory REST API (FastAPI + PostgreSQL) with JWT-based RBAC, product/stock CRUD, and atomic stock adjustments. Primary store is RDS PostgreSQL (`inventory_app` schema); no browser UI — Swagger at `/docs` is the demo surface.
-Diagram: `docs/generated-diagrams/inventory-app.png`. TBD: category delete endpoint, user deactivation API, pagination max-limit enforcement.
+REST API for warehouse stock management: single Postgres DB, JWT-auth FastAPI service, append-only adjustments for full audit trail. No web UI in v1 — Swagger at `/docs` serves as demo surface. Diagram: `docs/generated-diagrams/inventory-app.png`. TBD: low-stock threshold env-var config, manager user-CRUD endpoint (Phase 2).
 
 ## 2. Stack
-| Layer | Technology |
-|-------|------------|
-| API Service | FastAPI (uvicorn), ECS-hosted, `target-apps/inventory-app/` |
-| Auth | JWT HS256 via `python-jose`, passwords via `passlib[bcrypt]` |
-| ORM | SQLAlchemy 2.x (sync), Alembic migrations |
-| Database | RDS PostgreSQL 15, schema `inventory_app` |
-| Cache | ElastiCache Redis — hot product/stock-level reads |
-| Async Alerts | SQS + Lambda — reorder-threshold evaluation (out of app scope) |
+| Layer | Technology | Path |
+|-------|------------|------|
+| API | FastAPI (Python) | `target-apps/inventory-app/` |
+| Auth | PyJWT + bcrypt | `app/auth/` |
+| ORM | SQLAlchemy + Alembic | `app/models/`, `alembic/` |
+| DB | PostgreSQL (RDS) | env `DATABASE_URL` |
+| Container | Docker / docker compose | `docker-compose.yml` |
 
 ## 3. Data model
-| Table | Columns | Indexes / Constraints |
-|---|---|---|
-| `users` | `id uuid PK`, `username text UNIQUE NOT NULL`, `password_hash text NOT NULL`, `role user_role NOT NULL`, `is_active bool DEFAULT true`, `created_at timestamptz` | IDX: `username`; ENUM: `user_role('admin','staff')` |
-| `categories` | `id uuid PK`, `name varchar(80) NOT NULL`, `slug varchar(100) UNIQUE NOT NULL`, `created_at timestamptz` | IDX: `slug`; ON DELETE RESTRICT (from products) |
-| `products` | `id uuid PK`, `category_id uuid FK→categories RESTRICT`, `sku text UNIQUE NOT NULL`, `name varchar(120) NOT NULL`, `unit_price numeric(10,2) CHECK(>=0)`, `qty_on_hand int NOT NULL DEFAULT 0 CHECK(>=0)`, `created_at timestamptz`, `updated_at timestamptz` | IDX: `category_id`, `sku` |
-| `stock_movements` | `id uuid PK`, `product_id uuid FK→products CASCADE`, `delta int NOT NULL`, `reason movement_reason NOT NULL`, `note varchar(500)`, `performed_by uuid FK→users NULLABLE`, `created_at timestamptz` | IDX: `product_id`, `created_at DESC`; ENUM: `movement_reason('sale','restock','adjustment')`; immutable |
+| Table | Columns | Indexes / constraints |
+|-------|---------|----------------------|
+| `users` | `id uuid PK`, `username text UNIQUE`, `hashed_password text`, `role text`, `is_active bool DEFAULT true`, `created_at timestamptz` | idx on `username`; role IN ('manager','staff') |
+| `categories` | `id uuid PK`, `name text UNIQUE`, `created_at timestamptz`, `updated_at timestamptz` | idx on `name` |
+| `products` | `id uuid PK`, `name text`, `sku text UNIQUE`, `price numeric(10,2)`, `quantity_on_hand int DEFAULT 0`, `category_id uuid FK(categories)`, `is_active bool DEFAULT true`, `created_at timestamptz`, `updated_at timestamptz` | idx on `sku`, `category_id`; CHECK `quantity_on_hand >= 0` |
+| `adjustments` | `id uuid PK`, `product_id uuid FK(products)`, `user_id uuid FK(users)`, `delta int`, `reason text`, `note text`, `quantity_after int`, `created_at timestamptz` | idx on `product_id, created_at`; reason IN ('sale','restock','manual_adjustment'); no UPDATE/DELETE |
 
 ## 4. API surface
 | Method | Path | Request | Response | Notes |
 |--------|------|---------|----------|-------|
-| GET | `/health` | — | `{status,service}` | FR-1; no auth |
-| POST | `/auth/login` | `{username,password}` | `{access_token,token_type,role,expires_in}` | FR-2; returns 401 on bad creds/inactive |
-| GET | `/categories` | `?limit&offset` | `{items,total,limit,offset}` | FR-4; admin+staff |
-| POST | `/categories` | `{name,slug?}` | Category 201 | FR-4; admin only; 409 on dup slug |
-| GET | `/categories/{id}` | — | Category+`product_count` | FR-4; admin+staff |
-| PATCH | `/categories/{id}` | `{name?,slug?}` | Category | FR-4; admin only |
-| GET | `/products` | `?category_id&sku&low_stock&limit&offset` | `{items,total,limit,offset}` | FR-6; admin+staff |
-| POST | `/products` | `{category_id,sku,name,unit_price}` | Product 201 | FR-5; admin only; 409 dup SKU |
-| GET | `/products/{id}` | — | Product | FR-5; admin+staff |
-| PATCH | `/products/{id}` | `{name?,category_id?,unit_price?}` | Product | FR-5; `qty_on_hand` ignored |
-| DELETE | `/products/{id}` | — | 204 | FR-9; admin only; 409 if qty>0 |
-| POST | `/products/{id}/adjust-stock` | `{delta,reason,note?}` | Movement 200 | FR-7; admin+staff; 422 if qty<0 |
-| GET | `/products/{id}/movements` | `?limit&offset` | `{items,total,limit,offset}` | FR-8; admin+staff; newest-first |
+| POST | `/auth/token` | `username, password` | `{access_token, token_type}` | FR-1; 401 if inactive |
+| GET | `/health` | — | `{status, db}` | FR-10; no auth |
+| GET | `/categories` | — | `[{id, name}]` | FR-3 |
+| POST | `/categories` | `{name}` | `{id, name}` | FR-3; manager only; 409 on dup |
+| PUT | `/categories/{id}` | `{name}` | `{id, name}` | FR-3; manager only |
+| DELETE | `/categories/{id}` | — | 204 | FR-3; 409 if products assigned |
+| GET | `/products` | `?category_id&sku&name&low_stock` | `[{id,name,sku,price,quantity_on_hand,low_stock}]` | FR-7, FR-8 |
+| POST | `/products` | `{name,sku,price,category_id,quantity_on_hand}` | `{id,...}` | FR-4; manager only; 409 dup SKU |
+| PUT | `/products/{id}` | `{name,price,category_id}` | `{id,...}` | FR-4; manager only |
+| DELETE | `/products/{id}` | — | 204 | FR-4; 409 if qty > 0 |
+| POST | `/products/{id}/adjustments` | `{delta,reason,note?}` | `{id,quantity_after}` | FR-5; manager+staff; 422 if qty < 0 |
+| GET | `/products/{id}/adjustments` | — | `[{id,user_id,delta,reason,note,quantity_after,created_at}]` | FR-6; ascending order |
 
 ## 5. Rules
-- **RBAC roles:** `admin` — all routes; `staff` — GET categories/products, adjust-stock, movements only (FR-3).
-- **401** on missing/invalid/expired JWT; **403** on valid JWT with insufficient role (NFR-3).
-- **Atomic adjust-stock:** `SELECT FOR UPDATE` on product row + insert movement + update `qty_on_hand` in single transaction; rollback on negative result (NFR-6).
-- **Immutability:** `stock_movements` rows are never updated or deleted via API; CASCADE delete only when parent product is removed (FR-11).
-- **Slug:** auto-derived (lowercase, hyphens) from `name` if omitted; unique index is the integrity backstop (FR-4).
-- **Startup guard:** app exits non-zero if `DATABASE_URL` or `JWT_SECRET_KEY` absent (FR-12).
-- **Logging:** INFO per request `{method,path,status,latency_ms}`; WARNING on auth failure (no password echo); ERROR + stack trace on 5xx (NFR-8).
+- **Auth (FR-1, NFR-1, NFR-2):** bcrypt cost≥12 hashing; JWT HS256 8h expiry; secret from env `JWT_SECRET_KEY`; API: `Depends(get_current_user)` on all non-health routes; 401 on invalid/expired token; `is_active` checked at login only.
+- **RBAC (FR-2):** roles `manager`/`staff`; API: `Depends(require_role("manager"))` guards POST/PUT/DELETE on `/categories` and `/products`; staff may call POST `/products/{id}/adjustments` and all GETs; wrong role → 403.
+- **Adjustment integrity (FR-5, NFR-6):** `SELECT FOR UPDATE` on product row during adjustment; reject if `quantity_on_hand + delta < 0` → HTTP 422; validate sign convention: `sale`→delta<0, `restock`→delta>0, `manual_adjustment`→either; enforced in route handler + DB CHECK constraint.
+- **Audit immutability (FR-6, NFR-9):** No `UPDATE`/`DELETE` routes on adjustments; DB role revokes those privileges on `adjustments` table; `quantity_after` written atomically with product update.
+- **Category delete guard (FR-3):** Check `products` FK before delete; return 409 with message if any active product references category.
+- **Product delete guard (FR-4):** Reject DELETE if `quantity_on_hand > 0` → 409.
+- **Structured logging (NFR-8):** JSON middleware logs `method, path, status, latency_ms, user_id`; no request bodies logged; adjustments emit `INFO` event with `product_id, delta, reason, user_id`.
+- **Seed idempotency (FR-9):** Startup script uses `INSERT … ON CONFLICT DO NOTHING`; credentials from env vars `SEED_MANAGER_PASSWORD` / `SEED_STAFF_PASSWORD`.
 
 ## 6. DB delivery
-1. Migration order: `001_create_enums_and_users.sql` → `002_create_categories.sql` → `003_create_products.sql` → `004_create_stock_movements.sql`
-2. Seed file: `seeds/dev_users.sql` — inserts `admin` (role=`admin`) with bcrypt hash of `Admin123!` and `staff` (role=`staff`) with bcrypt hash of `Staff123!`; scoped dev-only; README warns to rotate before production (NFR-10).
-3. All tables under `inventory_app` schema; prepend `SET search_path TO inventory_app;` in each file; use `gen_random_uuid()` for UUIDs (Postgres 13+, fallback `uuid_generate_v4()` with `pgcrypto`).
+1. Migration order: `001_create_users.sql`, `002_create_categories.sql`, `003_create_products.sql`, `004_create_adjustments.sql`
+2. Seed data: one `manager` user (`demo_manager` / env `SEED_MANAGER_PASSWORD`), one `staff` user (`demo_staff` / env `SEED_STAFF_PASSWORD`), two categories (`Beverages`, `Snacks`), two sample products (qty 10 + qty 3 to demonstrate low-stock flag)
+3. Athena / NoSQL: not used

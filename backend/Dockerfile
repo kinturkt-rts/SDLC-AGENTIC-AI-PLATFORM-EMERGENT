@@ -9,7 +9,10 @@
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
 ARG AGENTCORE_AGENT=orchestrator-agent
-ARG INSTALL_NODE=true
+ARG INSTALL_NODE=false
+# devops-agent only: terraform CLI for devops_validate (init -backend=false + validate).
+ARG INSTALL_TERRAFORM=false
+ARG TERRAFORM_VERSION=1.15.8
 # AWS: run shared gitlab-mcp-server on ECS (HTTP) and set GITLAB_MCP_HTTP_URL on gitlab-agent.
 # Local stdio fallback: build with --build-arg INSTALL_GITLAB_MCP_BINARY=true (gitlab-agent only).
 ARG INSTALL_GITLAB_MCP_BINARY=false
@@ -24,10 +27,20 @@ RUN apt-get update \
         graphviz \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g firecrawl-mcp \
-    && rm -rf /var/lib/apt/lists/*
+RUN if [ "$INSTALL_NODE" = "true" ]; then \
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+      && apt-get install -y --no-install-recommends nodejs \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+RUN if [ "$INSTALL_TERRAFORM" = "true" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends unzip \
+      && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_arm64.zip" -o /tmp/terraform.zip \
+      && unzip /tmp/terraform.zip -d /usr/local/bin \
+      && rm /tmp/terraform.zip \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 ENV REPO_ROOT=/app
 ENV PYTHONUNBUFFERED=1
@@ -44,6 +57,8 @@ COPY agents /app/agents
 COPY a2a /app/a2a
 COPY scripts /app/scripts
 COPY config /app/config
+# Terraform module + env roots (devops-agent generates/validates per-app roots here).
+COPY infrastructure /app/infrastructure
 
 RUN if [ "$INSTALL_GITLAB_MCP_BINARY" = "true" ]; then \
       mkdir -p /app/bin \

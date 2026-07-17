@@ -16,6 +16,7 @@ stages:
 - test
 - deploy
 - agentcore
+- target-app-deploy
 - review
 - dast
 - staging
@@ -59,6 +60,35 @@ agentcore:deploy:
         --env "ARTIFACT_DYNAMODB_TABLE=${ARTIFACT_DYNAMODB_TABLE}"
   variables:
     AGENTCORE_AGENT_NAME: architect-agent
+
+# Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
+# fires only on branches gitlab-agent publishes (sdlc/<app>). `when: manual` on
+# purpose — this runs a real terraform apply against AWS, so it waits for a
+# person to click Run in the GitLab UI rather than firing on every push.
+#
+# Prerequisites not yet configured (job will fail until these are set up):
+#   - Runner needs Docker (build+push to ECR) and Terraform on PATH.
+#   - AWS credentials as protected/masked CI/CD variables (or OIDC role
+#     assumption) — SSO login (`aws sso login`) is interactive and won't work
+#     in CI, so this needs a different credential path than local runs use.
+#   - devops_agent.py's run_deploy() hardcodes the "powershell" binary name
+#     (agents/devops-agent/devops_agent.py:451), which only exists on Windows.
+#     A Linux runner only has "pwsh" if PowerShell Core is installed. This
+#     needs a decision before the job can succeed: either target a Windows
+#     runner, or make run_deploy() pick the binary by platform.
+target-app:deploy:
+  stage: target-app-deploy
+  image: python:3.12-slim
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+  before_script:
+    - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
+    - echo "Target app slug: $SLUG"
+    - pip install --no-cache-dir -r backend/requirements.txt
+  script:
+    - cd backend
+    - python agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy
 
 include:
 - template: Auto-DevOps.gitlab-ci.yml

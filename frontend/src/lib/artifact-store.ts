@@ -202,16 +202,30 @@ export async function inferTargetAppFromS3Run(runId: string): Promise<string | n
   return null;
 }
 
+/** Stale/renamed app slugs to hide everywhere (projects, artifacts, runs). */
+const HIDDEN_APP_SLUGS = new Set([
+  // Old brief name for guest-visit-log; run 368d5645 in S3 still uses it.
+  'guest-visit',
+]);
+
 function inferAppFromRunFiles(runId: string, files: S3ArtifactFile[]): string | null {
   const prefix = runS3Prefix(runId);
   for (const file of files) {
     const rel = file.key.startsWith(prefix) ? file.key.slice(prefix.length) : file.key;
     const nested = rel.match(/^([^/]+)\/inputs\/([^/]+)\.txt$/);
-    if (nested && nested[1] === nested[2]) return slugifyApp(nested[1]);
+    if (nested && nested[1] === nested[2]) return hideStaleApp(slugifyApp(nested[1]));
     const legacy = rel.match(/^inputs\/([^/]+)\.txt$/);
-    if (legacy) return slugifyApp(legacy[1]);
+    if (legacy) return hideStaleApp(slugifyApp(legacy[1]));
   }
   return null;
+}
+
+function hideStaleApp(slug: string): string | null {
+  return HIDDEN_APP_SLUGS.has(slug) ? null : slug;
+}
+
+export function isHiddenAppSlug(slug: string): boolean {
+  return HIDDEN_APP_SLUGS.has(slug);
 }
 
 function latestModifiedMs(files: S3ArtifactFile[]): number {
@@ -419,8 +433,10 @@ export async function getRunArtifactJson(
           Key: `${runS3Prefix(runId)}${rel}`,
         }),
       );
-      const raw = await response.Body?.transformToString('utf-8');
+      let raw = await response.Body?.transformToString('utf-8');
       if (!raw) return null;
+      // PowerShell Set-Content -Encoding utf8 writes a BOM; JSON.parse rejects it.
+      if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
       const parsed = JSON.parse(raw) as unknown;
       return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
     } catch {

@@ -79,12 +79,28 @@ _PGVECTOR_SQL_MARKERS = (
     "using hnsw",
 )
 
+_PGTRGM_SQL_MARKERS = (
+    "gin_trgm_ops",
+    "gist_trgm_ops",
+    "similarity(",
+    "create extension if not exists pg_trgm",
+)
+
 
 def _sql_files_need_pgvector(files: list[Path]) -> bool:
     """True when migrations use pgvector types, indexes, or extension DDL."""
     for path in files:
         lowered = path.read_text(encoding="utf-8").lower()
         if any(marker in lowered for marker in _PGVECTOR_SQL_MARKERS):
+            return True
+    return False
+
+
+def _sql_files_need_pgtrgm(files: list[Path]) -> bool:
+    """True when migrations use pg_trgm operators/opclasses or extension DDL."""
+    for path in files:
+        lowered = path.read_text(encoding="utf-8").lower()
+        if any(marker in lowered for marker in _PGTRGM_SQL_MARKERS):
             return True
     return False
 
@@ -127,6 +143,53 @@ def _ensure_pgvector_extension(cur, *, verbose: bool) -> None:
         )
     if verbose:
         print("  pgvector extension OK (schema public)", file=sys.stderr)
+
+
+def _trgm_opclass_schema(cur) -> str | None:
+    cur.execute(
+        """
+        SELECT n.nspname
+        FROM pg_opclass opc
+        JOIN pg_am am ON am.oid = opc.opcmethod
+        JOIN pg_namespace n ON n.oid = opc.opcnamespace
+        WHERE opc.opcname = 'gin_trgm_ops'
+          AND am.amname = 'gin'
+        LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _ensure_pgtrgm_extension(cur, *, verbose: bool) -> None:
+    """Install pg_trgm in public before trigram index DDL.
+
+    On shared RDS, `CREATE EXTENSION IF NOT EXISTS pg_trgm` can no-op because
+    another app schema already owns the extension. Then `gin_trgm_ops` is not
+    visible from the current app schema search_path and trigram indexes fail.
+    """
+    opclass_schema = _trgm_opclass_schema(cur)
+    if opclass_schema is None:
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
+        opclass_schema = _trgm_opclass_schema(cur)
+    elif opclass_schema != "public":
+        if verbose:
+            print(
+                f"  Relocating pg_trgm from {opclass_schema} to public (shared RDS) ...",
+                file=sys.stderr,
+            )
+        cur.execute("ALTER EXTENSION pg_trgm SET SCHEMA public")
+        opclass_schema = _trgm_opclass_schema(cur)
+
+    if opclass_schema != "public":
+        raise RuntimeError(
+            'pg_trgm operator class "gin_trgm_ops" is not available in schema public. '
+            f"Found in {opclass_schema!r} instead. "
+            "On RDS, run: ALTER EXTENSION pg_trgm SET SCHEMA public; "
+            "or contact a DBA to relocate the extension."
+        )
+    if verbose:
+        print("  pg_trgm extension OK (schema public)", file=sys.stderr)
 
 
 def _is_verbose() -> bool:
@@ -324,8 +387,14 @@ def _preprocess_seed_sql(sql: str) -> str:
 
     Eliminates the fragile post-apply UPDATE pass: the hash is embedded directly
     in the INSERT so rows always land with a valid bcrypt string, never a placeholder.
-    All seed users share one hash (same dev password); bcrypt.checkpw still works
-    because the salt is stored in the hash string itself.
+
+    Each occurrence gets its OWN freshly-salted hash of the same documented password —
+    not one shared digest reused everywhere. bcrypt.checkpw still validates every one
+    of them against the same plaintext (the salt lives inside each hash string), so
+    this is free for the common "all seed users share one dev password" case, and it
+    is required whenever the placeholder lands in a column with a UNIQUE constraint
+    (e.g. api_keys.key_hash) — a shared digest would collide and the INSERT would fail
+    with "duplicate key value violates unique constraint".
     """
     placeholder_sq = f"'{_BCRYPT_PLACEHOLDER}'"
     placeholder_dq = f'"{_BCRYPT_PLACEHOLDER}"'
@@ -356,13 +425,18 @@ def _preprocess_seed_sql(sql: str) -> str:
             file=sys.stderr,
         )
 
-    digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
-    result = sql.replace(placeholder_sq, f"'{digest}'").replace(placeholder_dq, f'"{digest}"')
+    def _fresh_hash(_match: re.Match[str], *, quote: str) -> str:
+        digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+        return f"{quote}{digest}{quote}"
+
+    result = re.sub(re.escape(placeholder_sq), lambda m: _fresh_hash(m, quote="'"), sql)
+    result = re.sub(re.escape(placeholder_dq), lambda m: _fresh_hash(m, quote='"'), result)
     replaced = (sql.count(placeholder_sq) + sql.count(placeholder_dq)) - (
         result.count(placeholder_sq) + result.count(placeholder_dq)
     )
     print(
-        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} __BCRYPT_PLACEHOLDER__ occurrence(s) with bcrypt hash",
+        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} __BCRYPT_PLACEHOLDER__ "
+        "occurrence(s), each with its own freshly-salted bcrypt hash",
         file=sys.stderr,
     )
     return result
@@ -462,6 +536,10 @@ def apply_sql_files(
                     if verbose:
                         print("Ensuring pgvector extension (public) ...", file=sys.stderr)
                     _ensure_pgvector_extension(cur, verbose=verbose)
+                if _sql_files_need_pgtrgm(files):
+                    if verbose:
+                        print("Ensuring pg_trgm extension (public) ...", file=sys.stderr)
+                    _ensure_pgtrgm_extension(cur, verbose=verbose)
                 applied: list[str] = []
                 ddl_files = [f for f in files if not _is_seed_file(f)]
                 seed_files = [f for f in files if _is_seed_file(f)]

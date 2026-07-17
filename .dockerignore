@@ -24,3 +24,7 @@ backend/deploy
 backend/tests
 backend/.env
 backend/.env.*
+
+# Never bake stale pipeline run state into the control-plane image
+agents/pipeline/runs
+**/agents/pipeline/runs

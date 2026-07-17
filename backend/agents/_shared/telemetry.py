@@ -199,17 +199,36 @@ class RunTelemetry:
             return
         run_id = self._run_id() or resolve_run_id({"targetApp": self.target_app})
         if not run_id:
+            print(
+                f"[{self.agent_name}] telemetry mirror skipped: no run_id",
+                file=sys.stderr,
+            )
             return
         rel_path = f"{self.target_app}/telemetry/{self.agent_name}-telemetry.json"
-        try:
-            data = json.loads(payload)
-            if isinstance(data, dict):
-                data["runId"] = run_id
-                payload = json.dumps(data, indent=2) + "\n"
-            put_artifact(run_id, rel_path, payload, content_type="application/json")
-        except Exception:
-            # Telemetry mirroring must never break an agent run.
-            pass
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                data = json.loads(payload)
+                if isinstance(data, dict):
+                    data["runId"] = run_id
+                    payload = json.dumps(data, indent=2) + "\n"
+                put_artifact(run_id, rel_path, payload, content_type="application/json")
+                if attempt > 0:
+                    print(
+                        f"[{self.agent_name}] telemetry mirrored to S3 on retry",
+                        file=sys.stderr,
+                    )
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0:
+                    import time
+                    time.sleep(0.5)
+        print(
+            f"[{self.agent_name}] WARNING: telemetry mirror to S3 failed after 2 attempts "
+            f"(run={run_id}, path={rel_path}): {last_exc}",
+            file=sys.stderr,
+        )
 
     def print_compact(self, *, stream: Any = sys.stderr) -> None:
         """One-line token summary after each agent (default)."""

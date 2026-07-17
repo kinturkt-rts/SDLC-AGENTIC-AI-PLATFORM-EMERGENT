@@ -55,10 +55,11 @@ function LogsInner() {
   const { data: runs } = useRuns();
   const { data: projects } = useProjects();
   const logsProjectId = useUiStore((s) => s.logsProjectId);
+  const setLogsProjectId = useUiStore((s) => s.setLogsProjectId);
 
   const [level, setLevel] = React.useState<LogEntry['level'] | 'all'>('all');
   const [q, setQ] = React.useState('');
-  const [timeWindow, setTimeWindow] = React.useState('240');
+  const [timeWindow, setTimeWindow] = React.useState('15');
   const [selectedRunId, setSelectedRunId] = React.useState(paramRunId || 'all');
   const [agent, setAgent] = React.useState<string>('all');
 
@@ -78,6 +79,18 @@ function LogsInner() {
     if (paramRunId) setSelectedRunId(paramRunId);
   }, [paramRunId]);
 
+  // When arriving via "Open in Logs" (?runId=...), sync the Topbar project
+  // dropdown to that run's project so the page context matches the log content.
+  const syncedParamRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!paramRunId || syncedParamRef.current === paramRunId) return;
+    const run = (runs ?? []).find((r) => r.id === paramRunId);
+    if (run?.projectId && run.projectId !== logsProjectId) {
+      setLogsProjectId(run.projectId);
+    }
+    syncedParamRef.current = paramRunId;
+  }, [paramRunId, runs, logsProjectId, setLogsProjectId]);
+
   React.useEffect(() => {
     if (selectedRunId === 'all') return;
     const belongs = scopedRuns.some((r) => r.id === selectedRunId);
@@ -87,6 +100,8 @@ function LogsInner() {
   const activeRunId = selectedRunId !== 'all' ? selectedRunId : undefined;
   const { data: activeRun } = useRun(activeRunId ?? '');
   const isLiveRun = activeRun?.status === 'running' || activeRun?.status === 'paused';
+  // Poll CloudWatch while browsing recent activity or watching a live run.
+  const livePolling = isLiveRun || !activeRunId;
 
   const minutes = TIME_WINDOWS.find((w) => w.value === timeWindow)?.minutes;
   const logFilters: LogsFilter = {
@@ -95,7 +110,7 @@ function LogsInner() {
     limit: 2000,
   };
 
-  const { data: logs, isLoading, isFetching } = useLogs(logFilters, isLiveRun || !activeRunId);
+  const { data: logs, isLoading, isFetching } = useLogs(logFilters, livePolling);
 
   let rows = filterLogRows(logs ?? [], { q, level });
   if (!activeRunId && logsProjectId) {
@@ -176,7 +191,8 @@ function LogsInner() {
       />
 
       <p className="mb-3 text-sm text-muted-foreground">
-        Live AgentCore stdout from CloudWatch.
+        Live AgentCore stdout from CloudWatch
+        {livePolling ? ' (auto-refreshes every few seconds)' : ''}.
         {activeRunId ? (
           <>
             {' '}
@@ -186,7 +202,7 @@ function LogsInner() {
             </Link>
           </>
         ) : (
-          <> Select a run for full per-run output, or use All runs with a time window.</>
+          <> Default view is the last 15 minutes; widen the window if you need older lines.</>
         )}
       </p>
 
@@ -194,7 +210,18 @@ function LogsInner() {
         <span className="text-teal-400">CloudWatch</span>
         <span>·</span>
         <span>{rows.length} entries</span>
-        {isFetching && !isLoading ? <span>· live</span> : null}
+        {livePolling ? (
+          <>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1.5 text-emerald-400">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              </span>
+              {isFetching && !isLoading ? 'refreshing' : 'live'}
+            </span>
+          </>
+        ) : null}
       </div>
 
       {isLoading ? (
@@ -206,11 +233,11 @@ function LogsInner() {
           description={
             activeRunId
               ? 'No CloudWatch output in this run window yet. Live runs refresh every few seconds.'
-              : 'Widen the time window or pick a specific run from the dropdown.'
+              : 'No events in this time window. Try Last 1 hour / 4 hours, or pick a specific run.'
           }
         />
       ) : (
-        <LogTable rows={rows} showRunColumn={!activeRunId} />
+        <LogTable rows={rows} showRunColumn={!activeRunId} live={livePolling} />
       )}
     </>
   );

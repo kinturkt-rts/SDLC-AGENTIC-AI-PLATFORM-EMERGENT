@@ -1,18 +1,22 @@
-{
+﻿{
     "productAgentOutput":  "See prdPath for change-request-hub MVP requirements.",
+    "deployUrl":  "http://sdlc-target-apps-dev-976943026.us-east-2.elb.amazonaws.com/change-request-hub/",
     "targetApp":  "change-request-hub",
     "prdPath":  "docs/PRD/change-request-hub.md",
     "designDocPath":  "docs/design/change-request-hub.md",
+    "ecsService":  "sdlc-change-request-hub-dev",
     "inputPath":  "inputs/change-request-hub.txt",
     "deliveryProfile":  {
                             "streamlitRequirementsPath":  "ui/requirements.txt",
                             "streamlitPath":  "ui/streamlit_app.py",
-                            "uiPattern":  "streamlit",
+                            "uiPattern":  "react",
                             "uiRequired":  true,
                             "requiresReact":  true,
-                            "requiresStreamlit":  true
+                            "requiresStreamlit":  false
                         },
     "diagramPaths":  [
-                         "docs/generated-diagrams/change-request-hub.png"
+                         {
+                             "Length":  46
+                         }
                      ]
 }

@@ -1,0 +1,20 @@
+Build a light shift handoff helper for our support desk so overnight notes stop getting lost in Slack.
+
+Problem:
+- End-of-shift summaries are inconsistent — some people write novels, others write almost nothing.
+- The next shift wastes time hunting for open issues and what was already tried.
+
+What people should do:
+- Paste a rough free-text note about what happened on their shift (alerts handled, open tickets, follow-ups).
+- The bot turns that into a short, structured handoff: what was done, what is still open, severity of anything urgent, and 3–5 suggested first checks for the next person.
+- If the note is too vague, say clearly that there is not enough context — do not invent incidents.
+- Save each handoff so the team can skim recent ones later.
+
+Must have for the demo:
+- A simple Streamlit screen to paste notes, see the cleaned-up handoff, and browse recent history.
+- A REST endpoint for the same "summarize handoff" action (for later automation).
+- Use Amazon Bedrock to write the summary; keep answers grounded in what the person typed.
+- Store history in Postgres. Shared API key is fine for v1; full company login can wait.
+
+Success:
+- Someone pastes a messy shift note in Streamlit and gets a clear handoff the next person can act on in under half a minute.

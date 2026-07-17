@@ -1,12 +1,5 @@
 ﻿# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
 # Prereqs: pip install bedrock-agentcore-starter-toolkit, AWS credentials, Bedrock model access.
-#
-# AgentCore registry names use underscores (database_agent). AGENTCORE_AGENT uses hyphenated
-# bundle keys (database-agent) matching agents/<name>/ and BUNDLE_FACTORIES in a2a_server.py.
-#
-# IMPORTANT: agentcore configure --entrypoint deploy/agentcore/a2a_server.py narrows source_path
-# to deploy/agentcore (~11 KB zip) and CodeBuild fails (COPY agents/ not found). Redeploys should
-# use -SkipConfigure (default for existing agents in .bedrock_agentcore.yaml). First-time setup: -Configure.
 param(
     [string] $Region = "us-east-2",
     [string[]] $Agents = @(),
@@ -34,6 +27,8 @@ $DotenvForwardedKeys = @(
     "MODEL_ID",
     "SDLC_AGENT_TIMEOUT_SEC",
     "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC",
+    "SDLC_DEVELOPER_RETRY_ATTEMPTS",
+    "DEVELOPER_AGENT_FALLBACK_MODEL_ID",
     "ATLASSIAN_MCP_TOKEN",
     "ATLASSIAN_MCP_EMAIL",
     "ATLASSIAN_MCP_URL",
@@ -194,6 +189,9 @@ $OptionalAgents = @(
         securityGroups = "sg-077b416683295dd42"
     } },
     @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
+    # devops_agent: standalone runtime (not in the pipeline batch / no orchestrator peering).
+    # node=$true only to trigger the per-agent Dockerfile copy (INSTALL_TERRAFORM=true).
+    @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $true; extra = @() },
     @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @(
         "AGENTCORE_WEBCRAWLER_WITH_POSTGRES=false",
         "FIRECRAWL_MCP_COMMAND=firecrawl-mcp",
@@ -231,6 +229,14 @@ if ($env:CODING_MODEL_ID) { $CommonEnv += "CODING_MODEL_ID=$($env:CODING_MODEL_I
 if ($env:BEDROCK_READ_TIMEOUT) { $CommonEnv += "BEDROCK_READ_TIMEOUT=$($env:BEDROCK_READ_TIMEOUT)" }
 if ($env:SDLC_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_AGENT_TIMEOUT_SEC=$($env:SDLC_AGENT_TIMEOUT_SEC)" }
 if ($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC=$($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC)" }
+if ($env:SDLC_DEVELOPER_RETRY_ATTEMPTS) { $CommonEnv += "SDLC_DEVELOPER_RETRY_ATTEMPTS=$($env:SDLC_DEVELOPER_RETRY_ATTEMPTS)" }
+# Default retry fallback matches product/architect MODEL_ID (Sonnet 4.6).
+if ($env:DEVELOPER_AGENT_FALLBACK_MODEL_ID) {
+    $CommonEnv += "DEVELOPER_AGENT_FALLBACK_MODEL_ID=$($env:DEVELOPER_AGENT_FALLBACK_MODEL_ID)"
+} else {
+    $fallbackModel = if ($env:MODEL_ID) { $env:MODEL_ID } else { "us.anthropic.claude-sonnet-4-6" }
+    $CommonEnv += "DEVELOPER_AGENT_FALLBACK_MODEL_ID=$fallbackModel"
+}
 if ($env:DEVELOPER_AGENT_AUTO_VALIDATE) { $CommonEnv += "DEVELOPER_AGENT_AUTO_VALIDATE=$($env:DEVELOPER_AGENT_AUTO_VALIDATE)" }
 if ($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST) { $CommonEnv += "DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST=$($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST)" }
 
@@ -244,6 +250,7 @@ $AgentSecretKeys = @{
     orchestrator_agent     = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     orchestrator_agent_vpc = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     security_agent         = @()
+    devops_agent           = @()
     qa_agent               = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE")
     web_crawler_agent      = @("FIRECRAWL_API_KEY")
 }
@@ -312,6 +319,7 @@ foreach ($agent in $TargetAgents) {
     if ($SkipConfigure -and -not (Test-AgentRegisteredInYaml -AwsName $awsName)) {
         Write-Warning "Skipping $awsName - not registered in .bedrock_agentcore.yaml. First-time setup:`n  .\scripts\deploy-agentcore-agents.ps1 -Agents $awsName -Configure`nThen verify source_path is 'backend' (not deploy/agentcore) before redeploying with -SkipConfigure."
         $DeploySkipped += $awsName
+        if ($agent.node) { & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null }
         continue
     }
 
@@ -359,9 +367,13 @@ foreach ($agent in $TargetAgents) {
         # agentcore deploy pushes a versioned tag but AgentCore references :latest.
         # Re-tag the most recent versioned image as :latest so the runtime pulls it.
         $ecrRepo = "bedrock-agentcore-$awsName"
-        python -c "
-import boto3, sys
-ecr = boto3.Session(profile_name='eks-admin-user', region_name='$Region').client('ecr')
+        if (-not $env:AWS_PROFILE) {
+            $env:AWS_PROFILE = "eks-admin-user"
+        }
+        python -c @"
+import os, boto3, sys
+profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
+ecr = boto3.Session(profile_name=profile, region_name='$Region').client('ecr')
 imgs = ecr.describe_images(repositoryName='$ecrRepo')['imageDetails']
 tagged = [i for i in imgs if i.get('imageTags') and 'latest' not in i['imageTags']]
 tagged.sort(key=lambda i: i['imagePushedAt'], reverse=True)
@@ -375,7 +387,43 @@ try:
     print('  Tagged ' + vtag + ' as :latest in $ecrRepo')
 except ecr.exceptions.ImageAlreadyExistsException:
     print('  :latest already current in $ecrRepo')
-" 2>`$null
+"@
+        # agentcore deploy resets lifecycleConfiguration to the 900s default idle
+        # timeout, which silently kills long developer/orchestrator sessions.
+        # Re-apply the 1h idle timeout after every deploy.
+        python -c @"
+import os, boto3, sys
+profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
+cc = boto3.Session(profile_name=profile, region_name='$Region').client('bedrock-agentcore-control')
+rts = cc.list_agent_runtimes(maxResults=100)['agentRuntimes']
+rt = next((r for r in rts if r['agentRuntimeName'] == '$awsName'), None)
+if rt is None:
+    print('  WARNING: runtime $awsName not found; lifecycle not updated')
+    sys.exit(0)
+full = cc.get_agent_runtime(agentRuntimeId=rt['agentRuntimeId'])
+kwargs = dict(
+    agentRuntimeId=rt['agentRuntimeId'],
+    agentRuntimeArtifact=full['agentRuntimeArtifact'],
+    roleArn=full['roleArn'],
+    networkConfiguration=full['networkConfiguration'],
+    lifecycleConfiguration={'idleRuntimeSessionTimeout': 3600, 'maxLifetime': 28800},
+)
+if full.get('protocolConfiguration'):
+    kwargs['protocolConfiguration'] = full['protocolConfiguration']
+if full.get('environmentVariables'):
+    kwargs['environmentVariables'] = full['environmentVariables']
+cc.update_agent_runtime(**kwargs)
+print('  Lifecycle re-applied: idle=3600s maxLifetime=28800s for $awsName')
+"@
+    }
+
+    # Undo the root-Dockerfile copy (line ~319): CodeBuild only reads the ROOT
+    # Dockerfile, not source_path, so node-hack agents (product/web-crawler/devops)
+    # temporarily overwrite it. Restore orchestrator-agent default immediately so a
+    # crash mid-loop or an early exit never leaves Dockerfile pointing at the wrong
+    # bundle for the next `agentcore launch` / local build.
+    if ($agent.node) {
+        & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null
     }
 }
 

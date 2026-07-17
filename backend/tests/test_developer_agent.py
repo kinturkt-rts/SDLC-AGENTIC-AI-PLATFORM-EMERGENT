@@ -23,6 +23,30 @@ def _load_agent_module():
     return module
 
 
+def test_resolve_repo_path_rejects_template_escape_with_stray_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a stray space in an LLM-authored path ("_template /x.json") let a
+    write escape the golden-template guard and land as a bogus top-level S3 key
+    (runs/<runId>/_template /scaffold-manifest.json) instead of being blocked. In
+    cloud mode _resolve_repo_path permits writes anywhere under repo root, so the
+    golden-template guard depends entirely on _validate_dev_write_path's part check —
+    which the un-stripped space defeated (this reproduces the cloud codepath)."""
+    mod = _load_agent_module()
+    monkeypatch.setattr(mod, "_is_cloud_store", lambda: True)
+    file_path = mod._resolve_repo_path("_template /scaffold-manifest.json", write=True)
+    assert "_template" in file_path.parts
+    blocked = mod._validate_dev_write_path(file_path)
+    assert blocked is not None
+    assert "read-only" in blocked
+
+
+def test_resolve_repo_path_still_blocks_clean_template_path() -> None:
+    mod = _load_agent_module()
+    with pytest.raises(ValueError, match="read-only"):
+        mod._resolve_repo_path("target-apps/_template/app/database.py", write=True)
+
+
 def test_max_output_tokens_defaults_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_agent_module()
     monkeypatch.delenv("DEVELOPER_AGENT_MAX_TOKENS", raising=False)
@@ -107,6 +131,16 @@ def test_resolve_repo_path_blocks_writes_outside_target_apps(
         mod._resolve_repo_path("docs/design/foo.md", write=True)
 
 
+def test_resolve_repo_path_blocks_template_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+
+    with pytest.raises(ValueError, match="read-only"):
+        mod._resolve_repo_path("target-apps/_template/golden/generated.py", write=True)
+
+
 def test_deployment_handoff_includes_port_and_env_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load_agent_module()
     service = tmp_path / "target-apps" / "demo-api"
@@ -144,6 +178,29 @@ def test_dedupe_preserve_order() -> None:
     assert mod._dedupe_preserve_order(["a.py", "b.py", "a.py"]) == ["a.py", "b.py"]
 
 
+def test_failed_developer_handoff_is_written_without_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_agent_module()
+    captured: dict[str, Any] = {}
+
+    def _capture(_app: str, handoff: dict[str, Any], *, context=None) -> str:
+        captured.update(handoff)
+        return "demo/handoffs/developer-handoff.json"
+
+    monkeypatch.setattr(mod, "_write_developer_handoff", _capture)
+    rel = mod._persist_developer_handoff(
+        "demo",
+        {"targetApp": "demo"},
+        [],
+        status="failed",
+        error="model timeout",
+    )
+
+    assert rel is not None
+    assert captured["status"] == "failed"
+    assert captured["writtenFiles"] == []
+    assert captured["error"] == "model timeout"
+
+
 def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> None:
     mod = _load_agent_module()
     service = tmp_path / "target-apps" / "demo-svc"
@@ -171,6 +228,14 @@ def test_validate_dev_write_path_blocks_verbatim_scaffold_files(tmp_path: Path) 
     assert mod._validate_dev_write_path(service / "app" / "routers" / "health.py") is not None
     assert mod._validate_dev_write_path(service / "app" / "models" / "pg_types.py") is not None
     assert mod._validate_dev_write_path(service / "app" / "routers" / "items.py") is None
+
+
+def test_validate_dev_write_path_blocks_all_template_files(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    template_file = tmp_path / "target-apps" / "_template" / "golden" / "database_golden.py"
+
+    assert "read-only" in str(mod._validate_dev_write_path(template_file))
+    assert "read-only" in mod.dev_scaffold("_template", "B")
 
 
 def test_python_for_service_prefers_repo_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

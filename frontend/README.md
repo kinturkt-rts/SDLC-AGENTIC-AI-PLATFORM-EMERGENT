@@ -36,10 +36,10 @@ npm run dev   # http://localhost:3000
 | `BACKEND_ROOT` | Path to `backend/` (default: `../backend`) |
 | `ORCHESTRATOR_PYTHON` | Python for pipeline subprocess (default: auto-detect `backend/.venv`) |
 | `SDLC_PIPELINE_TRANSPORT` | `local` (subprocess) or `a2a` (AgentCore cloud invoke) |
-| `ARTIFACT_STORE`, `ARTIFACT_S3_BUCKET`, `AWS_*` | S3 run artifacts — loaded from `backend/.env.local` if unset here |
+| `ARTIFACT_STORE`, `ARTIFACT_S3_BUCKET`, `AWS_*` | S3 run artifacts - loaded from `backend/.env.local` if unset here |
 | `CORS_ORIGINS` | CORS allow-list for API routes (default: `*`) |
 
-See `.env.example` for comments. Secrets stay in env files — never in the repo.
+See `.env.example` for comments. Secrets stay in env files - never in the repo.
 
 ## Pages
 

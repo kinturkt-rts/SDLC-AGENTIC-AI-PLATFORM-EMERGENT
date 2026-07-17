@@ -22,6 +22,7 @@ from .artifact_store import (
     is_s3_store,
     materialize_run,
     new_run_id,
+    put_artifact,
     put_context,
     register_pipeline_run,
     repo_root,
@@ -90,9 +91,14 @@ DEV_TASK_NO_DB = (
 )
 
 DB_AGENT_TASK = (
-    "Implement data model from designDocPath §3/§6: numbered sql/ migrations, "
-    "dev seed with __BCRYPT_PLACEHOLDER__ for password_hash columns, documented password "
-    "in SQL comment, ### seedCredentials table in HANDOFF.md, stable UUIDs."
+    "Implement data model from designDocPath §3/§6: numbered sql/ migrations, stable UUIDs. "
+    "Whenever any table seeds __BCRYPT_PLACEHOLDER__ in a password_hash/hashed_password column, "
+    "that same table should also have a username or email column as the login identifier, even "
+    "if designDocPath omitted it — a hash with no way to look up which row it belongs to means "
+    "nobody can actually log in and test the app, even though the pipeline itself will still "
+    "seed and hash it correctly. Document the password in a SQL comment, and write a "
+    "'### seedCredentials' table in HANDOFF.md listing every seeded user's login value, "
+    "password, and hash column."
 )
 
 WEB_CRAWLER_TASK = (
@@ -111,6 +117,11 @@ PIPELINE_STEPS: tuple[str, ...] = (
 
 DEFAULT_A2A_TIMEOUT_SEC = 600
 DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC = 2400
+# Re-attempts after the first developer-agent failure (SDLC_DEVELOPER_RETRY_ATTEMPTS).
+DEFAULT_DEVELOPER_RETRY_ATTEMPTS = 1
+# Fallback model for developer retries (DEVELOPER_AGENT_FALLBACK_MODEL_ID).
+# Same Sonnet 4.6 ID as product/architect agents (MODEL_ID) — lighter than CODING_MODEL_ID.
+DEFAULT_DEVELOPER_FALLBACK_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 
 
 @dataclass
@@ -322,6 +333,61 @@ class SdlcPipelineRunner:
             return None
         return self.root / "agents" / "pipeline" / "runs" / self.run_id / "run.json"
 
+    def _default_steps(self) -> list[dict[str, str]]:
+        """Frontend-compatible step skeleton (matches pipeline-run.ts run.json seed)."""
+        opts = self.options
+        return [
+            {
+                "name": "product-agent",
+                "label": "1/6 Product (PRD)",
+                "status": "skipped" if opts.skip_product else "queued",
+            },
+            {
+                "name": "architect-agent",
+                "label": "2/6 Architect (design + diagram)",
+                "status": "skipped" if opts.skip_architect else "queued",
+            },
+            {
+                "name": "database-agent",
+                "label": "3/6 Database (SQL migrations)",
+                "status": "skipped" if opts.skip_db else "queued",
+            },
+            {
+                "name": "developer-agent",
+                "label": "4/6 Developer (FastAPI)",
+                "status": "skipped" if opts.skip_developer else "queued",
+            },
+            {
+                "name": "gitlab-agent",
+                "label": "5/6 GitLab publish",
+                "status": "queued" if _should_run_gitlab(opts) else "skipped",
+            },
+            {
+                "name": "qa-agent",
+                "label": "6/6 QA (optional)",
+                "status": "queued" if _should_run_qa(opts) else "skipped",
+            },
+        ]
+
+    def _mirror_run_json_to_s3(self, data: dict[str, Any]) -> None:
+        """Publish run.json to runs/<runId>/ so the frontend can poll run state.
+
+        This is the async-pipeline status channel: the frontend gets an
+        immediate ack from the orchestrator and then reads this artifact until
+        status turns terminal (completed/failed).
+        """
+        if not self.run_id or not is_s3_store():
+            return
+        try:
+            put_artifact(
+                self.run_id,
+                "run.json",
+                json.dumps(data, indent=2) + "\n",
+                content_type="application/json",
+            )
+        except Exception:
+            logger.warning("Could not mirror run.json to S3", exc_info=True)
+
     def _update_run_json(
         self,
         *,
@@ -330,7 +396,7 @@ class SdlcPipelineRunner:
         error: str | None = None,
         finished: bool = False,
     ) -> None:
-        """Update local run.json so the frontend can track progress."""
+        """Update local run.json (and its S3 mirror) so the frontend can track progress."""
         rj = self._run_json_path()
         if not rj:
             return
@@ -341,17 +407,28 @@ class SdlcPipelineRunner:
             data.setdefault("runId", self.run_id)
             data.setdefault("feature", self.feature)
             data.setdefault("targetApp", self.feature)
+            data.setdefault("startedAt", datetime.now(timezone.utc).isoformat())
+            data.setdefault("status", "running")
+            if not data.get("steps"):
+                data["steps"] = self._default_steps()
             if status:
                 data["status"] = status
-            if current_step is not None:
-                data["currentStep"] = current_step
             if error is not None:
                 data["error"] = error
             if finished:
                 data["finishedAt"] = datetime.now(timezone.utc).isoformat()
             if data.get("steps"):
                 agent_order = [s["name"] for s in data["steps"]]
-                current = current_step or data.get("currentStep")
+                # current_step can be an internal-only pseudo-step (e.g. "rds-apply",
+                # "seed-materialize") that runs between database-agent and developer-agent
+                # but isn't one of the 6 UI-facing steps. Only advance the displayed
+                # currentStep/index for a name that's actually in the steps array — an
+                # unrecognized name would otherwise resolve to index -1, and on failure
+                # "i > current_idx" is then true for every step, wiping the whole array
+                # to "queued" even though earlier steps genuinely completed.
+                if current_step is not None and current_step in agent_order:
+                    data["currentStep"] = current_step
+                current = data.get("currentStep")
                 current_idx = agent_order.index(current) if current and current in agent_order else -1
                 for i, step in enumerate(data["steps"]):
                     if step.get("status") == "skipped":
@@ -370,6 +447,7 @@ class SdlcPipelineRunner:
                             step["status"] = "running"
             rj.parent.mkdir(parents=True, exist_ok=True)
             rj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            self._mirror_run_json_to_s3(data)
         except Exception as exc:
             logger.warning("Could not update run.json: %s", exc)
 
@@ -383,6 +461,9 @@ class SdlcPipelineRunner:
             os.environ["PIPELINE_RUN_ID"] = self.run_id
             if is_s3_store():
                 register_pipeline_run(self.run_id, self.feature)
+        # Seed run.json (local + S3 mirror) so frontend polling sees "running"
+        # immediately after the async ack instead of a missing artifact.
+        self._update_run_json(status="running")
 
     def _after_agent_step(self, agent_name: str) -> None:
         """Specialists -> S3; orchestrator -> DynamoDB run index."""
@@ -461,10 +542,17 @@ class SdlcPipelineRunner:
 
         normalize_handoff_paths(self.context)
 
-    def _run_python(self, args: list[str], *, step: str) -> None:
+    def _run_python(
+        self,
+        args: list[str],
+        *,
+        step: str,
+        env_overrides: dict[str, str] | None = None,
+    ) -> None:
         self._update_run_json(current_step=step)
         cmd = [sys.executable, *args]
         logger.info("[%s] %s", step, " ".join(args))
+        env = {**os.environ, **env_overrides} if env_overrides else None
         proc = subprocess.run(
             cmd,
             cwd=self.root,
@@ -473,6 +561,7 @@ class SdlcPipelineRunner:
             encoding="utf-8",
             errors="replace",
             check=False,
+            env=env,
         )
         if proc.stdout:
             _safe_print(proc.stdout)
@@ -502,7 +591,15 @@ class SdlcPipelineRunner:
                 return legacy
         return app_dir
 
-    def _invoke_a2a(self, agent_name: str, task: str, *, step: str, include_db_paths: bool = False) -> None:
+    def _invoke_a2a(
+        self,
+        agent_name: str,
+        task: str,
+        *,
+        step: str,
+        include_db_paths: bool = False,
+        extra_context: dict[str, Any] | None = None,
+    ) -> None:
         self._update_run_json(current_step=step)
         timeout = (
             DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC
@@ -515,10 +612,13 @@ class SdlcPipelineRunner:
             else "SDLC_AGENT_TIMEOUT_SEC"
         )
         timeout = int(os.getenv(env_key, str(timeout)))
+        context = self._context_for_agent(include_db_paths=include_db_paths)
+        if extra_context:
+            context.update(extra_context)
         result = invoke_agent(
             agent_name,
             task,
-            context=self._context_for_agent(include_db_paths=include_db_paths),
+            context=context,
             timeout=timeout,
         )
         text = response_text(result)
@@ -862,32 +962,91 @@ class SdlcPipelineRunner:
             put_context(self.run_id, self.context)
         logger.info("[rds-apply] HANDOFF.md -> %s", handoff_rel)
 
+    @staticmethod
+    def _developer_retry_attempts() -> int:
+        raw = os.getenv("SDLC_DEVELOPER_RETRY_ATTEMPTS", "").strip()
+        try:
+            return max(0, int(raw)) if raw else DEFAULT_DEVELOPER_RETRY_ATTEMPTS
+        except ValueError:
+            return DEFAULT_DEVELOPER_RETRY_ATTEMPTS
+
+    @staticmethod
+    def _developer_fallback_model() -> str:
+        """Sonnet fallback on developer retries; empty string disables the model switch."""
+        raw = os.getenv("DEVELOPER_AGENT_FALLBACK_MODEL_ID")
+        if raw is None:
+            return DEFAULT_DEVELOPER_FALLBACK_MODEL_ID
+        return raw.strip()
+
     def _step_developer(self) -> None:
         if self.run_id:
             self._hydrate_run_context()
         task = DEV_TASK_NO_DB if self.options.skip_db else DEV_TASK_DB
-        if self.transport == "local":
-            self._run_python(
-                [
-                    "agents/developer-agent/developer_agent.py",
-                    "--target-app",
-                    self.feature,
-                    "--context-file",
-                    self.context_file,
-                    "--task",
-                    task,
-                ],
-                step="developer-agent",
+
+        total_attempts = self._developer_retry_attempts() + 1
+        fallback_model = self._developer_fallback_model()
+        last_error: PipelineStepError | None = None
+
+        for attempt in range(total_attempts):
+            attempt_task = task
+            use_fallback = attempt > 0 and bool(fallback_model)
+            if attempt > 0:
+                logger.warning(
+                    "[developer-agent] retry %d/%d%s after failure: %s",
+                    attempt,
+                    total_attempts - 1,
+                    f" with fallback model {fallback_model}" if use_fallback else "",
+                    last_error,
+                )
+                attempt_task = (
+                    f"{task}\n\nRETRY NOTE: the previous developer-agent attempt failed "
+                    f"({last_error}). Re-implement the app completely, keep the code minimal, "
+                    "and ensure the developer handoff is written before finishing."
+                )
+            try:
+                if self.transport == "local":
+                    self._run_python(
+                        [
+                            "agents/developer-agent/developer_agent.py",
+                            "--target-app",
+                            self.feature,
+                            "--context-file",
+                            self.context_file,
+                            "--task",
+                            attempt_task,
+                        ],
+                        step="developer-agent",
+                        env_overrides=(
+                            {"CODING_MODEL_ID": fallback_model} if use_fallback else None
+                        ),
+                    )
+                else:
+                    self._invoke_a2a(
+                        "developer-agent",
+                        attempt_task,
+                        step="developer-agent",
+                        include_db_paths=not self.options.skip_db,
+                        extra_context=(
+                            {"codingModelOverride": fallback_model} if use_fallback else None
+                        ),
+                    )
+                    # AgentCore may return before developer-agent finishes writing S3 artifacts.
+                    self._wait_for_developer_handoff()
+                last_error = None
+                break
+            except PipelineStepError as exc:
+                last_error = exc
+                logger.warning(
+                    "[developer-agent] attempt %d/%d failed: %s",
+                    attempt + 1,
+                    total_attempts,
+                    exc,
+                )
+
+        if last_error is not None:
+            raise PipelineStepError(
+                f"developer-agent failed after {total_attempts} attempt(s): {last_error}"
             )
-        else:
-            self._invoke_a2a(
-                "developer-agent",
-                task,
-                step="developer-agent",
-                include_db_paths=not self.options.skip_db,
-            )
-            # AgentCore may return before developer-agent finishes writing S3 artifacts.
-            self._wait_for_developer_handoff()
 
         if self.transport == "a2a" and self.run_id:
             self._merge_run_context_from_s3()
@@ -895,33 +1054,132 @@ class SdlcPipelineRunner:
         self.agents_run.append("developer-agent")
         self.artifacts["App"] = f"{target_app_root_rel(self.feature)}/"
         self._after_agent_step("developer-agent")
+        self._ensure_developer_telemetry()
+
+    def _ensure_developer_telemetry(self) -> None:
+        """Verify developer-agent telemetry exists in S3; mirror from local if missing."""
+        if not self.run_id or not is_s3_store():
+            return
+        from .artifact_store import run_artifact_exists, get_artifact_text, put_artifact
+        from .telemetry import load_agent_telemetry, RunTelemetry
+
+        tel_rel = f"{self.feature}/telemetry/developer-agent-telemetry.json"
+        if run_artifact_exists(self.run_id, tel_rel):
+            logger.info("[pipeline] developer-agent telemetry verified in S3")
+            return
+
+        logger.warning(
+            "[pipeline] developer-agent telemetry missing from S3 (run=%s), "
+            "attempting local fallback",
+            self.run_id,
+        )
+        local_snap = load_agent_telemetry(self.feature, "developer-agent")
+        if local_snap:
+            local_snap["runId"] = self.run_id
+            payload = json.dumps(local_snap, indent=2) + "\n"
+            try:
+                put_artifact(self.run_id, tel_rel, payload, content_type="application/json")
+                logger.info("[pipeline] developer-agent telemetry mirrored from local to S3")
+                return
+            except Exception:
+                logger.exception("[pipeline] failed to mirror developer-agent telemetry from local")
+
+        try:
+            handoff_rel = f"{self.feature}/handoffs/developer-handoff.json"
+            raw = get_artifact_text(self.run_id, handoff_rel)
+            handoff = json.loads(raw)
+            files_written = len(handoff.get("writtenFiles", []))
+            status = handoff.get("status", "unknown")
+        except Exception:
+            files_written = 0
+            status = "completed"
+
+        fallback = RunTelemetry(
+            "developer-agent",
+            target_app=self.feature,
+            model_id=os.getenv("CODING_MODEL_ID", "us.anthropic.claude-opus-4-20250514-v1:0"),
+            run_id=self.run_id,
+        )
+        fallback.extra = {
+            "filesWritten": files_written,
+            "status": status,
+            "fallback": True,
+        }
+        payload = json.dumps(fallback.to_dict(), indent=2) + "\n"
+        try:
+            put_artifact(self.run_id, tel_rel, payload, content_type="application/json")
+            logger.warning(
+                "[pipeline] developer-agent fallback telemetry written to S3 "
+                "(no token data — agent did not report)"
+            )
+        except Exception:
+            logger.exception("[pipeline] failed to write developer-agent fallback telemetry")
 
     def _wait_for_developer_handoff(self) -> None:
-        """Block until developer-handoff.json lands in S3 (AgentCore can return early)."""
+        """Gate GitLab publish on developer readiness (AgentCore can return early).
+
+        Publish proceeds when the developer either finished cleanly (``completed``)
+        or delivered app artifacts but its runtime ended before finalizing
+        (``partial``). It is blocked only when the developer explicitly failed or
+        produced nothing publishable — preserving "publish whatever is generated"
+        while still surfacing real developer failures.
+        """
         if not self.run_id or not is_s3_store() or self.options.skip_developer:
             return
-        from .artifact_store import wait_for_developer_handoff
+        from .artifact_store import (
+            DEV_READY_COMPLETED,
+            DEV_READY_FAILED,
+            DEV_READY_MISSING,
+            DEV_READY_PARTIAL,
+            classify_developer_readiness,
+        )
         from .pipeline_context import developer_handoff_rel_for_app
 
         rel = developer_handoff_rel_for_app(self.feature)
-        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "900"))
+        # Async developer runs return an ack in seconds and stream work to S3
+        # for as long as the implementation takes, so this poll — not the A2A
+        # response — is the primary completion signal. The stall window must be
+        # generous: LLM turns between file writes (and the final summary turn)
+        # can legitimately go many minutes with no new writtenFiles.
+        timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "5400"))
+        poll_interval = float(os.getenv("SDLC_DEVELOPER_HANDOFF_POLL_SEC", "15"))
+        stall_polls = int(os.getenv("SDLC_DEVELOPER_STALL_POLLS", "40"))
         logger.info(
-            "[pipeline] waiting for developer handoff: runs/%s/%s (timeout=%ss)",
+            "[pipeline] waiting for developer handoff: runs/%s/%s "
+            "(timeout=%ss, poll=%ss, stall_polls=%s)",
             self.run_id,
             rel,
             timeout,
+            poll_interval,
+            stall_polls,
         )
-        try:
-            wait_for_developer_handoff(
-                self.run_id,
-                self.feature,
-                timeout_sec=timeout,
-            )
+        decision, handoff = classify_developer_readiness(
+            self.run_id,
+            self.feature,
+            timeout_sec=timeout,
+            poll_interval_sec=poll_interval,
+            stall_polls=stall_polls,
+        )
+        if decision == DEV_READY_COMPLETED:
             logger.info("[pipeline] developer handoff ready: runs/%s/%s", self.run_id, rel)
-        except TimeoutError as exc:
-            raise PipelineStepError(
-                f"developer-agent handoff not ready before gitlab-agent: {exc}"
-            ) from exc
+            return
+        if decision == DEV_READY_PARTIAL:
+            logger.warning(
+                "[pipeline] developer handoff not finalized for runs/%s/%s "
+                "(status=%s); publishing delivered artifacts best-effort",
+                self.run_id,
+                rel,
+                (handoff or {}).get("status", "in_progress"),
+            )
+            self.context["developerHandoffPartial"] = True
+            return
+        if decision == DEV_READY_FAILED:
+            detail = str((handoff or {}).get("error") or "developer-agent reported failure")
+            raise PipelineStepError(f"developer-agent failed before GitLab publish: {detail}")
+        raise PipelineStepError(
+            "developer-agent produced no publishable app artifacts before GitLab publish "
+            f"(runs/{self.run_id}/{rel})"
+        )
 
     def _step_verify(self) -> None:
         app_root = target_app_root_rel(self.feature)
@@ -1123,6 +1381,53 @@ class PipelineStepError(RuntimeError):
 def run_sdlc_pipeline(options: PipelineOptions) -> PipelineResult:
     """Public entry: run the full SDLC chain."""
     return SdlcPipelineRunner(options).run()
+
+
+def mark_run_failed(run_id: str, target_app: str, error: str) -> None:
+    """Force run.json (S3 + local) to a terminal failed state.
+
+    Used by the orchestrator's fire-and-forget wrapper when the background
+    pipeline dies with an unexpected exception — without this the frontend
+    would poll a permanently "running" run.json until its own timeout.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    feature = slugify(target_app)
+    data: dict[str, Any] = {
+        "runId": run_id,
+        "feature": feature,
+        "targetApp": feature,
+        "status": "failed",
+        "error": error,
+        "finishedAt": now,
+    }
+    rj = repo_root() / "agents" / "pipeline" / "runs" / run_id / "run.json"
+    try:
+        if rj.is_file():
+            existing = json.loads(rj.read_text(encoding="utf-8-sig"))
+            existing.update(data)
+            data = existing
+        rj.parent.mkdir(parents=True, exist_ok=True)
+        rj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        logger.warning("mark_run_failed: could not update local run.json", exc_info=True)
+    if is_s3_store():
+        try:
+            from .artifact_store import get_artifact_text
+
+            try:
+                remote = json.loads(get_artifact_text(run_id, "run.json"))
+                remote.update({k: v for k, v in data.items() if k != "steps"})
+                data = remote
+            except FileNotFoundError:
+                pass
+            put_artifact(
+                run_id,
+                "run.json",
+                json.dumps(data, indent=2) + "\n",
+                content_type="application/json",
+            )
+        except Exception:
+            logger.warning("mark_run_failed: could not update S3 run.json", exc_info=True)
 
 
 def options_from_dict(data: dict[str, Any]) -> PipelineOptions:

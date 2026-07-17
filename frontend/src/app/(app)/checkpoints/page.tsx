@@ -17,10 +17,12 @@ import type { HITLCheckpoint } from '@/src/types';
 export default function CheckpointsPage() {
   const { data: checkpoints, isLoading } = useCheckpoints();
   const { data: projects } = useProjects();
-  const currentProjectId = useUiStore((s) => s.currentProjectId);
+  const checkpointsProjectId = useUiStore((s) => s.checkpointsProjectId);
   const [overrides, setOverrides] = React.useState<Record<string, HITLCheckpoint['status']>>({});
 
-  const projectName = projects?.find((p) => p.id === currentProjectId)?.name ?? currentProjectId;
+  const scopeLabel = checkpointsProjectId
+    ? (projects?.find((p) => p.id === checkpointsProjectId)?.name ?? checkpointsProjectId)
+    : 'all projects';
 
   const resolve = (c: HITLCheckpoint, status: 'approved' | 'rejected') => {
     setOverrides((o) => ({ ...o, [c.id]: status }));
@@ -30,7 +32,7 @@ export default function CheckpointsPage() {
   };
 
   const items = (checkpoints ?? [])
-    .filter((c) => c.projectId === currentProjectId)
+    .filter((c) => !checkpointsProjectId || c.projectId === checkpointsProjectId)
     .map((c) => ({ ...c, status: overrides[c.id] ?? c.status }));
   const pending = items.filter((c) => c.status === 'pending');
   const resolved = items.filter((c) => c.status !== 'pending');
@@ -39,8 +41,8 @@ export default function CheckpointsPage() {
     <>
       <PageHeader
         eyebrow="Operate"
-        title="HITL Checkpoints"
-        description={`Human-in-the-loop gates for ${projectName} - approve, reject, or clarify before the pipeline continues.`}
+        title="HITL Approved Gates"
+        description={`Human-in-the-loop approval gates across ${scopeLabel} - approve, reject, or clarify before the pipeline continues.`}
       />
 
       {isLoading ? (
@@ -54,7 +56,11 @@ export default function CheckpointsPage() {
               <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">{pending.length}</span>
             </div>
             {pending.length === 0 ? (
-              <EmptyState icon={UserCheck} title="All clear" description="No checkpoints are waiting for human review." />
+              <EmptyState
+                icon={UserCheck}
+                title="All clear"
+                description="No approval gates are waiting for human review. HITL gates are planned for a later stage - this page will list them here when the pipeline requests approval."
+              />
             ) : (
               <div className="space-y-3">
                 {pending.map((c) => (
@@ -86,17 +92,21 @@ export default function CheckpointsPage() {
               <h2 className="text-sm font-semibold text-foreground">Resolved</h2>
               <span className="rounded-full bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{resolved.length}</span>
             </div>
-            <div className="space-y-2">
-              {resolved.map((c) => (
-                <Card key={c.id} className="flex items-center justify-between border-white/[0.06] bg-card/80 p-3 transition-colors hover:bg-white/[0.02]">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">{c.title}</p>
-                    <p className="truncate font-mono text-xs text-muted-foreground">{c.projectName} \u00b7 {c.approver ? `by ${c.approver}` : 'auto'} \u00b7 {formatRelative(c.requestedAt)}</p>
-                  </div>
-                  <StatusBadge status={c.status} size="sm" />
-                </Card>
-              ))}
-            </div>
+            {resolved.length === 0 ? (
+              <p className="px-1 py-2 text-sm text-muted-foreground">No resolved gates yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {resolved.map((c) => (
+                  <Card key={c.id} className="flex items-center justify-between border-white/[0.06] bg-card/80 p-3 transition-colors hover:bg-white/[0.02]">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">{c.title}</p>
+                      <p className="truncate font-mono text-xs text-muted-foreground">{c.projectName} \u00b7 {c.approver ? `by ${c.approver}` : 'auto'} \u00b7 {formatRelative(c.requestedAt)}</p>
+                    </div>
+                    <StatusBadge status={c.status} size="sm" />
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         </>
       )}
