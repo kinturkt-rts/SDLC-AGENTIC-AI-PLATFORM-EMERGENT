@@ -24,6 +24,9 @@ import {
   developerHandoffExistsForRun,
   developerHandoffFailedForRun,
   developerHandoffSucceededForRun,
+  devopsDeploySucceededForRun,
+  devopsHandoffExistsForRun,
+  getRunHandoffs,
   gitlabPublishSucceededForRun,
   resolveProjectRepositoryLink,
   resolveRunFailureDetail,
@@ -90,6 +93,7 @@ function emptyPhaseDone(): Record<SdlcPhase, boolean> {
     implementation: false,
     qa: false,
     security: false,
+    publish: false,
     deploy: false,
   };
 }
@@ -160,6 +164,7 @@ const PHASES: SdlcPhase[] = [
   'implementation',
   'qa',
   'security',
+  'publish',
   'deploy',
 ];
 
@@ -170,7 +175,8 @@ const phaseAgent: Record<SdlcPhase, AgentName> = {
   implementation: 'developer-agent',
   qa: 'qa-agent',
   security: 'security-agent',
-  deploy: 'gitlab-agent',
+  publish: 'gitlab-agent',
+  deploy: 'devops-agent',
 };
 
 const agentPhase: Record<string, SdlcPhase> = {
@@ -180,7 +186,8 @@ const agentPhase: Record<string, SdlcPhase> = {
   'developer-agent': 'implementation',
   'qa-agent': 'qa',
   'security-agent': 'security',
-  'gitlab-agent': 'deploy',
+  'gitlab-agent': 'publish',
+  'devops-agent': 'deploy',
 };
 
 interface LiveStepState {
@@ -220,7 +227,7 @@ const AGENT_DISPLAY: Record<
   'developer-agent': { displayName: 'Developer', phase: 'implementation' },
   'qa-agent': { displayName: 'QA', phase: 'qa' },
   'devops-agent': { displayName: 'DevOps', phase: 'deploy' },
-  'gitlab-agent': { displayName: 'GitLab', phase: 'deploy' },
+  'gitlab-agent': { displayName: 'GitLab', phase: 'publish' },
   'security-agent': { displayName: 'Security', phase: 'security' },
   'web-crawler-agent': { displayName: 'Web Crawler', phase: 'requirements' },
 };
@@ -942,6 +949,28 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     : buildSteps(runId, phaseDone, reconciled.status)
   ).filter((step) => MVP_TIMELINE_PHASES.includes(step.phase));
 
+  const isTerminalForDeploy =
+    reconciled.status === 'completed' ||
+    reconciled.status === 'failed' ||
+    reconciled.status === 'cancelled';
+  if (!phaseDone.deploy) {
+    const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
+    steps = steps.map((step) => {
+      if (step.phase !== 'deploy') return step;
+      if (hasDevopsHandoff) {
+        return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
+      }
+      if (isTerminalForDeploy && phaseDone.publish) {
+        return { ...step, status: 'skipped' as StepStatus, agent: 'devops-agent' };
+      }
+      return { ...step, agent: 'devops-agent' };
+    });
+  } else {
+    steps = steps.map((step) =>
+      step.phase === 'deploy' ? { ...step, status: 'completed' as StepStatus, agent: 'devops-agent' } : step,
+    );
+  }
+
   const runError = reconciled.error ?? enriched.error ?? null;
   if (runError) {
     const failedSteps = steps.filter((s) => s.status === 'failed');
@@ -1268,6 +1297,7 @@ async function listProjectsFromS3(): Promise<Project[]> {
     ]);
 
     const repoLink = await resolveProjectRepositoryLink(slug, runId);
+    const devops = await getRunHandoffs(runId, slug).then((h) => h.devops).catch(() => null);
 
     projects.push({
       id: slug,
@@ -1281,6 +1311,7 @@ async function listProjectsFromS3(): Promise<Project[]> {
       repoHref: repoLink.href,
       repoExternal: repoLink.external,
       runId,
+      liveUrl: devops?.appUrl ?? null,
       environment: 'dev' as Environment,
     });
   }
@@ -1426,7 +1457,8 @@ async function phaseCompletion(slug: string, ctx: PipelineContextFile | null): P
     implementation: await handoffExists(slug, 'developer-handoff.json'),
     qa: await handoffExists(slug, 'qa-handoff.json'),
     security: await handoffExists(slug, 'security-handoff.json'),
-    deploy: await handoffExists(slug, 'gitlab-handoff.json'),
+    publish: await handoffExists(slug, 'gitlab-handoff.json'),
+    deploy: await handoffExists(slug, 'devops-handoff.json'),
   };
 }
 
@@ -1450,9 +1482,10 @@ async function phaseCompletionForRun(
     const hasAppCode =
       has((r) => r.includes('/app/') && r.endsWith('.py')) ||
       has((r) => r.endsWith('/requirements.txt'));
-    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
+    const [devSuccess, gitlabSuccess, devopsSuccess, hasDevHandoff] = await Promise.all([
       developerHandoffSucceededForRun(runId, slug),
       gitlabPublishSucceededForRun(runId, slug),
+      devopsDeploySucceededForRun(runId, slug),
       developerHandoffExistsForRun(runId, slug),
     ]);
     return {
@@ -1464,7 +1497,8 @@ async function phaseCompletionForRun(
       implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: gitlabSuccess,
+      publish: gitlabSuccess,
+      deploy: devopsSuccess,
     };
   }
 
@@ -1486,9 +1520,10 @@ async function phaseCompletionForRun(
     const rels = await walk(runRoot);
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
     const hasAppCode = has((r) => r.includes('/app/') && r.endsWith('.py'));
-    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
+    const [devSuccess, gitlabSuccess, devopsSuccess, hasDevHandoff] = await Promise.all([
       developerHandoffSucceededForRun(runId, slug),
       gitlabPublishSucceededForRun(runId, slug),
+      devopsDeploySucceededForRun(runId, slug),
       developerHandoffExistsForRun(runId, slug),
     ]);
     return {
@@ -1500,7 +1535,8 @@ async function phaseCompletionForRun(
       implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: gitlabSuccess,
+      publish: gitlabSuccess,
+      deploy: devopsSuccess,
     };
   }
 
@@ -1960,7 +1996,7 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
       id: 'standard-sdlc',
       name: 'Standard SDLC',
       description:
-        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish. Fully automated in the current MVP.',
+        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy is the demo-2 phase that puts a live URL in front of users.',
       phases: MVP_TIMELINE_PHASES.map((phase) => ({
         phase,
         agent: PHASE_AGENT[phase],

@@ -1,4 +1,4 @@
-import { MVP_TIMELINE_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
+import { MVP_COMPLETION_PHASES, MVP_TIMELINE_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
@@ -109,7 +109,8 @@ export function parseLogSkipFlags(
       architecture: parsed.skip_architect === true,
       data: parsed.skip_db === true,
       implementation: parsed.skip_developer === true,
-      deploy: parsed.skip_gitlab === true,
+      publish: parsed.skip_gitlab === true,
+      deploy: parsed.skip_devops === true,
       qa: parsed.skip_verify === true,
     };
   } catch {
@@ -131,13 +132,13 @@ export function lastRunActivityMs(input: {
 }
 
 export function mvpPipelineComplete(phaseDone: Record<SdlcPhase, boolean>): boolean {
-  return MVP_TIMELINE_PHASES.every((phase) => phaseDone[phase]);
+  return MVP_COMPLETION_PHASES.every((phase) => phaseDone[phase]);
 }
 
 export function firstIncompleteMvpPhase(
   phaseDone: Record<SdlcPhase, boolean>,
 ): SdlcPhase | null {
-  for (const phase of MVP_TIMELINE_PHASES) {
+  for (const phase of MVP_COMPLETION_PHASES) {
     if (!phaseDone[phase]) return phase;
   }
   return null;
@@ -159,7 +160,7 @@ function firstMissingRequired(
   phaseDone: Record<SdlcPhase, boolean>,
   skipFlags: Partial<Record<SdlcPhase, boolean>>,
 ): SdlcPhase | null {
-  for (const phase of MVP_TIMELINE_PHASES) {
+  for (const phase of MVP_COMPLETION_PHASES) {
     if (skipFlags[phase]) continue;
     if (!phaseDone[phase]) return phase;
   }
@@ -173,9 +174,12 @@ function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   if (missing === 'implementation') {
     error =
       'Developer-agent did not complete successfully. Open the run and check the developer handoff for the concrete error.';
-  } else if (missing === 'deploy') {
+  } else if (missing === 'publish') {
     error =
       'GitLab publish did not complete successfully. Open the run and check the GitLab handoff for the concrete error.';
+  } else if (missing === 'deploy') {
+    error =
+      'AWS deploy did not complete successfully. Open the run and check the DevOps handoff for the concrete error.';
   } else if (agent) {
     error = `Pipeline stopped before ${label} finished (${agent}).`;
   }
@@ -191,7 +195,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   const effectiveDone = effectivePhaseDone(input.phaseDone, skipFlags);
   const missingRequired = firstMissingRequired(input.phaseDone, skipFlags);
   const verifiedComplete = missingRequired === null;
-  const hasAnyEvidence = MVP_TIMELINE_PHASES.some((p) => input.phaseDone[p]);
+  const hasAnyEvidence = MVP_COMPLETION_PHASES.some((p) => input.phaseDone[p]);
   const terminal = parseLogTerminalStatus(input.logText);
 
   if (input.status === 'cancelled') {

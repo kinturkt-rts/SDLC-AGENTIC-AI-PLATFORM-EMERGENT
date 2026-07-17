@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { getBackendRoot } from './repo-root';
 import { getRunArtifactJson, getS3RunContext, isS3Store } from './artifact-store';
-import type { DeveloperHandoffInfo, GitlabHandoffInfo, RunHandoffs } from '@/src/types';
+import type { DeveloperHandoffInfo, DevopsHandoffInfo, GitlabHandoffInfo, RunHandoffs } from '@/src/types';
 
 type HandoffRecord = Record<string, unknown>;
 
@@ -63,6 +63,35 @@ function parseDeveloperHandoff(
     status: String(data.status ?? 'unknown'),
     writtenFilesCount: files.length,
     validationStatus: parseValidationStatus(data),
+    error: typeof data.error === 'string' ? data.error : null,
+    source,
+    path: artifactPath,
+  };
+}
+
+function parseDevopsHandoff(
+  data: HandoffRecord,
+  source: 's3' | 'local',
+  artifactPath: string,
+): DevopsHandoffInfo {
+  const appUrl = typeof data.appUrl === 'string' ? data.appUrl.trim() : '';
+  const healthy = typeof data.healthy === 'boolean' ? data.healthy : null;
+  let status = typeof data.status === 'string' ? data.status : '';
+  if (!status) {
+    if (appUrl && healthy !== false) status = 'healthy';
+    else if (appUrl) status = 'deployed';
+    else if (data.tfRootPresent === true) status = 'tf_ready';
+    else status = 'unknown';
+  }
+  return {
+    status,
+    targetApp: String(data.targetApp ?? ''),
+    appUrl: appUrl || null,
+    environment: typeof data.environment === 'string' ? data.environment : null,
+    region: typeof data.region === 'string' ? data.region : null,
+    healthy,
+    ecsService: typeof data.ecsService === 'string' ? data.ecsService : null,
+    deployedAt: typeof data.deployedAt === 'string' ? data.deployedAt : null,
     error: typeof data.error === 'string' ? data.error : null,
     source,
     path: artifactPath,
@@ -141,6 +170,44 @@ async function loadFirstDeveloperHandoff(
   for (const candidate of candidates) {
     const data = await candidate.loader();
     if (data) return parseDeveloperHandoff(data, candidate.source, candidate.path);
+  }
+  return null;
+}
+
+async function loadFirstDevopsHandoff(
+  runId: string,
+  slug: string,
+): Promise<DevopsHandoffInfo | null> {
+  const candidates: Array<{ source: 's3' | 'local'; path: string; loader: () => Promise<HandoffRecord | null> }> = [
+    {
+      source: 's3',
+      path: `runs/${runId}/${slug}/handoffs/devops-handoff.json`,
+      loader: () => getRunArtifactJson(runId, `${slug}/handoffs/devops-handoff.json`),
+    },
+    {
+      source: 's3',
+      path: `runs/${runId}/handoffs/devops.json`,
+      loader: () => getRunArtifactJson(runId, 'handoffs/devops.json'),
+    },
+  ];
+  if (!isS3Store()) {
+    candidates.push(
+      {
+        source: 'local',
+        path: `agents/pipeline/${slug}.devops-handoff.json`,
+        loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.devops-handoff.json`),
+      },
+      {
+        source: 'local',
+        path: `agents/pipeline/runs/${runId}/${slug}/handoffs/devops-handoff.json`,
+        loader: () => getRunArtifactJson(runId, `${slug}/handoffs/devops-handoff.json`),
+      },
+    );
+  }
+
+  for (const candidate of candidates) {
+    const data = await candidate.loader();
+    if (data) return parseDevopsHandoff(data, candidate.source, candidate.path);
   }
   return null;
 }
@@ -321,12 +388,27 @@ export async function waitForDeveloperHandoffForRun(
   return false;
 }
 
-/** Load gitlab + developer handoffs for a run (S3 run store and local slug files). */
+/** True when devops-agent produced a usable live app URL for this run. */
+export async function devopsDeploySucceededForRun(runId: string, slug: string): Promise<boolean> {
+  const devops = await loadFirstDevopsHandoff(runId, slug.trim().toLowerCase());
+  if (!devops) return false;
+  const status = devops.status.trim().toLowerCase();
+  if (status === 'failed' || status === 'error') return false;
+  return Boolean(devops.appUrl);
+}
+
+/** True when a devops handoff exists (even if still deploying / no URL yet). */
+export async function devopsHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
+  return (await loadFirstDevopsHandoff(runId, slug.trim().toLowerCase())) !== null;
+}
+
+/** Load gitlab + developer + devops handoffs for a run (S3 run store and local slug files). */
 export async function getRunHandoffs(runId: string, projectSlug: string): Promise<RunHandoffs> {
   const slug = projectSlug.trim().toLowerCase();
-  const [gitlab, developer, ctx] = await Promise.all([
+  const [gitlab, developer, devops, ctx] = await Promise.all([
     loadFirstGitlabHandoff(runId, slug),
     loadFirstDeveloperHandoff(runId, slug),
+    loadFirstDevopsHandoff(runId, slug),
     isS3Store() ? getS3RunContext(runId) : getRunArtifactJson(runId, `${slug}/context.json`),
   ]);
 
@@ -340,6 +422,7 @@ export async function getRunHandoffs(runId: string, projectSlug: string): Promis
     projectSlug: slug,
     gitlab,
     developer,
+    devops,
     contextMergeRequestUrl,
     contextFeatureBranch,
   };

@@ -31,9 +31,13 @@ function MetadataRow({ label, value }: { label: string; value: React.ReactNode }
 
 function handoffBadge(status: string): 'completed' | 'failed' | 'running' | 'queued' {
   const normalized = status.trim().toLowerCase();
-  if (normalized === 'completed' || normalized === 'published') return 'completed';
+  if (normalized === 'completed' || normalized === 'published' || normalized === 'healthy' || normalized === 'deployed') {
+    return 'completed';
+  }
   if (normalized === 'failed' || normalized === 'error') return 'failed';
-  if (normalized === 'in_progress' || normalized === 'running') return 'running';
+  if (normalized === 'in_progress' || normalized === 'running' || normalized === 'deploying' || normalized === 'tf_ready') {
+    return 'running';
+  }
   return 'queued';
 }
 
@@ -71,16 +75,18 @@ export function PipelineHandoffsCard({
 }) {
   const gitlab = handoffs.gitlab;
   const developer = handoffs.developer;
+  const devops = handoffs.devops;
   const branchUrl = gitlab?.branchUrl ?? null;
   const repoUrl = gitlab?.repoUrl ?? null;
   const mrUrl = gitlab?.mergeRequestUrl ?? handoffs.contextMergeRequestUrl ?? null;
-  const hasAnything = Boolean(developer || gitlab || branchUrl || repoUrl || mrUrl);
+  const appUrl = devops?.appUrl ?? null;
+  const hasAnything = Boolean(developer || gitlab || devops || branchUrl || repoUrl || mrUrl || appUrl);
 
   if (!hasAnything) {
     return null;
   }
 
-  const appName = developer?.targetApp || handoffs.projectSlug;
+  const appName = developer?.targetApp || devops?.targetApp || handoffs.projectSlug;
   const validation = resolveValidationLabel(developer?.validationStatus ?? null, developerStepStatus);
 
   return (
@@ -133,6 +139,42 @@ export function PipelineHandoffsCard({
               {mrUrl ? <MetaLink href={mrUrl} label="Open merge request" /> : null}
             </div>
             {gitlab?.error ? <p className="text-xs text-red-400">{gitlab.error}</p> : null}
+          </div>
+        ) : null}
+
+        {devops || appUrl ? (
+          <div className="space-y-2 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Deploy</p>
+            <div className="flex flex-col gap-1.5">
+              {devops ? (
+                <StatusBadge
+                  status={handoffBadge(devops.status)}
+                  size="sm"
+                  label={devops.status.replaceAll('_', ' ')}
+                />
+              ) : null}
+              {appUrl ? (
+                <a
+                  href={appUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex w-fit items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-300 hover:bg-sky-500/15"
+                >
+                  Open live app
+                  <ExternalLink className="h-3.5 w-3.5 opacity-80" />
+                </a>
+              ) : (
+                <p className="text-xs text-muted-foreground">Live URL appears here after devops-agent finishes deploy.</p>
+              )}
+              {devops?.environment ? (
+                <p className="text-xs text-muted-foreground">
+                  Env {devops.environment}
+                  {devops.region ? ` · ${devops.region}` : ''}
+                  {devops.ecsService ? ` · ${devops.ecsService}` : ''}
+                </p>
+              ) : null}
+            </div>
+            {devops?.error ? <p className="text-xs text-red-400">{devops.error}</p> : null}
           </div>
         ) : null}
       </dl>

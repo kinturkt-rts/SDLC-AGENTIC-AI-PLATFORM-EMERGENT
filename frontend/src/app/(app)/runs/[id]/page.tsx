@@ -296,15 +296,30 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                   <CheckCircle2 className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">Pipeline complete</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {handoffs?.devops?.appUrl ? 'App is live' : 'Pipeline complete'}
+                  </p>
                   <p className="mt-0.5 text-[12px] text-muted-foreground">
-                    {handoffs?.gitlab?.status === 'published'
-                      ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
-                      : 'All SDLC phases finished. Review artifacts and handoffs below.'}
+                    {handoffs?.devops?.appUrl
+                      ? 'DevOps finished deploying. Open the live app or review the GitLab branch.'
+                      : handoffs?.gitlab?.status === 'published'
+                        ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
+                        : 'All SDLC phases finished. Review artifacts and handoffs below.'}
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                {handoffs?.devops?.appUrl ? (
+                  <a
+                    href={handoffs.devops.appUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-500/15"
+                  >
+                    Open live app
+                    <ExternalLink className="h-3 w-3 opacity-70" />
+                  </a>
+                ) : null}
                 {gitlabBranchUrl ? (
                   <a
                     href={gitlabBranchUrl}

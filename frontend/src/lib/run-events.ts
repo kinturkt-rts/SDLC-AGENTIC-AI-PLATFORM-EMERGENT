@@ -35,6 +35,7 @@ const AGENT_LABEL: Record<string, string> = {
   'database-agent': 'Database Agent',
   'developer-agent': 'Developer Agent',
   'gitlab-agent': 'GitLab Agent',
+  'devops-agent': 'DevOps Agent',
   'qa-agent': 'QA Agent',
 };
 
@@ -45,6 +46,7 @@ export const AGENT_ACTIVITY_ACCENT: Record<string, string> = {
   'database-agent': 'text-emerald-400',
   'developer-agent': 'text-amber-400',
   'gitlab-agent': 'text-orange-400',
+  'devops-agent': 'text-sky-400',
   'qa-agent': 'text-slate-400',
 };
 
@@ -79,7 +81,8 @@ function phaseForRel(relPath: string): SdlcPhase | null {
   if (lower.endsWith('.py') || lower.endsWith('requirements.txt') || lower.includes('/app/')) {
     return 'implementation';
   }
-  if (lower.includes('gitlab-handoff')) return 'deploy';
+  if (lower.includes('gitlab-handoff')) return 'publish';
+  if (lower.includes('devops-handoff')) return 'deploy';
   return null;
 }
 

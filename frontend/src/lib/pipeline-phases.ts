@@ -9,7 +9,8 @@ export const PHASE_AGENT: Record<SdlcPhase, AgentName> = {
   implementation: 'developer-agent',
   qa: 'qa-agent',
   security: 'security-agent',
-  deploy: 'gitlab-agent',
+  publish: 'gitlab-agent',
+  deploy: 'devops-agent',
 };
 
 /** Agents surfaced in logs / CloudWatch filters (MVP + orchestrator). */
@@ -40,17 +41,24 @@ export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
   implementation: 'Application Code',
   qa: 'QA',
   security: 'Security',
-  deploy: 'Publish',
+  publish: 'Publish',
+  deploy: 'Deploy',
 };
 
-/** Core MVP pipeline steps shown on the run detail timeline. */
-export const MVP_TIMELINE_PHASES: SdlcPhase[] = [
+/**
+ * Phases required for "pipeline succeeded" while GitLab is the terminal MVP step.
+ * Deploy (devops) is shown on the timeline but optional until the orchestrator wires it.
+ */
+export const MVP_COMPLETION_PHASES: SdlcPhase[] = [
   'requirements',
   'architecture',
   'data',
   'implementation',
-  'deploy',
+  'publish',
 ];
+
+/** Full timeline shown on run detail / dashboard (includes Deploy for demo-2). */
+export const MVP_TIMELINE_PHASES: SdlcPhase[] = [...MVP_COMPLETION_PHASES, 'deploy'];
 
 export function phaseDisplayLabel(phase: SdlcPhase | string | null | undefined): string {
   if (!phase) return 'Pipeline';

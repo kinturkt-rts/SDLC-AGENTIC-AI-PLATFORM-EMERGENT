@@ -10,7 +10,8 @@ const allDone: Record<SdlcPhase, boolean> = {
   implementation: true,
   qa: false,
   security: false,
-  deploy: true,
+  publish: true,
+  deploy: false,
 };
 
 describe('reconcileRunStatus', () => {
@@ -39,7 +40,7 @@ describe('reconcileRunStatus', () => {
       logText: '[gitlab-fallback] cloud gitlab-agent succeeded\n',
       phaseDone: {
         ...allDone,
-        deploy: false,
+        publish: false,
         implementation: false,
       },
       error: 'Cancelled by user',

@@ -38,6 +38,7 @@ const MVP_AGENTS: { id: AgentName; label: string }[] = [
   { id: 'database-agent', label: 'Database' },
   { id: 'developer-agent', label: 'Developer' },
   { id: 'gitlab-agent', label: 'GitLab' },
+  { id: 'devops-agent', label: 'DevOps' },
 ];
 
 export default function LogsPage() {

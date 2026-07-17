@@ -35,6 +35,7 @@ export type SdlcPhase =
   | 'implementation'
   | 'qa'
   | 'security'
+  | 'publish'
   | 'deploy';
 
 export type AgentAvailability = 'online' | 'offline' | 'unknown';
@@ -121,6 +122,21 @@ export interface GitlabHandoffInfo {
   path: string;
 }
 
+/** AWS deploy result from devops-agent (live app URL for users). */
+export interface DevopsHandoffInfo {
+  status: string;
+  targetApp: string;
+  appUrl?: string | null;
+  environment?: string | null;
+  region?: string | null;
+  healthy?: boolean | null;
+  ecsService?: string | null;
+  deployedAt?: string | null;
+  error?: string | null;
+  source: 's3' | 'local';
+  path: string;
+}
+
 /** Developer contract written after implementation (for QA / GitLab publish). */
 export interface DeveloperHandoffInfo {
   targetApp: string;
@@ -138,6 +154,7 @@ export interface RunHandoffs {
   projectSlug: string;
   gitlab: GitlabHandoffInfo | null;
   developer: DeveloperHandoffInfo | null;
+  devops: DevopsHandoffInfo | null;
   /** From shared context.json when gitlab handoff is missing. */
   contextMergeRequestUrl?: string | null;
   contextFeatureBranch?: string | null;
@@ -187,6 +204,8 @@ export interface Project {
   repoExternal?: boolean;
   /** Latest cloud pipeline run id when known (S3 mode). */
   runId?: string | null;
+  /** Live app URL from devops-agent when a deploy succeeded. */
+  liveUrl?: string | null;
   environment: Environment;
 }
 

@@ -15,6 +15,7 @@ import {
   Database,
   Code2,
   GitBranch,
+  Rocket,
   Shield,
   Zap,
   ChevronRight,
@@ -101,7 +102,8 @@ const PIPELINE_STEPS: {
   { id: 'architecture', label: PHASE_DISPLAY_LABEL.architecture, agent: 'Architect Agent', agentId: 'architect-agent', icon: Building2, phase: 'architecture', accent: 'text-violet-400', iconBg: 'bg-violet-500/10 ring-violet-500/20' },
   { id: 'database', label: PHASE_DISPLAY_LABEL.data, agent: 'Database Agent', agentId: 'database-agent', icon: Database, phase: 'data', accent: 'text-emerald-400', iconBg: 'bg-emerald-500/10 ring-emerald-500/20' },
   { id: 'development', label: PHASE_DISPLAY_LABEL.implementation, agent: 'Developer Agent', agentId: 'developer-agent', icon: Code2, phase: 'implementation', accent: 'text-amber-400', iconBg: 'bg-amber-500/10 ring-amber-500/20' },
-  { id: 'gitlab', label: PHASE_DISPLAY_LABEL.deploy, agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'deploy', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
+  { id: 'gitlab', label: PHASE_DISPLAY_LABEL.publish, agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'publish', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
+  { id: 'devops', label: PHASE_DISPLAY_LABEL.deploy, agent: 'DevOps Agent', agentId: 'devops-agent', icon: Rocket, phase: 'deploy', accent: 'text-sky-400', iconBg: 'bg-sky-500/10 ring-sky-500/20' },
 ];
 
 const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
@@ -111,6 +113,7 @@ const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
   'database-agent': Database,
   'developer-agent': Code2,
   'gitlab-agent': GitBranch,
+  'devops-agent': Rocket,
   'qa-agent': Shield,
 };
 
