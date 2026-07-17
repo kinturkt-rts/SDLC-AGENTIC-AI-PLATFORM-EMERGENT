@@ -62,9 +62,11 @@ agentcore:deploy:
     AGENTCORE_AGENT_NAME: architect-agent
 
 # Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
-# fires only on branches gitlab-agent publishes (sdlc/<app>). `when: manual` on
-# purpose — this runs a real terraform apply against AWS, so it waits for a
-# person to click Run in the GitLab UI rather than firing on every push.
+# fires only on branches gitlab-agent publishes (sdlc/<app>).
+#
+# TEMPORARY: `when: manual` removed for a showcase run (auto-fires on push to
+# sdlc/*). This runs a real terraform apply against AWS with no human gate —
+# switch back to `when: manual` before this is used for anything beyond a demo.
 #
 # Prerequisites not yet configured (job will fail until these are set up):
 #   - Runner needs Docker (build+push to ECR) and Terraform on PATH.
@@ -79,7 +81,6 @@ agentcore:deploy:
 target-app:deploy:
   stage: target-app-deploy
   image: python:3.12-slim
-  when: manual
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
   before_script:

@@ -186,24 +186,6 @@ function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   };
 }
 
-/**
- * Derive truthful run status from verified evidence, not just whatever run.json / logs claim.
- *
- * Rules (in order):
- *   1. User cancel is sticky — never upgrade `cancelled` to completed/failed from
- *      artifacts or log success markers. Cancel is an explicit operator decision.
- *   2. VERIFIED SUCCESS - every non-skipped required MVP phase has real artifacts →
- *      completed. This is the ONLY path to a green pipeline (except cancel above).
- *   3. Explicit failure signals (log/run.json) → failed.
- *   4. Claimed completion (from run.json OR a "pipeline completed" log line) that
- *      CANNOT be verified against artifacts → failed with the first missing phase named,
- *      as long as we have some evidence the run actually started in the artifact store.
- *      This is how a run that silently died mid-way stops showing as "green".
- *   5. Claimed completion with NO artifact evidence at all (very old runs whose S3
- *      lifecycle has purged everything) → trust the recorded status; we have no way to
- *      disprove it and downgrading them all to failed would be dishonest.
- *   6. Otherwise fall through to active/stalled logic.
- */
 export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult {
   const skipFlags = parseLogSkipFlags(input.logText);
   const effectiveDone = effectivePhaseDone(input.phaseDone, skipFlags);
@@ -212,8 +194,6 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   const hasAnyEvidence = MVP_TIMELINE_PHASES.some((p) => input.phaseDone[p]);
   const terminal = parseLogTerminalStatus(input.logText);
 
-  // Cancel must win over artifact/log "success" — otherwise a cancelled run that
-  // already had (or later gained) MVP artifacts flips green on the dashboard.
   if (input.status === 'cancelled') {
     return {
       status: 'cancelled',

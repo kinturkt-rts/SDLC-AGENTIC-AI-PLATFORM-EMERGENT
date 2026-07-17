@@ -575,8 +575,6 @@ async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   if (isS3Store()) {
     const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
 
-    // Prefer cancel from either side — cloud finalize can overwrite S3 to
-    // "completed" after the user already cancelled locally (or vice versa).
     if (local?.status === 'cancelled') {
       return { ...local, runId: local.runId || runId };
     }
@@ -758,7 +756,6 @@ async function latestUuidRunMtime(runId: string): Promise<string> {
 function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   const next: LiveRunState = { ...live, steps: live.steps ? [...live.steps] : live.steps };
 
-  // User cancel is sticky — log success/failure markers must not resurrect the run.
   if (next.status === 'cancelled') {
     return next;
   }

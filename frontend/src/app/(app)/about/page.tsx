@@ -82,7 +82,7 @@ export default function AboutPage() {
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Outputs stored in</dt>
-                <dd className="text-foreground">{settings?.storage.label ?? '—'}</dd>
+                <dd className="text-foreground">{settings?.storage.label ?? '-'}</dd>
               </div>
             </dl>
           )}

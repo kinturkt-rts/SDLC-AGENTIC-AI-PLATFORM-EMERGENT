@@ -16,7 +16,7 @@ export default function PipelinesPage() {
       <PageHeader
         eyebrow="Design"
         title="Pipelines"
-        description="The live MVP delivery path. Each phase is run by a specialist AgentCore agent — start a run from the Dashboard."
+        description="The live MVP delivery path. Each phase is run by a specialist AgentCore agent - start a run from the Dashboard."
       />
 
       {isLoading ? (

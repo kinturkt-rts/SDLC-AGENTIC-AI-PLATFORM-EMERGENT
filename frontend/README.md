@@ -1,4 +1,4 @@
-# SDLC Agentic AI Platform — Control Plane
+# SDLC Agentic AI Platform - Control Plane
 
 Next.js 14 (App Router) UI for monitoring and operating the SDLC agent pipeline: projects,
 runs, artifacts, agents, MCP servers, and token usage.
@@ -47,7 +47,7 @@ See `.env.example` for comments. Secrets stay in env files - never in the repo.
 |-------|-------------|
 | `/dashboard` | Summary, activity feed, submit brief / start pipeline |
 | `/runs`, `/runs/[id]` | Pipeline runs, live progress, handoffs, logs |
-| `/projects`, `/projects/[id]` | Target apps — overview, runs, artifacts, context, repo link |
+| `/projects`, `/projects/[id]` | Target apps - overview, runs, artifacts, context, repo link |
 | `/pipelines`, `/pipelines/[id]` | SDLC pipeline definitions |
 | `/agents`, `/agents/[id]` | Agent registry, MCP tools, optional connectivity test |
 | `/orchestrator`, `/orchestrator/messages` | Orchestrator flow and message log |

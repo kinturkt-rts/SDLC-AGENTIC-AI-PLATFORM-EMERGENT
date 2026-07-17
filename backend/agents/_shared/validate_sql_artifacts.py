@@ -352,11 +352,86 @@ def check_uuid_literals(sql_dir: Path) -> list[str]:
     return errors
 
 
+_VECTOR_CAST_BAD_FN_RE = re.compile(
+    r"\b(array_to_string|string_agg|format)\s*\(",
+    re.IGNORECASE,
+)
+# Bare text literals cast to vector — must start with '[' for pgvector's text parser.
+_VECTOR_STRING_LITERAL_RE = re.compile(
+    r"'((?:[^']|'')*)'\s*::\s*vector\b",
+    re.IGNORECASE,
+)
+_VECTOR_CAST_RE = re.compile(r"::\s*vector\b", re.IGNORECASE)
+
+_VECTOR_CAST_HINT = (
+    'Cast a native array directly instead, e.g. '
+    "array_fill(0.0::real, ARRAY[n])::vector or '[0.0,0.0,...]'::vector."
+)
+
+
+def _statement_window(cleaned: str, cast_end: int) -> str:
+    """Return the SQL statement slice ending at cast_end (from prior ';' or start)."""
+    start = cleaned.rfind(";", 0, cast_end) + 1
+    return cleaned[start:cast_end]
+
+
+def check_vector_literal_format(sql_dir: Path) -> list[str]:
+    """Reject ::vector casts that pgvector's text/array parsers will reject."""
+
+    errors: list[str] = []
+    for path in sorted(sql_dir.glob("*.sql")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        cleaned = _strip_sql_comments(text)
+
+        for match in _VECTOR_CAST_BAD_FN_RE.finditer(cleaned):
+            fn_name = match.group(1)
+            open_paren = match.end() - 1
+            try:
+                close_paren = _find_matching_paren(cleaned, open_paren)
+            except ValueError:
+                continue
+            # ::vector may follow directly, or after a wrapping "(SELECT ... FROM ...)"
+            # subquery (e.g. string_agg(...) FROM generate_series(...)). Look ahead
+            # within the same statement, not into the next INSERT row or statement.
+            window_end = min(len(cleaned), close_paren + 1 + 300)
+            window = cleaned[close_paren + 1 : window_end]
+            stop = re.search(r";", window)
+            if stop:
+                window = window[: stop.start()]
+            if re.search(r"::\s*vector\b", window, re.IGNORECASE):
+                errors.append(
+                    f"{path.name}: {fn_name}(...)::vector builds a bare comma-separated "
+                    f"string, which pgvector rejects (\"Vector contents must start with "
+                    f"'['\"). {_VECTOR_CAST_HINT}"
+                )
+
+        for match in _VECTOR_STRING_LITERAL_RE.finditer(cleaned):
+            lit = match.group(1).replace("''", "'").strip()
+            if lit.startswith("["):
+                continue
+            preview = lit[:48] + ("…" if len(lit) > 48 else "")
+            errors.append(
+                f"{path.name}: string literal '{preview}'::vector is missing leading '[' "
+                f"(pgvector text form must look like '[0.1,0.2,…]'::vector). {_VECTOR_CAST_HINT}"
+            )
+
+        for match in _VECTOR_CAST_RE.finditer(cleaned):
+            stmt = _statement_window(cleaned, match.end())
+            if "||" not in stmt:
+                continue
+            errors.append(
+                f"{path.name}: string concatenation (||) used near ::vector — "
+                f"pgvector will not parse concatenated CSV text as a vector. {_VECTOR_CAST_HINT}"
+            )
+    return errors
+
+
 def validate_sql_dir(sql_dir: Path) -> list[str]:
     """Run all blocking sql/ artifact checks."""
     errors = check_seed_schema_nullability(sql_dir)
     errors.extend(check_uuid_literals(sql_dir))
     errors.extend(check_bare_search_path(sql_dir))
+    errors.extend(check_vector_literal_format(sql_dir))
     return errors
 
 

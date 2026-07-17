@@ -201,9 +201,7 @@ function LogsInner() {
               Run detail
             </Link>
           </>
-        ) : (
-          <> Default view is the last 15 minutes; widen the window if you need older lines.</>
-        )}
+        ) : null}
       </p>
 
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">

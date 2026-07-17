@@ -46,7 +46,7 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
   ...ARTIFACT_FILTER_KINDS.map((k) => ({ value: k, label: artifactKindLabel(k) })),
 ];
 
-/** Final gate before a card can render — never trust a single filter path alone. */
+/** Final gate before a card can render - never trust a single filter path alone. */
 function passesFilters(
   artifact: Artifact,
   projectId: string | null,

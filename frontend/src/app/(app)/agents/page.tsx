@@ -121,7 +121,7 @@ export default function AgentsPage() {
       header: 'Success',
       render: (a) => {
         const m = metricsByAgent[a.id];
-        if (m?.successRatePct == null) return <span className="text-muted-foreground">—</span>;
+        if (m?.successRatePct == null) return <span className="text-muted-foreground">-</span>;
         return (
           <span className="tabular-nums text-foreground">
             {m.successRatePct}% <span className="text-muted-foreground">({m.sampleSize})</span>
@@ -136,7 +136,7 @@ export default function AgentsPage() {
         const m = metricsByAgent[a.id];
         return (
           <span className="tabular-nums text-muted-foreground">
-            {m?.avgDurationSec != null ? formatDuration(Math.round(m.avgDurationSec)) : '—'}
+            {m?.avgDurationSec != null ? formatDuration(Math.round(m.avgDurationSec)) : '-'}
           </span>
         );
       },

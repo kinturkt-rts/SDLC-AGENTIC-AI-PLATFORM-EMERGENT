@@ -453,7 +453,6 @@
   accent-color: #22d3ee;
 }
 
-/* Sonner defaults the close control to top-left; move it top-right like most apps. */
 [data-sonner-toast][data-close-button='true'] {
   padding-inline-end: 2.5rem !important;
 }

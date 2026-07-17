@@ -11,6 +11,7 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.validate_sql_artifacts import (  # noqa: E402
     check_seed_schema_nullability,
     check_uuid_literals,
+    check_vector_literal_format,
     parse_seed_inserts,
     validate_sql_dir,
 )
@@ -104,6 +105,126 @@ INSERT INTO t (id, name) VALUES
         encoding="utf-8",
     )
     assert check_uuid_literals(sql_dir) == []
+
+
+def test_check_vector_literal_format_rejects_array_to_string(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT array_to_string(array_fill(0.01::float, ARRAY[1024]), ','))::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "array_to_string" in errors[0]
+
+
+def test_check_vector_literal_format_rejects_string_agg(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT string_agg('0.0', ',') FROM generate_series(1, 1024))::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "string_agg" in errors[0]
+
+
+def test_check_vector_literal_format_passes_array_cast(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT array_fill(0.01::real, ARRAY[1024])::vector)),
+    ('d1000000-0000-4000-8000-000000000002',
+     (SELECT array_agg(0.0)::vector FROM generate_series(1, 1024)));
+""",
+        encoding="utf-8",
+    )
+    assert check_vector_literal_format(sql_dir) == []
+
+
+def test_check_vector_literal_format_ignores_unrelated_array_to_string(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO logs (id, tags) VALUES
+    ('d1000000-0000-4000-8000-000000000001', array_to_string(ARRAY['a', 'b'], ','));
+""",
+        encoding="utf-8",
+    )
+    assert check_vector_literal_format(sql_dir) == []
+
+
+def test_check_vector_literal_format_rejects_bare_csv_string_literal(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001', '0.01,0.02,0.03'::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "missing leading '['" in errors[0]
+
+
+def test_check_vector_literal_format_accepts_bracketed_string_literal(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001', '[0.01,0.02,0.03]'::vector);
+""",
+        encoding="utf-8",
+    )
+    assert check_vector_literal_format(sql_dir) == []
+
+
+def test_check_vector_literal_format_rejects_concat_near_vector(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     ('[' || '0.01,0.02' || ']')::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert any("||" in e for e in errors)
+
+
+def test_check_vector_literal_format_rejects_format_fn(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT format('%s', '0.01,0.02'))::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "format" in errors[0]
 
 
 def test_validate_sql_dir_catches_bad_uuids(tmp_path: Path) -> None:
