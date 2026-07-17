@@ -116,8 +116,6 @@ export default function ArtifactsPage() {
     ? projects?.find((p) => p.id === artifactsProjectId)?.name ?? artifactsProjectId
     : 'all projects';
 
-  const kindLabel = FILTER_OPTIONS.find((o) => o.value === kind)?.label ?? 'All kinds';
-
   const rows = React.useMemo(() => {
     const filtered: Artifact[] = [];
     for (const a of artifacts ?? []) {
@@ -132,17 +130,7 @@ export default function ArtifactsPage() {
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description={
-          <>
-            <span>
-              Showing {isLoading ? '…' : rows.length} {kindLabel.toLowerCase()}
-              {kind === 'all' ? ' artifacts' : ''} for {projectName}.
-            </span>
-            <span className="mt-1 block text-[11px] text-muted-foreground/70">
-              Filter build Jul 16 — if you still see Code under PRD, hard-refresh (Ctrl+Shift+R).
-            </span>
-          </>
-        }
+        description={`Deliverables across ${projectName} - PRDs, design docs, architecture diagrams, SQL, and application code`}
         actions={
           <div className="flex items-center gap-2">
             <label htmlFor="artifact-kind-filter" className="text-xs font-medium text-muted-foreground">
