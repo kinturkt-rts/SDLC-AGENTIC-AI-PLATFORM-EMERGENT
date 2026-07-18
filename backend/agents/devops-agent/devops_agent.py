@@ -443,11 +443,26 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
     return result
 
 
+def _powershell_exe() -> str:
+    """'powershell' (5.1) is what this repo's scripts are tested against on
+    Windows; Linux/macOS runners (e.g. GitLab CI) only have 'pwsh' (PowerShell
+    Core), if installed at all. Prefer the Windows-native binary so local
+    behavior is unchanged; fall back to pwsh for non-Windows runners."""
+    for candidate in ("powershell", "pwsh"):
+        if shutil.which(candidate):
+            return candidate
+    raise RuntimeError(
+        "No PowerShell found on PATH (tried 'powershell' and 'pwsh'). Install "
+        "PowerShell Core (https://aka.ms/powershell) to run "
+        "scripts/deploy-target-app.ps1 in this environment."
+    )
+
+
 def run_deploy(app: str, *, plan_only: bool = False, destroy: bool = False) -> int:
     """Invoke the deterministic deploy script (build + push + terraform apply + wait)."""
     script = _REPO_ROOT / "scripts" / "deploy-target-app.ps1"
     cmd = [
-        "powershell",
+        _powershell_exe(),
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",

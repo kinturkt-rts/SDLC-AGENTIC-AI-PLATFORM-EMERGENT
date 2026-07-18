@@ -91,7 +91,7 @@ def derive_extra_env(app: str) -> dict[str, str]:
 
 
 def ensure_deploy_dockerfiles(app: str) -> list[str]:
-    """Copy template Dockerfiles into target-apps/<app>/deploy/ when missing."""
+    """Copy template Dockerfiles and serve_api.py into target-apps/<app>/ when missing."""
     app_dir = _TARGET_APPS / app
     deploy_dir = app_dir / "deploy"
     copied: list[str] = []
@@ -104,6 +104,13 @@ def ensure_deploy_dockerfiles(app: str) -> list[str]:
         if src.is_file() and not dst.is_file():
             shutil.copyfile(src, dst)
             copied.append(f"target-apps/{app}/deploy/{name}")
+    # serve_api.py lives at the app root (same level as app/) so uvicorn can import it.
+    # It reads API_PATH_PREFIX at runtime and strips the ALB path prefix from requests.
+    serve_src = _TARGET_APPS / "_template" / "serve_api.py"
+    serve_dst = app_dir / "serve_api.py"
+    if serve_src.is_file() and not serve_dst.is_file():
+        shutil.copyfile(serve_src, serve_dst)
+        copied.append(f"target-apps/{app}/serve_api.py")
     return copied
 
 
