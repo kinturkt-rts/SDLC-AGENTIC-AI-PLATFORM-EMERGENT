@@ -22,6 +22,7 @@ _INFRA_DIR = _REPO_ROOT / "infrastructure"
 _PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
+from _shared.artifact_store import is_s3_store, put_handoff, resolve_run_id, update_pipeline_run
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.deploy_manifest import (
     build_deploy_manifest,
@@ -569,13 +570,32 @@ def main() -> None:
 
     if args.deploy or args.plan_only:
         rc = run_deploy(target, plan_only=args.plan_only)
+        handoff = _PIPELINE_DIR / f"{target}.devops-handoff.json"
+        data = (
+            json.loads(handoff.read_text(encoding="utf-8-sig"))
+            if handoff.is_file()
+            else None
+        )
+
+        # Record handoff + run status even on failure — this stage may run
+        # standalone (e.g. GitLab CI), outside the orchestrator that normally
+        # does this after every other agent's step. Mirrors gitlab-agent's own
+        # put_handoff() call, gated the same way (put_handoff builds an S3 URI
+        # unconditionally, so it isn't safe to call outside S3 mode).
+        run_id = resolve_run_id(ctx)
+        if run_id and is_s3_store():
+            if data:
+                put_handoff(run_id, "devops", data)
+            update_pipeline_run(
+                run_id,
+                status="completed" if rc == 0 else "failed",
+                last_agent=AGENT_NAME,
+            )
+
         if rc != 0:
             raise SystemExit(rc)
-        handoff = _PIPELINE_DIR / f"{target}.devops-handoff.json"
-        if handoff.is_file():
-            data = json.loads(handoff.read_text(encoding="utf-8-sig"))
-            if data.get("appUrl"):
-                print(f"\n[{AGENT_NAME}] Live UI: {data['appUrl']}")
+        if data and data.get("appUrl"):
+            print(f"\n[{AGENT_NAME}] Live UI: {data['appUrl']}")
 
 
 if __name__ == "__main__":

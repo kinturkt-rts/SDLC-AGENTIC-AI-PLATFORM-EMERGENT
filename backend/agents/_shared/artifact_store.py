@@ -15,6 +15,7 @@ from _shared.pipeline_context import (
     _is_cloud_store,
     db_dir_rel_for_app,
     db_handoff_rel_for_app,
+    devops_handoff_rel_for_app,
     gitlab_handoff_rel_for_app,
     infer_target_app_from_context,
     is_pipeline_context_rel,
@@ -425,6 +426,8 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
         paths.append(gitlab_handoff_rel_for_app(slug))
     elif agent_name == "qa-agent":
         paths.append(qa_handoff_rel_for_app(slug))
+    elif agent_name == "devops-agent":
+        paths.append(devops_handoff_rel_for_app(slug))
     return paths
 
 

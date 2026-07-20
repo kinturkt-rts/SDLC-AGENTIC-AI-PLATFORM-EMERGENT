@@ -167,10 +167,10 @@ try {
     Write-Host "`n=== $Feature deployed ===" -ForegroundColor Green
     if ($healthy) {
         Write-Host "Health check OK through ALB." -ForegroundColor Green
+        Write-Host "Live UI: $AppUrl" -ForegroundColor Yellow
     } else {
-        Write-Warning "Health endpoint not answering yet ($healthUrl) - the service may still be warming up."
+        Write-Warning "Health endpoint not answering ($healthUrl) after all retries - NOT reporting this as live."
     }
-    Write-Host "Live UI: $AppUrl" -ForegroundColor Yellow
 
     $handoffDir = Join-Path $RepoRoot "agents\pipeline"
     if (Test-Path $handoffDir) {
@@ -185,7 +185,10 @@ try {
         $handoff["targetApp"] = $Feature
         $handoff["environment"] = "dev"
         $handoff["region"] = $Region
-        $handoff["appUrl"] = $AppUrl
+        # Only record appUrl when the health check actually passed - an unhealthy
+        # deployment must not be reported as "live" to downstream consumers
+        # (devops_agent.py's CLI output, S3 handoff sync, the frontend).
+        if ($healthy) { $handoff["appUrl"] = $AppUrl } else { $handoff.Remove("appUrl") | Out-Null }
         $handoff["ecsCluster"] = $Cluster
         $handoff["ecsService"] = $Service
         $handoff["imageTag"] = $ImageTag
@@ -193,6 +196,12 @@ try {
         $handoff["deployedAt"] = (Get-Date).ToUniversalTime().ToString("o")
         $handoff | ConvertTo-Json -Depth 10 | Out-File -FilePath $handoffPath -Encoding utf8
         Write-Host "Handoff: agents/pipeline/$Feature.devops-handoff.json" -ForegroundColor DarkGray
+    }
+
+    if (-not $healthy) {
+        # Infra apply succeeded but the app never came up healthy - fail loudly
+        # so the caller (devops_agent.py, GitLab CI) doesn't treat this as success.
+        exit 2
     }
 }
 finally {
