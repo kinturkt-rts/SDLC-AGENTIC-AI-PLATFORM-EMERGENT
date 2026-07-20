@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from _shared.api_surface import (
@@ -133,17 +134,24 @@ def check_streamlit_no_raw_uuid_fields(
 
 
 def check_streamlit_no_deprecated_width_api(app_dir: Path) -> list[str]:
-    """Block deprecated use_container_width (Streamlit 1.41+ prefers width=)."""
+    """Block deprecated/invalid Streamlit width APIs (Streamlit 1.41+)."""
     ui = app_dir / "ui" / "streamlit_app.py"
     if not ui.is_file():
         return []
     text = ui.read_text(encoding="utf-8", errors="replace")
-    if "use_container_width" not in text:
-        return []
-    return [
-        "UI_PARITY: ui/streamlit_app.py uses deprecated `use_container_width` — "
-        'replace True with width="stretch" and False with width="content"'
-    ]
+    errors: list[str] = []
+    if "use_container_width" in text:
+        errors.append(
+            "UI_PARITY: ui/streamlit_app.py uses deprecated `use_container_width` — "
+            'replace True with width="stretch" and False with width="content"'
+        )
+    # width=0 / width=False crash Streamlit 1.41+ with StreamlitInvalidWidthError
+    if re.search(r"\bwidth\s*=\s*(0|False)\b", text):
+        errors.append(
+            "UI_PARITY: ui/streamlit_app.py uses invalid `width=0`/`width=False` — "
+            'use width="stretch" (full width) or width="content"'
+        )
+    return errors
 
 
 def validate_ui_parity(app_dir: Path, repo_root: Path) -> list[str]:

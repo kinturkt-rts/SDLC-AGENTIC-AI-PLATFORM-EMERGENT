@@ -110,9 +110,16 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Docker daemon not running. Start Docker Desktop and retry." }
 
         Write-Host "`n--- [2/4] Build + push images to ECR ---" -ForegroundColor Cyan
-        # cmd /c keeps the pipe out of PowerShell 5.1, which appends CRLF to piped
-        # stdin and breaks --password-stdin with a 400 from the registry.
-        cmd /c "aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $Registry"
+        if ($IsLinux -or $IsMacOS) {
+            # pwsh on Linux/macOS pipes stdin natively without the CRLF issue
+            # below - no cmd wrapper available there anyway (cmd.exe is
+            # Windows-only), so use a direct pipe.
+            aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $Registry
+        } else {
+            # cmd /c keeps the pipe out of PowerShell 5.1, which appends CRLF to piped
+            # stdin and breaks --password-stdin with a 400 from the registry.
+            cmd /c "aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $Registry"
+        }
         if ($LASTEXITCODE -ne 0) { throw "docker login to ECR failed." }
 
         $apiImage = "${Registry}/sdlc/$Feature/api:$ImageTag"

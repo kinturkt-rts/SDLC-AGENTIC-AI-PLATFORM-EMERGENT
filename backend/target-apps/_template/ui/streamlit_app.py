@@ -9,8 +9,9 @@ ADAPT checklist:
   - POST-on-collection APIs need matching GET list; forms use st.selectbox, not st.text_input for IDs.
   - After successful POST/PATCH, call st.rerun() so lists refresh.
   - Every httpx call uses follow_redirects=True (FastAPI 307 redirect fix).
-  - Never use deprecated `use_container_width` — use `width="stretch"` (full width) or
-    `width="content"` (fit content) on st.dataframe, st.button, st.form_submit_button, etc.
+  - Never use deprecated `use_container_width` and never `width=0` (raises StreamlitInvalidWidthError).
+    Use `width="stretch"` (full width) or `width="content"` (fit content) on st.dataframe,
+    st.button, st.form_submit_button, etc.
 """
 from __future__ import annotations
 

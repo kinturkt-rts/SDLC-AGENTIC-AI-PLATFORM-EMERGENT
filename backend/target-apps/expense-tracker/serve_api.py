@@ -1,8 +1,8 @@
 """ASGI startup shim — strips API_PATH_PREFIX before routing to FastAPI.
 
 The shared ALB routes /<app-name>/* to this container but does NOT strip the
-prefix before forwarding, so FastAPI receives /expense-tracker/health instead
-of /health.  This wrapper intercepts the path, strips the prefix, and adjusts
+prefix before forwarding, so FastAPI receives /<app-name>/health instead of
+/health.  This wrapper intercepts the path, strips the prefix, and adjusts
 root_path so Swagger UI generates correct URLs.
 
 Usage (set automatically by Dockerfile.api CMD):

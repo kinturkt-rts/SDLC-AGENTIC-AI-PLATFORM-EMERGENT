@@ -1,25 +1,28 @@
 ﻿{
-    "productAgentOutput":  "See prdPath for expense-tracker MVP requirements.",
     "targetApp":  "expense-tracker",
-    "prdPath":  "docs/PRD/expense-tracker.md",
+    "inputFile":  "inputs/expense-tracker.txt",
     "designDocPath":  "docs/design/expense-tracker.md",
-    "gitlabProject":  "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps",
-    "productBrief":  "Feature: Team Expense Tracker — Internal API PRD\nThe Finance team requires a lightweight internal REST API that allows employees to log business expenses and enables managers and admins to review, approve, and report on those expenses. Today there is no structured system, which makes monthly consolidation manual and error-prone. The proposed solution is a FastAPI + PostgreSQL service exposing role-scoped endpoints for three actor types: **employees** (submit and edit their own expenses), **managers** (view monthly aggregations per team), and **admins** (manage teams and action approval workflow). Multi-currency input is supported through a pre-loaded daily-rate snapshot table; conversion...",
-    "inputPath":  "inputs/expense-tracker.txt",
     "deliveryProfile":  {
                             "streamlitRequirementsPath":  "ui/requirements.txt",
                             "streamlitPath":  "ui/streamlit_app.py",
-                            "uiPattern":  "react",
+                            "uiPattern":  "streamlit",
                             "uiRequired":  true,
                             "requiresReact":  true,
-                            "requiresStreamlit":  false
+                            "requiresStreamlit":  true
                         },
-    "mergeRequestUrl":  null,
+    "mergeRequestIid":  null,
     "diagramPaths":  [
                          {
                              "Length":  43
                          }
                      ],
+    "prdPath":  "docs/PRD/expense-tracker.md",
+    "mergeRequestUrl":  null,
+    "productBrief":  "Feature: Team Expense Tracker — Internal API PRD\nThe Finance team requires a lightweight internal REST API that enables employees to log business expenses and gives managers and administrators visibility into spending by team and category. Currently, no standardised system exists for capturing, converting, or approving employee expenses, leading to manual reconciliation effort and a lack of audit accountability. The proposed solution is a FastAPI service backed by PostgreSQL that covers the full expense lifecycle: submission (with at-submit-time currency conversion using a pre-loaded daily FX snapshot table), admin approval or rejection, manager reporting, and an immutable audit trail. Al...",
+    "gitlabProject":  "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps",
+    "productAgentOutput":  "See prdPath for expense-tracker MVP requirements.",
+    "ecsService":  "sdlc-expense-tracker-dev",
+    "inputPath":  "inputs/expense-tracker.txt",
     "featureBranch":  "sdlc/expense-tracker",
-    "mergeRequestIid":  null
+    "deployUrl":  "http://sdlc-target-apps-dev-976943026.us-east-2.elb.amazonaws.com/expense-tracker/"
 }

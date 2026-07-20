@@ -165,8 +165,8 @@ export default function SettingsPage() {
         <div className="flex items-center gap-2">
           <Lock className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold text-foreground">Authentication</h3>
-          <span className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Coming soon
+          <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-400">
+            Wired
           </span>
         </div>
         <div className="mt-3 flex items-start gap-3">
@@ -176,14 +176,12 @@ export default function SettingsPage() {
           <div className="min-w-0 space-y-1">
             <p className="text-sm font-medium text-foreground">Amazon Cognito</p>
             <p className="text-sm text-muted-foreground">
-              Sign-in with a Cognito user pool - SSO-friendly for enterprise teams. Role-based access
-              to runs, artifacts, and pipeline controls will be enforced here.
+              Control-plane UI sign-in uses a Cognito User Pool (email + password, forgot-password).
+              Users and password hashes live in Cognito — not in agents, S3 runs, or the pipeline.
+              Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID on the control-plane service.
             </p>
           </div>
         </div>
-        <Button className="mt-4" variant="outline" disabled>
-          Configure Cognito
-        </Button>
       </Card>
     </div>
   );

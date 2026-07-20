@@ -3,18 +3,26 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
-import { isAuthenticated } from '@/src/lib/auth-session';
+import { resolveAuthenticated } from '@/src/lib/auth-session';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [allowed, setAllowed] = React.useState(false);
 
   React.useEffect(() => {
-    if (!isAuthenticated()) {
-      router.replace('/login');
-      return;
-    }
-    setAllowed(true);
+    let cancelled = false;
+    void (async () => {
+      const ok = await resolveAuthenticated();
+      if (cancelled) return;
+      if (!ok) {
+        router.replace('/login');
+        return;
+      }
+      setAllowed(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   if (!allowed) {

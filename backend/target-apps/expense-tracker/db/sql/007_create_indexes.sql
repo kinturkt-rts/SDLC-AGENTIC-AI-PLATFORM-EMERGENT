@@ -1,14 +1,11 @@
 -- 007_create_indexes.sql
--- Composite and secondary indexes for query performance (NFR-1, NFR-6)
+-- Performance indexes per design §3 and NFR-4
 
-CREATE INDEX IF NOT EXISTS idx_expenses_team_status_date
-    ON expenses (team_id, status, expense_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_team_date
+    ON expenses(team_id, expense_date, status, deleted_at);
 
-CREATE INDEX IF NOT EXISTS idx_expenses_employee_id
-    ON expenses (employee_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_user
+    ON expenses(user_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_audit_log_expense_id
-    ON audit_log (expense_id);
-
-CREATE INDEX IF NOT EXISTS idx_teams_name
-    ON teams (name);
+CREATE INDEX IF NOT EXISTS idx_audit_expense
+    ON audit_log(expense_id, created_at);

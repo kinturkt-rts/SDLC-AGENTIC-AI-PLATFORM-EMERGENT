@@ -325,6 +325,8 @@ Rules — apply to every FR regardless of domain:
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
   - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder,
+    no invented second secret). For API-key auth, the value pasted into Streamlit/Swagger **must be
+    the seed-comment password** (same string hashed into `api_keys` / `token_hash`)
     apply_sql/materialize script names, seed-apply notes, or SQLite-test notes); password matches
     seed SQL comment exactly
 
@@ -466,8 +468,9 @@ startup check. NEVER import from `app/` — Streamlit calls the API over HTTP on
 **UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
 list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
 inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
-**Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Use
-`width="stretch"` for full-width dataframes/buttons, `width="content"` to fit content.
+**Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Never
+`width=0` / `width=False` (StreamlitInvalidWidthError on Streamlit 1.41+). Use only
+`width="stretch"` for full-width dataframes/buttons, or `width="content"` to fit content.
 **Arrow-safe dataframes:** In `st.dataframe`/`st.table` data, never mix string placeholders
 ("—", "N/A", "") into numeric columns — pass `None` for missing values (Arrow rejects mixed-type
 columns). Placeholders belong in display formatting (`st.column_config.NumberColumn(format=...)`)
@@ -593,7 +596,8 @@ Section numbers vary per feature. Locate content by heading text:
   or PRD section 11 / input brief requires Streamlit — even if design.md Stack omitted it.
   Place at `ui/streamlit_app.py`; call API over HTTP; add `streamlit` to `ui/requirements.txt`;
   README documents Terminal 1 (uvicorn) + Terminal 2 (`streamlit run ui/streamlit_app.py`).
-  Streamlit widgets: use `width="stretch"` / `width="content"` — never `use_container_width`.
+  Streamlit widgets: use `width="stretch"` / `width="content"` — never `use_container_width`
+  and never `width=0` (crashes live UI on Streamlit 1.41+).
   **UI scope:** Wire Streamlit to design §4 **collection GET** routes and role-specific views — NOT every
   internal/admin route needs a screen, but browse/create flows from the PRD MUST be usable without pasting UUIDs.
 - **API-only (Pattern B/B+/B++ without Streamlit):** FastAPI routes + pytest only — no `ui/` folder.
@@ -704,7 +708,8 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | Pydantic `EmailStr` | Importing `EmailStr` alone is fine, but at *validation time* Pydantic imports `email-validator` lazily and raises `ImportError: email-validator is not installed` | Any schema that uses `EmailStr` requires `pydantic[email]>=2.0` (or `email-validator>=2.0`) in `requirements.txt`. Add it the moment you write `EmailStr` anywhere — not later. |
 | `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
 | `import app.models` + bare `app` name | `from app.main import app` then `import app.models` rebinds `app` to the **package**; `app.dependency_overrides` raises `AttributeError` on every test using the `client` fixture | Always `from app.main import app as fastapi_app`; use `fastapi_app.dependency_overrides` and `TestClient(fastapi_app)`. The golden conftest_reference.py already includes `import app.models` — do not re-add it under a bare `app` name. |
-| Streamlit `use_container_width` | Deprecated; removed in Streamlit 1.41+ — logs warnings and will break on upgrade | Never `use_container_width=True/False`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
+| Streamlit `use_container_width` / `width=0` | Deprecated/invalid; Streamlit 1.41+ raises `StreamlitInvalidWidthError` on live UI | Never `use_container_width=True/False` and never `width=0`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
+| API-key demo secret ≠ seed password | README invents `ADMIN_KEY_DEV` / random tokens while seed SQL bcrypt-hashes the seed-comment password into `api_keys` / `token_hash` — live UI 401s | When auth is `X-API-Key` and seed uses `__BCRYPT_PLACEHOLDER__`, README **Demo credentials** MUST tell the tester to paste the **same plaintext** as `-- Password for all seed users: "..."` (e.g. `ExpenseTest123!`). Do not invent a second key name unless that exact string is what was hashed. |
 
 When writing `tests/conftest.py`, COPY `_template/tests/conftest_reference.py` via
 `dev_read_file("target-apps/_template/tests/conftest_reference.py")` then `dev_write_file` as

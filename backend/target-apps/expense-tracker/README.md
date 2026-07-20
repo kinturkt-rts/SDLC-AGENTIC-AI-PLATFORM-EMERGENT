@@ -1,14 +1,14 @@
-# Expense Tracker — Internal API
+# Expense Tracker
 
-FastAPI + PostgreSQL REST API for logging, approving, and reporting on employee business expenses.
+Internal REST API for employee expense submission, admin approval/rejection, and manager team-spend reporting with at-submit-time FX conversion.
 
-## Features
+## Tech Stack
 
-- **Employees**: Submit, edit, and soft-delete expenses with automatic multi-currency → USD conversion
-- **Managers**: View monthly team aggregation reports (approved expenses only)
-- **Admins**: Manage teams, assign employees, approve/reject expenses
-- **Audit Log**: Every status transition is recorded with actor and timestamp
-- **Health**: `GET /health` with real DB ping (503 on failure)
+- Python 3.12 + FastAPI + Pydantic v2
+- SQLAlchemy 2.x (sync) + psycopg 3
+- PostgreSQL (RDS) with schema `expense_tracker`
+- Streamlit UI (optional interactive client)
+- Authentication: API key via `X-API-Key` header (bcrypt-hashed in DB)
 
 ## Quick Start
 
@@ -36,112 +36,106 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` with your RDS credentials. **Every line must be `KEY=value` format** — never paste a bare URL without `DATABASE_URL=`.
+Edit `.env` and set your real `DATABASE_URL`. Every line **must** be `KEY=value` — never paste a bare URL without the `DATABASE_URL=` prefix.
 
 Example:
 ```
-DATABASE_URL=postgresql+psycopg://postgres:yourpassword@agenticaidbinstance.c1u0cggiolxp.us-east-2.rds.amazonaws.com:5432/sdlc_agentic_ai?sslmode=require
+DATABASE_URL=postgresql+psycopg://postgres:mypassword@agenticaidbinstance.c1u0cggiolxp.us-east-2.rds.amazonaws.com:5432/sdlc_agentic_ai?sslmode=require
 ```
 
 ### 3. Run the API (Terminal 1)
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas
 ```
 
-Access Swagger UI at: http://localhost:8000/docs
+Open Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-### 4. Run tests
+### 4. Run the Streamlit UI (Terminal 2)
+
+**PowerShell (Windows):**
+```powershell
+cd target-apps/expense-tracker
+.\.venv\Scripts\Activate.ps1
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
+
+**Bash:**
+```bash
+cd target-apps/expense-tracker
+source .venv/bin/activate
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
+
+### 5. Run tests
 
 ```bash
 pytest tests/ -q
 ```
 
-## Authentication
+## Environment Variables
 
-This API uses **two auth mechanisms** (no JWT):
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `APP_ENV` | `development`, `production`, `test` | `development` |
+| `DATABASE_URL` | PostgreSQL DSN (psycopg driver) | _(required)_ |
+| `POSTGRES_SCHEMA` | Schema name | `expense_tracker` |
+| `API_KEY` | API key for admin access | _(required)_ |
+| `AWS_REGION` | AWS region | `us-east-2` |
+| `LOG_LEVEL` | Logging level | `INFO` |
+| `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
-| Actor | Header | Format |
-|-------|--------|--------|
-| Employee | `Authorization` | `Bearer <token>` |
-| Manager | `X-Api-Key` | `<api-key>` |
-| Admin | `X-Api-Key` | `<api-key>` |
+## Demo Accounts
 
-Tokens and API keys are SHA-256 hashed and stored in `employees.token_hash` and `api_keys.key_hash` respectively.
+| Email | Role | Password / Token |
+|-------|------|-----------------|
+| admin@example.com | admin | ExpenseTest123! |
+| admin2@example.com | admin | ExpenseTest123! |
+| manager@example.com | manager | ExpenseTest123! |
+| alice@example.com | employee | ExpenseTest123! |
+| bob@example.com | employee | ExpenseTest123! |
+| carol@example.com | employee | ExpenseTest123! |
+| dave@example.com | employee | ExpenseTest123! |
 
-### Swagger Auth
+The `X-API-Key` header accepts the plaintext token/key. The API matches it against bcrypt hashes in the `users.token_hash` and `api_keys.key_hash` columns.
 
-- For employee routes: Click "Authorize" and enter bearer token
-- For manager/admin routes: Add `X-Api-Key` header in individual requests or use curl
+For live UI / Swagger auth, use the seeded demo secret: `ExpenseTest123!`
+(same value as the seed password comment in `db/sql/008_seed.sql`).
 
-## Demo Accounts (Seed Data)
+## API Endpoints
 
-| Role | Name | ID | Team |
-|------|------|----|------|
-| Employee | Alice Johnson | employees.id=1 | Engineering |
-| Employee | Bob Smith | employees.id=2 | Engineering |
-| Employee | Carol Davis | employees.id=3 | Finance |
-| Manager | Manager - Engineering | api_keys.id=1 | Engineering |
-| Admin | Admin - Global | api_keys.id=2 | All teams |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | None | Health check with DB ping |
+| POST | `/api/v1/expenses` | Employee | Submit expense |
+| GET | `/api/v1/expenses` | Employee/Admin | List expenses |
+| GET | `/api/v1/expenses/{id}` | Owner/Admin | Get expense |
+| PATCH | `/api/v1/expenses/{id}` | Owner | Edit submitted expense |
+| DELETE | `/api/v1/expenses/{id}` | Owner | Soft-delete submitted expense |
+| POST | `/api/v1/expenses/{id}/approve` | Admin | Approve expense |
+| POST | `/api/v1/expenses/{id}/reject` | Admin | Reject expense |
+| GET | `/api/v1/expenses/{id}/audit` | Admin | Audit trail |
+| POST | `/api/v1/teams` | Admin | Create team |
+| GET | `/api/v1/teams` | Admin/Manager | List teams |
+| PATCH | `/api/v1/teams/{id}/members` | Admin | Assign/remove member |
+| GET | `/api/v1/teams/{id}/expenses/summary` | Manager/Admin | Monthly summary |
+| POST | `/api/v1/fx-snapshots` | Admin | Create/update FX rate |
 
-> **Note**: Seed plaintext passwords: `DevToken123!` (employee tokens), `DevApiKey456!` (API keys).
+## Swagger Auth
 
-## Role & Endpoint Quick Reference
+1. Open http://localhost:8000/docs
+2. Click "Authorize" button
+3. Enter your API key in the `X-API-Key` field
+4. Execute endpoints
 
-| Endpoint | Allowed Role(s) | Notes |
-|----------|-----------------|-------|
-| `POST /api/v1/expenses` | employee | Submit expense |
-| `PATCH /api/v1/expenses/{id}` | employee (owner) | Edit submitted only |
-| `DELETE /api/v1/expenses/{id}` | employee (owner) | Soft-delete submitted only |
-| `GET /api/v1/expenses` | employee | Own expenses, filterable |
-| `GET /api/v1/expenses/{id}` | employee (owner), admin | Single expense |
-| `GET /api/v1/expenses/{id}/audit-log` | employee (owner), admin, manager | Audit trail |
-| `POST /api/v1/expenses/{id}/approve` | admin | submitted → approved |
-| `POST /api/v1/expenses/{id}/reject` | admin | submitted → rejected |
-| `POST /api/v1/teams` | admin | Create team |
-| `GET /api/v1/teams` | admin | List all teams |
-| `PUT /api/v1/employees/{id}/team` | admin | Assign employee to team |
-| `GET /api/v1/teams/{team_id}/report?year=&month=` | manager (scoped), admin | Monthly aggregation |
-| `GET /health` | public | Health check with DB ping |
-| `GET /api/v1/health` | public | Health check (versioned) |
+## Architecture Notes
 
-## RDS Smoke Test
-
-After configuring `.env` with valid RDS credentials:
-
-```bash
-# 1. Health check
-curl http://localhost:8000/health
-# Expected: {"status":"ok","checks":{"api":"ok","database":"ok"}}
-
-# 2. List teams (requires admin API key)
-curl -H "X-Api-Key: <your-admin-key>" http://localhost:8000/api/v1/teams
-```
-
-## Project Structure
-
-```
-app/
-├── __init__.py
-├── config.py           # Settings from .env
-├── database.py         # SQLAlchemy engine + session
-├── startup_checks.py   # Runtime validation
-├── dependencies.py     # Auth + DI
-├── main.py             # FastAPI app entry point
-├── models/             # SQLAlchemy ORM models
-│   ├── team.py
-│   ├── employee.py
-│   ├── api_key.py
-│   ├── fx_rate_snapshot.py
-│   ├── expense.py
-│   └── audit_log.py
-└── routers/
-    ├── health.py       # GET /health
-    ├── health_v1.py    # GET /api/v1/health
-    ├── expenses.py     # Expense CRUD + approve/reject + audit-log
-    ├── teams.py        # Team management + report
-    └── employees.py    # Employee team assignment
-schemas/                # Pydantic request/response models
-tests/                  # pytest integration tests
-db/sql/                 # DDL migrations + seed (read-only)
-```
+- All monetary values use `Decimal` (never `float`) mapped to `NUMERIC(19,4)` in Postgres
+- FX conversion happens at submit/edit time; `amount_usd` is frozen on the row
+- Soft-delete only — `deleted_at` timestamp; no hard deletes
+- Append-only audit log for all expense state changes
+- Composite index on `(team_id, expense_date, status, deleted_at)` for aggregation performance
