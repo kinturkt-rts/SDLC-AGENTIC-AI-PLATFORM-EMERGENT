@@ -61,25 +61,23 @@ agentcore:deploy:
   variables:
     AGENTCORE_AGENT_NAME: architect-agent
 
-# Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
-# fires only on branches gitlab-agent publishes (sdlc/<app>).
-#
-# TEMPORARY: `when: manual` removed for a showcase run (auto-fires on push to
-# sdlc/*). This runs a real terraform apply against AWS with no human gate —
-# switch back to `when: manual` before this is used for anything beyond a demo.
-#
-# The image/services/before_script below install everything the job needs
-# (pwsh, Docker CLI, Terraform, Python deps) so it doesn't depend on a
-# pre-baked runner image. What's still a runner/project setting, not
-# something this file can fix:
-#   - The runner must allow privileged mode for the docker:dind service
-#     (GitLab Runner config, not repo config) — without it, "docker info"
-#     below fails fast with a clear message instead of hanging deep in terraform.
-#   - AWS credentials as protected/masked CI/CD variables (Settings > CI/CD >
-#     Variables): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
-#     (or swap for OIDC role assumption). SSO login (`aws sso login`) is
-#     interactive and can't run in CI, so local credential setup doesn't
-#     carry over — checked below before anything else runs.
+# One-off: verify the OIDC role your AWS admin created (gitlab-sdlc-deploy-role)
+oidc:test:
+  stage: target-app-deploy
+  image:
+    name: amazon/aws-cli:2.17.62
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  script:
+    - export AWS_ROLE_ARN=arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_OIDC_TOKEN
+    - aws sts get-caller-identity
+
+
 target-app:deploy:
   stage: target-app-deploy
   image: mcr.microsoft.com/powershell:7.4-debian-12
@@ -89,19 +87,28 @@ target-app:deploy:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
     TF_VERSION: "1.10.5"
+    AWS_ROLE_ARN: arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    ARTIFACT_STORE: "s3"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
   before_script:
     - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
     - 'echo "Target app slug: $SLUG"'
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_OIDC_TOKEN
+    - export AWS_DEFAULT_REGION="$AWS_REGION"
     - |
-      for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION; do
+      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE; do
         if [ -z "$(printenv "$v")" ]; then
-          echo "Missing required CI/CD variable: $v — add it under Settings > CI/CD > Variables (protected+masked). See comment above this job."
+          echo "Missing required CI/CD variable: $v — add it under Settings > CI/CD > Variables. See comment above this job."
           exit 1
         fi
       done
     - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+    - pip3 install --no-cache-dir --break-system-packages awscli
+    - aws sts get-caller-identity || (echo "OIDC role assumption failed — re-run the oidc:test job above to isolate whether this is a role/trust-policy issue." && exit 1)
     - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
     - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
     - terraform -version
