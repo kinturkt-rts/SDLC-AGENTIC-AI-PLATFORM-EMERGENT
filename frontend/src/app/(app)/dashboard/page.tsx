@@ -308,51 +308,82 @@ function pipelineStepVisualState(
 function PipelineVisualization({ run }: { run: PipelineRun | undefined }) {
   return (
     <div className="relative overflow-x-auto">
-      <div className="flex items-center justify-between gap-2 min-w-[600px] px-2 py-4">
+      <div className="flex min-w-[640px] items-start gap-0 px-2 py-4">
         {PIPELINE_STEPS.map((step, idx) => {
           const visualState = pipelineStepVisualState(step.phase, run);
           const isActive = visualState === 'active';
           const isCompleted = visualState === 'completed';
 
           return (
-            <div key={step.id} className="flex flex-1 items-center">
-              <Link href={`/agents/${step.agentId}`} className={cn(
-                'group relative flex flex-1 flex-col items-center gap-2 rounded-xl border p-3 transition-all duration-300 cursor-pointer',
-                isActive
-                  ? 'border-teal-500/40 bg-teal-500/[0.06] glow-teal-sm'
-                  : isCompleted
-                    ? 'border-emerald-500/20 bg-emerald-500/[0.04]'
-                    : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12]',
-              )}>
-                <div className={cn(
-                  'flex h-10 w-10 items-center justify-center rounded-lg ring-1 ring-inset transition-all',
+            <React.Fragment key={step.id}>
+              <Link
+                href={`/agents/${step.agentId}`}
+                className={cn(
+                  'group relative flex min-w-0 flex-1 flex-col items-center rounded-xl border px-2 pb-3 pt-3 transition-all duration-300',
                   isActive
-                    ? 'bg-teal-500/15 ring-teal-500/30 animate-pulse-glow'
+                    ? 'border-teal-500/40 bg-teal-500/[0.06] glow-teal-sm'
                     : isCompleted
-                      ? 'bg-emerald-500/10 ring-emerald-500/20'
-                      : step.iconBg,
-                )}>
-                  <step.icon className={cn('h-5 w-5', isActive ? 'text-teal-400' : isCompleted ? 'text-emerald-400' : step.accent)} />
+                      ? 'border-emerald-500/20 bg-emerald-500/[0.04]'
+                      : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12]',
+                )}
+              >
+                <div
+                  className={cn(
+                    'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset transition-all',
+                    isActive
+                      ? 'bg-teal-500/15 ring-teal-500/30 animate-pulse-glow'
+                      : isCompleted
+                        ? 'bg-emerald-500/10 ring-emerald-500/20'
+                        : step.iconBg,
+                  )}
+                >
+                  <step.icon
+                    className={cn(
+                      'h-5 w-5',
+                      isActive ? 'text-teal-400' : isCompleted ? 'text-emerald-400' : step.accent,
+                    )}
+                  />
                 </div>
-                <div className="text-center">
-                  <p className={cn('text-xs font-semibold', isActive ? 'text-teal-300' : isCompleted ? 'text-emerald-300' : 'text-foreground')}>{step.label}</p>
-                  <p className="text-[10px] text-muted-foreground">{step.agent}</p>
+                <div className="mt-2 flex min-h-[2.75rem] w-full flex-col items-center justify-start text-center">
+                  <p
+                    className={cn(
+                      'line-clamp-2 text-xs font-semibold leading-tight',
+                      isActive ? 'text-teal-300' : isCompleted ? 'text-emerald-300' : 'text-foreground',
+                    )}
+                  >
+                    {step.label}
+                  </p>
+                  <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{step.agent}</p>
                 </div>
                 {isActive && (
-                  <span className="absolute -top-1.5 right-2 rounded-full bg-teal-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">Active</span>
+                  <span className="absolute -top-1.5 right-1.5 rounded-full bg-teal-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                    Active
+                  </span>
                 )}
                 {isCompleted && (
-                  <span className="absolute -top-1.5 right-2 rounded-full bg-emerald-500/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">Done</span>
+                  <span className="absolute -top-1.5 right-1.5 rounded-full bg-emerald-500/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                    Done
+                  </span>
                 )}
               </Link>
-              {idx < PIPELINE_STEPS.length - 1 && (
-                <div className="relative mx-1 flex h-[2px] w-8 shrink-0 items-center lg:w-12">
-                  <div className={cn('h-full w-full rounded-full', isCompleted ? 'bg-emerald-500/40' : 'bg-white/[0.08]')} />
-                  {isActive && <div className="pipeline-connector absolute inset-0" />}
-                  <ChevronRight className={cn('absolute -right-1 h-3 w-3', isCompleted ? 'text-emerald-500/60' : 'text-white/20')} />
+              {idx < PIPELINE_STEPS.length - 1 ? (
+                <div className="relative mx-0.5 mt-5 flex h-0 w-6 shrink-0 items-center sm:w-8 lg:w-10">
+                  <div
+                    className={cn(
+                      'h-[2px] w-full rounded-full',
+                      isCompleted ? 'bg-emerald-500/40' : 'bg-white/[0.08]',
+                    )}
+                  />
+                  {isActive ? <div className="pipeline-connector absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2" /> : null}
+                  <ChevronRight
+                    className={cn(
+                      'absolute -right-1.5 top-1/2 h-3 w-3 -translate-y-1/2',
+                      isCompleted ? 'text-emerald-500/60' : 'text-white/20',
+                    )}
+                  />
                 </div>
-              )}
-            </div>
+              ) : null}
+            </React.Fragment>
           );
         })}
       </div>

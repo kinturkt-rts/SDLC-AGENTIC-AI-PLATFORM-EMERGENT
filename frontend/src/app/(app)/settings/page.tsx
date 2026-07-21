@@ -117,7 +117,7 @@ function PlatformSettingsCards({ settings }: { settings: PlatformSettings }) {
 }
 
 export default function SettingsPage() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const { data: settings, isLoading, isError } = usePlatformSettings();
 
@@ -155,7 +155,7 @@ export default function SettingsPage() {
         <div className="mt-4 flex items-center justify-between">
           <p className="text-sm font-medium text-foreground">Dark mode</p>
           <Switch
-            checked={mounted ? theme === 'dark' : true}
+            checked={mounted ? resolvedTheme !== 'light' : true}
             onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
           />
         </div>
