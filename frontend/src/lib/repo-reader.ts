@@ -993,11 +993,35 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     telemetryElapsedSec = await loadRunTelemetryElapsedSec(slug, runId);
   }
 
+  // AgentCore marks the run completed after gitlab-agent. Deploy continues in
+  // GitLab CI asynchronously — keep the control-plane run "running" on Deploy
+  // so dashboard strip, active-run cards, and polling stay live until appUrl.
+  const deployStepRunning = steps.some(
+    (step) => step.phase === 'deploy' && step.status === 'running',
+  );
+  const displayStatus: RunStatus =
+    deployStepRunning && reconciled.status === 'completed' ? 'running' : reconciled.status;
+  const displayPhase: SdlcPhase | null = deployStepRunning
+    ? 'deploy'
+    : displayStatus === 'completed' ||
+        displayStatus === 'failed' ||
+        displayStatus === 'cancelled'
+      ? null
+      : currentPhase;
+  const displayAgent: AgentName | null = deployStepRunning
+    ? 'devops-agent'
+    : displayStatus === 'completed' ||
+        displayStatus === 'failed' ||
+        displayStatus === 'cancelled' ||
+        !currentAgentName
+      ? null
+      : (currentAgentName as AgentName);
+
   const timings = resolveRunTimings({
     startedAt,
-    status: reconciled.status,
+    status: displayStatus,
     liveStartedAt: enriched.startedAt,
-    liveFinishedAt: enriched.finishedAt,
+    liveFinishedAt: deployStepRunning ? null : enriched.finishedAt,
     logMtimeMs,
     s3LatestMs: s3MtimeMs,
     s3EarliestMs,
@@ -1010,22 +1034,11 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     projectId: slug,
     projectName: slugToTitle(slug),
     pipeline: 'Standard SDLC',
-    status: reconciled.status,
-    currentPhase:
-      reconciled.status === 'completed' ||
-      reconciled.status === 'failed' ||
-      reconciled.status === 'cancelled'
-        ? null
-        : currentPhase,
-    currentAgent:
-      reconciled.status === 'completed' ||
-      reconciled.status === 'failed' ||
-      reconciled.status === 'cancelled' ||
-      !currentAgentName
-        ? null
-        : (currentAgentName as AgentName),
+    status: displayStatus,
+    currentPhase: displayPhase,
+    currentAgent: displayAgent,
     startedAt: timings.startedAt,
-    finishedAt: timings.finishedAt,
+    finishedAt: deployStepRunning ? null : timings.finishedAt,
     elapsedSec: timings.elapsedSec,
     triggeredBy: enriched.triggeredBy ?? 'frontend',
     steps,

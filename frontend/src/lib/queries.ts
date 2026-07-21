@@ -63,7 +63,16 @@ export const useRuns = () =>
     staleTime: 10_000,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 8_000;
+      if (
+        runs?.some(
+          (r) =>
+            r.status === 'running' ||
+            r.status === 'paused' ||
+            r.steps?.some((s) => s.phase === 'deploy' && s.status === 'running'),
+        )
+      ) {
+        return 8_000;
+      }
       return 20_000;
     },
     refetchOnWindowFocus: true,
@@ -74,8 +83,9 @@ export const useRun = (id: string) =>
     queryFn: () => api.getRun(id),
     enabled: !!id,
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === 'running' || status === 'paused' ? 4000 : false;
+      const run = query.state.data;
+      const deployRunning = run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'running');
+      return run?.status === 'running' || run?.status === 'paused' || deployRunning ? 4000 : false;
     },
   });
 export const useRunLogs = (id: string, live = false) =>

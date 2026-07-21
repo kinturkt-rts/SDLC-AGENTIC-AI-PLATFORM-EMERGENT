@@ -285,7 +285,7 @@ function pipelineStepVisualState(
   stepPhase: string,
   run: PipelineRun | undefined,
 ): 'completed' | 'active' | 'pending' {
-  if (!run || (run.status !== 'running' && run.status !== 'paused')) return 'pending';
+  if (!run || !isRunActiveForDashboard(run)) return 'pending';
 
   const pipelineStep = run.steps?.find((s) => s.phase === stepPhase);
   if (pipelineStep?.status === 'completed') return 'completed';
@@ -303,6 +303,14 @@ function pipelineStepVisualState(
   if (currentIdx >= 0 && stepIdx >= 0 && stepIdx < currentIdx) return 'completed';
 
   return 'pending';
+}
+
+function isRunActiveForDashboard(run: PipelineRun): boolean {
+  if (run.status === 'running' || run.status === 'paused') return true;
+  // AgentCore marks the run completed at GitLab publish, but deploy continues
+  // asynchronously in GitLab CI. Keep the dashboard strip/live cards active
+  // while the synthesized deploy step is still waiting/running.
+  return run.steps?.some((s) => s.phase === 'deploy' && s.status === 'running') ?? false;
 }
 
 function PipelineVisualization({ run }: { run: PipelineRun | undefined }) {
@@ -416,7 +424,7 @@ function InputRequirementsCard() {
   const featureValid = !feature || FEATURE_SLUG_RE.test(feature);
 
   const activeRuns = React.useMemo(
-    () => (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused'),
+    () => (runs ?? []).filter(isRunActiveForDashboard),
     [runs],
   );
   const conflictingApp = React.useMemo(
@@ -920,10 +928,10 @@ export default function DashboardPage() {
   const { data: checkpoints } = useCheckpoints();
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
 
-  const activeRuns = (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused');
+  const activeRuns = (runs ?? []).filter(isRunActiveForDashboard);
   const hasActive = activeRuns.length > 0;
 
-  const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
+  const runningRun = (runs ?? []).find(isRunActiveForDashboard);
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
 
@@ -1032,7 +1040,7 @@ export default function DashboardPage() {
                       <LiveElapsed
                         startedAt={run.startedAt}
                         finishedAt={run.finishedAt}
-                        live={run.status === 'running' || run.status === 'paused'}
+                        live={isRunActiveForDashboard(run)}
                         fallbackSec={run.elapsedSec}
                       />
                     </div>
