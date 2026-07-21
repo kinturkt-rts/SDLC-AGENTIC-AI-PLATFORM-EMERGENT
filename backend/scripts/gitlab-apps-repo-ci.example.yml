@@ -1,0 +1,69 @@
+# Optional CI for sdlc-agentic-ai-platform-apps (GITLAB_APPS_REPO=true).
+# Copy into that project's .gitlab-ci.yml (or include via project file).
+#
+# Closes the loop when publish lands on apps-repo branch <slug> instead of
+# monorepo sdlc/<slug>: load PIPELINE_RUN_ID from .sdlc/pipeline-run.json
+# (written by gitlab-agent), clone the platform repo, and run devops --deploy
+# so the live URL is written back to the same S3 run handoff.
+#
+# Required CI/CD variables on the apps project:
+#   PLATFORM_REPO_URL   — clone URL for sdlc-agentic-ai-platform (with credentials)
+#   ARTIFACT_S3_BUCKET, ARTIFACT_DYNAMODB_TABLE
+#   AWS OIDC role (same gitlab-sdlc-deploy-role pattern as the platform project)
+
+stages:
+  - target-app-deploy
+
+target-app:deploy:
+  stage: target-app-deploy
+  image: mcr.microsoft.com/powershell:7.4-debian-12
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    TF_VERSION: "1.10.5"
+    AWS_REGION: us-east-2
+    AWS_ROLE_ARN: arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    ARTIFACT_STORE: "s3"
+    PLATFORM_CLONE_DIR: /tmp/sdlc-platform
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  before_script:
+    - export SLUG="${CI_COMMIT_BRANCH}"
+    - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+    - |
+      MARKER=".sdlc/pipeline-run.json"
+      if [ ! -f "$MARKER" ]; then
+        echo "Missing $MARKER — republish via gitlab-agent so CI can link the frontend run"
+        exit 1
+      fi
+      export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
+      echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID SLUG=$SLUG"
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_OIDC_TOKEN
+    - export AWS_DEFAULT_REGION="$AWS_REGION"
+    - |
+      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE PLATFORM_REPO_URL; do
+        if [ -z "$(printenv "$v")" ]; then
+          echo "Missing required CI/CD variable: $v"
+          exit 1
+        fi
+      done
+    - pip3 install --no-cache-dir --break-system-packages awscli
+    - aws sts get-caller-identity
+    - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+    - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
+    - git clone --depth 1 "$PLATFORM_REPO_URL" "$PLATFORM_CLONE_DIR"
+    - mkdir -p "$PLATFORM_CLONE_DIR/backend/target-apps/$SLUG"
+    - |
+      # Apps branch root is the app tree; overlay into monorepo layout for devops_agent.
+      tar -C . --exclude='.git' --exclude='inputs' -cf - . \
+        | tar -C "$PLATFORM_CLONE_DIR/backend/target-apps/$SLUG" -xf -
+    - pip3 install --no-cache-dir --break-system-packages -r "$PLATFORM_CLONE_DIR/backend/requirements.txt"
+  script:
+    - cd "$PLATFORM_CLONE_DIR/backend"
+    - export PIPELINE_RUN_ID ARTIFACT_STORE
+    - python3 agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy

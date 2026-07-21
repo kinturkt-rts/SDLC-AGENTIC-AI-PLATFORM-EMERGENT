@@ -50,6 +50,26 @@ from strands.tools.decorator import tool
 AGENT_NAME = "devops-agent"
 A2A_PORT = 9105
 
+
+def _ensure_pipeline_run_id_from_marker(target: str, ctx: dict[str, Any]) -> None:
+    """If PIPELINE_RUN_ID is unset, load it from the gitlab-agent publish marker."""
+    if resolve_run_id(ctx):
+        return
+    marker = _REPO_ROOT / "target-apps" / target / ".sdlc" / "pipeline-run.json"
+    if not marker.is_file():
+        return
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    rid = str(data.get("runId") or "").strip()
+    if not rid:
+        return
+    os.environ["PIPELINE_RUN_ID"] = rid
+    ctx["runId"] = rid
+    print(f"[{AGENT_NAME}] Loaded PIPELINE_RUN_ID from {marker.relative_to(_REPO_ROOT).as_posix()}")
+
+
 _WINGET_TF_DIR = (
     Path.home()
     / "AppData/Local/Microsoft/WinGet/Packages"
@@ -560,6 +580,8 @@ def main() -> None:
         )
     except TargetAppRequiredError as exc:
         parser.error(str(exc))
+
+    _ensure_pipeline_run_id_from_marker(target, ctx)
 
     if args.destroy:
         raise SystemExit(run_deploy(target, destroy=True))

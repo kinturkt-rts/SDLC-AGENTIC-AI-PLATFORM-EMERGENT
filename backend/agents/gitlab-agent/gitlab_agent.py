@@ -15,6 +15,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
+from _shared.artifact_store import resolve_run_id
 from _shared.gitlab_mcp_actions import (
     collect_feature_artifact_paths,
     create_mr_note,
@@ -26,6 +27,7 @@ from _shared.gitlab_mcp_actions import (
     list_projects,
     publish_feature,
     slugify_feature,
+    write_pipeline_run_marker,
 )
 from _shared.pipeline_context import (
     TargetAppRequiredError,
@@ -86,6 +88,15 @@ def run_publish(
     layout = "apps" if apps_repo or ctx.get("gitlabPublishLayout") == "apps" else "monorepo"
     _enrich_gitlab_context(ctx, layout=layout, root=publish_root)
 
+    # Embed runId in the published app tree so GitLab CI can set PIPELINE_RUN_ID
+    # and devops-agent can write the live URL back to the same S3 run handoff.
+    run_id = resolve_run_id(ctx)
+    marker_rel = write_pipeline_run_marker(app, run_id or "", root=publish_root)
+    if run_id:
+        ctx["runId"] = run_id
+    # Refresh publish path list after marker write (used in handoff context only).
+    ctx["publishPaths"] = collect_feature_artifact_paths(app, root=publish_root)
+
     publish_started = time.monotonic()
     result = publish_feature(
         app,
@@ -116,6 +127,8 @@ def run_publish(
         "commitCount": result.get("commitCount"),
         "fileCount": result.get("fileCount"),
         "mcpUrl": result.get("mcpUrl"),
+        "runId": run_id,
+        "pipelineRunMarker": marker_rel,
     }
     handoff_path = _write_gitlab_handoff(app, handoff)
 

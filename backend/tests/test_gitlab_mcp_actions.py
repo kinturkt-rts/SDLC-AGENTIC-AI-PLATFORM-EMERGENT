@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -26,8 +27,10 @@ from _shared.gitlab_mcp_actions import (  # noqa: E402
     gitlab_personal_access_token,
     gitlab_project_path,
     is_cloud_materialized_workspace,
+    pipeline_run_marker_repo_rel,
     sanitize_publish_content_for_waf,
     should_include_file,
+    write_pipeline_run_marker,
 )
 from _shared.gitlab_mcp_client import GitLabMcpError  # noqa: E402
 
@@ -272,3 +275,45 @@ def test_sanitize_publish_content_for_waf_only_on_cloudfront(
         "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp",
     )
     assert sanitize_publish_content_for_waf(text) == "curl http://127.0.0.1:8000/health"
+
+
+def test_write_pipeline_run_marker_monorepo(tmp_path: Path) -> None:
+    feature = "expense-tracker"
+    (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
+    (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# x", encoding="utf-8")
+
+    rel = write_pipeline_run_marker(feature, "run-abc-123", root=tmp_path)
+    assert rel == pipeline_run_marker_repo_rel(feature)
+    marker = tmp_path / rel
+    assert marker.is_file()
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    assert data["runId"] == "run-abc-123"
+    assert data["targetApp"] == feature
+
+    paths = collect_feature_artifact_paths(feature, root=tmp_path)
+    assert rel in paths
+
+    apps_files = _collect_apps_repo_publish_files(feature, root=tmp_path)
+    apps_paths = {item["path"] for item in apps_files}
+    assert ".sdlc/pipeline-run.json" in apps_paths
+
+
+def test_write_pipeline_run_marker_cloud_workspace(tmp_path: Path) -> None:
+    feature = "demo-app"
+    cloud_root = tmp_path / feature
+    (cloud_root / "app").mkdir(parents=True)
+    (cloud_root / "app" / "main.py").write_text("# main", encoding="utf-8")
+
+    rel = write_pipeline_run_marker(feature, "run-cloud-1", root=tmp_path)
+    assert rel == f"target-apps/{feature}/.sdlc/pipeline-run.json"
+    assert (cloud_root / ".sdlc" / "pipeline-run.json").is_file()
+
+    dests = {dest for _, dest in collect_feature_artifact_entries(feature, root=tmp_path)}
+    assert rel in dests
+
+
+def test_write_pipeline_run_marker_skips_without_run_id(tmp_path: Path) -> None:
+    feature = "demo-app"
+    (tmp_path / "target-apps" / feature).mkdir(parents=True)
+    assert write_pipeline_run_marker(feature, "  ", root=tmp_path) is None
+    assert write_pipeline_run_marker(feature, "", root=tmp_path) is None

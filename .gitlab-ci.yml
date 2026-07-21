@@ -78,6 +78,10 @@ oidc:test:
     - aws sts get-caller-identity
 
 
+# Deploys target-apps on sdlc/<slug> branches. After gitlab-agent publish, the branch
+# includes target-apps/<slug>/.sdlc/pipeline-run.json so this job can set PIPELINE_RUN_ID
+# and devops-agent can put the live appUrl back onto the same AgentCore/S3 pipeline run
+# (frontend DeploySuccessWatcher). Requires CI/CD vars: ARTIFACT_S3_BUCKET, ARTIFACT_DYNAMODB_TABLE.
 target-app:deploy:
   stage: target-app-deploy
   image: mcr.microsoft.com/powershell:7.4-debian-12
@@ -95,7 +99,7 @@ target-app:deploy:
     AWS_OIDC_TOKEN:
       aud: sts.amazonaws.com
   before_script:
-    - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
+    - export SLUG="${TARGET_APP_SLUG:-${CI_COMMIT_BRANCH#sdlc/}}"
     - 'echo "Target app slug: $SLUG"'
     - export AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_OIDC_TOKEN
     - export AWS_DEFAULT_REGION="$AWS_REGION"
@@ -107,6 +111,17 @@ target-app:deploy:
         fi
       done
     - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+    - |
+      MARKER="backend/target-apps/${SLUG}/.sdlc/pipeline-run.json"
+      if [ -z "${PIPELINE_RUN_ID:-}" ] && [ -f "$MARKER" ]; then
+        export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
+        echo "Loaded PIPELINE_RUN_ID from $MARKER"
+      fi
+      if [ -z "${PIPELINE_RUN_ID:-}" ]; then
+        echo "WARN: PIPELINE_RUN_ID unset — deploy will still run, but devops S3 handoff will not update the frontend run"
+      else
+        echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID"
+      fi
     - pip3 install --no-cache-dir --break-system-packages awscli
     - aws sts get-caller-identity || (echo "OIDC role assumption failed — re-run the oidc:test job above to isolate whether this is a role/trust-policy issue." && exit 1)
     - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
@@ -116,6 +131,7 @@ target-app:deploy:
     - pip3 install --no-cache-dir --break-system-packages -r backend/requirements.txt
   script:
     - cd backend
+    - export PIPELINE_RUN_ID ARTIFACT_STORE
     - python3 agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy
 
 include:

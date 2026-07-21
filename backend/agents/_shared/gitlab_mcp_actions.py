@@ -276,6 +276,50 @@ def apps_branch_name(feature: str) -> str:
     return slugify_feature(feature)
 
 
+def pipeline_run_marker_repo_rel(feature: str) -> str:
+    """Monorepo-relative path for the CI pipeline-run marker under a target app."""
+    return f"target-apps/{slugify_feature(feature)}/.sdlc/pipeline-run.json"
+
+
+def write_pipeline_run_marker(
+    feature: str,
+    run_id: str,
+    *,
+    root: Path | None = None,
+) -> str | None:
+    """Write ``.sdlc/pipeline-run.json`` so GitLab CI can export ``PIPELINE_RUN_ID``.
+
+    Returns the monorepo-relative path written, or ``None`` when skipped (no run id /
+    no app tree). Works for local monorepo and cloud-materialized workspaces.
+    """
+    rid = (run_id or "").strip()
+    if not rid:
+        return None
+    root = root or repo_root()
+    slug = slugify_feature(feature)
+    payload = {
+        "runId": rid,
+        "targetApp": slug,
+        "writtenBy": "gitlab-agent",
+    }
+    text = json.dumps(payload, indent=2) + "\n"
+
+    if is_cloud_materialized_workspace(root, slug):
+        app_root = root / slug
+        if not app_root.is_dir():
+            return None
+        path = app_root / ".sdlc" / "pipeline-run.json"
+    else:
+        app_root = root / "target-apps" / slug
+        if not app_root.is_dir():
+            return None
+        path = app_root / ".sdlc" / "pipeline-run.json"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return pipeline_run_marker_repo_rel(slug)
+
+
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     """Map monorepo-relative paths to apps-repo branch root (target-apps stripped)."""
     if rel_path.startswith("inputs/") and rel_path.endswith(".txt"):
