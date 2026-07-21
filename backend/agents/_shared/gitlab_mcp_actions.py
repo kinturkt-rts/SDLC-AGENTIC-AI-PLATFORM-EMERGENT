@@ -47,6 +47,43 @@ def sanitize_publish_content_for_waf(content: str) -> str:
     return _WAF_LOCALHOST_HTTP.sub(_replace, content)
 
 
+def assert_publish_python_syntax(files: list[dict[str, str]]) -> None:
+    """Fail publish early if any .py payload has SyntaxError (avoids green CI + 502 UI)."""
+    import py_compile
+    import tempfile
+
+    errors: list[str] = []
+    for item in files:
+        path = str(item.get("path") or "")
+        if not path.endswith(".py") or item.get("binary"):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        with tempfile.NamedTemporaryFile(
+            "w",
+            suffix=".py",
+            encoding="utf-8",
+            delete=False,
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            py_compile.compile(tmp_path, doraise=True)
+        except py_compile.PyCompileError as exc:
+            errors.append(f"{path}: {exc.msg}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    if errors:
+        raise ValueError(
+            "Refusing to publish Python with SyntaxError (would deploy a crashing app):\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        )
+
+
 def _publish_batch_size() -> int:
     """CloudFront/WAF: one file per request. Direct ALB: batched commits (default 20)."""
     if use_gitlab_mcp_http():
@@ -938,6 +975,17 @@ async def publish_feature_async(
         return {
             "ok": False,
             "error": f"No publishable artifacts found for '{slug}'{detail}",
+            "targetApp": slug,
+            "branch": publish_branch,
+            **cfg,
+        }
+
+    try:
+        assert_publish_python_syntax(files)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
             "targetApp": slug,
             "branch": publish_branch,
             **cfg,

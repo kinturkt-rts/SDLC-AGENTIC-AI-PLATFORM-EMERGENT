@@ -954,7 +954,8 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     reconciled.status === 'completed' ||
     reconciled.status === 'failed' ||
     reconciled.status === 'cancelled';
-  if (!phaseDone.deploy) {
+
+    if (!phaseDone.deploy) {
     const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
     steps = steps.map((step) => {
       if (step.phase !== 'deploy') return step;
@@ -962,7 +963,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
         return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
       }
       if (isTerminalForDeploy && phaseDone.publish) {
-        return { ...step, status: 'skipped' as StepStatus, agent: 'devops-agent' };
+        return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
       }
       return { ...step, agent: 'devops-agent' };
     });

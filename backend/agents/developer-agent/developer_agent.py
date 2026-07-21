@@ -471,6 +471,10 @@ inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enfor
 **Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Never
 `width=0` / `width=False` (StreamlitInvalidWidthError on Streamlit 1.41+). Use only
 `width="stretch"` for full-width dataframes/buttons, or `width="content"` to fit content.
+**Streamlit string literals:** Never put a raw newline inside `"..."` / `f"..."` quotes.
+Use `"line1\\nline2"` escapes or adjacent string concatenation on one logical statement.
+Broken multiline f-strings pass some editors but crash live UI (`SyntaxError: unterminated f-string`)
+while `_stcore/health` can still return 200 — CI looks green, browser shows Script execution error / 502.
 **Arrow-safe dataframes:** In `st.dataframe`/`st.table` data, never mix string placeholders
 ("—", "N/A", "") into numeric columns — pass `None` for missing values (Arrow rejects mixed-type
 columns). Placeholders belong in display formatting (`st.column_config.NumberColumn(format=...)`)
