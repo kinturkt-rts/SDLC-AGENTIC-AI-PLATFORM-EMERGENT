@@ -245,17 +245,18 @@ const AGENT_BUILTIN_TOOLS: Record<string, string[]> = {
   'orchestrator-agent': ['pipeline coordination (A2A)'],
 };
 
-/** Phase 1 MVP agents deployed on AgentCore. */
+/** MVP agents deployed on AgentCore and shown online in the control plane. */
 const MVP_ONLINE_AGENTS = new Set<string>([
   'product-agent',
   'architect-agent',
   'database-agent',
   'developer-agent',
   'gitlab-agent',
+  'devops-agent',
 ]);
 
-/** Reserved for phase 2 - shown offline in the UI. */
-const PHASE2_OFFLINE_AGENTS = new Set<string>(['qa-agent', 'devops-agent', 'security-agent']);
+/** Not yet in the live MVP path — shown offline in the UI. */
+const PHASE2_OFFLINE_AGENTS = new Set<string>(['qa-agent', 'security-agent']);
 
 function resolveAgentAvailability(agentId: string): AgentAvailability {
   if (MVP_ONLINE_AGENTS.has(agentId)) return 'online';

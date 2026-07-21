@@ -76,7 +76,7 @@ export const mockAgents: Agent[] = [
     mcpTools: ['terraform.plan', 'terraform.apply', 'gitlab.pipeline'],
     mcpServers: ['Terraform', 'GitLab'],
     port: 9105,
-    availability: 'offline',
+    availability: 'online',
     lastRunAt: minsAgo(220),
     phase: 'deploy',
   },
@@ -130,7 +130,7 @@ export const mockAgents: Agent[] = [
     port: 9110,
     availability: 'online',
     lastRunAt: minsAgo(5),
-    phase: 'deploy',
+    phase: 'publish',
   },
 ];
 
