@@ -4,6 +4,7 @@ import * as React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
+import { OpenLiveAppLink } from '@/src/components/common/OpenLiveAppLink';
 import type { RunHandoffs, StepStatus } from '@/src/types';
 
 function MetaLink({ href, label }: { href: string; label: string }) {
@@ -154,15 +155,7 @@ export function PipelineHandoffsCard({
                 />
               ) : null}
               {appUrl ? (
-                <a
-                  href={appUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex w-fit items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-300 hover:bg-sky-500/15"
-                >
-                  Open live app
-                  <ExternalLink className="h-3.5 w-3.5 opacity-80" />
-                </a>
+                <OpenLiveAppLink href={appUrl} variant="button" />
               ) : (
                 <p className="text-xs text-muted-foreground">Live URL appears here after devops-agent finishes deploy.</p>
               )}

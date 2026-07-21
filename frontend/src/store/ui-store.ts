@@ -35,11 +35,6 @@ interface UiState {
   checkpointsProjectId: string | null;
   setCheckpointsProjectId: (id: string | null) => void;
 
-  /** Live apps from devops deploy — persists across pages until dismissed. */
-  liveApps: Array<{ runId: string; projectId: string; projectName: string; appUrl: string }>;
-  upsertLiveApp: (app: { runId: string; projectId: string; projectName: string; appUrl: string }) => void;
-  dismissLiveApp: (runId: string) => void;
-
   environment: Environment;
   setEnvironment: (env: Environment) => void;
 
@@ -78,14 +73,6 @@ export const useUiStore = create<UiState>((set) => ({
 
   checkpointsProjectId: null,
   setCheckpointsProjectId: (id) => set({ checkpointsProjectId: id }),
-
-  liveApps: [],
-  upsertLiveApp: (app) =>
-    set((s) => {
-      const without = s.liveApps.filter((a) => a.runId !== app.runId && a.appUrl !== app.appUrl);
-      return { liveApps: [app, ...without].slice(0, 8) };
-    }),
-  dismissLiveApp: (runId) => set((s) => ({ liveApps: s.liveApps.filter((a) => a.runId !== runId) })),
 
   environment: 'dev',
   setEnvironment: (env) => set({ environment: env }),

@@ -9,6 +9,7 @@ import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { LiveRelative } from '@/src/components/common/LiveElapsed';
+import { OpenLiveAppLink } from '@/src/components/common/OpenLiveAppLink';
 import { useProjects, useRuns } from '@/src/lib/queries';
 import type { PipelineRun, Project, RunStatus } from '@/src/types';
 
@@ -151,9 +152,12 @@ export default function ProjectsPage() {
               const runCount = runsByProject.counts.get(p.id) ?? 0;
               const isLive = live.status === 'running' || live.status === 'paused';
               return (
-                <Link key={p.id} href={`/projects/${p.id}`} className="group block">
-                  <Card className="relative flex h-full flex-col overflow-hidden border-white/[0.06] bg-card/80 p-4 transition-all duration-300 hover:border-teal-500/30 hover:bg-card hover:shadow-lg">
-                    <div className="absolute left-0 top-0 h-[2px] w-full bg-gradient-to-r from-teal-500 to-cyan-400 opacity-0 transition-opacity group-hover:opacity-60" />
+                <Card
+                  key={p.id}
+                  className="group relative flex h-full flex-col overflow-hidden border-white/[0.06] bg-card/80 transition-all duration-300 hover:border-teal-500/30 hover:bg-card hover:shadow-lg"
+                >
+                  <div className="absolute left-0 top-0 h-[2px] w-full bg-gradient-to-r from-teal-500 to-cyan-400 opacity-0 transition-opacity group-hover:opacity-60" />
+                  <Link href={`/projects/${p.id}`} className="flex flex-1 flex-col p-4 pb-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-2.5">
                         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-500/10 text-teal-400 ring-1 ring-inset ring-teal-500/20">
@@ -182,8 +186,13 @@ export default function ProjectsPage() {
                         <LiveRelative iso={live.lastRunAt} live={isLive} />
                       </span>
                     </div>
-                  </Card>
-                </Link>
+                  </Link>
+                  {p.liveUrl ? (
+                    <div className="border-t border-white/[0.06] px-4 py-2.5">
+                      <OpenLiveAppLink href={p.liveUrl} variant="chip" />
+                    </div>
+                  ) : null}
+                </Card>
               );
             })}
           </div>

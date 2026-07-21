@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
+import { OpenLiveAppLink } from '@/src/components/common/OpenLiveAppLink';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { LogTable } from '@/src/components/logs/LogTable';
 import { useRouter } from 'next/navigation';
@@ -310,15 +311,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                 {handoffs?.devops?.appUrl ? (
-                  <a
-                    href={handoffs.devops.appUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-500/15"
-                  >
-                    Open live app
-                    <ExternalLink className="h-3 w-3 opacity-70" />
-                  </a>
+                  <OpenLiveAppLink href={handoffs.devops.appUrl} variant="button" className="text-xs" />
                 ) : null}
                 {gitlabBranchUrl ? (
                   <a

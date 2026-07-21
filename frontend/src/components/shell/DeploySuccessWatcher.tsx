@@ -3,9 +3,9 @@
 import * as React from 'react';
 import { toast } from 'sonner';
 import { useProjects, useRunHandoffs, useRuns } from '@/src/lib/queries';
-import { useUiStore } from '@/src/store/ui-store';
 
 const NOTIFIED_KEY = 'sdlc:notified-live-apps';
+const BASELINE_MS = 3_000;
 
 function loadNotified(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -27,8 +27,8 @@ function saveNotified(ids: Set<string>) {
 }
 
 /**
- * Watches runs for a devops live URL. Toasts with an Open app action, and
- * pins the URL into the Live Apps bar so it stays available after navigation.
+ * Watches runs for a devops live URL and toasts once when an app goes live.
+ * Persistent access lives on the project page / run handoffs — not a global bar.
  */
 function DeployHandoffProbe({
   runId,
@@ -55,29 +55,25 @@ function DeployHandoffProbe({
 export function DeploySuccessWatcher() {
   const { data: runs } = useRuns();
   const { data: projects } = useProjects();
-  const upsertLiveApp = useUiStore((s) => s.upsertLiveApp);
   const notifiedRef = React.useRef<Set<string> | null>(null);
-  const baselinedRef = React.useRef(false);
+  const mountedAtRef = React.useRef(0);
 
   if (notifiedRef.current === null) {
     notifiedRef.current = loadNotified();
   }
+  if (mountedAtRef.current === 0 && typeof window !== 'undefined') {
+    mountedAtRef.current = Date.now();
+  }
 
-  // Seed bar from projects that already have a liveUrl (no toast on cold start).
+  // Seed "already notified" from projects that already have a liveUrl (no toast on cold start).
   React.useEffect(() => {
     if (!projects?.length) return;
     for (const p of projects) {
       if (!p.liveUrl || !p.runId) continue;
-      upsertLiveApp({
-        runId: p.runId,
-        projectId: p.id,
-        projectName: p.name,
-        appUrl: p.liveUrl,
-      });
       notifiedRef.current?.add(p.runId);
     }
     if (notifiedRef.current) saveNotified(notifiedRef.current);
-  }, [projects, upsertLiveApp]);
+  }, [projects]);
 
   const candidates = React.useMemo(() => {
     return (runs ?? [])
@@ -90,21 +86,16 @@ export function DeploySuccessWatcher() {
     (info: { runId: string; projectId: string; projectName: string; appUrl: string }) => {
       const notified = notifiedRef.current;
       if (!notified) return;
-
-      upsertLiveApp(info);
-
-      if (!baselinedRef.current) {
-        notified.add(info.runId);
-        saveNotified(notified);
-        return;
-      }
-
       if (notified.has(info.runId)) return;
+
       notified.add(info.runId);
       saveNotified(notified);
 
+      const inBaseline = Date.now() - mountedAtRef.current < BASELINE_MS;
+      if (inBaseline) return;
+
       toast.success(`${info.projectName} is live`, {
-        description: 'Open the app anytime from the Live apps bar under the top nav.',
+        description: 'Open it from the project page anytime, or use Open app now.',
         duration: 12_000,
         action: {
           label: 'Open app',
@@ -114,15 +105,8 @@ export function DeploySuccessWatcher() {
         },
       });
     },
-    [upsertLiveApp],
+    [],
   );
-
-  React.useEffect(() => {
-    if (!runs?.length) return;
-    if (!baselinedRef.current) {
-      baselinedRef.current = true;
-    }
-  }, [runs]);
 
   return (
     <>

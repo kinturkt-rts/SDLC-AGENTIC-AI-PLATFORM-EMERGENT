@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, GitBranch, FileBox, Clock, ChevronRight, ExternalLink } from 'lucide-react';
+import { ArrowLeft, GitBranch, FileBox, Clock, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
+import { OpenLiveAppLink } from '@/src/components/common/OpenLiveAppLink';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { ContextView } from '@/src/features/context/ContextView';
@@ -80,7 +81,12 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         title={project?.name ?? params.id}
         eyebrow={project?.slug}
         description={project?.description}
-        actions={headerStatus ? <StatusBadge status={headerStatus} /> : null}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {project?.liveUrl ? <OpenLiveAppLink href={project.liveUrl} variant="button" /> : null}
+            {headerStatus ? <StatusBadge status={headerStatus} /> : null}
+          </div>
+        }
       />
 
       <Tabs defaultValue="overview">
@@ -112,17 +118,9 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
             {project?.liveUrl ? (
               <div className="mt-3 border-t border-white/[0.06] pt-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                  Live app
+                  Deploy
                 </p>
-                <a
-                  href={project.liveUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1.5 inline-flex items-center gap-1.5 text-sm font-medium text-sky-300 hover:text-sky-200"
-                >
-                  Open live app
-                  <ExternalLink className="h-3.5 w-3.5 opacity-80" />
-                </a>
+                <OpenLiveAppLink href={project.liveUrl} className="mt-1.5" />
               </div>
             ) : null}
           </Card>
