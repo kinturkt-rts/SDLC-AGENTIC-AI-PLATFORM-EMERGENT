@@ -6,7 +6,7 @@ manage the catalog; members check out and return books. The system tracks loan p
 status, and a simple hold queue when every copy is out — no external integrations, just a
 working backend and Swagger for demos.
 
-MVP:
+Features:
 - Book catalog: ISBN, title, author, number of physical copies on shelf.
 - Member registry: name, email; each member gets a personal access key at signup (shown once).
 - Checkout and return with due date based on a configurable loan period (default two weeks).

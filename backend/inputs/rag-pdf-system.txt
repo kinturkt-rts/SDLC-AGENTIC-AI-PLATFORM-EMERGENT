@@ -11,7 +11,7 @@ What we want:
 - Admin view to see which documents are indexed, last updated, and ingestion status (success/failed).
 - Role-based access so only authorized users can upload, query, or manage collections.
 
-Initial scope (MVP):
+Initial scope:
 - PDF upload and storage with metadata (title, owner, upload date, collection/tag).
 - Text extraction, chunking, embedding, and vector search (retrieve top chunks, then generate answer).
 - Q&A interface with source citations in every response.

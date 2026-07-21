@@ -1,94 +1,40 @@
-Lunch & Learn Sessions API
+Lunch & Learn Sessions for our company.
 
-App idea:
-A small company runs internal **Lunch & Learn** sessions. Organizers create sessions with a seat
-limit; employees register with name and email. The REST API tracks capacity, prevents overbooking,
-and lets organizers cancel sessions or individual registrations. Backend only — Swagger for demos;
-no browser UI in MVP.
+Problem:
+- Internal Lunch & Learn talks are scheduled in spreadsheets and chat threads.
+- Organizers lose track of seat limits and overbook rooms.
+- Employees want an easy way to see upcoming sessions and sign up or cancel.
 
-Purpose:
-- Provide a backend API for scheduling internal Lunch & Learn sessions, tracking registrations,
-  and enforcing seat limits so organizers avoid manual spreadsheets and overbooking.
-- This file shows how a requirements brief should read: one-paragraph app idea, then personas,
-  data model, API contracts (method/path/auth/behavior), business rules, stack, tests, out-of-scope,
-  success criteria, and target output path — specific enough to implement without guessing.
+Who uses it:
+- Organizers create and update sessions (title, host, time, seat limit) and see who registered — protected by a shared API key.
+- Employees browse open sessions and register or cancel their own signup with name and email — no personal login for v1.
+- Anyone can list sessions and check health; writes need the organizer API key.
 
-Personas & auth:
-| Actor | Auth | Can do |
-|-------|------|--------|
-| organizer | `X-API-Key` header | POST/PATCH sessions; list registrations for a session |
-| employee | none | browse open sessions; register or cancel own registration |
-| anonymous | none | GET /health, GET /sessions, GET /sessions/{id} |
-
-Auth implementation (MVP):
-- Write endpoints (POST/PATCH session, GET registrations list) require header `X-API-Key` matching env `API_KEY`.
-- Load `API_KEY` via pydantic-settings from `.env` / `.env.example` (placeholder only in repo).
-- Missing or wrong key → 401.
-
-Data model (Postgres — database-agent owns DDL under target-apps/test-db/db/sql/):
-- sessions: id uuid PK, title text NOT NULL (1–120), host_name text NOT NULL (1–80),
-  scheduled_at timestamptz NOT NULL, max_seats int NOT NULL CHECK (max_seats >= 1 AND max_seats <= 500),
-  status enum (scheduled | full | cancelled) NOT NULL DEFAULT scheduled,
-  created_at timestamptz NOT NULL DEFAULT now()
-- registrations: id uuid PK, session_id uuid FK→sessions ON DELETE CASCADE,
-  display_name text NOT NULL (1–80), employee_email text NOT NULL,
-  status enum (confirmed | cancelled) NOT NULL DEFAULT confirmed,
-  registered_at timestamptz NOT NULL DEFAULT now(),
-  cancelled_at timestamptz NULL,
-  UNIQUE (session_id, employee_email)
-
-Computed / response fields (not stored):
-- `registration_count` — count of registrations where status = confirmed
-- `seats_remaining` — max_seats - registration_count (min 0)
-
-API contracts:
-| Method | Path | Auth | Behavior |
-| GET | /health | none | {"status":"ok","service":"lunch-learn"} |
-| POST | /sessions | API key | create session; 201; status defaults to scheduled |
-| GET | /sessions | none | list; ?status=scheduled|full|cancelled & ?from=ISO8601 & ?to=ISO8601 & ?limit= & ?offset= |
-| GET | /sessions/{id} | none | 200 with registration_count, seats_remaining; or 404 |
-| PATCH | /sessions/{id} | API key | update title, host_name, scheduled_at, max_seats, status; 404 if missing; 409 if max_seats < confirmed count |
-| POST | /sessions/{id}/registrations | none | body {display_name, employee_email}; 201; 404 unknown session; 409 duplicate email; 422 if session cancelled or full |
-| GET | /sessions/{id}/registrations | API key | list confirmed registrations; paginated ?limit=&offset=; 404 if session missing |
-| DELETE | /registrations/{id} | none | soft-cancel: set status=cancelled, cancelled_at=now; 204; 404 if missing; idempotent if already cancelled |
+MVP features:
+- Create sessions with a maximum number of seats and a scheduled time.
+- Employees register for a session; block duplicate signups for the same email on the same session.
+- When seats fill up, mark the session full; when someone cancels, free a seat again.
+- Organizers can cancel a whole session; nobody should register for a cancelled session.
+- Soft-cancel a registration instead of wiping history.
+- Seed a couple of sample sessions (including one nearly full and one cancelled) for demos.
+- Backend/API only for v1 — Swagger is fine; no browser UI yet.
 
 Business rules:
-- On successful registration: if confirmed count reaches max_seats, set session.status = full.
-- On cancel registration: if session was full and seats open, set session.status back to scheduled.
-- Cannot register for cancelled sessions (422).
-- Cannot reduce max_seats below current confirmed count (409).
-- List endpoints return `{items, total, limit, offset}`.
-- scheduled_at must be in the future at create time (422).
-- Email comparison case-insensitive for uniqueness check.
+- Cannot reduce seat limit below how many people are already confirmed.
+- Session time should be in the future when created.
+- Email uniqueness for a session should ignore case.
+- Show how many seats remain on each session.
 
-Stack (developer-agent):
-- Python 3.12, FastAPI, Pydantic v2, pydantic-settings, uvicorn.
-- SQLAlchemy 2.x sync + psycopg; follow `_template` SessionLocal pattern.
-- search_path per app schema `test_db`.
-- Layout: `app/routers/health.py`, `sessions.py`, `registrations.py`;
-  `app/models/`, `app/schemas/`, `app/services/sessions.py`, `app/dependencies.py` (verify_api_key).
-- `.env.example`: DATABASE_URL, POSTGRES_SCHEMA=test_db, API_KEY, PORT=8000
-- Do NOT pass pool args (e.g. max_overflow) when tests use SQLite — guard in `_make_engine()` by dialect.
+Must have for v1:
+- Persisted data (not in-memory only).
+- Clear capacity and overbooking protection.
 
-Tests (developer baseline):
-- pytest + TestClient; prefer Postgres test schema or SQLite with dialect-safe engine config.
-- Cover: health, create session, register until full (session → full), duplicate email 409,
-  cancel frees seat, cancelled session blocks register 422, API key 401 on POST /sessions,
-  pagination shape, PATCH max_seats conflict 409, future scheduled_at validation.
+Nice to have (later):
+- Browser UI, waitlists, email reminders, personal logins.
 
-Seed data (database-agent dev seed — optional):
-- 2 scheduled sessions (one with 2 seats, one with 10)
-- 1 cancelled session
-- 1 confirmed registration on the 2-seat session
-
-Out of scope:
-- Frontend UI, JWT/OAuth, email notifications, waitlists, LLM, MongoDB, Redis, Docker.
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
 
 Success:
-- database-agent produces migrations + HANDOFF.md under target-apps/test-db/db/sql/
-- developer-agent wires SQLAlchemy models 1:1 with SQL; pytest green
-- README with migrate/run steps and sample curl (register flow + API key)
-- Runnable demo: create session → register employees → hit capacity → cancel → seat opens
-
-Target app slug: test-db
-Output directory: target-apps/test-db/
+- Organizer creates a small session; employees fill it until full; one cancels and a seat opens; cancelled sessions reject new signups.
