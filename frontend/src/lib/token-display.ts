@@ -10,20 +10,20 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-/** MVP pipeline Bedrock model assignment (matches backend MODEL_ID / CODING_MODEL_ID defaults). */
-export const MVP_PIPELINE_MODELS = [
+/** Pipeline Bedrock model assignment (matches backend MODEL_ID / CODING_MODEL_ID defaults). */
+export const PIPELINE_MODELS = [
   { agentId: 'product-agent', shortName: 'Product', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
   { agentId: 'architect-agent', shortName: 'Architect', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
   { agentId: 'database-agent', shortName: 'Database', model: 'Claude Opus 4.6', family: 'opus' as const },
   { agentId: 'developer-agent', shortName: 'Developer', model: 'Claude Opus 4.6', family: 'opus' as const },
 ] as const;
 
-export type MvpAgentId = (typeof MVP_PIPELINE_MODELS)[number]['agentId'];
+export type PipelineAgentId = (typeof PIPELINE_MODELS)[number]['agentId'];
 
-export const MVP_AGENT_IDS: readonly MvpAgentId[] = MVP_PIPELINE_MODELS.map((m) => m.agentId);
+export const AGENT_IDS: readonly PipelineAgentId[] = PIPELINE_MODELS.map((m) => m.agentId);
 
-export function isMvpAgentId(id: string): id is MvpAgentId {
-  return (MVP_AGENT_IDS as readonly string[]).includes(id);
+export function isPipelineAgentId(id: string): id is PipelineAgentId {
+  return (AGENT_IDS as readonly string[]).includes(id);
 }
 
 export const AGENT_CHART_COLOR: Record<string, string> = {
@@ -81,7 +81,7 @@ export function formatCacheHitRatio(inputTokens: number, cacheReadTokens: number
 }
 
 export function expectedModelForAgent(agentId: string): { modelLabel: string; modelId: string; display: string } {
-  const row = MVP_PIPELINE_MODELS.find((m) => m.agentId === agentId);
+  const row = PIPELINE_MODELS.find((m) => m.agentId === agentId);
   if (!row) return { modelLabel: 'unknown', modelId: '', display: 'Unknown model' };
   const modelLabel = row.family === 'opus' ? 'opus-4-6' : 'sonnet-4-6';
   const modelId =

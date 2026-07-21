@@ -5,7 +5,7 @@ import { getBackendRoot } from './repo-root';
 import { cachedAsync } from './request-cache';
 import { titleCase } from './format';
 import { isUserPipelineRun, listRuns } from './repo-reader';
-import { expectedModelForAgent, isMvpAgentId, MVP_AGENT_IDS } from './token-display';
+import { expectedModelForAgent, isPipelineAgentId, AGENT_IDS } from './token-display';
 import {
   findLatestS3RunIdForApp,
   getRunArtifactJson,
@@ -131,10 +131,10 @@ async function discoverLocalAgentsWithTelemetry(targetApp: string): Promise<stri
     if (name === `${targetApp}.pipeline-telemetry.json`) continue;
     if (!name.startsWith(prefix) || !name.endsWith(suffix)) continue;
     const middle = name.slice(prefix.length, -suffix.length);
-    if (middle && isMvpAgentId(middle)) found.add(middle);
+    if (middle && isPipelineAgentId(middle)) found.add(middle);
   }
 
-  return MVP_AGENT_IDS.filter((a) => found.has(a));
+  return AGENT_IDS.filter((a) => found.has(a));
 }
 
 /** Per-agent telemetry mirrored under runs/<runId>/<slug>/telemetry/ on AgentCore. */
@@ -153,10 +153,10 @@ async function discoverS3AgentsWithTelemetry(
     const matchedPrefix = relPrefixes.find((p) => rel.startsWith(p) && rel.endsWith('-telemetry.json'));
     if (!matchedPrefix) continue;
     const agent = rel.slice(matchedPrefix.length, -'-telemetry.json'.length);
-    if (isMvpAgentId(agent)) found.add(agent);
+    if (isPipelineAgentId(agent)) found.add(agent);
   }
 
-  return MVP_AGENT_IDS.filter((a) => found.has(a));
+  return AGENT_IDS.filter((a) => found.has(a));
 }
 
 export async function discoverAgentsWithTelemetry(
@@ -255,7 +255,7 @@ export function aggregateTelemetrySnapshots(
 ): PipelineTelemetrySummary {
   const byAgent = new Map<string, { snap: AgentTelemetrySnapshot; mtimeMs: number; source?: 'local' | 's3' }>();
   for (const row of rows) {
-    if (!isMvpAgentId(row.snap.agent)) continue;
+    if (!isPipelineAgentId(row.snap.agent)) continue;
     if (
       !telemetryMatchesRun(row.snap, runId, {
         runScoped: row.source === 's3',
@@ -267,7 +267,7 @@ export function aggregateTelemetrySnapshots(
     byAgent.set(row.snap.agent, row);
   }
 
-  const agents: AgentTelemetryRow[] = MVP_AGENT_IDS.map((agentId) => {
+  const agents: AgentTelemetryRow[] = AGENT_IDS.map((agentId) => {
     const row = byAgent.get(agentId);
     const expected = expectedModelForAgent(agentId);
     if (!row) {
@@ -369,7 +369,7 @@ async function loadPipelineTelemetryUncached(projectId: string): Promise<Pipelin
   const runId = await resolveTelemetryRunId(projectId);
   // Always load all MVP slots - S3 discovery may omit agents whose telemetry only exists locally.
   const loaded = await Promise.all(
-    MVP_AGENT_IDS.map((name) => loadAgentTelemetry(projectId, name, runId)),
+    AGENT_IDS.map((name) => loadAgentTelemetry(projectId, name, runId)),
   );
   const rows = loaded.filter((r): r is NonNullable<typeof r> => r !== null);
 

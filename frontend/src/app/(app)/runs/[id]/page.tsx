@@ -48,7 +48,7 @@ import {
 import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import { LiveRunMonitoringLine } from '@/src/components/common/LiveElapsed';
-import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
+import { TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import { useUiStore } from '@/src/store/ui-store';
 import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
@@ -385,7 +385,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </div>
               <ol className="p-4">
                 {run.steps
-                  .filter((step) => MVP_TIMELINE_PHASES.includes(step.phase))
+                  .filter((step) => TIMELINE_PHASES.includes(step.phase))
                   .map((step: PipelineStep, i: number, arr) => {
                   const Icon = STEP_ICON[step.status];
                   const last = i === arr.length - 1;

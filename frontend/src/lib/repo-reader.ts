@@ -19,7 +19,7 @@ import {
   getS3RunArtifactIndex,
   isHiddenAppSlug,
 } from './artifact-store';
-import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
+import { TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
 import {
   developerHandoffExistsForRun,
   developerHandoffFailedForRun,
@@ -245,8 +245,8 @@ const AGENT_BUILTIN_TOOLS: Record<string, string[]> = {
   'orchestrator-agent': ['pipeline coordination (A2A)'],
 };
 
-/** MVP agents deployed on AgentCore and shown online in the control plane. */
-const MVP_ONLINE_AGENTS = new Set<string>([
+/**  Agents deployed on AgentCore and shown online in the control plane. */
+const ONLINE_AGENTS = new Set<string>([
   'product-agent',
   'architect-agent',
   'database-agent',
@@ -255,17 +255,17 @@ const MVP_ONLINE_AGENTS = new Set<string>([
   'devops-agent',
 ]);
 
-/** Not yet in the live MVP path — shown offline in the UI. */
-const PHASE2_OFFLINE_AGENTS = new Set<string>(['qa-agent', 'security-agent']);
+/** Not yet in the live pipeline path — shown offline in the UI. */
+const OFFLINE_AGENTS = new Set<string>(['qa-agent', 'security-agent']);
 
 function resolveAgentAvailability(agentId: string): AgentAvailability {
-  if (MVP_ONLINE_AGENTS.has(agentId)) return 'online';
-  if (PHASE2_OFFLINE_AGENTS.has(agentId)) return 'offline';
+  if (ONLINE_AGENTS.has(agentId)) return 'online';
+  if (OFFLINE_AGENTS.has(agentId)) return 'offline';
   if (agentId === 'orchestrator-agent') return 'online';
   return 'unknown';
 }
 
-const MCP_NAME_MAP: Record<string, McpServerName> = {
+const NAME_MAP: Record<string, McpServerName> = {
   atlassian: 'Atlassian',
   'aws-diagram': 'AWS Diagram',
   'aws-postgres': 'Postgres',
@@ -289,7 +289,7 @@ async function mcpServersByAgent(): Promise<Map<AgentName, McpServerName[]>> {
   if (!catalog?.servers) return map;
 
   for (const [key, srv] of Object.entries(catalog.servers)) {
-    const mcpName = MCP_NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
+    const mcpName = NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
     for (const usedBy of srv.usedBy ?? []) {
       const agentId = parseUsedByAgent(usedBy);
       if (!agentId) continue;
@@ -634,7 +634,7 @@ async function listPipelineLogRunIds(): Promise<string[]> {
   }
 }
 
-import { MVP_LOG_AGENT_SET } from './pipeline-phases';
+import { LOG_AGENT_SET } from './pipeline-phases';
 
 function inferLogLevel(line: string): LogEntry['level'] {
   const lower = line.toLowerCase();
@@ -658,7 +658,7 @@ function parseLogLine(line: string): { agent: AgentName; message: string } {
     const raw = agentMatch[1];
     const agentId = raw.endsWith('-agent') ? raw : `${raw === 'orchestrator' ? 'orchestrator' : raw}-agent`;
     const normalized =
-      agentId === 'orchestrator-agent' || MVP_LOG_AGENT_SET.has(agentId)
+      agentId === 'orchestrator-agent' || LOG_AGENT_SET.has(agentId)
         ? (agentId as AgentName)
         : null;
     if (normalized) {
@@ -739,7 +739,7 @@ export async function listRunLogs(runId: string): Promise<LogEntry[]> {
     startMs,
     endMs,
     limit: 2000,
-    mvpOnly: true,
+    pipelineOnly: true,
     timeWindowForRun: true,
   });
 }
@@ -819,7 +819,7 @@ function mergeStepProgressFromPhases(
   if (status === 'completed') {
     return live.steps.map((step) => {
       const phase = agentPhase[step.name];
-      if (!phase || !MVP_TIMELINE_PHASES.includes(phase)) return step;
+      if (!phase || !TIMELINE_PHASES.includes(phase)) return step;
       if (step.status === 'skipped' || skipFlags?.[phase]) return { ...step, status: 'skipped' };
       return { ...step, status: 'completed' };
     });
@@ -948,7 +948,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   let steps = (enriched.steps?.length
     ? buildStepsFromLive(runId, enriched)
     : buildSteps(runId, phaseDone, reconciled.status)
-  ).filter((step) => MVP_TIMELINE_PHASES.includes(step.phase));
+  ).filter((step) => TIMELINE_PHASES.includes(step.phase));
 
   const isTerminalForDeploy =
     reconciled.status === 'completed' ||
@@ -1950,7 +1950,7 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
   if (!catalog?.servers) return [];
 
   return Object.entries(catalog.servers).map(([key, srv]) => {
-    const name = MCP_NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
+    const name = NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
     const usedBy = (srv.usedBy ?? [])
       .filter((u) => u.endsWith('-agent') || u === 'orchestrator-agent')
       .map((u) => u as AgentName);
@@ -1991,14 +1991,13 @@ async function getDashboardSummaryUncached(): Promise<DashboardSummary> {
 }
 
 export async function listPipelines(): Promise<PipelineDefinition[]> {
-  // Live MVP definition (not the old multi-recipe mock catalog).
   return [
     {
       id: 'standard-sdlc',
       name: 'Standard SDLC',
       description:
         'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy is the demo-2 phase that puts a live URL in front of users.',
-      phases: MVP_TIMELINE_PHASES.map((phase) => ({
+      phases: TIMELINE_PHASES.map((phase) => ({
         phase,
         agent: PHASE_AGENT[phase],
         hitl: false,
@@ -2014,7 +2013,7 @@ async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> 
     startMs,
     endMs,
     limit: 120,
-    mvpOnly: true,
+    pipelineOnly: true,
     timeWindowForRun: true,
   });
   if (withRunFilter.length > 0) return withRunFilter;
@@ -2024,7 +2023,7 @@ async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> 
   }
 
   const minutes = Math.min(Math.max(minutesSince(run.startedAt), 15), 240);
-  const broad = await listCloudWatchLogs({ minutes, limit: 120, mvpOnly: true });
+  const broad = await listCloudWatchLogs({ minutes, limit: 120, pipelineOnly: true });
   return broad.filter((log) => matchCloudWatchLogToRun(log, [run])?.id === run.id);
 }
 

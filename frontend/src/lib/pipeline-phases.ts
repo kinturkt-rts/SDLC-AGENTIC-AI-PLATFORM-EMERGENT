@@ -13,8 +13,8 @@ export const PHASE_AGENT: Record<SdlcPhase, AgentName> = {
   deploy: 'devops-agent',
 };
 
-/** Agents surfaced in logs / CloudWatch filters (MVP + orchestrator). */
-export const MVP_LOG_AGENT_NAMES: AgentName[] = [
+/** Agents surfaced in logs / CloudWatch filters (pipeline + orchestrator). */
+export const LOG_AGENT_NAMES: AgentName[] = [
   'orchestrator-agent',
   'product-agent',
   'architect-agent',
@@ -26,11 +26,11 @@ export const MVP_LOG_AGENT_NAMES: AgentName[] = [
   'security-agent',
 ];
 
-export const MVP_LOG_AGENT_SET = new Set<string>(MVP_LOG_AGENT_NAMES);
+export const LOG_AGENT_SET = new Set<string>(LOG_AGENT_NAMES);
 
 export function parseLogAgentQuery(value: string | null | undefined): AgentName | undefined {
   const trimmed = value?.trim();
-  return trimmed && MVP_LOG_AGENT_SET.has(trimmed) ? (trimmed as AgentName) : undefined;
+  return trimmed && LOG_AGENT_SET.has(trimmed) ? (trimmed as AgentName) : undefined;
 }
 
 /** User-facing labels for SDLC timeline phases. */
@@ -46,10 +46,10 @@ export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
 };
 
 /**
- * Phases required for "pipeline succeeded" while GitLab is the terminal MVP step.
+ * Phases required for "pipeline succeeded" while GitLab is the terminal publish step.
  * Deploy (devops) is shown on the timeline but optional until the orchestrator wires it.
  */
-export const MVP_COMPLETION_PHASES: SdlcPhase[] = [
+export const COMPLETION_PHASES: SdlcPhase[] = [
   'requirements',
   'architecture',
   'data',
@@ -57,8 +57,8 @@ export const MVP_COMPLETION_PHASES: SdlcPhase[] = [
   'publish',
 ];
 
-/** Full timeline shown on run detail / dashboard (includes Deploy for demo-2). */
-export const MVP_TIMELINE_PHASES: SdlcPhase[] = [...MVP_COMPLETION_PHASES, 'deploy'];
+/** Full timeline shown on run detail / dashboard (includes Deploy). */
+export const TIMELINE_PHASES: SdlcPhase[] = [...COMPLETION_PHASES, 'deploy'];
 
 export function phaseDisplayLabel(phase: SdlcPhase | string | null | undefined): string {
   if (!phase) return 'Pipeline';

@@ -1,5 +1,5 @@
 import type { LogEntry } from '@/src/types';
-import { MVP_LOG_AGENT_SET } from './pipeline-phases';
+import { LOG_AGENT_SET } from './pipeline-phases';
 
 const NOISE_PATTERNS: RegExp[] = [
   /\bGET \/ping\b/i,
@@ -56,7 +56,7 @@ export function filterLogsForProject(
   if (!projectId || projectRunIds.size === 0) return rows;
   const ids = [...projectRunIds];
   return rows.filter((l) => {
-    if (!MVP_LOG_AGENT_SET.has(l.agent)) return false;
+    if (!LOG_AGENT_SET.has(l.agent)) return false;
     if (l.runId && projectRunIds.has(l.runId)) return true;
     return ids.some((id) => l.message.includes(id));
   });

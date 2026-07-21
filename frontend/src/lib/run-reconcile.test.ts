@@ -15,7 +15,7 @@ const allDone: Record<SdlcPhase, boolean> = {
 };
 
 describe('reconcileRunStatus', () => {
-  it('keeps cancelled even when every MVP phase has artifacts', () => {
+  it('keeps cancelled even when every pipeline phase has artifacts', () => {
     const result = reconcileRunStatus({
       status: 'cancelled',
       startedAt: new Date(Date.now() - 60_000).toISOString(),

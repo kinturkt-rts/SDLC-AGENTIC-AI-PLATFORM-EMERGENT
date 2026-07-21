@@ -1,4 +1,4 @@
-import { MVP_COMPLETION_PHASES, MVP_TIMELINE_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
+import { COMPLETION_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
@@ -131,14 +131,14 @@ export function lastRunActivityMs(input: {
   );
 }
 
-export function mvpPipelineComplete(phaseDone: Record<SdlcPhase, boolean>): boolean {
-  return MVP_COMPLETION_PHASES.every((phase) => phaseDone[phase]);
+export function pipelineComplete(phaseDone: Record<SdlcPhase, boolean>): boolean {
+  return COMPLETION_PHASES.every((phase) => phaseDone[phase]);
 }
 
-export function firstIncompleteMvpPhase(
+export function firstIncompletePhase(
   phaseDone: Record<SdlcPhase, boolean>,
 ): SdlcPhase | null {
-  for (const phase of MVP_COMPLETION_PHASES) {
+  for (const phase of COMPLETION_PHASES) {
     if (!phaseDone[phase]) return phase;
   }
   return null;
@@ -160,7 +160,7 @@ function firstMissingRequired(
   phaseDone: Record<SdlcPhase, boolean>,
   skipFlags: Partial<Record<SdlcPhase, boolean>>,
 ): SdlcPhase | null {
-  for (const phase of MVP_COMPLETION_PHASES) {
+  for (const phase of COMPLETION_PHASES) {
     if (skipFlags[phase]) continue;
     if (!phaseDone[phase]) return phase;
   }
@@ -195,7 +195,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   const effectiveDone = effectivePhaseDone(input.phaseDone, skipFlags);
   const missingRequired = firstMissingRequired(input.phaseDone, skipFlags);
   const verifiedComplete = missingRequired === null;
-  const hasAnyEvidence = MVP_COMPLETION_PHASES.some((p) => input.phaseDone[p]);
+  const hasAnyEvidence = COMPLETION_PHASES.some((p) => input.phaseDone[p]);
   const terminal = parseLogTerminalStatus(input.logText);
 
   if (input.status === 'cancelled') {
@@ -254,7 +254,7 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   if (isActiveStatus) {
-    const phase = firstIncompleteMvpPhase(effectiveDone);
+    const phase = firstIncompletePhase(effectiveDone);
     return {
       status: 'running',
       currentStep: phase ? PHASE_AGENT[phase] : null,

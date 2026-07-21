@@ -1,12 +1,12 @@
 'use client';
 
 import { Card } from '@/components/ui/card';
-import { MVP_PIPELINE_MODELS } from '@/src/lib/token-display';
+import { PIPELINE_MODELS } from '@/src/lib/token-display';
 import { cn } from '@/lib/utils';
 
 export function PipelineModelsBanner() {
-  const sonnet = MVP_PIPELINE_MODELS.filter((m) => m.family === 'sonnet');
-  const opus = MVP_PIPELINE_MODELS.filter((m) => m.family === 'opus');
+  const sonnet = PIPELINE_MODELS.filter((m) => m.family === 'sonnet');
+  const opus = PIPELINE_MODELS.filter((m) => m.family === 'opus');
 
   return (
     <Card className="border-white/[0.06] bg-card/80 p-4">

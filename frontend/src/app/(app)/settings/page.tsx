@@ -104,7 +104,7 @@ function PlatformSettingsCards({ settings }: { settings: PlatformSettings }) {
         <dl className="mt-4">
           <SettingRow
             label="Agents available"
-            value={`${pipeline.deployedAgentCount} of ${pipeline.totalMvpAgents} deployed`}
+            value={`${pipeline.deployedAgentCount} of ${pipeline.totalAgents} deployed`}
           />
           <SettingRow
             label="Default flow"

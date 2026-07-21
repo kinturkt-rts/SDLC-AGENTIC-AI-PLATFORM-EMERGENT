@@ -41,13 +41,13 @@ export async function GET(request: Request) {
         endMs,
         agent,
         limit,
-        mvpOnly: true,
+        pipelineOnly: true,
         timeWindowForRun: true,
       });
       return NextResponse.json({ logs, source: 'cloudwatch', runId });
     }
   }
 
-  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 15, limit, mvpOnly: true });
+  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 15, limit, pipelineOnly: true });
   return NextResponse.json({ logs, source: 'cloudwatch' });
 }

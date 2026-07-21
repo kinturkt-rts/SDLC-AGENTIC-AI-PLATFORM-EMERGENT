@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { getRunArtifactJson, isS3Store } from './artifact-store';
 import { getBackendRoot } from './repo-root';
-import { MVP_AGENT_IDS } from './token-display';
+import { AGENT_IDS } from './token-display';
 import type { RunStatus } from '@/src/types';
 
 export interface RunTimingInput {
@@ -103,7 +103,7 @@ export async function loadRunTelemetryElapsedSec(
   let found = false;
 
   if (isS3Store()) {
-    for (const agentId of MVP_AGENT_IDS) {
+    for (const agentId of AGENT_IDS) {
       for (const rel of [
         `${slug}/telemetry/${agentId}-telemetry.json`,
         `${slug}/handoffs/${agentId}-telemetry.json`,
@@ -121,7 +121,7 @@ export async function loadRunTelemetryElapsedSec(
   }
 
   const pipelineDir = path.join(getBackendRoot(), 'agents', 'pipeline');
-  for (const agentId of MVP_AGENT_IDS) {
+  for (const agentId of AGENT_IDS) {
     const filePath = path.join(pipelineDir, `${slug}.${agentId}-telemetry.json`);
     try {
       let raw = await fs.readFile(filePath, 'utf-8');

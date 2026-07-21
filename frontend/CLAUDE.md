@@ -77,7 +77,7 @@ Package manager: **yarn** (`yarn install`). Dockerfile uses `npm ci`.
 | `agentcore-invoke.ts` | Invoke deployed AgentCore runtimes via SigV4 (used by cloud run path) |
 | `auth-cognito.ts` | Amplify/Cognito client-side session gate — optional, only active when `COGNITO_*` vars are set |
 | `auth-session.ts` | Server-side session check for API routes |
-| `pipeline-phases.ts` | `MVP_TIMELINE_PHASES`, `PHASE_AGENT`, `PHASE_DISPLAY_LABEL` constants |
+| `pipeline-phases.ts` | `TIMELINE_PHASES`, `PHASE_AGENT`, `PHASE_DISPLAY_LABEL` constants |
 | `pipeline-handoffs.ts` | Parse developer/gitlab/devops/qa handoff JSONs; resolve run failure detail |
 | `run-events.ts` | Build activity feed from S3 artifacts + log lines |
 | `cloudwatch-logs.ts` + `cloudwatch-activity.ts` | Fetch and parse ECS task CloudWatch logs |

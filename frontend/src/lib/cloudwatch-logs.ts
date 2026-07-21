@@ -12,7 +12,7 @@ export interface CloudWatchLogsOptions {
   startMs?: number;
   endMs?: number;
   limit?: number;
-  mvpOnly?: boolean;
+  pipelineOnly?: boolean;
   timeWindowForRun?: boolean;
 }
 
@@ -35,7 +35,7 @@ function cacheKey(options: CloudWatchLogsOptions): string {
     startMs: options.startMs ?? '',
     endMs: options.endMs ?? '',
     limit: options.limit ?? 500,
-    mvpOnly: options.mvpOnly !== false,
+    pipelineOnly: options.pipelineOnly !== false,
     timeWindowForRun: options.timeWindowForRun === true,
   });
 }
@@ -83,7 +83,7 @@ async function fetchCloudWatchLogs(
   if (options.startMs) args.push('--start-ms', String(options.startMs));
   if (options.endMs) args.push('--end-ms', String(options.endMs));
   if (options.limit) args.push('--limit', String(options.limit));
-  if (options.mvpOnly === false) args.push('--all-agents');
+  if (options.pipelineOnly === false) args.push('--all-agents');
   if (options.timeWindowForRun) args.push('--time-window-for-run');
 
   return await new Promise<LogEntry[]>((resolve) => {

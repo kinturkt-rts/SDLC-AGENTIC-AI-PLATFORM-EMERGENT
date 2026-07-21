@@ -76,7 +76,7 @@ export default function AboutPage() {
                 <dt className="text-muted-foreground">Ready to run</dt>
                 <dd className="text-foreground">
                   {settings
-                    ? `${settings.pipeline.deployedAgentCount} of ${settings.pipeline.totalMvpAgents}`
+                    ? `${settings.pipeline.deployedAgentCount} of ${settings.pipeline.totalAgents}`
                     : '-'}
                 </dd>
               </div>

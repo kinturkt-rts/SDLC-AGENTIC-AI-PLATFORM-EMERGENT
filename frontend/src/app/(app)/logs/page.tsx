@@ -31,7 +31,7 @@ const TIME_WINDOWS: { value: string; minutes?: number; label: string }[] = [
   { value: '1440', minutes: 1440, label: 'Last 24 hours' },
 ];
 
-const MVP_AGENTS: { id: AgentName; label: string }[] = [
+const LOG_AGENTS: { id: AgentName; label: string }[] = [
   { id: 'orchestrator-agent', label: 'Orchestrator' },
   { id: 'product-agent', label: 'Product' },
   { id: 'architect-agent', label: 'Architect' },
@@ -170,7 +170,7 @@ function LogsInner() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All agents</SelectItem>
-                {MVP_AGENTS.map((a) => (
+                {LOG_AGENTS.map((a) => (
                   <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
                 ))}
               </SelectContent>
