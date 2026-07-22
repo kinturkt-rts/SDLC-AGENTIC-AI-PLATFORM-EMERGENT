@@ -1,78 +1,99 @@
-"""Department API routes."""
-from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+"""Department CRUD routes."""
+from __future__ import annotations
 
-from app.dependencies import ApiKeyAuth, DbSession
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+
+from app.dependencies import DbSession, verify_api_key
+from app.models.contact import Contact
 from app.models.department import Department
-from schemas.department import DepartmentCreate, DepartmentRead, DepartmentUpdate
+from schemas.department import (
+    DepartmentCreate,
+    DepartmentDetail,
+    DepartmentOut,
+    DepartmentUpdate,
+)
 
 router = APIRouter()
 
 
-@router.get("/", response_model=list[DepartmentRead])
-def list_departments(db: DbSession) -> list[Department]:
-    """List all departments."""
-    departments = list(db.scalars(select(Department)).all())
-    return departments
+@router.get("", response_model=list[DepartmentOut])
+def list_departments(db: DbSession):
+    """Return all departments sorted alphabetically by name. No auth required."""
+    stmt = select(Department).order_by(Department.name.asc())
+    rows = db.scalars(stmt).all()
+    return rows
 
 
-@router.post("/", response_model=DepartmentRead, status_code=201)
+@router.post("", response_model=DepartmentOut, status_code=status.HTTP_201_CREATED)
 def create_department(
     body: DepartmentCreate,
     db: DbSession,
-    _api_key: ApiKeyAuth,
-) -> Department:
-    """Create a new department."""
-    # Check for duplicate code
-    existing = db.scalar(select(Department).where(Department.code == body.code))
-    if existing:
+    _key: str = Depends(verify_api_key),
+):
+    """Create a new department. Requires X-API-Key."""
+    dept = Department(name=body.name, code=body.code)
+    db.add(dept)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Department code '{body.code}' already exists"
+            detail=f"Department with code '{body.code}' already exists",
         )
-    
-    department = Department(**body.model_dump())
-    db.add(department)
-    db.commit()
-    db.refresh(department)
-    return department
+    db.refresh(dept)
+    return dept
 
 
-@router.patch("/{id}", response_model=DepartmentRead)
-def update_department(
-    id: str,
-    body: DepartmentUpdate,
-    db: DbSession,
-    _api_key: ApiKeyAuth,
-) -> Department:
-    """Update an existing department."""
-    department = db.scalar(select(Department).where(Department.id == id))
-    if not department:
+@router.get("/{department_id}", response_model=DepartmentDetail)
+def get_department(department_id: str, db: DbSession):
+    """Get a single department with contact_count. No auth required."""
+    dept = db.get(Department, department_id)
+    if not dept:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Department not found"
+            detail="Department not found",
         )
-    
+    # Count contacts (active + inactive)
+    count_stmt = select(func.count(Contact.id)).where(
+        Contact.department_id == department_id
+    )
+    contact_count = db.scalar(count_stmt) or 0
+    return DepartmentDetail(
+        id=str(dept.id),
+        name=dept.name,
+        code=dept.code,
+        created_at=dept.created_at,
+        contact_count=contact_count,
+    )
+
+
+@router.patch("/{department_id}", response_model=DepartmentOut)
+def update_department(
+    department_id: str,
+    body: DepartmentUpdate,
+    db: DbSession,
+    _key: str = Depends(verify_api_key),
+):
+    """Partial update of a department. Requires X-API-Key."""
+    dept = db.get(Department, department_id)
+    if not dept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Department not found",
+        )
     updates = body.model_dump(exclude_unset=True)
-    
-    # Check for duplicate code if updating code
-    if "code" in updates:
-        existing = db.scalar(
-            select(Department).where(
-                Department.code == updates["code"],
-                Department.id != id
-            )
+    for field, value in updates.items():
+        setattr(dept, field, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Department with code '{updates.get('code', '')}' already exists",
         )
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Department code '{updates['code']}' already exists"
-            )
-    
-    for key, value in updates.items():
-        setattr(department, key, value)
-    
-    db.commit()
-    db.refresh(department)
-    return department
+    db.refresh(dept)
+    return dept

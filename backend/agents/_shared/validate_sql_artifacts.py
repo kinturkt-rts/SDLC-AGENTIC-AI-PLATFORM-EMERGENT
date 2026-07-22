@@ -501,3 +501,52 @@ def reconcile_nullability_from_ddl(
             if verbose:
                 print(f"  Reconciled: {msg}", file=sys.stderr)
     return alters
+
+
+def check_ddl_column_drift(
+    cur: object,
+    *,
+    app_schema: str,
+    sql_dir: Path,
+) -> list[str]:
+    """Detect columns the DDL declares that the live table doesn't have.
+
+    `CREATE TABLE IF NOT EXISTS` silently no-ops when a table from an earlier,
+    differently-shaped generation of the app already occupies that name — the apply
+    script then reports success while the live table still has the old columns/types
+    (e.g. a renamed `short_code` -> `code`, or `id integer` -> `id uuid`). Nullability
+    can be safely reconciled in one direction (see `reconcile_nullability_from_ddl`);
+    a missing/renamed/retyped column cannot be auto-fixed without risking data loss,
+    so this only detects and reports — the caller should fail loudly and point at
+    `apply_sql_to_rds.py --reset-schema`.
+    """
+    nullability = parse_schema_nullability(sql_dir)
+    tables: set[tuple[str | None, str]] = {(schema, table) for schema, table, _col in nullability}
+
+    drift: list[str] = []
+    for schema, table in sorted(tables):
+        effective_schema = schema or app_schema
+        cur.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            """,
+            (effective_schema, table),
+        )
+        db_cols = {row[0] for row in cur.fetchall()}
+        if not db_cols:
+            continue  # table didn't exist yet — CREATE TABLE made it fresh, no drift
+        ddl_cols = {
+            col_name
+            for spec_schema, spec_table, col_name in nullability
+            if spec_table == table and spec_schema in (None, effective_schema)
+        }
+        missing = sorted(ddl_cols - db_cols)
+        if missing:
+            drift.append(
+                f"{effective_schema}.{table}: DDL declares column(s) {missing} not present on "
+                f"the live table (has: {sorted(db_cols)}) — CREATE TABLE IF NOT EXISTS no-op'd "
+                "against an incompatible existing table from an earlier schema version. "
+                f"Fix: python scripts/apply_sql_to_rds.py --target-app <app> --reset-schema"
+            )
+    return drift

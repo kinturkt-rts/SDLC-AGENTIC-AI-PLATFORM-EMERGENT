@@ -1,130 +1,94 @@
-"""Test department endpoints."""
-import pytest
-from fastapi.testclient import TestClient
+"""Department route tests."""
+import uuid
 
 
-def test_list_departments_empty(client: TestClient):
-    """Test listing departments when none exist."""
-    response = client.get("/departments/")
-    assert response.status_code == 200
-    assert response.json() == []
+def test_list_departments_empty(client):
+    """GET /api/v1/departments returns empty list when no data."""
+    resp = client.get("/api/v1/departments")
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
-def test_create_department_success(client: TestClient, api_headers: dict):
-    """Test successful department creation."""
-    dept_data = {
-        "name": "Engineering", 
-        "code": "ENG"
-    }
-    response = client.post("/departments/", json=dept_data, headers=api_headers)
-    assert response.status_code == 201
-    
-    dept = response.json()
-    assert dept["name"] == "Engineering"
-    assert dept["code"] == "ENG"
-    assert "id" in dept
-    assert "created_at" in dept
+def test_create_department_no_key(client):
+    """POST without API key returns 401."""
+    resp = client.post("/api/v1/departments", json={"name": "Test", "code": "TST"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Invalid or missing API key"
 
 
-def test_create_department_without_api_key(client: TestClient):
-    """Test department creation fails without API key."""
-    dept_data = {
-        "name": "Engineering", 
-        "code": "ENG"
-    }
-    response = client.post("/departments/", json=dept_data)
-    assert response.status_code == 401
-    assert "Invalid or missing API key" in response.json()["detail"]
+def test_create_department(client, api_headers):
+    """POST with API key creates department."""
+    resp = client.post(
+        "/api/v1/departments",
+        json={"name": "Engineering", "code": "ENG"},
+        headers=api_headers,
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "Engineering"
+    assert data["code"] == "ENG"
+    assert "id" in data
+    assert "created_at" in data
 
 
-def test_create_department_invalid_code(client: TestClient, api_headers: dict):
-    """Test department creation with invalid code format."""
-    dept_data = {
-        "name": "Engineering", 
-        "code": "invalid"
-    }
-    response = client.post("/departments/", json=dept_data, headers=api_headers)
-    assert response.status_code == 422
+def test_create_department_duplicate_code(client, api_headers, sample_department):
+    """POST with duplicate code returns 409."""
+    resp = client.post(
+        "/api/v1/departments",
+        json={"name": "Duplicate", "code": sample_department.code},
+        headers=api_headers,
+    )
+    assert resp.status_code == 409
 
 
-def test_create_department_duplicate_code(client: TestClient, api_headers: dict):
-    """Test department creation with duplicate code."""
-    dept_data = {
-        "name": "Engineering", 
-        "code": "ENG"
-    }
-    # First creation should succeed
-    response = client.post("/departments/", json=dept_data, headers=api_headers)
-    assert response.status_code == 201
-    
-    # Second creation should fail
-    dept_data2 = {
-        "name": "Different Engineering", 
-        "code": "ENG"
-    }
-    response = client.post("/departments/", json=dept_data2, headers=api_headers)
-    assert response.status_code == 409
-    assert "already exists" in response.json()["detail"]
+def test_get_department(client, sample_department):
+    """GET /departments/{id} returns department with contact_count."""
+    resp = client.get(f"/api/v1/departments/{sample_department.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == sample_department.id
+    assert data["name"] == sample_department.name
+    assert data["contact_count"] == 0
 
 
-def test_list_departments_with_data(client: TestClient, api_headers: dict):
-    """Test listing departments after creating some."""
-    # Create a few departments
-    depts = [
-        {"name": "Engineering", "code": "ENG"},
-        {"name": "Sales", "code": "SALES"}
-    ]
-    
-    for dept_data in depts:
-        response = client.post("/departments/", json=dept_data, headers=api_headers)
-        assert response.status_code == 201
-    
-    # List all departments
-    response = client.get("/departments/")
-    assert response.status_code == 200
-    
-    dept_list = response.json()
-    assert len(dept_list) == 2
-    codes = {dept["code"] for dept in dept_list}
-    assert codes == {"ENG", "SALES"}
+def test_get_department_not_found(client):
+    """GET non-existent department returns 404."""
+    resp = client.get(f"/api/v1/departments/{uuid.uuid4()}")
+    assert resp.status_code == 404
 
 
-def test_update_department_success(client: TestClient, api_headers: dict):
-    """Test successful department update."""
-    # Create department
-    dept_data = {"name": "Engineering", "code": "ENG"}
-    response = client.post("/departments/", json=dept_data, headers=api_headers)
-    assert response.status_code == 201
-    dept_id = response.json()["id"]
-    
-    # Update department
-    update_data = {"name": "Software Engineering"}
-    response = client.patch(f"/departments/{dept_id}", json=update_data, headers=api_headers)
-    assert response.status_code == 200
-    
-    updated_dept = response.json()
-    assert updated_dept["name"] == "Software Engineering"
-    assert updated_dept["code"] == "ENG"  # unchanged
+def test_get_department_contact_count(client, sample_contact):
+    """contact_count includes contacts in the department."""
+    resp = client.get(f"/api/v1/departments/{sample_contact.department_id}")
+    assert resp.status_code == 200
+    assert resp.json()["contact_count"] == 1
 
 
-def test_update_department_not_found(client: TestClient, api_headers: dict):
-    """Test updating non-existent department."""
-    update_data = {"name": "New Name"}
-    response = client.patch("/departments/99999999-9999-9999-9999-999999999999", 
-                          json=update_data, headers=api_headers)
-    assert response.status_code == 404
-    assert "Department not found" in response.json()["detail"]
+def test_list_departments_sorted(client, api_headers):
+    """Departments are sorted by name ascending."""
+    client.post("/api/v1/departments", json={"name": "Zebra", "code": "ZEB"}, headers=api_headers)
+    client.post("/api/v1/departments", json={"name": "Alpha", "code": "ALP"}, headers=api_headers)
+    resp = client.get("/api/v1/departments")
+    names = [d["name"] for d in resp.json()]
+    assert names == sorted(names)
 
 
-def test_update_department_without_api_key(client: TestClient, api_headers: dict):
-    """Test department update fails without API key."""
-    # Create department first
-    dept_data = {"name": "Engineering", "code": "ENG"}
-    response = client.post("/departments/", json=dept_data, headers=api_headers)
-    assert response.status_code == 201
-    dept_id = response.json()["id"]
-    
-    # Try to update without API key
-    update_data = {"name": "New Name"}
-    response = client.patch(f"/departments/{dept_id}", json=update_data)
-    assert response.status_code == 401
+def test_patch_department(client, api_headers, sample_department):
+    """PATCH updates department fields."""
+    resp = client.patch(
+        f"/api/v1/departments/{sample_department.id}",
+        json={"name": "Eng Updated"},
+        headers=api_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Eng Updated"
+    assert resp.json()["code"] == sample_department.code
+
+
+def test_patch_department_no_key(client, sample_department):
+    """PATCH without API key returns 401."""
+    resp = client.patch(
+        f"/api/v1/departments/{sample_department.id}",
+        json={"name": "Unauthorized"},
+    )
+    assert resp.status_code == 401

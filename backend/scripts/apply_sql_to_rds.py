@@ -591,7 +591,16 @@ def apply_sql_files(
 
                 _apply_paths(ddl_files, label="ddl")
                 if app_schema and ddl_files:
-                    from _shared.validate_sql_artifacts import reconcile_nullability_from_ddl
+                    from _shared.validate_sql_artifacts import (
+                        check_ddl_column_drift,
+                        reconcile_nullability_from_ddl,
+                    )
+
+                    drift = check_ddl_column_drift(cur, app_schema=app_schema, sql_dir=sql_dir)
+                    if drift:
+                        for msg in drift:
+                            print(f"FAILED (schema drift): {msg}", file=sys.stderr)
+                        return 1
 
                     reconciled = reconcile_nullability_from_ddl(
                         cur,

@@ -27,7 +27,7 @@ def health(response: Response) -> dict:
         checks["database"] = f"error: {exc.__class__.__name__}"
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
-    # Optional Bedrock probe when the app uses LLM inference
+    # Optional Bedrock probe — informational only; DB availability drives HTTP status.
     if getattr(settings, "bedrock_model_id", None) and settings.bedrock_model_id.strip():
         try:
             from app.services.bedrock_client import get_bedrock_client
@@ -39,8 +39,7 @@ def health(response: Response) -> dict:
         except Exception as exc:
             logger.warning("health_bedrock_failed: %s", exc)
             checks["bedrock"] = f"error: {exc.__class__.__name__}"
-            if response.status_code < 400:
-                response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
-    overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    db_ok = checks.get("database") == "ok"
+    overall = "ok" if db_ok and all(v == "ok" for v in checks.values()) else "degraded"
     return {"status": overall, "checks": checks}

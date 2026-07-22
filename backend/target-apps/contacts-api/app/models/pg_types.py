@@ -5,10 +5,15 @@ Use when `db/sql/` defines native ENUM or uuid columns. SQLite tests use
 """
 from __future__ import annotations
 
-from sqlalchemy import Enum as SAEnum, String
+from sqlalchemy import DateTime, Enum as SAEnum, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from app.config import get_settings
+
+# Timezone-aware timestamp column type. Use for any `created_at`, `updated_at`,
+# `*_at` field that must round-trip TZ info on Postgres. SQLite stores naive
+# datetimes but accepts the same column type, so tests don't need a variant.
+TimestampTZ = DateTime(timezone=True)
 
 
 def pg_schema() -> str:
