@@ -154,6 +154,39 @@ def check_streamlit_no_deprecated_width_api(app_dir: Path) -> list[str]:
     return errors
 
 
+# Deterministic rewrites for the same anti-patterns `check_streamlit_no_deprecated_width_api`
+# flags. Applied as a self-heal pass so a model that ignores the prompt guidance doesn't need
+# a regenerate round-trip — the file is repaired in place before the blocking check runs.
+_WIDTH_AUTOFIX_PATTERNS = (
+    (re.compile(r"use_container_width\s*=\s*True"), 'width="stretch"'),
+    (re.compile(r"use_container_width\s*=\s*False"), 'width="content"'),
+    (re.compile(r"\bwidth\s*=\s*0\b"), 'width="stretch"'),
+    (re.compile(r"\bwidth\s*=\s*False\b"), 'width="content"'),
+)
+
+
+def autofix_streamlit_width_api(app_dir: Path) -> list[str]:
+    """Rewrite deprecated/invalid Streamlit width kwargs in place.
+
+    Returns a description of each substitution applied (empty if the file was already clean
+    or doesn't exist). Safe to call unconditionally before the blocking check — it is a no-op
+    when there's nothing to fix.
+    """
+    ui = app_dir / "ui" / "streamlit_app.py"
+    if not ui.is_file():
+        return []
+    text = ui.read_text(encoding="utf-8", errors="replace")
+    fixes: list[str] = []
+    for pattern, replacement in _WIDTH_AUTOFIX_PATTERNS:
+        count = len(pattern.findall(text))
+        if count:
+            fixes.append(f'{pattern.pattern!r} -> {replacement!r} ({count}x)')
+            text = pattern.sub(replacement, text)
+    if fixes:
+        ui.write_text(text, encoding="utf-8")
+    return fixes
+
+
 def validate_ui_parity(app_dir: Path, repo_root: Path) -> list[str]:
     """Run API/UI parity checks. Streamlit rules apply only when Pattern C is required."""
     app_slug = app_dir.name

@@ -2000,7 +2000,15 @@ def run_service_validation(
     for warn in validate_rds_parity_warnings(service_dir):
         _warn(f"rds_parity: {warn}")
 
-    from _shared.validate_ui_parity import validate_ui_parity, validate_ui_parity_blocking
+    from _shared.validate_ui_parity import (
+        autofix_streamlit_width_api,
+        validate_ui_parity,
+        validate_ui_parity_blocking,
+    )
+
+    width_fixes = autofix_streamlit_width_api(service_dir)
+    for fix in width_fixes:
+        _warn(f"ui_parity: auto-fixed deprecated Streamlit width API: {fix}")
 
     ui_errors = validate_ui_parity_blocking(service_dir, _REPO_ROOT)
     if ui_errors:
