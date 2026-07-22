@@ -599,8 +599,36 @@ def apply_sql_files(
                     drift = check_ddl_column_drift(cur, app_schema=app_schema, sql_dir=sql_dir)
                     if drift:
                         for msg in drift:
-                            print(f"FAILED (schema drift): {msg}", file=sys.stderr)
-                        return 1
+                            print(f"[apply-sql] Schema drift detected: {msg}", file=sys.stderr)
+                        print(
+                            f"[apply-sql] Auto-healing: resetting schema {app_schema!r} "
+                            "(DROP CASCADE + CREATE) and reapplying DDL — this is safe on "
+                            "dev/seed RDS; the stale table was from an earlier, differently "
+                            "shaped generation of this app, not the current one.",
+                            file=sys.stderr,
+                        )
+                        from psycopg import sql as psql
+
+                        cur.execute(psql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(psql.Identifier(app_schema)))
+                        cur.execute(psql.SQL("CREATE SCHEMA {}").format(psql.Identifier(app_schema)))
+                        cur.execute(
+                            psql.SQL("SET search_path TO {}, public").format(
+                                psql.Identifier(app_schema), psql.Identifier("public")
+                            )
+                        )
+                        _apply_paths(ddl_files, label="ddl")
+                        drift_after = check_ddl_column_drift(cur, app_schema=app_schema, sql_dir=sql_dir)
+                        if drift_after:
+                            for msg in drift_after:
+                                print(f"FAILED (schema drift persists after reset): {msg}", file=sys.stderr)
+                            print(
+                                "Auto-heal reset the schema but drift persists — this means two "
+                                "DDL files in db/sql/ declare the same table differently (a stale "
+                                "file from an earlier design still sitting alongside the current "
+                                "one). Remove the stale file(s) from db/sql/ and re-run.",
+                                file=sys.stderr,
+                            )
+                            return 1
 
                     reconciled = reconcile_nullability_from_ddl(
                         cur,

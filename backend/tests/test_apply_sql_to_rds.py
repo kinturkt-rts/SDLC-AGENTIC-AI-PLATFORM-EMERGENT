@@ -158,3 +158,168 @@ def test_preprocess_seed_sql_gives_each_occurrence_a_distinct_hash() -> None:
     assert len(set(hashes)) == 3, "each occurrence must get a distinct hash (UNIQUE columns)"
     for digest in hashes:
         assert bcrypt.checkpw(b"LegalQA2024!", digest.encode("utf-8"))
+
+
+class _FakeInMemoryPostgres:
+    """Minimal in-memory Postgres stand-in driving apply_sql_files()'s auto-heal path.
+
+    Understands just enough SQL to exercise DROP/CREATE SCHEMA, CREATE TABLE IF NOT
+    EXISTS (via the real DDL column parser), and the single-column information_schema
+    lookup check_ddl_column_drift issues. Anything else (SET search_path, INSERT, etc.)
+    is accepted and ignored.
+    """
+
+    def __init__(self) -> None:
+        self.schemas: dict[str, dict[str, set[str]]] = {}
+        self._last_rows: list[tuple[str]] = []
+
+    def execute(self, query: object, params: tuple[str, str] | None = None) -> None:
+        from _shared.validate_sql_artifacts import _parse_create_table_columns
+
+        # psycopg's sql.Composed has no __str__ rendering without a live connection —
+        # str() falls back to repr(), e.g. "Composed([SQL('DROP SCHEMA IF EXISTS '),
+        # Identifier('contacts_api'), SQL(' CASCADE')])". Pull the identifier out of that.
+        stmt = str(query)
+        upper = stmt.upper().strip()
+        identifier_match = re.search(r"Identifier\('([^']+)'\)", stmt)
+        if "DROP SCHEMA" in upper:
+            if identifier_match:
+                self.schemas.pop(identifier_match.group(1), None)
+            return
+        if "CREATE SCHEMA" in upper:
+            if identifier_match:
+                self.schemas.setdefault(identifier_match.group(1), {})
+            return
+        if "SEARCH_PATH" in upper:
+            return
+        if "INFORMATION_SCHEMA.COLUMNS" in upper:
+            assert params is not None
+            schema, table = params
+            cols = self.schemas.get(schema, {}).get(table, set())
+            self._last_rows = [(c,) for c in sorted(cols)]
+            return
+        if upper.startswith("CREATE TABLE"):
+            by_table: dict[tuple[str | None, str], set[str]] = {}
+            for spec in _parse_create_table_columns(stmt, source="test"):
+                by_table.setdefault((spec.schema, spec.table), set()).add(spec.name)
+            for (schema, table), cols in by_table.items():
+                eff_schema = schema or self._only_schema()
+                table_cols = self.schemas.setdefault(eff_schema, {})
+                if table not in table_cols:  # IF NOT EXISTS: no-op when already present
+                    table_cols[table] = cols
+            return
+        return  # INSERT / other statements — irrelevant to this test
+
+    def _only_schema(self) -> str:
+        # DDL in these tests always uses unqualified table names against the single
+        # schema apply_sql_files just created/reset — there's only ever one candidate.
+        assert len(self.schemas) == 1
+        return next(iter(self.schemas))
+
+    def fetchall(self) -> list[tuple[str]]:
+        return self._last_rows
+
+
+class _FakeCursorCM:
+    def __init__(self, cursor: _FakeInMemoryPostgres) -> None:
+        self._cursor = cursor
+
+    def __enter__(self) -> _FakeInMemoryPostgres:
+        return self._cursor
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _FakeConn:
+    def __init__(self, cursor: _FakeInMemoryPostgres) -> None:
+        self._cursor = cursor
+
+    def __enter__(self) -> "_FakeConn":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def cursor(self) -> _FakeCursorCM:
+        return _FakeCursorCM(self._cursor)
+
+
+def _patch_apply_sql_plumbing(monkeypatch: pytest.MonkeyPatch, mod, db: _FakeInMemoryPostgres) -> None:
+    """Bypass AWS/network preflight and real psycopg.connect so apply_sql_files()
+    runs entirely against the in-memory fake."""
+    import psycopg
+
+    monkeypatch.setattr(mod, "_preflight_aws", lambda **_: True)
+    monkeypatch.setattr(mod, "_tcp_probe", lambda *a, **k: (True, "reachable"))
+    monkeypatch.setattr(mod, "_resolve_host_port", lambda *_: ("fakehost", 5432))
+    monkeypatch.setattr(mod, "_connection_url", lambda: "postgresql://fake")
+    monkeypatch.setattr(mod, "_validate_sql_artifacts", lambda _sql_dir: [])
+    monkeypatch.setattr(
+        "_shared.validate_sql_artifacts.reconcile_nullability_from_ddl",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _FakeConn(db))
+
+
+def test_apply_sql_files_auto_heals_stale_table_from_earlier_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: contacts-api's live departments table was `short_code`/int from an
+    earlier generation; CREATE TABLE IF NOT EXISTS silently no-op'd against it and the
+    current uuid/`code` design never took effect. apply_sql_files() must now detect
+    that drift and self-heal (reset schema + reapply) rather than reporting success."""
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_departments.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS departments (\n"
+        "    id uuid PRIMARY KEY,\n"
+        "    name text NOT NULL,\n"
+        "    code text UNIQUE NOT NULL\n"
+        ");\n",
+        encoding="utf-8",
+    )
+
+    db = _FakeInMemoryPostgres()
+    db.schemas["contacts_api"] = {"departments": {"id", "name", "short_code", "created_at"}}
+    _patch_apply_sql_plumbing(monkeypatch, mod, db)
+
+    rc = mod.apply_sql_files(sql_dir, target_app="contacts-api", skip_seed=True, quiet=True)
+
+    assert rc == 0
+    assert db.schemas["contacts_api"]["departments"] == {"id", "name", "code"}
+
+
+def test_apply_sql_files_fails_loudly_when_stale_file_still_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a stale DDL file for the same table sits alongside the current one, reset
+    + reapply reproduces the same drift (whichever file sorts first wins) — this must
+    fail loudly with an actionable message, not succeed silently on the wrong schema."""
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    # Sorts first alphabetically -> wins after every reset, same as the real bug.
+    (sql_dir / "001_create_departments_old.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS departments (\n"
+        "    id integer PRIMARY KEY,\n"
+        "    short_code text NOT NULL\n"
+        ");\n",
+        encoding="utf-8",
+    )
+    (sql_dir / "002_create_departments_new.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS departments (\n"
+        "    id uuid PRIMARY KEY,\n"
+        "    code text NOT NULL\n"
+        ");\n",
+        encoding="utf-8",
+    )
+
+    db = _FakeInMemoryPostgres()
+    db.schemas["contacts_api"] = {"departments": {"id", "short_code"}}
+    _patch_apply_sql_plumbing(monkeypatch, mod, db)
+
+    rc = mod.apply_sql_files(sql_dir, target_app="contacts-api", skip_seed=True, quiet=True)
+
+    assert rc == 1

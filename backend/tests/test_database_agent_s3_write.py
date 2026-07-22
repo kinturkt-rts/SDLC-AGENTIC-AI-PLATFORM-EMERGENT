@@ -283,6 +283,97 @@ def test_database_pipeline_surfaces_run_task_errors(
     assert "bedrock unavailable" in text
 
 
+def test_db_delete_file_removes_local_file(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    sql_dir = repo_root / "target-apps" / _FIXTURE_APP / "db" / "sql"
+    sql_dir.mkdir(parents=True)
+    stale = sql_dir / "002_create_departments_old.sql"
+    stale.write_text("CREATE TABLE IF NOT EXISTS departments (id integer PRIMARY KEY);", encoding="utf-8")
+
+    mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
+    mod._run_context = {"targetApp": _FIXTURE_APP}
+
+    result = mod.db_delete_file(f"target-apps/{_FIXTURE_APP}/db/sql/002_create_departments_old.sql")
+
+    assert f"Deleted target-apps/{_FIXTURE_APP}/db/sql/002_create_departments_old.sql" in result
+    assert not stale.exists()
+    mod._run_context = None
+
+
+def test_db_delete_file_is_noop_when_already_gone(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    (repo_root / "target-apps" / _FIXTURE_APP / "db" / "sql").mkdir(parents=True)
+    mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
+    mod._run_context = {"targetApp": _FIXTURE_APP}
+
+    result = mod.db_delete_file(f"target-apps/{_FIXTURE_APP}/db/sql/999_never_existed.sql")
+
+    assert not result.startswith("Error:")
+    mod._run_context = None
+
+
+def test_db_delete_file_cloud_requires_run_id(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
+    mod._run_context = None
+    captured: list[str] = []
+
+    def _capture_delete(rel: str, *, context: dict | None = None) -> None:
+        captured.append(rel)
+
+    with patch.object(mod, "delete_repo_artifact", side_effect=_capture_delete):
+        with patch.object(mod, "_is_cloud_store", return_value=True):
+            with patch("_shared.pipeline_context._is_cloud_store", return_value=True):
+                no_ctx = mod.db_delete_file(f"target-apps/{_FIXTURE_APP}/db/sql/001_users.sql")
+                mod._run_context = {"targetApp": _FIXTURE_APP}
+                no_run = mod.db_delete_file(f"target-apps/{_FIXTURE_APP}/db/sql/001_users.sql")
+
+    assert no_ctx.startswith("Error:")
+    assert "run context" in no_ctx
+    assert no_run.startswith("Error:")
+    assert "runId" in no_run
+    assert captured == []
+    mod._run_context = None
+
+
+def test_db_delete_file_persists_deletion_to_s3_when_run_id_set(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    (repo_root / "target-apps" / _FIXTURE_APP / "db" / "sql").mkdir(parents=True)
+
+    mod = _load_agent_module()
+    _isolate_agent_paths(mod, repo_root, monkeypatch)
+    run_id = "db-delete-001"
+    mod._run_context = {"targetApp": _FIXTURE_APP, "runId": run_id}
+
+    rel = f"target-apps/{_FIXTURE_APP}/db/sql/001_users.sql"
+    mod.db_write_file(rel, "CREATE TABLE users (id uuid PRIMARY KEY);")
+
+    from _shared.artifact_store import get_artifact_text
+
+    assert "CREATE TABLE users" in get_artifact_text(run_id, rel)
+
+    result = mod.db_delete_file(rel)
+    assert f"Deleted {rel}" in result
+
+    with pytest.raises(FileNotFoundError):
+        get_artifact_text(run_id, rel)
+    mod._run_context = None
+
+
 @pytest.fixture()
 def repo_root(tmp_path: Path) -> Path:
     (tmp_path / "agents").mkdir()

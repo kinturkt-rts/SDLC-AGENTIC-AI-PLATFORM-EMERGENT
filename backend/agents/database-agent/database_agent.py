@@ -19,6 +19,7 @@ _DEFAULT_DB_SUBDIR = "db"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.artifact_store import (
+    delete_repo_artifact,
     get_artifact,
     is_s3_store,
     list_run_artifact_keys,
@@ -83,6 +84,7 @@ _READ_PREFIXES = (
 )
 
 _written_files: list[str] = []
+_deleted_files: list[str] = []
 _run_context: dict[str, Any] | None = None
 
 DATABASE_SYS_PROMPT = """\
@@ -194,7 +196,7 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
 
 ## Workflow
 1. Read design (+ PRD when `prdPath` set); list planned tables with PRD FR ids.
-2. `db_list_tree` / overwrite stale files via `db_write_file`; **delete** superseded `sql/` files (do not leave duplicate `00N_*.sql` no-ops).
+2. `db_list_tree` / overwrite stale files via `db_write_file`. When redesigning an existing app's schema, `db_delete_file` every superseded `sql/` file first — `apply_sql_to_rds.py` runs every `*.sql` it finds, so a leftover old migration under a different filename (e.g. `002_create_departments.sql` next to a new `001_create_departments.sql`) can win via `CREATE TABLE IF NOT EXISTS` and leave RDS on the old schema even though the new files look correct. Do not leave duplicate `00N_*.sql` no-ops.
 3. Write migrations in §6 order; write seed with `seedMinRows`–`seedMaxRows` rows per §3 table.
 4. `db_validate_sql(service=targetApp)` — must report SQL_VALIDATION OK.
 5. One compact reply (see below).
@@ -412,6 +414,44 @@ def db_write_file(path: str, content: str) -> str:
     return f"Wrote {rel} ({len(content)} bytes)"
 
 
+@tool
+def db_delete_file(path: str) -> str:
+    """Delete a superseded generated file under the app db tree (cloud: ``<slug>/db/...``).
+
+    Use this before writing a redesigned schema so old ``sql/`` migrations from an earlier
+    generation don't linger alongside the new ones — ``apply_sql_to_rds.py`` runs every
+    ``*.sql`` file it finds, and a stale file left behind can silently win over the current
+    design via ``CREATE TABLE IF NOT EXISTS``. No-op (not an error) if the file is already gone.
+    """
+    raw = path.strip()
+    artifact_rel = cloud_artifact_rel(raw)
+    if _is_cloud_store():
+        if _run_context is None:
+            return (
+                "Error: cloud delete requires active run context "
+                "(run_task must set _run_context before db_delete_file)."
+            )
+        run_id = resolve_run_id(_run_context)
+        if not run_id:
+            return (
+                "Error: cloud delete requires runId in Context "
+                f"(refused to claim delete of {artifact_rel})."
+            )
+        delete_repo_artifact(artifact_rel, context=_run_context)
+        _deleted_files.append(artifact_rel)
+        return f"Deleted {artifact_rel}"
+    try:
+        file_path = _resolve_repo_path(raw, write=True)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    file_path.unlink(missing_ok=True)
+    rel = cloud_artifact_rel(file_path.relative_to(_REPO_ROOT).as_posix())
+    _deleted_files.append(rel)
+    if _run_context is not None:
+        delete_repo_artifact(rel, context=_run_context)
+    return f"Deleted {rel}"
+
+
 def _format_sql_validation_result(errors: list[str]) -> str:
     if not errors:
         return (
@@ -608,7 +648,7 @@ def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> 
 
 
 def _file_tools() -> list[Any]:
-    return [db_list_tree, db_read_file, db_write_file, db_validate_sql]
+    return [db_list_tree, db_read_file, db_write_file, db_delete_file, db_validate_sql]
 
 
 def _mongodb_mcp_tools(stack: ExitStack) -> list[Any]:
@@ -638,8 +678,9 @@ def run_task(
     use_postgres: bool = False,
     use_mongodb: bool = False,
 ) -> tuple[str, list[str]]:
-    global _written_files, _run_context
+    global _written_files, _deleted_files, _run_context
     _written_files = []
+    _deleted_files = []
     _run_context = None
 
     app = resolve_target_app(target_app, context, env_var="DATABASE_TARGET_APP")
@@ -677,7 +718,7 @@ def run_task(
             "\n\n> No files were written under target-apps/. "
             "Use db_write_file to persist SQL/NoSQL scripts.\n"
         )
-    telemetry.extra = {"filesWritten": len(_written_files)}
+    telemetry.extra = {"filesWritten": len(_written_files), "filesDeleted": len(_deleted_files)}
     telemetry.finalize(context=ctx)
 
     run_id = resolve_run_id(ctx)
