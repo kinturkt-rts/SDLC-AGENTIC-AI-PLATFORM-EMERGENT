@@ -1,0 +1,44 @@
+Build a medium internal Meeting Room Booking API for our office.
+
+Problem:
+- People book conference rooms in Slack threads and calendar comments, so double-bookings happen.
+- Facilities needs one reliable place to see which rooms exist, who booked them, and what is free.
+- Integrators and internal tools should call a clean API — no browser app required for v1.
+
+Who uses it:
+- Anyone with a valid API key can browse rooms and reservations (read).
+- Users with a key can create, update, or cancel their own reservations.
+- A shared facilities/admin key can manage rooms (create, update, deactivate) and cancel any reservation.
+- Health checks stay open for ops (no auth).
+
+MVP features:
+- Maintain rooms: name, floor/location, capacity, optional amenities note, active/inactive.
+- Create reservations: room, title, organizer email, start time, end time, optional notes.
+- List and filter reservations by room, date range, or organizer email.
+- Cancel a reservation (soft cancel — keep the record with a cancelled status; do not hard-delete in v1).
+- Update a reservation’s title, times, or notes when it is still active (not cancelled).
+- Seed a few sample rooms and upcoming reservations so demos work out of the box.
+
+Business rules:
+- End time must be after start time.
+- Two active reservations for the same room must not overlap.
+- You cannot book an inactive room.
+- You cannot permanently delete a room that still has future active reservations; deactivate the room instead.
+- Writes without a valid API key should be rejected.
+
+Must have for v1:
+- Persisted data (not in-memory only).
+- Role distinction between normal API key and admin/facilities key (or equivalent).
+- A simple FastAPI suitable for demos (Swagger is fine).
+- No customer-facing web UI, Streamlit, chatbots, or SSO for this version — API only.
+
+Nice to have (later):
+- Browser UI, personal logins, recurring bookings, calendar sync, Slack notifications.
+
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
+
+Success:
+- Someone can list rooms, book a free slot with the API key, see the conflict rejected when times overlap, cancel a booking, and still find the cancelled record in history.
+- Facilities can deactivate a room so it no longer accepts new bookings.

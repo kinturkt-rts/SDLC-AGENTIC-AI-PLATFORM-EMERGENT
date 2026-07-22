@@ -60,7 +60,7 @@ export const useRuns = () =>
   useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.getRuns,
-    staleTime: 10_000,
+    staleTime: 0,
     refetchInterval: (query) => {
       const runs = query.state.data;
       if (
@@ -71,22 +71,25 @@ export const useRuns = () =>
             r.steps?.some((s) => s.phase === 'deploy' && s.status === 'running'),
         )
       ) {
-        return 8_000;
+        return 2_500;
       }
       return 20_000;
     },
     refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 export const useRun = (id: string) =>
   useQuery({
     queryKey: queryKeys.run(id),
     queryFn: () => api.getRun(id),
     enabled: !!id,
+    staleTime: 0,
     refetchInterval: (query) => {
       const run = query.state.data;
       const deployRunning = run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'running');
-      return run?.status === 'running' || run?.status === 'paused' || deployRunning ? 4000 : false;
+      return run?.status === 'running' || run?.status === 'paused' || deployRunning ? 2_500 : false;
     },
+    refetchOnWindowFocus: true,
   });
 export const useRunLogs = (id: string, live = false) =>
   useQuery({

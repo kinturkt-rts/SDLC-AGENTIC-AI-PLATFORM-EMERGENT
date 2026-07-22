@@ -189,7 +189,8 @@ try {
         Invoke-Native "docker" @("push", $apiImage) "docker push api"
 
         $uiDockerfile = Join-Path $AppDir "deploy\Dockerfile.ui"
-        if ((Test-Path $uiDockerfile) -and (Test-Path (Join-Path $AppDir "ui\streamlit_app.py"))) {
+        $streamlitApp = Join-Path (Join-Path $AppDir "ui") "streamlit_app.py"
+        if ((Test-Path $uiDockerfile) -and (Test-Path $streamlitApp)) {
             $uiImage = "${Registry}/sdlc/$Feature/ui:$ImageTag"
             Invoke-Native "docker" @("build", "-f", $uiDockerfile, "-t", $uiImage, $AppDir) "docker build ui"
             Invoke-Native "docker" @("push", $uiImage) "docker push ui"
@@ -205,6 +206,16 @@ try {
     $AppUrl = (& $Terraform output -raw app_url)
     $Service = (& $Terraform output -raw service_name)
     $Cluster = (& $Terraform output -raw cluster_name)
+
+    # API-only FastAPI apps have no Streamlit UI — browser root often 404s.
+    # Keep terraform app_url as the base path for health checks; expose /docs
+    # as the human Live URL in the handoff (frontend Open Live App link).
+    $hasStreamlitUi = Test-Path (Join-Path (Join-Path $AppDir "ui") "streamlit_app.py")
+    $LiveUrl = if ($hasStreamlitUi) {
+        $AppUrl.TrimEnd('/')
+    } else {
+        "$($AppUrl.TrimEnd('/'))/docs"
+    }
 
     # ── 4) Roll service (":latest" re-push needs a forced deployment) + wait ────
     Write-Host "`n--- [4/4] Roll ECS service + wait for stable ---" -ForegroundColor Cyan
@@ -236,7 +247,7 @@ try {
     Write-Host "`n=== $Feature deployed ===" -ForegroundColor Green
     if ($healthy) {
         Write-Host "Health check OK through ALB." -ForegroundColor Green
-        Write-Host "Live UI: $AppUrl" -ForegroundColor Yellow
+        Write-Host "Live UI: $LiveUrl" -ForegroundColor Yellow
     } else {
         Write-Warning "Health endpoint not answering ($healthUrl) after all retries - NOT reporting this as live."
     }
@@ -257,7 +268,7 @@ try {
         # Only record appUrl when the health check actually passed - an unhealthy
         # deployment must not be reported as "live" to downstream consumers
         # (devops_agent.py's CLI output, S3 handoff sync, the frontend).
-        if ($healthy) { $handoff["appUrl"] = $AppUrl } else { $handoff.Remove("appUrl") | Out-Null }
+        if ($healthy) { $handoff["appUrl"] = $LiveUrl } else { $handoff.Remove("appUrl") | Out-Null }
         $handoff["ecsCluster"] = $Cluster
         $handoff["ecsService"] = $Service
         $handoff["imageTag"] = $ImageTag

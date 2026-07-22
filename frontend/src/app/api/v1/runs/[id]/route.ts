@@ -9,5 +9,9 @@ export async function GET(_request: Request, { params }: { params: { id: string 
   if (!run) {
     return NextResponse.json({ error: 'Run not found' }, { status: 404 });
   }
-  return NextResponse.json(run);
+  return NextResponse.json(run, {
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    },
+  });
 }

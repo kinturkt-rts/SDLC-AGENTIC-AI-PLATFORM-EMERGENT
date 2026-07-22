@@ -19,7 +19,7 @@ import {
   getS3RunArtifactIndex,
   isHiddenAppSlug,
 } from './artifact-store';
-import { TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
+import { TIMELINE_PHASES, PHASE_AGENT, COMPLETION_PHASES } from './pipeline-phases';
 import {
   developerHandoffExistsForRun,
   developerHandoffFailedForRun,
@@ -76,7 +76,8 @@ import type {
   SdlcPhase,
   StepStatus,
 } from '@/src/types';
-const LIST_RUNS_TTL_MS = 30_000;
+/** Keep short so the dashboard pipeline strip tracks live agent progress. */
+const LIST_RUNS_TTL_MS = 2_500;
 const ACTIVITY_CACHE_KEY = 'listRecentActivity';
 const ARTIFACTS_CACHE_KEY = 'listArtifacts';
 const PROJECTS_CACHE_KEY = 'listProjects';
@@ -910,12 +911,27 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     logText: log,
     phaseDone,
     error: enriched.error,
+    reportedCurrentStep: enriched.currentStep,
   });
 
   let reconciledError = reconciled.error ?? enriched.error ?? null;
   if (reconciled.status === 'failed') {
     const detail = await resolveRunFailureDetail(runId, slug);
     if (detail) reconciledError = detail;
+  }
+
+  // When run.json/log already advanced past a stale S3 artifact index, treat earlier
+  // phases as done so the timeline strip does not flash an older agent.
+  if (reconciled.currentStep && reconciled.status === 'running') {
+    const currentPhase = agentPhase[reconciled.currentStep];
+    if (currentPhase) {
+      const order = COMPLETION_PHASES;
+      const idx = order.indexOf(currentPhase);
+      if (idx > 0) {
+        phaseDone = { ...phaseDone };
+        for (let i = 0; i < idx; i++) phaseDone[order[i]] = true;
+      }
+    }
   }
 
   enriched = {

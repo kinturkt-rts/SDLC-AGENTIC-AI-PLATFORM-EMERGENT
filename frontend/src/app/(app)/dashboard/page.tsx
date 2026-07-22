@@ -42,6 +42,7 @@ import { StatusBadge } from '@/src/components/common/StatusBadge';
 import {
   useDashboardSummary,
   useRuns,
+  useRun,
   useCheckpoints,
   useRecentActivity,
   useArtifacts,
@@ -931,7 +932,13 @@ export default function DashboardPage() {
   const activeRuns = (runs ?? []).filter(isRunActiveForDashboard);
   const hasActive = activeRuns.length > 0;
 
-  const runningRun = (runs ?? []).find(isRunActiveForDashboard);
+  const listedActiveRun = (runs ?? []).find(isRunActiveForDashboard);
+  // Prefer the dedicated run endpoint (bypasses listRuns cache) for the live strip.
+  const { data: liveActiveRun } = useRun(listedActiveRun?.id ?? '');
+  const runningRun =
+    liveActiveRun && isRunActiveForDashboard(liveActiveRun)
+      ? liveActiveRun
+      : listedActiveRun;
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
 

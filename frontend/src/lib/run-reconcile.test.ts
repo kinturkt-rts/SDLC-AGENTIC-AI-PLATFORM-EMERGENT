@@ -48,4 +48,28 @@ describe('reconcileRunStatus', () => {
 
     assert.equal(result.status, 'cancelled');
   });
+
+  it('prefers reportedCurrentStep when artifact index lags behind live progress', () => {
+    const result = reconcileRunStatus({
+      status: 'running',
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      logMtimeMs: Date.now(),
+      s3MtimeMs: Date.now(),
+      logText: '[developer-agent] running\n',
+      phaseDone: {
+        requirements: true,
+        architecture: false,
+        data: false,
+        implementation: false,
+        qa: false,
+        security: false,
+        publish: false,
+        deploy: false,
+      },
+      reportedCurrentStep: 'developer-agent',
+    });
+
+    assert.equal(result.status, 'running');
+    assert.equal(result.currentStep, 'developer-agent');
+  });
 });

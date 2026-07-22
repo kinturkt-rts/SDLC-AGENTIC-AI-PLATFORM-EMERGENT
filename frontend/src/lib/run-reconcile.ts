@@ -5,6 +5,18 @@ export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
 
 export const RUN_NO_PROGRESS_IDLE_MS = 12 * 60 * 1000;
 
+/** Pipeline agent order used to prefer the furthest live step when sources disagree. */
+const AGENT_PROGRESS_ORDER = [
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+  'qa-agent',
+  'security-agent',
+  'devops-agent',
+] as const;
+
 export interface ReconcileRunInput {
   status: RunStatus;
   startedAt: string;
@@ -13,6 +25,18 @@ export interface ReconcileRunInput {
   logText: string | null;
   phaseDone: Record<SdlcPhase, boolean>;
   error?: string | null;
+  /** From run.json / log markers — used when artifact index lags behind live progress. */
+  reportedCurrentStep?: string | null;
+}
+
+function furthestAgentStep(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const ai = AGENT_PROGRESS_ORDER.indexOf(a as (typeof AGENT_PROGRESS_ORDER)[number]);
+  const bi = AGENT_PROGRESS_ORDER.indexOf(b as (typeof AGENT_PROGRESS_ORDER)[number]);
+  if (ai < 0) return b;
+  if (bi < 0) return a;
+  return ai >= bi ? a : b;
 }
 
 export interface ReconcileRunResult {
@@ -255,9 +279,10 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
 
   if (isActiveStatus) {
     const phase = firstIncompletePhase(effectiveDone);
+    const fromArtifacts = phase ? PHASE_AGENT[phase] : null;
     return {
       status: 'running',
-      currentStep: phase ? PHASE_AGENT[phase] : null,
+      currentStep: furthestAgentStep(fromArtifacts, input.reportedCurrentStep),
     };
   }
 

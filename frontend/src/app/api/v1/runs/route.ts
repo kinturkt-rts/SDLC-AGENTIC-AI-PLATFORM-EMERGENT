@@ -8,7 +8,14 @@ export const runtime = 'nodejs';
 export async function GET() {
   try {
     const runs = await listRuns();
-    return NextResponse.json({ runs });
+    return NextResponse.json(
+      { runs },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      },
+    );
   } catch (err) {
     return apiRouteErrorResponse(err);
   }
