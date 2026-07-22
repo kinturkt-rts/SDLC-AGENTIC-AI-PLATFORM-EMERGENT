@@ -1,0 +1,43 @@
+Build a medium internal Bike Locker Reservation API for campus bike lockers.
+
+Problem:
+- Bike lockers are first-come via a hallway clipboard; people double-book the same locker slot.
+- Facilities needs one reliable place to see lockers, who reserved them, and what is free.
+- Integrators should call a clean API — no browser app required for v1.
+
+Who uses it:
+- Anyone with a valid API key can browse lockers and reservations (read).
+- Users with a key can create or cancel their own reservations for a day/slot.
+- A shared facilities/admin key can manage lockers (create, update, deactivate) and cancel any reservation.
+- Health checks stay open for ops (no auth).
+
+MVP features:
+- Maintain lockers: code/label, building, size (small, medium, large), active/inactive.
+- Create reservations: locker, reservation date, requester email, optional notes.
+- List and filter reservations by locker, date, or requester email.
+- Cancel a reservation (soft cancel — keep cancelled status; do not hard-delete in v1).
+- Seed a few sample lockers and upcoming reservations so demos work out of the box.
+
+Business rules:
+- One active reservation per locker per calendar date (no double-booking the same day).
+- You cannot book an inactive locker.
+- Reservation date must be today or in the future when created.
+- You cannot permanently delete a locker that still has future active reservations; deactivate instead.
+- Writes without a valid API key should be rejected.
+
+Must have for v1:
+- Persisted data (not in-memory only).
+- Role distinction between normal API key and admin/facilities key (or equivalent).
+- A simple FastAPI suitable for demos (Swagger is fine).
+- No customer-facing web UI, Streamlit, chatbots, or SSO for this version — API only.
+
+Nice to have (later):
+- Browser UI, QR check-in, multi-day passes, Slack notifications.
+
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
+
+Success:
+- Someone can list lockers, reserve a free locker for a date with the API key, see a second booking for the same locker/date rejected, cancel, and still find the cancelled record.
+- Facilities can deactivate a locker so it no longer accepts new bookings.

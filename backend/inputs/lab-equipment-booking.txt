@@ -1,0 +1,44 @@
+Build a medium internal Lab Equipment Booking API for our R&D lab.
+
+Problem:
+- Shared microscopes, 3D printers, and test benches get double-booked via Slack DMs.
+- Lab managers need one place to see which tools exist, who reserved them, and what is free.
+- Integrators and internal tools should call a clean API — no browser app required for v1.
+
+Who uses it:
+- Anyone with a valid API key can browse equipment and reservations (read).
+- Users with a key can create, update, or cancel their own reservations.
+- A shared lab-admin key can manage equipment (create, update, deactivate) and cancel any reservation.
+- Health checks stay open for ops (no auth).
+
+MVP features:
+- Maintain equipment: name, category (microscope, printer, bench, other), location, optional notes, active/inactive.
+- Create reservations: equipment, title, requester email, start time, end time, optional notes.
+- List and filter reservations by equipment, date range, or requester email.
+- Cancel a reservation (soft cancel — keep the record with a cancelled status; do not hard-delete in v1).
+- Update a reservation’s title, times, or notes when it is still active (not cancelled).
+- Seed a few sample tools and upcoming reservations so demos work out of the box.
+
+Business rules:
+- End time must be after start time.
+- Two active reservations for the same equipment must not overlap.
+- You cannot book inactive equipment.
+- You cannot permanently delete equipment that still has future active reservations; deactivate instead.
+- Writes without a valid API key should be rejected.
+
+Must have for v1:
+- Persisted data (not in-memory only).
+- Role distinction between normal API key and lab-admin key (or equivalent).
+- A simple FastAPI suitable for demos (Swagger is fine).
+- No customer-facing web UI, Streamlit, chatbots, or SSO for this version — API only.
+
+Nice to have (later):
+- Browser UI, personal logins, maintenance windows, Slack notifications.
+
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
+
+Success:
+- Someone can list equipment, book a free slot with the API key, see the conflict rejected when times overlap, cancel a booking, and still find the cancelled record in history.
+- Lab admin can deactivate a tool so it no longer accepts new bookings.
