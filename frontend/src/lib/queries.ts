@@ -64,20 +64,16 @@ export const useRuns = () =>
     staleTime: 0,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      // Fast poll while agents are running.
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) {
-        return 2_500;
-      }
-      // Medium poll while deploy is pending/running on any completed run
-      // so the live URL appears without a manual refresh.
       if (
         runs?.some(
           (r) =>
+            r.status === 'running' ||
+            r.status === 'paused' ||
             r.deployStatus === 'running' ||
             r.deployStatus === 'pending',
         )
       ) {
-        return 8_000;
+        return 2_500;
       }
       return 20_000;
     },
@@ -93,9 +89,7 @@ export const useRun = (id: string) =>
     refetchInterval: (query) => {
       const run = query.state.data;
       if (run?.status === 'running' || run?.status === 'paused') return 2_500;
-      // Keep polling at a relaxed rate while deploy is in progress so the
-      // live URL / deploy status appears without a manual page refresh.
-      if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 8_000;
+      if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 2_500;
       return false;
     },
     refetchOnWindowFocus: true,
@@ -112,7 +106,7 @@ export const useLiveRunsById = (ids: string[]) => {
       refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
         const run = query.state.data;
         if (run?.status === 'running' || run?.status === 'paused') return 2_500;
-        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 8_000;
+        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 2_500;
         return false;
       },
       refetchOnWindowFocus: true,

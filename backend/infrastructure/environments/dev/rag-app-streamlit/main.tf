@@ -1,13 +1,13 @@
-# Per-app deploy root for target-app: desk-booking
+# Per-app deploy root for target-app: rag-app-streamlit
 # Auto-scaffolded by scripts/ensure-target-app-tf-root.py for destroy/redeploy.
-# Deploy with: .\scripts\deploy-target-app.ps1 -Feature desk-booking
+# Deploy with: .\scripts\deploy-target-app.ps1 -Feature rag-app-streamlit
 
 terraform {
   required_version = ">= 1.10"
 
   backend "s3" {
     bucket       = "sdlc-tfstate-061836593297-us-east-2"
-    key          = "dev/apps/desk-booking/terraform.tfstate"
+    key          = "dev/apps/rag-app-streamlit/terraform.tfstate"
     region       = "us-east-2"
     use_lockfile = true
   }
@@ -27,7 +27,7 @@ provider "aws" {
     tags = {
       Project     = "sdlc-agentic-ai-platform"
       Environment = "dev"
-      TargetApp   = "desk-booking"
+      TargetApp   = "rag-app-streamlit"
       ManagedBy   = "terraform"
     }
   }
@@ -45,7 +45,7 @@ data "terraform_remote_state" "shared" {
 module "app" {
   source = "../../../modules/target-app-ecs"
 
-  app_name    = "desk-booking"
+  app_name    = "rag-app-streamlit"
   environment = "dev"
   aws_region  = "us-east-2"
 
@@ -55,7 +55,7 @@ module "app" {
   alb_listener_arn      = data.terraform_remote_state.shared.outputs.alb_listener_arn
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
-  enable_ui      = false
+  enable_ui      = true
   enable_bedrock = true
   has_database         = true
   db_secret_arn        = aws_secretsmanager_secret.db.arn
@@ -70,7 +70,7 @@ variable "database_url" {
 }
 
 resource "aws_secretsmanager_secret" "db" {
-  name                    = "sdlc/desk-booking/database-url"
+  name                    = "sdlc/rag-app-streamlit/database-url"
   recovery_window_in_days = 0
 }
 
@@ -84,7 +84,7 @@ data "aws_db_instance" "rds" {
 }
 
 output "app_url" {
-  value = "http://${data.terraform_remote_state.shared.outputs.alb_dns_name}/desk-booking/"
+  value = "http://${data.terraform_remote_state.shared.outputs.alb_dns_name}/rag-app-streamlit/"
 }
 
 output "ecr_repository_api" {

@@ -80,6 +80,7 @@ function parseDevopsHandoff(
   if (!status) {
     if (appUrl && healthy !== false) status = 'healthy';
     else if (appUrl) status = 'deployed';
+    else if (healthy === false && data.deployedAt) status = 'failed';
     else if (data.tfRootPresent === true) status = 'tf_ready';
     else status = 'unknown';
   }
@@ -395,6 +396,19 @@ export async function devopsDeploySucceededForRun(runId: string, slug: string): 
   const status = devops.status.trim().toLowerCase();
   if (status === 'failed' || status === 'error') return false;
   return Boolean(devops.appUrl);
+}
+
+/** True when a completed deploy attempt explicitly failed its health check. */
+export async function devopsDeployFailedForRun(runId: string, slug: string): Promise<boolean> {
+  const devops = await loadFirstDevopsHandoff(runId, slug.trim().toLowerCase());
+  if (!devops) return false;
+  const status = devops.status.trim().toLowerCase();
+  return (
+    devops.healthy === false ||
+    status === 'failed' ||
+    status === 'error' ||
+    status === 'destroyed'
+  );
 }
 
 /** True when a devops handoff exists (even if still deploying / no URL yet). */

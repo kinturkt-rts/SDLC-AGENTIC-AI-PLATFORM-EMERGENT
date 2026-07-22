@@ -287,10 +287,7 @@ function pipelineStepVisualState(
   run: PipelineRun | undefined,
 ): 'completed' | 'active' | 'pending' {
   if (!run) return 'pending';
-  // Show pipeline strip for both active runs AND completed runs (so deploy
-  // step stays visible after agent chain finishes).
-  const isLiveOrDone = isRunActiveForDashboard(run) || run.status === 'completed';
-  if (!isLiveOrDone) return 'pending';
+  if (!isRunActiveForDashboard(run) && run.status !== 'completed') return 'pending';
 
   const pipelineStep = run.steps?.find((s) => s.phase === stepPhase);
   if (pipelineStep?.status === 'completed') return 'completed';
@@ -307,21 +304,48 @@ function pipelineStepVisualState(
   const stepIdx = order.indexOf(stepPhase);
   if (currentIdx >= 0 && stepIdx >= 0 && stepIdx < currentIdx) return 'completed';
 
-  // When run is completed (all agents done), prior phases are completed.
-  if (run.status === 'completed' && stepPhase !== 'deploy') return 'completed';
+  // Agents done / still deploying: prior phases are complete.
+  if (
+    (run.status === 'completed' || isDeployFollowOnRun(run)) &&
+    stepPhase !== 'deploy'
+  ) {
+    return 'completed';
+  }
 
   return 'pending';
 }
 
 function isRunActiveForDashboard(run: PipelineRun): boolean {
-  // Phase A: only agent-chain work (running/paused) counts against concurrency.
-  // Deploy is a follow-on tracked by deployStatus — it no longer blocks new
-  // pipeline submissions or keeps the dashboard strip "running".
-  return run.status === 'running' || run.status === 'paused';
+  // Keep Deploy visible on the strip/cards until the live URL lands.
+  return (
+    run.status === 'running' ||
+    run.status === 'paused' ||
+    run.deployStatus === 'pending' ||
+    run.deployStatus === 'running'
+  );
+}
+
+/** Concurrency slots: agent-chain only (Deploy wait does not block new briefs). */
+function isAgentChainActive(run: PipelineRun): boolean {
+  if (run.status === 'paused') return true;
+  if (run.status !== 'running') return false;
+  if (run.deployStatus === 'pending' || run.deployStatus === 'running') return false;
+  if (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent') return false;
+  return true;
+}
+
+function isDeployFollowOnRun(run: PipelineRun): boolean {
+  return (
+    run.deployStatus === 'pending' ||
+    run.deployStatus === 'running' ||
+    (run.status === 'running' &&
+      (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent'))
+  );
 }
 
 /** Prefer the running step over currentAgent so cards match the pipeline strip. */
 function activeAgentDisplayName(run: PipelineRun): string {
+  if (isDeployFollowOnRun(run)) return 'DevOps';
   const step = run.steps?.find(
     (s) => s.status === 'running' || s.status === 'waiting_for_human',
   );
@@ -443,6 +467,10 @@ function InputRequirementsCard() {
     () => (runs ?? []).filter(isRunActiveForDashboard),
     [runs],
   );
+  const agentChainRuns = React.useMemo(
+    () => (runs ?? []).filter(isAgentChainActive),
+    [runs],
+  );
   const conflictingApp = React.useMemo(
     () => (feature ? activeRuns.find((r) => r.projectId === feature) ?? null : null),
     [activeRuns, feature],
@@ -451,7 +479,8 @@ function InputRequirementsCard() {
   const showDuplicateWarning = Boolean(
     conflictingApp && (!startedRunId || conflictingApp.id !== startedRunId),
   );
-  const atCapacity = activeRuns.length >= MAX_CONCURRENT_RUNS;
+  // Deploy wait does not consume a concurrency slot.
+  const atCapacity = agentChainRuns.length >= MAX_CONCURRENT_RUNS;
 
   const clearSavedRunState = React.useCallback(() => {
     setSavedPath(null);
@@ -573,7 +602,7 @@ function InputRequirementsCard() {
     }
     if (atCapacity) {
       toast.error('Maximum concurrent runs reached', {
-        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+        description: `${agentChainRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
       });
       return;
     }
@@ -648,7 +677,7 @@ function InputRequirementsCard() {
     }
     if (atCapacity) {
       toast.error('Maximum concurrent runs reached', {
-        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+        description: `${agentChainRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
       });
       return;
     }
@@ -884,8 +913,8 @@ function InputRequirementsCard() {
             </p>
           ) : atCapacity ? (
             <p className="rounded-lg border border-orange-500/50 bg-orange-100 px-3 py-2 text-xs text-orange-950 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-50">
-              <span className="font-semibold">At capacity:</span> {activeRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
-              concurrent pipelines active. Wait for one to finish or cancel a run.
+              <span className="font-semibold">At capacity:</span> {agentChainRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
+              concurrent agent pipelines active. Deploy-only waits do not count. Wait for one to finish or cancel a run.
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
@@ -1047,6 +1076,11 @@ export default function DashboardPage() {
                 {' '}
                 · {runningRun.id.slice(0, 8)}…
               </span>
+              {isDeployFollowOnRun(runningRun) ? (
+                <span className="ml-2 text-sky-400">
+                  · Deploying — code is on GitLab; live URL appears when DevOps finishes
+                </span>
+              ) : null}
             </span>
             <Link href={`/runs/${runningRun.id}`} className="font-medium text-teal-400 hover:underline">
               Open run
@@ -1067,13 +1101,19 @@ export default function DashboardPage() {
               activeRuns.map((run) => (
                 <div key={run.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
                   <Link href={`/runs/${run.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-                    <StatusBadge status={run.status} size="sm" />
+                    <StatusBadge
+                      status={isDeployFollowOnRun(run) ? 'running' : run.status}
+                      label={isDeployFollowOnRun(run) ? 'Deploying' : undefined}
+                      size="sm"
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">{run.id} · {run.pipeline}</p>
                     </div>
                     <div className="hidden text-right sm:block">
-                      <p className="text-[10px] text-muted-foreground">current</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {isDeployFollowOnRun(run) ? 'deploying' : 'current'}
+                      </p>
                       <p className="text-sm font-medium text-foreground">{activeAgentDisplayName(run)}</p>
                     </div>
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1086,6 +1126,7 @@ export default function DashboardPage() {
                       />
                     </div>
                   </Link>
+                  {isDeployFollowOnRun(run) ? null : (
                   <Button
                     type="button"
                     size="sm"
@@ -1101,6 +1142,7 @@ export default function DashboardPage() {
                     )}
                     Cancel
                   </Button>
+                  )}
                 </div>
               ))
             )}
