@@ -72,4 +72,32 @@ describe('reconcileRunStatus', () => {
     assert.equal(result.status, 'running');
     assert.equal(result.currentStep, 'developer-agent');
   });
+
+  it('Phase A: completed after publish even when deploy is pending', () => {
+    const result = reconcileRunStatus({
+      status: 'completed',
+      startedAt: new Date(Date.now() - 600_000).toISOString(),
+      logMtimeMs: Date.now(),
+      s3MtimeMs: Date.now(),
+      logText: 'SDLC pipeline completed\n',
+      phaseDone: { ...allDone, deploy: false },
+    });
+
+    // Status must remain completed — deploy is follow-on, not a blocker.
+    assert.equal(result.status, 'completed');
+    assert.equal(result.currentStep, null);
+  });
+
+  it('Phase A: completed stays completed even with deploy done', () => {
+    const result = reconcileRunStatus({
+      status: 'completed',
+      startedAt: new Date(Date.now() - 900_000).toISOString(),
+      logMtimeMs: Date.now(),
+      s3MtimeMs: Date.now(),
+      logText: 'SDLC pipeline completed\n',
+      phaseDone: { ...allDone, deploy: true },
+    });
+
+    assert.equal(result.status, 'completed');
+  });
 });

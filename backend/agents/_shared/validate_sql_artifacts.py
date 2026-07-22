@@ -428,10 +428,13 @@ def check_vector_literal_format(sql_dir: Path) -> list[str]:
 
 def validate_sql_dir(sql_dir: Path) -> list[str]:
     """Run all blocking sql/ artifact checks."""
+    from _shared.sha256_api_keys import validate_seed_sha256_api_keys
+
     errors = check_seed_schema_nullability(sql_dir)
     errors.extend(check_uuid_literals(sql_dir))
     errors.extend(check_bare_search_path(sql_dir))
     errors.extend(check_vector_literal_format(sql_dir))
+    errors.extend(validate_seed_sha256_api_keys(sql_dir))
     return errors
 
 

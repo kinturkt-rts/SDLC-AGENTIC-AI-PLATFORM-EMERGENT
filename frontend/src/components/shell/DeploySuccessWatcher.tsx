@@ -77,7 +77,13 @@ export function DeploySuccessWatcher() {
 
   const candidates = React.useMemo(() => {
     return (runs ?? [])
-      .filter((r) => r.status === 'completed' || r.status === 'running')
+      .filter(
+        (r) =>
+          r.status === 'completed' ||
+          r.status === 'running' ||
+          r.deployStatus === 'pending' ||
+          r.deployStatus === 'running',
+      )
       .slice(0, 12)
       .map((r) => ({ runId: r.id, projectId: r.projectId, projectName: r.projectName }));
   }, [runs]);

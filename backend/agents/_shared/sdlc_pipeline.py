@@ -932,7 +932,7 @@ class SdlcPipelineRunner:
                     raise
         else:
             logger.info(
-                "[rds-apply] No __BCRYPT_PLACEHOLDER__ in seed SQL — skipping seed materialize"
+                "[rds-apply] No seed hash placeholders — skipping seed materialize"
             )
 
         handoff_ctx = self._handoff_context_for_rds()

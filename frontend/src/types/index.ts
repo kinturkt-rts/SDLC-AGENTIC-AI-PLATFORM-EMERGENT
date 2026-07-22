@@ -91,6 +91,8 @@ export interface PipelineStep {
   error?: string | null;
 }
 
+export type DeployStatus = 'pending' | 'running' | 'live' | 'failed' | 'stale' | null;
+
 export interface PipelineRun {
   id: string;
   projectId: string;
@@ -105,6 +107,8 @@ export interface PipelineRun {
   triggeredBy: string;
   steps: PipelineStep[];
   error?: string | null;
+  /** Follow-on deploy status — independent of run.status after publish completes. */
+  deployStatus?: DeployStatus;
 }
 
 /** GitLab publish result from gitlab-agent (handoffs/gitlab.json or legacy slug file). */

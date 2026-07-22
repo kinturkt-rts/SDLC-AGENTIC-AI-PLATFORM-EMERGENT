@@ -140,9 +140,13 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const queryClient = useQueryClient();
   const { data: run, isLoading } = useRun(params.id);
   const isLive = run?.status === 'running' || run?.status === 'paused';
+  // Phase A: keep polling handoffs while deploy is pending/running so the
+  // live URL and "App is live" banner appear without a manual refresh.
+  const deployActive =
+    run?.deployStatus === 'pending' || run?.deployStatus === 'running';
   const { data: events } = useRunEvents(params.id, isLive);
   const { data: runLogs, isLoading: runLogsLoading } = useRunLogs(params.id, isLive);
-  const { data: handoffs } = useRunHandoffs(params.id, isLive);
+  const { data: handoffs } = useRunHandoffs(params.id, isLive || deployActive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
   const setArtifactsProjectId = useUiStore((s) => s.setArtifactsProjectId);
@@ -215,8 +219,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const runDescription =
     run && status !== 'running' && status !== 'paused'
       ? `Started ${formatRelative(run.startedAt)}${
-          run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
-        }`
+          run.elapsedSec != null ? ` · took ${formatDuration(run.elapsedSec)}` : ''
+        }${run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''}`
       : undefined;
 
   return (
@@ -291,21 +295,35 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
           ) : null}
 
           {status === 'completed' ? (
-            <Card className="flex flex-col gap-3 border-emerald-500/30 bg-emerald-500/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <Card className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between ${
+              deployActive
+                ? 'border-blue-500/30 bg-blue-500/[0.05]'
+                : 'border-emerald-500/30 bg-emerald-500/[0.05]'
+            }`}>
               <div className="flex items-start gap-3">
-                <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
+                <span className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                  deployActive
+                    ? 'bg-blue-500/15 text-blue-400'
+                    : 'bg-emerald-500/15 text-emerald-400'
+                }`}>
                   <CheckCircle2 className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">
-                    {handoffs?.devops?.appUrl ? 'App is live' : 'Pipeline complete'}
+                    {handoffs?.devops?.appUrl
+                      ? 'App is live'
+                      : deployActive
+                        ? 'Pipeline complete — deploying'
+                        : 'Pipeline complete'}
                   </p>
                   <p className="mt-0.5 text-[12px] text-muted-foreground">
                     {handoffs?.devops?.appUrl
                       ? 'DevOps finished deploying. Open the live app or review the GitLab branch.'
-                      : handoffs?.gitlab?.status === 'published'
-                        ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
-                        : 'All SDLC phases finished. Review artifacts and handoffs below.'}
+                      : deployActive
+                        ? 'All agents finished. GitLab CI is building and deploying your app — the live URL will appear here automatically.'
+                        : handoffs?.gitlab?.status === 'published'
+                          ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
+                          : 'All SDLC phases finished. Review artifacts and handoffs below.'}
                   </p>
                 </div>
               </div>

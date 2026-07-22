@@ -382,19 +382,12 @@ def _is_seed_file(path: Path) -> bool:
 _BCRYPT_PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
 
 
-def _preprocess_seed_sql(sql: str) -> str:
+def _preprocess_bcrypt_placeholders(sql: str) -> str:
     """Replace __BCRYPT_PLACEHOLDER__ with a real bcrypt hash before executing.
 
-    Eliminates the fragile post-apply UPDATE pass: the hash is embedded directly
-    in the INSERT so rows always land with a valid bcrypt string, never a placeholder.
-
     Each occurrence gets its OWN freshly-salted hash of the same documented password —
-    not one shared digest reused everywhere. bcrypt.checkpw still validates every one
-    of them against the same plaintext (the salt lives inside each hash string), so
-    this is free for the common "all seed users share one dev password" case, and it
-    is required whenever the placeholder lands in a column with a UNIQUE constraint
-    (e.g. api_keys.key_hash) — a shared digest would collide and the INSERT would fail
-    with "duplicate key value violates unique constraint".
+    required when the placeholder lands in a UNIQUE column (e.g. api_keys.key_hash).
+    Use this only when the app verifies with bcrypt.checkpw — not for SHA-256 hex lookup.
     """
     placeholder_sq = f"'{_BCRYPT_PLACEHOLDER}'"
     placeholder_dq = f'"{_BCRYPT_PLACEHOLDER}"'
@@ -440,6 +433,39 @@ def _preprocess_seed_sql(sql: str) -> str:
         file=sys.stderr,
     )
     return result
+
+
+def _preprocess_sha256_placeholders(sql: str) -> str:
+    """Replace __SHA256_PLACEHOLDER:<label>__ with sha256(plaintext).hexdigest()."""
+    try:
+        from _shared.sha256_api_keys import (
+            replace_sha256_placeholders,
+            seed_text_has_sha256_placeholders,
+        )
+    except ImportError:
+        return sql
+
+    if not seed_text_has_sha256_placeholders(sql):
+        return sql
+
+    result, replaced, errors = replace_sha256_placeholders(sql)
+    for err in errors:
+        print(f"[apply-sql] ERROR: {err}", file=sys.stderr)
+    if errors:
+        raise ValueError(
+            "SHA-256 API-key placeholder preprocess failed:\n" + "\n".join(errors)
+        )
+    print(
+        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} "
+        "__SHA256_PLACEHOLDER__ occurrence(s) with real sha256 hex digests",
+        file=sys.stderr,
+    )
+    return result
+
+
+def _preprocess_seed_sql(sql: str) -> str:
+    """Replace bcrypt and SHA-256 seed placeholders before executing INSERT SQL."""
+    return _preprocess_sha256_placeholders(_preprocess_bcrypt_placeholders(sql))
 
 
 def apply_sql_files(

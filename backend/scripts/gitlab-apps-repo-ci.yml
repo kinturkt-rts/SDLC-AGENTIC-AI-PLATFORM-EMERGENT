@@ -76,7 +76,13 @@ oidc:test:
 target-app:deploy:
   stage: deploy
   tags: [juno-labs-3]
-  image: mcr.microsoft.com/powershell:7.4-debian-12
+  # Pre-baked toolchain (python/git/terraform/aws/docker-cli). Build+push:
+  #   backend/scripts/push-deploy-ci-ecr.ps1
+  # Tag must match TF_VERSION below. Runner must be able to pull this private
+  # ECR image (host credential helper) — job OIDC is not available at pull time.
+  image:
+    name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
+    entrypoint: [""]
   # gitlab-agent publishes each app as several rapid commits (batch 1, batch
   # 2, final) - each one independently triggers its own pipeline, and without
   # this, they race on the runner and on the shared :latest ECR tag. The one
@@ -116,7 +122,6 @@ target-app:deploy:
           exit 1
         fi
       done
-    - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
     - |
       # Link this deploy to the AgentCore/frontend runId written by gitlab-agent.
       # Apps-repo publish: branch-root .sdlc/pipeline-run.json
@@ -135,7 +140,6 @@ target-app:deploy:
         exit 1
       fi
       echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID (from $MARKER)"
-    - pip3 install --no-cache-dir --break-system-packages awscli
     - aws sts get-caller-identity || (echo "OIDC role assumption failed — see the comment above this job about trust policy scope, or re-run the oidc:test job." && exit 1)
     - |
       account=$(aws sts get-caller-identity --query Account --output text)
@@ -143,8 +147,6 @@ target-app:deploy:
         echo "Wrong AWS account: got $account, expected 061836593297 — refusing to deploy. Ambient runner credentials are shadowing the OIDC role."
         exit 1
       fi
-    - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
-    - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
     - terraform -version
     - docker info > /dev/null || (echo "Docker daemon not reachable via the host socket — ask whoever manages the runner whether /var/run/docker.sock is still bind-mounted for this runner." && exit 1)
     # devops-agent's own code isn't in this repo — clone the platform repo and
@@ -160,6 +162,8 @@ target-app:deploy:
       if [ -f "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" ]; then
         cp "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" "/tmp/platform/backend/target-apps/${SLUG}/.sdlc/pipeline-run.json"
       fi
+    # Platform Python deps stay job-local: they track PLATFORM_REPO_BRANCH and
+    # change more often than the CI image pin.
     - pip3 install --no-cache-dir --break-system-packages -r /tmp/platform/backend/requirements.txt
   script:
     - cd /tmp/platform/backend

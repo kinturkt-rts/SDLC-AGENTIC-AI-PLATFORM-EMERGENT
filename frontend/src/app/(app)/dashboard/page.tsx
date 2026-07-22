@@ -42,7 +42,7 @@ import { StatusBadge } from '@/src/components/common/StatusBadge';
 import {
   useDashboardSummary,
   useRuns,
-  useRun,
+  useLiveRunsById,
   useCheckpoints,
   useRecentActivity,
   useArtifacts,
@@ -286,7 +286,11 @@ function pipelineStepVisualState(
   stepPhase: string,
   run: PipelineRun | undefined,
 ): 'completed' | 'active' | 'pending' {
-  if (!run || !isRunActiveForDashboard(run)) return 'pending';
+  if (!run) return 'pending';
+  // Show pipeline strip for both active runs AND completed runs (so deploy
+  // step stays visible after agent chain finishes).
+  const isLiveOrDone = isRunActiveForDashboard(run) || run.status === 'completed';
+  if (!isLiveOrDone) return 'pending';
 
   const pipelineStep = run.steps?.find((s) => s.phase === stepPhase);
   if (pipelineStep?.status === 'completed') return 'completed';
@@ -303,15 +307,26 @@ function pipelineStepVisualState(
   const stepIdx = order.indexOf(stepPhase);
   if (currentIdx >= 0 && stepIdx >= 0 && stepIdx < currentIdx) return 'completed';
 
+  // When run is completed (all agents done), prior phases are completed.
+  if (run.status === 'completed' && stepPhase !== 'deploy') return 'completed';
+
   return 'pending';
 }
 
 function isRunActiveForDashboard(run: PipelineRun): boolean {
-  if (run.status === 'running' || run.status === 'paused') return true;
-  // AgentCore marks the run completed at GitLab publish, but deploy continues
-  // asynchronously in GitLab CI. Keep the dashboard strip/live cards active
-  // while the synthesized deploy step is still waiting/running.
-  return run.steps?.some((s) => s.phase === 'deploy' && s.status === 'running') ?? false;
+  // Phase A: only agent-chain work (running/paused) counts against concurrency.
+  // Deploy is a follow-on tracked by deployStatus — it no longer blocks new
+  // pipeline submissions or keeps the dashboard strip "running".
+  return run.status === 'running' || run.status === 'paused';
+}
+
+/** Prefer the running step over currentAgent so cards match the pipeline strip. */
+function activeAgentDisplayName(run: PipelineRun): string {
+  const step = run.steps?.find(
+    (s) => s.status === 'running' || s.status === 'waiting_for_human',
+  );
+  const agent = step?.agent ?? run.currentAgent;
+  return agent ? titleCase(agent.replace(/-agent$/, '')) : '-';
 }
 
 function PipelineVisualization({ run }: { run: PipelineRun | undefined }) {
@@ -929,16 +944,35 @@ export default function DashboardPage() {
   const { data: checkpoints } = useCheckpoints();
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
 
-  const activeRuns = (runs ?? []).filter(isRunActiveForDashboard);
-  const hasActive = activeRuns.length > 0;
+  const listedActiveRuns = React.useMemo(
+    () => (runs ?? []).filter(isRunActiveForDashboard),
+    [runs],
+  );
+  const liveQueries = useLiveRunsById(listedActiveRuns.map((r) => r.id));
+  const liveById = React.useMemo(() => {
+    const map = new Map<string, PipelineRun>();
+    for (const q of liveQueries) {
+      if (q.data?.id) map.set(q.data.id, q.data);
+    }
+    return map;
+  }, [liveQueries]);
 
-  const listedActiveRun = (runs ?? []).find(isRunActiveForDashboard);
-  // Prefer the dedicated run endpoint (bypasses listRuns cache) for the live strip.
-  const { data: liveActiveRun } = useRun(listedActiveRun?.id ?? '');
-  const runningRun =
-    liveActiveRun && isRunActiveForDashboard(liveActiveRun)
-      ? liveActiveRun
-      : listedActiveRun;
+  // Strip + cards share the same live-polled run objects (not stale listRuns rows).
+  const activeRuns = React.useMemo(
+    () => listedActiveRuns.map((r) => liveById.get(r.id) ?? r),
+    [listedActiveRuns, liveById],
+  );
+  const hasActive = activeRuns.length > 0;
+  const runningRun = activeRuns[0];
+
+  // Keep the runs list cache aligned so other dashboard widgets don't flash older agents.
+  React.useEffect(() => {
+    if (liveById.size === 0) return;
+    queryClient.setQueryData<PipelineRun[]>(queryKeys.runs, (old) => {
+      if (!old) return old;
+      return old.map((r) => liveById.get(r.id) ?? r);
+    });
+  }, [liveById, queryClient]);
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
 
@@ -1040,7 +1074,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="hidden text-right sm:block">
                       <p className="text-[10px] text-muted-foreground">current</p>
-                      <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
+                      <p className="text-sm font-medium text-foreground">{activeAgentDisplayName(run)}</p>
                     </div>
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Timer className="h-3.5 w-3.5" />

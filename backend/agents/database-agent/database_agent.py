@@ -157,7 +157,18 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
     ```
     `array_fill(...)::vector` / `array_agg(...)::vector` cast a native Postgres array — preferred.
     **Never** use `array_to_string` / `string_agg` / `format` / `||` to build CSV text for `::vector`, and never cast a bare `'0.01,0.01,…'` string (must start with `[`). `db_validate_sql` rejects these; fix before finishing.
-  - **`api_keys.key_hash` UNIQUE:** never insert multiple rows with the same `__BCRYPT_PLACEHOLDER__` — use one row per tier or pre-hash distinct API key strings; placeholders are for `users` password columns only.
+  - **`api_keys.key_hash` — match the design hash algorithm (MANDATORY):**
+    - **bcrypt.verify apps** (e.g. expense-tracker): use `'__BCRYPT_PLACEHOLDER__'` per row. Host
+      replaces each with a *distinct* salted bcrypt hash (UNIQUE-safe). Never invent `$2b$12$…`.
+    - **SHA-256 hex lookup apps** (`hashlib.sha256(raw).hexdigest()` in dependencies): use
+      **labeled** sentinels `'__SHA256_PLACEHOLDER:<label>__'` (label must match the row's
+      `label` / name column). Add one comment per key at the top of the seed file:
+      `-- API key for demo-standard: "demo-standard-key-2024"`
+      Host replaces with the real 64-char hex digest. **Never** invent fake tokens like
+      `'sha256_standard_demo_001'` — those are not digests and live UI/Swagger always 401.
+    - Do **not** put `__BCRYPT_PLACEHOLDER__` into `key_hash` when the app looks up SHA-256 hex
+      (bcrypt strings will never match). Do **not** put SHA-256 placeholders into JWT
+      `hashed_password` columns.
 - `sql/*_seed.sql` or `011_seed.sql` — **dev/test fixture rows only** per design §6.2 (not production CUR data).
   Use `seedMinRows`–`seedMaxRows` from Context: **every RDS table in §3 must get that many INSERT rows**
   (realistic names/emails/dates; stable UUIDs only where tests need them; respect FK order; `ON CONFLICT DO NOTHING`).
@@ -274,8 +285,10 @@ The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS 
 
 If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and `hashed_password`.
 
-Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext.
-Mandatory trio: sentinel in SQL + password comment in seed file + `### seedCredentials` in your reply.
+Same rule for JWT `hashed_password` (bcrypt placeholder). For **SHA-256 API-key**
+`key_hash` columns, use `__SHA256_PLACEHOLDER:<label>__` + `-- API key for <label>: "…"`
+comments instead — never invent `sha256_*` fake tokens or literal hex digests.
+Mandatory trio: sentinel in SQL + password/API-key comment in seed file + `### seedCredentials` in your reply.
 """
 
 

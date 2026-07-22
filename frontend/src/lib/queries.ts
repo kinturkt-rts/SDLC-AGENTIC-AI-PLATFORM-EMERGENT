@@ -1,7 +1,8 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from './api';
+import type { PipelineRun } from '@/src/types';
 
 export const queryKeys = {
   agents: ['agents'] as const,
@@ -63,15 +64,20 @@ export const useRuns = () =>
     staleTime: 0,
     refetchInterval: (query) => {
       const runs = query.state.data;
+      // Fast poll while agents are running.
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) {
+        return 2_500;
+      }
+      // Medium poll while deploy is pending/running on any completed run
+      // so the live URL appears without a manual refresh.
       if (
         runs?.some(
           (r) =>
-            r.status === 'running' ||
-            r.status === 'paused' ||
-            r.steps?.some((s) => s.phase === 'deploy' && s.status === 'running'),
+            r.deployStatus === 'running' ||
+            r.deployStatus === 'pending',
         )
       ) {
-        return 2_500;
+        return 8_000;
       }
       return 20_000;
     },
@@ -86,11 +92,34 @@ export const useRun = (id: string) =>
     staleTime: 0,
     refetchInterval: (query) => {
       const run = query.state.data;
-      const deployRunning = run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'running');
-      return run?.status === 'running' || run?.status === 'paused' || deployRunning ? 2_500 : false;
+      if (run?.status === 'running' || run?.status === 'paused') return 2_500;
+      // Keep polling at a relaxed rate while deploy is in progress so the
+      // live URL / deploy status appears without a manual page refresh.
+      if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 8_000;
+      return false;
     },
     refetchOnWindowFocus: true,
   });
+
+/** Live-poll each active run (bypasses listRuns cache) so strip + cards stay in sync. */
+export const useLiveRunsById = (ids: string[]) => {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  return useQueries({
+    queries: uniqueIds.map((id) => ({
+      queryKey: queryKeys.run(id),
+      queryFn: () => api.getRun(id),
+      staleTime: 0,
+      refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
+        const run = query.state.data;
+        if (run?.status === 'running' || run?.status === 'paused') return 2_500;
+        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 8_000;
+        return false;
+      },
+      refetchOnWindowFocus: true,
+    })),
+  });
+};
+
 export const useRunLogs = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runLogs(id),

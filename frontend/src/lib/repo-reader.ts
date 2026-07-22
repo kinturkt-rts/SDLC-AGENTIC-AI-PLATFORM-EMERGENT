@@ -1026,35 +1026,66 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     telemetryElapsedSec = await loadRunTelemetryElapsedSec(slug, runId);
   }
 
-  // AgentCore marks the run completed after gitlab-agent. Deploy continues in
-  // GitLab CI asynchronously — keep the control-plane run "running" on Deploy
-  // so dashboard strip, active-run cards, and polling stay live until appUrl.
-  const deployStepRunning = steps.some(
-    (step) => step.phase === 'deploy' && step.status === 'running',
+  // Phase A: Pipeline is "completed" after GitLab publish. Deploy is a follow-on
+  // status tracked by deployStatus — it no longer overrides the run status to
+  // "running", so the concurrency slot is freed and the dashboard shows "Completed"
+  // sooner. Deploy progress still updates via polling (deployStatus field).
+  const deployStep = steps.find((step) => step.phase === 'deploy');
+  const deployStepRunning = deployStep?.status === 'running';
+
+  type DeployStatus = 'pending' | 'running' | 'live' | 'failed' | 'stale' | null;
+  let deployStatus: DeployStatus = null;
+  if (isTerminalForDeploy && phaseDone.publish) {
+    if (phaseDone.deploy) {
+      deployStatus = 'live';
+    } else if (deployIsStale) {
+      deployStatus = 'stale';
+    } else if (deployStepRunning) {
+      deployStatus = 'running';
+    } else if (deployStep?.status === 'failed') {
+      deployStatus = 'failed';
+    } else {
+      deployStatus = 'pending';
+    }
+  }
+
+  // Run status is no longer overridden by deploy — completed means agents finished.
+  const displayStatus: RunStatus = reconciled.status;
+
+  // Prefer the step timeline as source of truth for "where are we" so currentAgent
+  // cannot lag behind steps (e.g. strip shows Database while card still says Product).
+  const activeStep = steps.find(
+    (s) => s.status === 'running' || s.status === 'waiting_for_human',
   );
-  const displayStatus: RunStatus =
-    deployStepRunning && reconciled.status === 'completed' ? 'running' : reconciled.status;
-  const displayPhase: SdlcPhase | null = deployStepRunning
-    ? 'deploy'
-    : displayStatus === 'completed' ||
-        displayStatus === 'failed' ||
-        displayStatus === 'cancelled'
+  const displayPhase: SdlcPhase | null =
+    displayStatus === 'completed' ||
+    displayStatus === 'failed' ||
+    displayStatus === 'cancelled'
       ? null
-      : currentPhase;
-  const displayAgent: AgentName | null = deployStepRunning
-    ? 'devops-agent'
-    : displayStatus === 'completed' ||
-        displayStatus === 'failed' ||
-        displayStatus === 'cancelled' ||
-        !currentAgentName
+      : (activeStep?.phase ?? currentPhase);
+  const displayAgent: AgentName | null =
+    displayStatus === 'completed' ||
+    displayStatus === 'failed' ||
+    displayStatus === 'cancelled'
       ? null
-      : (currentAgentName as AgentName);
+      : ((activeStep?.agent as AgentName | undefined) ??
+        (currentAgentName ? (currentAgentName as AgentName) : null));
+
+  // finishedAt = agent chain end (GitLab publish). If deploy is also done,
+  // extend to the latest S3 activity so elapsed includes deploy wall time.
+  let liveFinishedAt: string | null = enriched.finishedAt ?? null;
+  if (phaseDone.deploy && s3MtimeMs > 0) {
+    const liveMs = liveFinishedAt ? Date.parse(liveFinishedAt) : 0;
+    if (s3MtimeMs > (Number.isFinite(liveMs) ? liveMs : 0)) {
+      liveFinishedAt = new Date(s3MtimeMs).toISOString();
+    }
+  }
 
   const timings = resolveRunTimings({
     startedAt,
     status: displayStatus,
     liveStartedAt: enriched.startedAt,
-    liveFinishedAt: deployStepRunning ? null : enriched.finishedAt,
+    liveFinishedAt,
     logMtimeMs,
     s3LatestMs: s3MtimeMs,
     s3EarliestMs,
@@ -1071,11 +1102,12 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     currentPhase: displayPhase,
     currentAgent: displayAgent,
     startedAt: timings.startedAt,
-    finishedAt: deployStepRunning ? null : timings.finishedAt,
+    finishedAt: timings.finishedAt,
     elapsedSec: timings.elapsedSec,
     triggeredBy: enriched.triggeredBy ?? 'frontend',
     steps,
     error: runError,
+    deployStatus,
   };
 }
 
