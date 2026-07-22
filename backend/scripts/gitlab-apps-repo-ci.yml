@@ -1,0 +1,172 @@
+# This repo (sdlc-agentic-ai-platform-apps) holds generated app output only —
+# devops-agent's own code (agents/, scripts/, infrastructure/) lives in the
+# main platform repo (sdlc-agentic-ai-platform) and is cloned in before_script.
+#
+# The included Auto-DevOps template (bottom of this file) brings its own
+# workflow:rules that only creates a pipeline if it detects a Dockerfile /
+# requirements.txt / package.json etc. at THIS repo's root — none of which
+# exist here (they live under target-apps/<app>/ or the platform repo's
+# backend/). That silently blocked every pipeline on this repo before this
+# fix. A local workflow: key overrides the included one.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+#
+# One-off: verify the OIDC role your AWS admin created (gitlab-sdlc-deploy-role)
+# actually works before relying on it in target-app:deploy below. Delete this
+# job once target-app:deploy has been confirmed working end to end.
+oidc:test:
+  stage: test
+  tags: [juno-labs-3]
+  image:
+    name: amazon/aws-cli:2.17.62
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  script:
+    # This runner has ambient AWS credentials baked in for its own (unrelated)
+    # EKS-management purposes, which botocore prefers over web-identity
+    # federation. Strip them so our OIDC role is actually what gets used.
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+    - export AWS_ROLE_ARN=arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    # $AWS_OIDC_TOKEN is the raw JWT content here (not a file path, despite the
+    # variable's own name suggesting otherwise) - write it to a file ourselves.
+    - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
+    - aws sts get-caller-identity
+    - |
+      account=$(aws sts get-caller-identity --query Account --output text)
+      if [ "$account" != "061836593297" ]; then
+        echo "Wrong AWS account: got $account, expected 061836593297. OIDC role assumption is still being shadowed by ambient runner credentials."
+        exit 1
+      fi
+
+# Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
+# fires on branches gitlab-agent publishes here (sdlc/<app>).
+#
+# TEMPORARY: no `when: manual` — auto-fires on push to sdlc/* for a showcase
+# run. This runs a real terraform apply against AWS with no human gate; add
+# `when: manual` back before this is used for anything beyond a demo.
+#
+# Auth: OIDC role assumption (gitlab-sdlc-deploy-role) — no static AWS keys
+# stored in GitLab. If aws sts get-caller-identity below fails, the most
+# likely cause is the role's trust policy `sub` condition being scoped to the
+# main repo's project path instead of this one
+# (junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform-apps) — check
+# that with whoever set up the role.
+#
+# What's still a runner/project setting, not something this file can fix:
+#   - ARTIFACT_S3_BUCKET / ARTIFACT_DYNAMODB_TABLE are expected to come from
+#     a group-level CI/CD variable (same one agentcore:deploy uses in the
+#     main repo) — checked below before anything else runs.
+#
+# Docker: this runner (juno-labs-3) binds the host's real Docker socket into
+# job containers rather than running docker:dind — confirmed against a
+# working reference pipeline on this same runner. No DOCKER_HOST, no
+# services:, no privileged mode needed; docker just talks to the default
+# socket like any other CLI on the host.
+#
+# Live URL → frontend: gitlab-agent writes .sdlc/pipeline-run.json with runId.
+# This job MUST export PIPELINE_RUN_ID so devops put_handoff writes
+# runs/<runId>/handoffs/devops.json (appUrl) for the control-plane UI.
+target-app:deploy:
+  stage: deploy
+  tags: [juno-labs-3]
+  image: mcr.microsoft.com/powershell:7.4-debian-12
+  # gitlab-agent publishes each app as several rapid commits (batch 1, batch
+  # 2, final) - each one independently triggers its own pipeline, and without
+  # this, they race on the runner and on the shared :latest ECR tag. The one
+  # that finishes last wins, regardless of which commit was actually correct
+  # - this is exactly what broke contacts-api (an earlier, incomplete commit's
+  # image silently overwrote the final, correct one). resource_group forces
+  # GitLab to queue deploys for the same app one at a time instead.
+  resource_group: "deploy-$CI_COMMIT_REF_SLUG"
+  variables:
+    TF_VERSION: "1.10.5"
+    AWS_ROLE_ARN: arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    AWS_REGION: us-east-2
+    ARTIFACT_STORE: "s3"
+    PLATFORM_REPO_URL: "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform.git"
+    # The platform repo's default branch (main) is stale - missing
+    # requirements.txt and devops_agent.py entirely. All real work lives on
+    # this branch. Update this if/when main catches up or the working branch
+    # changes.
+    PLATFORM_REPO_BRANCH: "MVP_SDLC_agentic"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  before_script:
+    - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
+    - 'echo "Target app slug: $SLUG"'
+    # Same ambient-credential shadowing as oidc:test - strip before OIDC vars.
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+    - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
+    - export AWS_DEFAULT_REGION="$AWS_REGION"
+    - |
+      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
+        if [ -z "$(printenv "$v")" ]; then
+          echo "Missing required CI/CD variable: $v — check group-level CI/CD variables under junolabs, or project variables on this repo."
+          exit 1
+        fi
+      done
+    - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+    - |
+      # Link this deploy to the AgentCore/frontend runId written by gitlab-agent.
+      # Apps-repo publish: branch-root .sdlc/pipeline-run.json
+      # Monorepo-style fallback: target-apps/<slug>/.sdlc/pipeline-run.json
+      MARKER=""
+      for cand in ".sdlc/pipeline-run.json" "target-apps/${SLUG}/.sdlc/pipeline-run.json"; do
+        if [ -f "$cand" ]; then MARKER="$cand"; break; fi
+      done
+      if [ -z "$MARKER" ]; then
+        echo "Missing .sdlc/pipeline-run.json — republish via gitlab-agent so the frontend can receive appUrl"
+        exit 1
+      fi
+      export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
+      if [ -z "$PIPELINE_RUN_ID" ]; then
+        echo "pipeline-run.json has empty runId ($MARKER)"
+        exit 1
+      fi
+      echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID (from $MARKER)"
+    - pip3 install --no-cache-dir --break-system-packages awscli
+    - aws sts get-caller-identity || (echo "OIDC role assumption failed — see the comment above this job about trust policy scope, or re-run the oidc:test job." && exit 1)
+    - |
+      account=$(aws sts get-caller-identity --query Account --output text)
+      if [ "$account" != "061836593297" ]; then
+        echo "Wrong AWS account: got $account, expected 061836593297 — refusing to deploy. Ambient runner credentials are shadowing the OIDC role."
+        exit 1
+      fi
+    - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+    - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
+    - terraform -version
+    - docker info > /dev/null || (echo "Docker daemon not reachable via the host socket — ask whoever manages the runner whether /var/run/docker.sock is still bind-mounted for this runner." && exit 1)
+    # devops-agent's own code isn't in this repo — clone the platform repo and
+    # overlay this branch's generated output onto its backend/ tree, since
+    # both repos share the same relative path layout (this repo's root ==
+    # the platform repo's backend/ root).
+    - git clone --depth 1 --branch "$PLATFORM_REPO_BRANCH" "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${PLATFORM_REPO_URL#https://}" /tmp/platform
+    - cp -r "$CI_PROJECT_DIR"/. /tmp/platform/backend/
+    - rm -rf /tmp/platform/backend/.git
+    # Ensure marker is also under target-apps/<slug> for devops_agent fallback.
+    - |
+      mkdir -p "/tmp/platform/backend/target-apps/${SLUG}/.sdlc"
+      if [ -f "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" ]; then
+        cp "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" "/tmp/platform/backend/target-apps/${SLUG}/.sdlc/pipeline-run.json"
+      fi
+    - pip3 install --no-cache-dir --break-system-packages -r /tmp/platform/backend/requirements.txt
+  script:
+    - cd /tmp/platform/backend
+    - export PIPELINE_RUN_ID ARTIFACT_STORE
+    - python3 agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy
+
+# Auto-DevOps template intentionally not included: its buildpack-detection
+# jobs don't match this repo's structure (see workflow: comment above) and,
+# more importantly, they're untagged — since every runner here requires
+# tags, an untagged first-stage job blocks the whole pipeline forever.

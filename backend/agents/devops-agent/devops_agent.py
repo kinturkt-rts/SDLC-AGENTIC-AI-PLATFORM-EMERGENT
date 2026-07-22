@@ -51,23 +51,41 @@ AGENT_NAME = "devops-agent"
 A2A_PORT = 9105
 
 
+def _pipeline_run_marker_candidates(target: str) -> list[Path]:
+    """Locations gitlab-agent may write ``.sdlc/pipeline-run.json``.
+
+    Monorepo / platform CI: ``target-apps/<slug>/.sdlc/…``
+    Apps-repo publish (branch root = app tree) overlaid onto ``backend/``: ``.sdlc/…``
+    """
+    slug = (target or "").strip()
+    return [
+        _REPO_ROOT / "target-apps" / slug / ".sdlc" / "pipeline-run.json",
+        _REPO_ROOT / ".sdlc" / "pipeline-run.json",
+    ]
+
+
 def _ensure_pipeline_run_id_from_marker(target: str, ctx: dict[str, Any]) -> None:
     """If PIPELINE_RUN_ID is unset, load it from the gitlab-agent publish marker."""
     if resolve_run_id(ctx):
         return
-    marker = _REPO_ROOT / "target-apps" / target / ".sdlc" / "pipeline-run.json"
-    if not marker.is_file():
+    for marker in _pipeline_run_marker_candidates(target):
+        if not marker.is_file():
+            continue
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        rid = str(data.get("runId") or "").strip()
+        if not rid:
+            continue
+        os.environ["PIPELINE_RUN_ID"] = rid
+        ctx["runId"] = rid
+        try:
+            rel = marker.relative_to(_REPO_ROOT).as_posix()
+        except ValueError:
+            rel = str(marker)
+        print(f"[{AGENT_NAME}] Loaded PIPELINE_RUN_ID from {rel}")
         return
-    try:
-        data = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    rid = str(data.get("runId") or "").strip()
-    if not rid:
-        return
-    os.environ["PIPELINE_RUN_ID"] = rid
-    ctx["runId"] = rid
-    print(f"[{AGENT_NAME}] Loaded PIPELINE_RUN_ID from {marker.relative_to(_REPO_ROOT).as_posix()}")
 
 
 _WINGET_TF_DIR = (
@@ -605,14 +623,22 @@ def main() -> None:
         # put_handoff() call, gated the same way (put_handoff builds an S3 URI
         # unconditionally, so it isn't safe to call outside S3 mode).
         run_id = resolve_run_id(ctx)
-        if run_id and is_s3_store():
-            if data:
-                put_handoff(run_id, "devops", data)
-            update_pipeline_run(
-                run_id,
-                status="completed" if rc == 0 else "failed",
-                last_agent=AGENT_NAME,
-            )
+        if is_s3_store():
+            if run_id:
+                if data:
+                    put_handoff(run_id, "devops", data)
+                update_pipeline_run(
+                    run_id,
+                    status="completed" if rc == 0 else "failed",
+                    last_agent=AGENT_NAME,
+                )
+            else:
+                print(
+                    f"[{AGENT_NAME}] WARN: ARTIFACT_STORE=s3 but no PIPELINE_RUN_ID "
+                    f"(checked marker paths under target-apps/{target}/.sdlc and .sdlc/) "
+                    "— frontend will not get appUrl for this deploy",
+                    file=sys.stderr,
+                )
 
         if rc != 0:
             raise SystemExit(rc)

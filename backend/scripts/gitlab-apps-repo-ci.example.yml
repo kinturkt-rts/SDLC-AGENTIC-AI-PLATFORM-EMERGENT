@@ -36,13 +36,22 @@ target-app:deploy:
     - export SLUG="${CI_COMMIT_BRANCH}"
     - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
     - |
-      MARKER=".sdlc/pipeline-run.json"
-      if [ ! -f "$MARKER" ]; then
-        echo "Missing $MARKER — republish via gitlab-agent so CI can link the frontend run"
+      # Apps-repo publish puts the marker at branch root (.sdlc/…).
+      # Also accept monorepo-style target-apps/<slug>/.sdlc/… if present.
+      MARKER=""
+      for cand in ".sdlc/pipeline-run.json" "target-apps/${SLUG}/.sdlc/pipeline-run.json"; do
+        if [ -f "$cand" ]; then MARKER="$cand"; break; fi
+      done
+      if [ -z "$MARKER" ]; then
+        echo "Missing .sdlc/pipeline-run.json — republish via gitlab-agent so CI can link the frontend run"
         exit 1
       fi
       export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
-      echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID SLUG=$SLUG"
+      if [ -z "$PIPELINE_RUN_ID" ]; then
+        echo "pipeline-run.json has empty runId"
+        exit 1
+      fi
+      echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID SLUG=$SLUG (from $MARKER)"
     - export AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_OIDC_TOKEN
     - export AWS_DEFAULT_REGION="$AWS_REGION"
     - |
