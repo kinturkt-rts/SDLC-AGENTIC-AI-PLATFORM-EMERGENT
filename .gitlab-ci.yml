@@ -6,6 +6,10 @@
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
 
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "MVP_SDLC_agentic"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 variables:
   AWS_REGION: us-east-2
   AGENTCORE_ENTRYPOINT: deploy/agentcore/a2a_server.py
