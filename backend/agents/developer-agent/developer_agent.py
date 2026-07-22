@@ -803,6 +803,12 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
 def require_api_key(x_api_key: str = Header(alias="X-API-Key")) -> str: ...
 ```
 
+When design stores **SHA-256 digests** in `api_keys.key_hash` (DB lookup, not env compare),
+hash the header and SELECT by digest. Seed must use `__SHA256_PLACEHOLDER:<label>__` +
+`-- API key for <label>: "…"` (see `_template/db/reference/sha256_api_keys_seed_reference.sql`).
+README / `.env.example` demo keys MUST be those same plaintext strings — never invent a
+second set of keys, and never invent fake `sha256_*` seed tokens.
+
 ### Router prefix vs route path — no double prefix
 
 The final URL is `app.include_router(prefix=...) + @router.get(...)`. Concatenating
@@ -1936,6 +1942,51 @@ def run_service_validation(
                         )
             except subprocess.TimeoutExpired:
                 _warn("seed_bcrypt check timed out (non-blocking)")
+
+    # SHA-256 opaque API-key seeds (same gate as bcrypt placeholders — blocks invented sha256_* fakes)
+    if seed_sql:
+        from _shared.sha256_api_keys import (
+            collect_documented_api_keys,
+            seed_sql_has_sha256_work,
+            validate_seed_sha256_api_keys,
+        )
+
+        sha_errors = validate_seed_sha256_api_keys(service_dir / "db" / "sql")
+        if sha_errors:
+            detail = "SEED_SHA256 FAILED (opaque API-key digests):\n" + "\n".join(
+                f"  - {e}" for e in sha_errors
+            )
+            return _fail("seed_sha256", detail)
+        if seed_sql_has_sha256_work(service_dir):
+            documented = collect_documented_api_keys(service_dir)
+            readme = service_dir / "README.md"
+            env_ex = service_dir / ".env.example"
+            corpus = ""
+            if readme.is_file():
+                corpus += readme.read_text(encoding="utf-8", errors="replace")
+            if env_ex.is_file():
+                corpus += "\n" + env_ex.read_text(encoding="utf-8", errors="replace")
+            missing = [
+                f'{label}="{raw}"'
+                for label, raw in documented.items()
+                if raw and raw not in corpus
+            ]
+            if missing:
+                return _fail(
+                    "seed_sha256",
+                    "SEED_SHA256 FAILED — README/.env.example missing documented API key "
+                    "plaintext(s) from seed comments "
+                    f"(must match `-- API key for <label>: \"…\"` exactly):\n  - "
+                    + "\n  - ".join(missing),
+                )
+            _ok("seed_sha256")
+            _warn(
+                "seed SQL uses __SHA256_PLACEHOLDER — RDS login will 401 until "
+                f"apply_sql_to_rds.py runs (`python scripts/apply_sql_to_rds.py --target-app {service}`); "
+                "README should list the documented API key plaintext only"
+            )
+        else:
+            _ok("seed_sha256")
 
     from _shared.validate_rds_parity import validate_rds_parity, validate_rds_parity_warnings
 

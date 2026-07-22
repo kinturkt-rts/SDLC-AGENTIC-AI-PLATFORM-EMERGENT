@@ -1,0 +1,28 @@
+-- Reference: SHA-256 opaque API-key seed pattern (database-agent).
+-- Use when design auth looks up sha256(raw_key).hexdigest() in api_keys.key_hash
+-- (NOT bcrypt.checkpw). Host pipeline replaces placeholders before/after RDS apply.
+--
+-- DO NOT invent fake tokens like 'sha256_standard_demo_001' — those are not digests.
+-- DO NOT use __BCRYPT_PLACEHOLDER__ here when the app compares SHA-256 hex.
+--
+-- Required comments (one per label; plaintext must match README / .env.example):
+-- API key for demo-standard: "demo-standard-key-2024"
+-- API key for demo-admin: "demo-admin-key-2024"
+
+-- Example DDL (app owns real migrations):
+-- CREATE TABLE IF NOT EXISTS api_keys (
+--     id UUID PRIMARY KEY,
+--     key_hash TEXT NOT NULL UNIQUE,
+--     role TEXT NOT NULL,
+--     label TEXT NOT NULL,
+--     active BOOLEAN NOT NULL DEFAULT true,
+--     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- );
+
+-- Example seed rows (copy the comment + placeholder pattern into *seed*.sql):
+-- INSERT INTO api_keys (id, key_hash, role, label, active) VALUES
+--     ('c3000001-0000-0000-0000-000000000001',
+--      '__SHA256_PLACEHOLDER:demo-standard__', 'standard', 'demo-standard', true),
+--     ('c3000001-0000-0000-0000-000000000002',
+--      '__SHA256_PLACEHOLDER:demo-admin__', 'admin', 'demo-admin', true)
+-- ON CONFLICT (id) DO NOTHING;

@@ -166,6 +166,8 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
       `-- API key for demo-standard: "demo-standard-key-2024"`
       Host replaces with the real 64-char hex digest. **Never** invent fake tokens like
       `'sha256_standard_demo_001'` — those are not digests and live UI/Swagger always 401.
+      Reference: `target-apps/_template/db/reference/sha256_api_keys_seed_reference.sql`
+      (`db_validate_sql` blocks invented `sha256_*` tokens).
     - Do **not** put `__BCRYPT_PLACEHOLDER__` into `key_hash` when the app looks up SHA-256 hex
       (bcrypt strings will never match). Do **not** put SHA-256 placeholders into JWT
       `hashed_password` columns.
