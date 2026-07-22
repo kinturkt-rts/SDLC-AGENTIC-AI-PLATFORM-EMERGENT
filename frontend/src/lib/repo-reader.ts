@@ -955,6 +955,15 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     reconciled.status === 'failed' ||
     reconciled.status === 'cancelled';
 
+  // A real GitLab CI deploy (oidc:test + target-app:deploy, terraform apply, ECS
+  // health check) has never taken more than a few minutes in practice. If publish
+  // finished and 30+ minutes have passed with still no devops handoff at all, the
+  // branch's CI was never wired up / never triggered a deploy - deploy step should
+  // not be shown as running forever with no handoff to ever resolve it.
+  const DEPLOY_STALE_MS = 30 * 60 * 1000;
+  const deployIsStale =
+    isTerminalForDeploy && s3MtimeMs > 0 && Date.now() - s3MtimeMs > DEPLOY_STALE_MS;
+
     if (!phaseDone.deploy) {
     const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
     steps = steps.map((step) => {
@@ -962,7 +971,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
       if (hasDevopsHandoff) {
         return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
       }
-      if (isTerminalForDeploy && phaseDone.publish) {
+      if (isTerminalForDeploy && phaseDone.publish && !deployIsStale) {
         return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
       }
       return { ...step, agent: 'devops-agent' };
