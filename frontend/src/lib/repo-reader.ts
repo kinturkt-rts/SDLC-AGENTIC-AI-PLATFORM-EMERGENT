@@ -969,7 +969,15 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     steps = steps.map((step) => {
       if (step.phase !== 'deploy') return step;
       if (hasDevopsHandoff) {
-        return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
+        // A handoff exists but phaseDone.deploy is false, so the attempt didn't
+        // produce a live appUrl. Keep showing "running" while it's recent (may
+        // still be mid-deploy), but past DEPLOY_STALE_MS treat it as the failed
+        // attempt it is instead of "running" forever.
+        return {
+          ...step,
+          status: (deployIsStale ? 'failed' : 'running') as StepStatus,
+          agent: 'devops-agent',
+        };
       }
       if (isTerminalForDeploy && phaseDone.publish && !deployIsStale) {
         return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
