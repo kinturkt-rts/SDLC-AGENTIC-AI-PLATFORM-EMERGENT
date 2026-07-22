@@ -1,8 +1,0 @@
-{
-  "targetApp": "pr-diff-summarizer",
-  "prdPath": "docs/PRD/pr-diff-summarizer.md",
-  "designDocPath": "docs/design/pr-diff-summarizer.md",
-  "diagramPaths": [
-    "docs/generated-diagrams/pr-diff-summarizer.png"
-  ]
-}
