@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from pathlib import Path
@@ -144,9 +145,12 @@ def test_monorepo_publish_includes_input_brief(tmp_path: Path) -> None:
 
     from _shared.gitlab_mcp_actions import _collect_monorepo_publish_files
 
-    paths = {item["path"] for item in _collect_monorepo_publish_files(feature, root=tmp_path)}
-    assert f"inputs/{feature}.txt" in paths
-    assert f"target-apps/{feature}/app/main.py" in paths
+    files = _collect_monorepo_publish_files(feature, root=tmp_path)
+    by_path = {item["path"]: item for item in files}
+    assert f"inputs/{feature}.txt" in by_path
+    py_item = by_path[f"target-apps/{feature}/app/main.py"]
+    assert py_item["binary"] is True
+    assert base64.b64decode(py_item["content"]).decode("utf-8") == "# main"
 
 
 def test_apps_repo_publish_includes_local_input_brief(tmp_path: Path) -> None:

@@ -1,13 +1,12 @@
-# Per-app deploy root for target-app: meeting-assistant
-# Auto-scaffolded by scripts/ensure-target-app-tf-root.py for destroy/redeploy.
-# Deploy with: .\scripts\deploy-target-app.ps1 -Feature meeting-assistant
+# Per-app deploy root for target-app: prior-auth-workbench
+# Destroy with: .\scripts\deploy-target-app.ps1 -Feature prior-auth-workbench -Destroy
 
 terraform {
   required_version = ">= 1.10"
 
   backend "s3" {
     bucket       = "sdlc-tfstate-061836593297-us-east-2"
-    key          = "dev/apps/meeting-assistant/terraform.tfstate"
+    key          = "dev/apps/prior-auth-workbench/terraform.tfstate"
     region       = "us-east-2"
     use_lockfile = true
   }
@@ -27,7 +26,7 @@ provider "aws" {
     tags = {
       Project     = "sdlc-agentic-ai-platform"
       Environment = "dev"
-      TargetApp   = "meeting-assistant"
+      TargetApp   = "prior-auth-workbench"
       ManagedBy   = "terraform"
     }
   }
@@ -45,7 +44,7 @@ data "terraform_remote_state" "shared" {
 module "app" {
   source = "../../../modules/target-app-ecs"
 
-  app_name    = "meeting-assistant"
+  app_name    = "prior-auth-workbench"
   environment = "dev"
   aws_region  = "us-east-2"
 
@@ -55,8 +54,8 @@ module "app" {
   alb_listener_arn      = data.terraform_remote_state.shared.outputs.alb_listener_arn
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
-  enable_ui      = true
-  enable_bedrock = true
+  enable_ui            = true
+  enable_bedrock       = true
   has_database         = true
   db_secret_arn        = aws_secretsmanager_secret.db.arn
   db_security_group_id = data.aws_db_instance.rds.vpc_security_groups[0]
@@ -70,7 +69,7 @@ variable "database_url" {
 }
 
 resource "aws_secretsmanager_secret" "db" {
-  name                    = "sdlc/meeting-assistant/database-url"
+  name                    = "sdlc/prior-auth-workbench/database-url"
   recovery_window_in_days = 0
 }
 
@@ -84,7 +83,7 @@ data "aws_db_instance" "rds" {
 }
 
 output "app_url" {
-  value = "http://${data.terraform_remote_state.shared.outputs.alb_dns_name}/meeting-assistant/"
+  value = "http://${data.terraform_remote_state.shared.outputs.alb_dns_name}/prior-auth-workbench/"
 }
 
 output "ecr_repository_api" {

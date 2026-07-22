@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -47,7 +48,20 @@ def sanitize_publish_content_for_waf(content: str) -> str:
     return _WAF_LOCALHOST_HTTP.sub(_replace, content)
 
 
-def assert_publish_python_syntax(files: list[dict[str, str]]) -> None:
+def _decode_publish_text(item: dict[str, Any]) -> str | None:
+    """Return UTF-8 text for a publish payload (plain or base64-encoded)."""
+    content = item.get("content")
+    if not isinstance(content, str):
+        return None
+    if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
+        try:
+            return base64.b64decode(content).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+    return content
+
+
+def assert_publish_python_syntax(files: list[dict[str, Any]]) -> None:
     """Fail publish early if any .py payload has SyntaxError (avoids green CI + 502 UI)."""
     import py_compile
     import tempfile
@@ -55,18 +69,20 @@ def assert_publish_python_syntax(files: list[dict[str, str]]) -> None:
     errors: list[str] = []
     for item in files:
         path = str(item.get("path") or "")
-        if not path.endswith(".py") or item.get("binary"):
+        if not path.endswith(".py"):
             continue
-        content = item.get("content")
-        if not isinstance(content, str):
+        text = _decode_publish_text(item)
+        if text is None:
+            errors.append(f"{path}: could not decode publish payload as UTF-8 Python source")
             continue
         with tempfile.NamedTemporaryFile(
             "w",
             suffix=".py",
             encoding="utf-8",
             delete=False,
+            newline="",
         ) as tmp:
-            tmp.write(content)
+            tmp.write(text)
             tmp_path = tmp.name
         try:
             py_compile.compile(tmp_path, doraise=True)
@@ -82,6 +98,37 @@ def assert_publish_python_syntax(files: list[dict[str, str]]) -> None:
             "Refusing to publish Python with SyntaxError (would deploy a crashing app):\n"
             + "\n".join(f"  - {e}" for e in errors)
         )
+
+
+def _build_publish_file(dest_rel: str, data: bytes) -> dict[str, Any]:
+    """Build one GitLab publish payload.
+
+    Python sources are always base64. The MCP/text JSON path expands literal
+    ``\\n`` sequences into real newlines, which turns golden files like
+    ``app/startup_checks.py`` into byte-identical SyntaxErrors across every app.
+    Base64 + ``encoding=base64`` on file_create/update preserves bytes exactly
+    (same path already used for PNGs).
+    """
+    suffix = Path(dest_rel).suffix.lower()
+    name = Path(dest_rel).name
+    if suffix == ".py" or suffix == ".png":
+        return {
+            "path": dest_rel,
+            "content": base64.b64encode(data).decode("ascii"),
+            "binary": True,
+        }
+    text_suffixes = {".md", ".sql", ".txt", ".ini", ".json", ".example"}
+    if name == ".gitignore" or suffix in text_suffixes:
+        return {
+            "path": dest_rel,
+            "content": sanitize_publish_content_for_waf(data.decode("utf-8")),
+            "binary": False,
+        }
+    return {
+        "path": dest_rel,
+        "content": base64.b64encode(data).decode("ascii"),
+        "binary": True,
+    }
 
 
 def _publish_batch_size() -> int:
@@ -523,7 +570,9 @@ def gitlab_repo_config(
     }
 
 
-def _batch_files(files: list[dict[str, str]], batch_size: int | None = None) -> list[list[dict[str, str]]]:
+def _batch_files(
+    files: list[dict[str, Any]], batch_size: int | None = None
+) -> list[list[dict[str, Any]]]:
     size = batch_size if batch_size is not None else _publish_batch_size()
     return [files[i : i + size] for i in range(0, len(files), size)]
 
@@ -540,35 +589,22 @@ def _mr_body(slug: str, paths: list[str]) -> str:
     )
 
 
-def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, str]]:
+def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, Any]]:
     root_path = root or repo_root()
     slug = slugify_feature(feature)
-    text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
-    files: list[dict[str, str]] = []
+    files: list[dict[str, Any]] = []
     for source_rel, dest_rel in collect_feature_artifact_entries(slug, root=root_path):
         if dest_rel.endswith(".devops-handoff.json"):
             continue
         src = root_path / source_rel
-        data = src.read_bytes()
-        if src.suffix.lower() == ".png":
-            import base64
-
-            content = base64.b64encode(data).decode("ascii")
-        elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
-        else:
-            import base64
-
-            content = base64.b64encode(data).decode("ascii")
-        files.append({"path": dest_rel, "content": content, "binary": src.suffix.lower() == ".png"})
+        files.append(_build_publish_file(dest_rel, src.read_bytes()))
     return files
 
 
-def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, str]]:
+def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, Any]]:
     """Publish target-apps/<slug>/ at branch root plus inputs/<brief>.txt (apps GitLab project)."""
     root_path = root or repo_root()
     slug = slugify_feature(feature)
-    text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
     seen_dest: set[str] = set()
     publish_entries: list[tuple[str, str]] = []
 
@@ -586,27 +622,16 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
         seen_dest.add(dest)
         publish_entries.append((source_rel, dest))
 
-    files: list[dict[str, str]] = []
+    files: list[dict[str, Any]] = []
     for source_rel, dest in publish_entries:
         src = root_path / source_rel
-        data = src.read_bytes()
-        if src.suffix.lower() == ".png":
-            import base64
-
-            content = base64.b64encode(data).decode("ascii")
-        elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
-        else:
-            import base64
-
-            content = base64.b64encode(data).decode("ascii")
-        files.append({"path": dest, "content": content, "binary": src.suffix.lower() == ".png"})
+        files.append(_build_publish_file(dest, src.read_bytes()))
     return files
 
 
-def _split_publish_files(files: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    text_files: list[dict[str, str]] = []
-    binary_files: list[dict[str, str]] = []
+def _split_publish_files(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    text_files: list[dict[str, Any]] = []
+    binary_files: list[dict[str, Any]] = []
     for item in files:
         if item.get("binary"):
             binary_files.append(item)
@@ -621,19 +646,21 @@ def _commit_content(content: str) -> str:
 
 
 def _commit_actions(
-    batch: list[dict[str, str]],
+    batch: list[dict[str, Any]],
     existing_paths: set[str],
-) -> list[dict[str, str]]:
-    actions: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
     for item in batch:
         path = item["path"].lstrip("/")
-        actions.append(
-            {
-                "action": "update" if path in existing_paths else "create",
-                "file_path": path,
-                "content": _commit_content(item["content"]),
-            }
-        )
+        action: dict[str, Any] = {
+            "action": "update" if path in existing_paths else "create",
+            "file_path": path,
+            "content": _commit_content(item["content"]),
+        }
+        # Prefer base64 when present — commit_create text path expands \\n and corrupts .py.
+        if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
+            action["encoding"] = "base64"
+        actions.append(action)
     return actions
 
 
@@ -643,7 +670,7 @@ async def _publish_files_via_file_api(
     project_id: str,
     branch: str,
     slug: str,
-    files: list[dict[str, str]],
+    files: list[dict[str, Any]],
     existing_paths: set[str],
 ) -> list[str]:
     """Upload one file per MCP call (required for HTTP MCP behind restrictive WAF)."""
@@ -656,12 +683,10 @@ async def _publish_files_via_file_api(
             "file_path": path,
             "branch": branch,
             "commit_message": _publish_commit_message(slug),
+            "content": item["content"],
         }
-        if item.get("binary"):
-            payload["content"] = item["content"]
+        if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
             payload["encoding"] = "base64"
-        else:
-            payload["content"] = item["content"]
         result = await call_gitlab_mcp_tool(session, tool, payload)
         existing_paths.add(path)
         commit_id = result.get("id") or result.get("short_id") or result.get("commit_id")
@@ -676,7 +701,7 @@ async def _publish_text_file_batches(
     project_id: str,
     branch: str,
     slug: str,
-    text_files: list[dict[str, str]],
+    text_files: list[dict[str, Any]],
     existing_paths: set[str],
 ) -> list[str]:
     # CloudFront WAF limits POST bodies — one file per MCP call. Direct ALB uses batched commits.
@@ -865,7 +890,7 @@ async def _publish_binary_files(
     project_id: str,
     branch: str,
     slug: str,
-    binary_files: list[dict[str, str]],
+    binary_files: list[dict[str, Any]],
     existing_paths: set[str],
 ) -> list[str]:
     """jmrplens commit_create schema has no per-action encoding; use file_create/update."""

@@ -6,7 +6,9 @@ param(
     [switch] $PlanOnly,
     [switch] $Destroy,
     [string] $Region = "us-east-2",
-    [string] $ImageTag = "latest"
+    [string] $ImageTag = "latest",
+    # Absorbs unquoted name fragments: -Feature prior auth workbench → prior-auth-workbench
+    [Parameter(ValueFromRemainingArguments = $true)] [string[]] $FeatureTail
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,13 +42,49 @@ if (-not $env:TF_PLUGIN_CACHE_DIR) {
     New-Item -ItemType Directory -Force -Path $tfCache | Out-Null
     $env:TF_PLUGIN_CACHE_DIR = $tfCache
 }
+
+# Normalize feature slug: spaces → dashes, lowercase.
+# Handles both -Feature prior-auth-workbench and -Feature prior auth workbench.
+$FeatureParts = @($Feature) + @($FeatureTail | Where-Object { $_ -and $_ -notmatch '^-' })
+$Feature = (($FeatureParts -join '-') -replace '_', '-' -replace '\s+', '-').ToLowerInvariant().Trim('-')
+if (-not $Feature) { throw "Feature/app slug is required." }
+
 $AppDir = Join-Path $RepoRoot "target-apps\$Feature"
 $TfRoot = Join-Path $RepoRoot "infrastructure\environments\dev\$Feature"
+$TfMain = Join-Path $TfRoot "main.tf"
 
 function Invoke-Native {
     param([string] $Exe, [string[]] $Arguments, [string] $Label)
     & $Exe @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Label failed (exit $LASTEXITCODE)." }
+}
+
+function Test-TfRootComplete {
+    if (-not (Test-Path $TfMain)) { return $false }
+    $text = Get-Content -Raw -Path $TfMain
+    return [bool]($text -match 'module\s+"app"')
+}
+
+function Ensure-TfRoot {
+    if (Test-TfRootComplete) { return }
+
+    $ensurePy = Join-Path $PSScriptRoot "ensure-target-app-tf-root.py"
+    if (-not (Test-Path $ensurePy)) {
+        throw "Missing $ensurePy (needed to scaffold TF root from remote state)."
+    }
+
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $py) { $py = Get-Command py -ErrorAction SilentlyContinue }
+    if (-not $py) { throw "python not found on PATH (needed to scaffold missing TF root)." }
+
+    Write-Host "Local TF root missing/incomplete for '$Feature' — scaffolding from S3 state..." -ForegroundColor Cyan
+    & $py.Source $ensurePy --app $Feature --region $Region
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not scaffold Terraform root for '$Feature'. If this app was never deployed, there is nothing to destroy."
+    }
+    if (-not (Test-TfRootComplete)) {
+        throw "Scaffolded TF root still incomplete at $TfMain"
+    }
 }
 
 # ── Resolve tools ──────────────────────────────────────────────────────────────
@@ -56,11 +94,30 @@ if (-not $tf) {
                 [System.Environment]::GetEnvironmentVariable('Path', 'User')
     $tf = Get-Command terraform -ErrorAction SilentlyContinue
 }
+if (-not $tf) {
+    # winget install often leaves terraform off PATH until a new shell
+    $wingetTf = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter terraform.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($wingetTf) {
+        $env:Path = "$(Split-Path $wingetTf);$env:Path"
+        $tf = Get-Command terraform -ErrorAction SilentlyContinue
+    }
+}
 if (-not $tf) { throw "terraform not found on PATH. Install with: winget install HashiCorp.Terraform" }
 $Terraform = $tf.Source
 
-if (-not (Test-Path $TfRoot)) {
-    throw "No Terraform root for '$Feature' at infrastructure/environments/dev/$Feature. Create it (see hello-fastapi example)."
+if (-not (Test-TfRootComplete)) {
+    if ($Destroy) {
+        # State lives in S3 after devops deploy; local main.tf is often missing on
+        # another laptop. Scaffold a compatible root from remote state, then destroy.
+        Ensure-TfRoot
+    } else {
+        throw @"
+No Terraform root for '$Feature' at infrastructure/environments/dev/$Feature (need a complete main.tf with module `"app`").
+Create it via devops-agent deploy, or for destroy-only recovery run:
+  python .\scripts\ensure-target-app-tf-root.py --app $Feature
+"@
+    }
 }
 
 Write-Host "`n=== deploy-target-app: $Feature (dev, $Region) ===" -ForegroundColor Green
@@ -70,6 +127,11 @@ if (-not $env:TF_VAR_database_url -and $env:POSTGRES_MCP_DB_PASSWORD -and $env:P
     # postgresql+psycopg + sslmode: matches target-app SQLAlchemy/psycopg3 expectations
     $env:TF_VAR_database_url = "postgresql+psycopg://$($env:POSTGRES_MCP_DB_USER):$($env:POSTGRES_MCP_DB_PASSWORD)@$($env:POSTGRES_MCP_DB_ENDPOINT):${dbPort}/$($env:POSTGRES_MCP_DATABASE)?sslmode=require"
     Write-Host "TF_VAR_database_url derived from POSTGRES_MCP_* env." -ForegroundColor DarkGray
+}
+
+# Destroy still evaluates var.database_url for apps with a DB secret; a dummy is enough.
+if ($Destroy -and -not $env:TF_VAR_database_url) {
+    $env:TF_VAR_database_url = "postgresql+psycopg://unused:unused@localhost:5432/unused"
 }
 
 # ── AWS identity ───────────────────────────────────────────────────────────────
