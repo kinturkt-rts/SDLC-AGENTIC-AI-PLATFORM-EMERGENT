@@ -134,5 +134,47 @@ target-app:deploy:
     - export PIPELINE_RUN_ID ARTIFACT_STORE
     - python3 agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy
 
+# One-off (when: manual): build+push the control-plane frontend image and roll
+# ECS to it. Exists because Docker Desktop on Windows can't reliably reach ECR
+# from this environment right now (internal proxy mangles the ECR auth login);
+# this runner's Docker setup is already proven working for target-app deploys.
+frontend:deploy:
+  stage: build
+  tags: [juno-labs-3]
+  image: mcr.microsoft.com/powershell:7.4-debian-12
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "MVP_SDLC_agentic"'
+  variables:
+    AWS_ROLE_ARN: arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    AWS_REGION: us-east-2
+    ECR_REPOSITORY: sdlc-control-plane
+    ECS_CLUSTER: sdlc-agentic-ai
+    ECS_SERVICE: sdlc-control-plane
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  before_script:
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+    - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
+    - export AWS_DEFAULT_REGION="$AWS_REGION"
+    - apt-get update -qq && apt-get install -y -qq docker.io python3 python3-pip
+    - pip3 install --no-cache-dir --break-system-packages awscli
+    - aws sts get-caller-identity || (echo "OIDC role assumption failed" && exit 1)
+    - |
+      account=$(aws sts get-caller-identity --query Account --output text)
+      if [ "$account" != "061836593297" ]; then
+        echo "Wrong AWS account: got $account, expected 061836593297" && exit 1
+      fi
+    - docker info > /dev/null || (echo "Docker daemon not reachable via host socket" && exit 1)
+  script:
+    - REGISTRY="061836593297.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+    - docker build -f frontend/Dockerfile -t "$REGISTRY/${ECR_REPOSITORY}:latest" .
+    - docker push "$REGISTRY/${ECR_REPOSITORY}:latest"
+    - aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment --region "$AWS_REGION" > /dev/null
+    - echo "Frontend redeployed - ECS force-new-deployment triggered for $ECS_SERVICE."
+
 include:
 - template: Auto-DevOps.gitlab-ci.yml
