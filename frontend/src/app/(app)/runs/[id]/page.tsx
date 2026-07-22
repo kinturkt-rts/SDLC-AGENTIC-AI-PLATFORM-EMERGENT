@@ -327,7 +327,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">
-                  Code published — deployment did not become healthy
+                  Code published - deployment did not become healthy
                 </p>
                 <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
                   The agent workflow and GitLab publish completed, but no working live URL was produced.
