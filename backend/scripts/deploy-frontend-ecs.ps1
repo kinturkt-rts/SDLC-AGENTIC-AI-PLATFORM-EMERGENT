@@ -237,8 +237,11 @@ $albSg = Get-OrCreateSecurityGroup -Name "sdlc-cp-alb-sg" -Description "ALB for 
 $taskSg = Get-OrCreateSecurityGroup -Name "sdlc-cp-task-sg" -Description "ECS tasks for SDLC control plane"
 
 if (-not $WhatIf) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     aws ec2 authorize-security-group-ingress --group-id $albSg --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $Region --profile $Profile 2>$null | Out-Null
     aws ec2 authorize-security-group-ingress --group-id $taskSg --protocol tcp --port 3000 --source-group $albSg --region $Region --profile $Profile 2>$null | Out-Null
+    $ErrorActionPreference = $prevEap
 }
 
 Write-Host "Ensuring ALB $AlbName ..." -ForegroundColor Cyan
