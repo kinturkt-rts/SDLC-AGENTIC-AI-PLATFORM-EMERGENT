@@ -1,0 +1,50 @@
+Build a small internal Employee Directory API for maintaining basic employee information.
+
+Problem:
+
+Employee details are currently stored across spreadsheets and documents.
+HR and internal teams need one place to create, view, update, and deactivate employee records.
+Internal systems should use a clean API — no browser app required for v1.
+
+Who uses it:
+
+Internal users can browse active employee records.
+HR staff with a valid API key can create, update, or deactivate employees.
+Health checks stay open for ops.
+
+Features:
+
+Create an employee: employee ID, full name, email, department, job title, joining date, and status.
+View one employee or list all employees.
+Update employee information.
+Deactivate an employee instead of permanently deleting the record.
+Filter employees by department, job title, or status.
+Seed a few sample employees for demos.
+
+Business rules:
+
+Employee ID and email must be unique.
+Full name, employee ID, email, and department are required.
+Joining date cannot be in the future.
+Deactivated employees remain available in history.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+Basic CRUD using FastAPI.
+Swagger/OpenAPI is sufficient.
+No Streamlit, chatbots, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Employee photos, manager relationships, office locations, search by skills.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+HR can create an employee, list employees, update the department, deactivate the employee, and still retrieve the inactive record later.

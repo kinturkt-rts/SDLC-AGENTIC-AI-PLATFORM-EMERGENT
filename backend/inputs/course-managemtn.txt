@@ -1,0 +1,51 @@
+Build an internal Course Management API for maintaining training courses.
+
+Problem:
+
+Course information is currently maintained through spreadsheets and email.
+Training staff needs one place to create, view, update, and deactivate courses.
+Internal systems should use a clean API — no browser app required for v1.
+
+Who uses it:
+
+Internal users can browse active courses.
+Training administrators with a valid API key can create, update, or deactivate courses.
+Health checks stay open for ops.
+
+Features:
+
+Create a course: course code, title, instructor, category, duration, start date, and status.
+View one course or list all courses.
+Update course details.
+Deactivate or cancel a course without deleting its record.
+Filter courses by category, instructor, date, or status.
+Seed a few sample courses for demos.
+
+Business rules:
+
+Course code must be unique.
+Course title, course code, and instructor are required.
+Duration must be greater than zero.
+New courses cannot have a start date in the past.
+Inactive or cancelled courses remain available in history.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+Basic CRUD using FastAPI.
+Swagger/OpenAPI is sufficient.
+No Streamlit, chatbots, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Student enrollment, attendance, certificates, course materials.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+Training staff can add a course, list courses, update the instructor, cancel the course, and still retrieve its record later.
