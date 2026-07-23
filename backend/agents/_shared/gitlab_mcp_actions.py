@@ -597,9 +597,14 @@ def publish_branch_name(feature: str) -> str:
 
 
 def _branch_tree_url(web_url: str, branch: str) -> str:
+    """GitLab branch browse URL.
+
+    Prefer an unencoded path segment (``sdlc/app``) plus ``ref_type=heads``.
+    Encoded forms like ``sdlc%2Fapp`` work less reliably in the GitLab UI.
+    """
     base = web_url.rstrip("/")
-    encoded = branch.replace("/", "%2F")
-    return f"{base}/-/tree/{encoded}"
+    branch_path = branch.strip().lstrip("/")
+    return f"{base}/-/tree/{branch_path}?ref_type=heads"
 
 
 def gitlab_repo_config(
@@ -644,6 +649,24 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
     return files
 
 
+def resolve_apps_repo_ci_template(root: Path | None = None) -> Path | None:
+    """Locate ``scripts/gitlab-apps-repo-ci.yml`` for apps-repo publish.
+
+    Cloud AgentCore publish roots are often a materialized app workspace that
+    does **not** contain ``scripts/``. Always fall back to the packaged backend
+    root (``repo_root()`` next to this module) so every publish still ships the
+    current temp-fix / deploy CI template as ``.gitlab-ci.yml``.
+    """
+    candidates: list[Path] = []
+    if root is not None:
+        candidates.append(Path(root) / "scripts" / "gitlab-apps-repo-ci.yml")
+    candidates.append(repo_root() / "scripts" / "gitlab-apps-repo-ci.yml")
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
 def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, Any]]:
     """Publish target-apps/<slug>/ at branch root plus inputs/<brief>.txt (apps GitLab project)."""
     root_path = root or repo_root()
@@ -675,8 +698,8 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
     # first created — inheritance from the apps project's default branch only
     # happens once, at branch-creation time, which silently strands existing
     # branches when this template is fixed later.
-    ci_template = root_path / "scripts" / "gitlab-apps-repo-ci.yml"
-    if ci_template.is_file():
+    ci_template = resolve_apps_repo_ci_template(root_path)
+    if ci_template is not None:
         files.append(_build_publish_file(".gitlab-ci.yml", ci_template.read_bytes()))
 
     return files

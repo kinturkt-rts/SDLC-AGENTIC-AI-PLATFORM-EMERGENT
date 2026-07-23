@@ -78,10 +78,9 @@ export function PipelineHandoffsCard({
   const developer = handoffs.developer;
   const devops = handoffs.devops;
   const branchUrl = gitlab?.branchUrl ?? null;
-  const repoUrl = gitlab?.repoUrl ?? null;
   const mrUrl = gitlab?.mergeRequestUrl ?? handoffs.contextMergeRequestUrl ?? null;
   const appUrl = devops?.appUrl ?? null;
-  const hasAnything = Boolean(developer || gitlab || devops || branchUrl || repoUrl || mrUrl || appUrl);
+  const hasAnything = Boolean(developer || gitlab || devops || branchUrl || mrUrl || appUrl);
 
   if (!hasAnything) {
     return null;
@@ -136,7 +135,6 @@ export function PipelineHandoffsCard({
                 label={gitlab.status.replaceAll('_', ' ')}
               />
               {branchUrl ? <MetaLink href={branchUrl} label="View branch on GitLab" /> : null}
-              {repoUrl ? <MetaLink href={repoUrl} label="View repository on GitLab" /> : null}
               {mrUrl ? <MetaLink href={mrUrl} label="Open merge request" /> : null}
             </div>
             {gitlab?.error ? <p className="text-xs text-red-400">{gitlab.error}</p> : null}

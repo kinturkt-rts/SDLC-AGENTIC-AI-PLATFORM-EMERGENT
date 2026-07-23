@@ -1,0 +1,40 @@
+We need an internal AI system that learns from historical support tickets and helps employees find previous resolutions before creating new tickets.
+
+Current pain:
+    Employees repeatedly create tickets for issues that were already solved.
+    Support engineers spend time answering the same questions.
+    Finding previous ticket resolutions requires manual searching.
+
+What we want:
+    Import historical support tickets and knowledge articles.
+    Allow employees to ask natural-language questions.
+    Return relevant previous tickets and recommended resolutions.
+    Show confidence and source ticket references for every answer.
+    Allow administrators to refresh the knowledge base as new tickets are closed.
+
+Initial scope:
+    Import support tickets from CSV or API.
+    Store ticket metadata and resolution history.
+    Semantic search across previous tickets.
+    AI-generated answers grounded in retrieved tickets.
+    Admin page showing ingestion status, ticket count, and last synchronization.
+    Audit log of searches and imports.
+
+Data and integrations:
+    Object storage for imported ticket exports.
+    Relational database for ticket metadata.
+    Vector database for semantic search.
+    Amazon Bedrock (preferred) for answer generation.
+    Optional Jira or ServiceNow integration.
+
+Constraints:
+    Employees should only access tickets they are authorized to view.
+    AI responses must reference source tickets.
+    If confidence is low, respond that no relevant solution was found.
+    Secrets stored securely.
+    Internal use only.
+
+Success expectation:
+Employees find existing solutions before opening duplicate tickets.
+Support teams reduce repetitive work.
+Responses include references to previous tickets and are returned within a reasonable response time (target under 10–15 seconds).

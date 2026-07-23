@@ -18,6 +18,36 @@ async function readLocalPipelineJson(rel: string): Promise<HandoffRecord | null>
   }
 }
 
+/**
+ * Normalize GitLab branch browse links for the UI.
+ * Older handoffs used ``/-/tree/sdlc%2Fapp``; GitLab prefers
+ * ``/-/tree/sdlc/app?ref_type=heads``.
+ */
+export function normalizeGitlabBranchUrl(url: string | null | undefined): string | null {
+  const raw = typeof url === 'string' ? url.trim() : '';
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw);
+    const marker = '/-/tree/';
+    const idx = parsed.pathname.indexOf(marker);
+    if (idx >= 0) {
+      const prefix = parsed.pathname.slice(0, idx + marker.length);
+      const encodedBranch = parsed.pathname.slice(idx + marker.length);
+      const branchPath = decodeURIComponent(encodedBranch).replace(/^\/+/, '');
+      parsed.pathname = `${prefix}${branchPath}`;
+      if (!parsed.searchParams.has('ref_type')) {
+        parsed.searchParams.set('ref_type', 'heads');
+      }
+      return parsed.toString();
+    }
+  } catch {
+    // Fall through for non-absolute / odd values.
+  }
+
+  return raw.replace(/%2F/gi, '/');
+}
+
 function parseGitlabHandoff(
   data: HandoffRecord,
   source: 's3' | 'local',
@@ -28,7 +58,9 @@ function parseGitlabHandoff(
   return {
     status: String(data.status ?? 'unknown'),
     branch: typeof data.branch === 'string' ? data.branch : null,
-    branchUrl: typeof data.branchUrl === 'string' ? data.branchUrl : null,
+    branchUrl: normalizeGitlabBranchUrl(
+      typeof data.branchUrl === 'string' ? data.branchUrl : null,
+    ),
     mergeRequestUrl: typeof data.mergeRequestUrl === 'string' ? data.mergeRequestUrl : null,
     mergeRequestIid: typeof iid === 'number' ? iid : null,
     gitlabProject: typeof data.gitlabProject === 'string' ? data.gitlabProject : null,
