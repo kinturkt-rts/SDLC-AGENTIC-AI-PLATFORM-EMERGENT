@@ -28,7 +28,14 @@
         { "name": "SDLC_PIPELINE_TRANSPORT", "value": "a2a" },
         { "name": "COGNITO_USER_POOL_ID", "value": "us-east-2_KBdvEUenC" },
         { "name": "COGNITO_CLIENT_ID", "value": "202iq7pu97a461lre5daoti3o8" },
-        { "name": "COGNITO_REGION", "value": "us-east-2" }
+        { "name": "COGNITO_REGION", "value": "us-east-2" },
+        { "name": "GITLAB_URL", "value": "https://code.junodev.net" }
+      ],
+      "secrets": [
+        {
+          "name": "GITLAB_PERSONAL_ACCESS_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:061836593297:secret:sdlc/control-plane/gitlab-pat"
+        }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

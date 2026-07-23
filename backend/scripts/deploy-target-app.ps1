@@ -7,7 +7,7 @@ param(
     [switch] $Destroy,
     [string] $Region = "us-east-2",
     [string] $ImageTag = "latest",
-    # Absorbs unquoted name fragments: -Feature prior auth workbench → prior-auth-workbench
+    # Absorbs unquoted name fragments: -Feature prior auth workbench -> prior-auth-workbench
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $FeatureTail
 )
 
@@ -35,7 +35,7 @@ foreach ($envPath in @(
     }
 }
 
-# Cache Terraform providers across runs (~600MB AWS provider) — faster init and
+# Cache Terraform providers across runs (~600MB AWS provider) - faster init and
 # resilient to transient registry/DNS failures.
 if (-not $env:TF_PLUGIN_CACHE_DIR) {
     $tfCache = Join-Path $env:LOCALAPPDATA "terraform-plugin-cache"
@@ -43,7 +43,7 @@ if (-not $env:TF_PLUGIN_CACHE_DIR) {
     $env:TF_PLUGIN_CACHE_DIR = $tfCache
 }
 
-# Normalize feature slug: spaces → dashes, lowercase.
+# Normalize feature slug: spaces -> dashes, lowercase.
 # Handles both -Feature prior-auth-workbench and -Feature prior auth workbench.
 $FeatureParts = @($Feature) + @($FeatureTail | Where-Object { $_ -and $_ -notmatch '^-' })
 $Feature = (($FeatureParts -join '-') -replace '_', '-' -replace '\s+', '-').ToLowerInvariant().Trim('-')
@@ -77,7 +77,7 @@ function Ensure-TfRoot {
     if (-not $py) { $py = Get-Command py -ErrorAction SilentlyContinue }
     if (-not $py) { throw "python not found on PATH (needed to scaffold missing TF root)." }
 
-    Write-Host "Local TF root missing/incomplete for '$Feature' — scaffolding from S3 state..." -ForegroundColor Cyan
+    Write-Host "Local TF root missing/incomplete for '$Feature' - scaffolding from S3 state..." -ForegroundColor Cyan
     & $py.Source $ensurePy --app $Feature --region $Region
     if ($LASTEXITCODE -ne 0) {
         throw "Could not scaffold Terraform root for '$Feature'. If this app was never deployed, there is nothing to destroy."
@@ -87,7 +87,7 @@ function Ensure-TfRoot {
     }
 }
 
-# ── Resolve tools ──────────────────────────────────────────────────────────────
+# -- Resolve tools --------------------------------------------------------------
 $tf = Get-Command terraform -ErrorAction SilentlyContinue
 if (-not $tf) {
     $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
@@ -96,10 +96,10 @@ if (-not $tf) {
 }
 if (-not $tf) {
     # winget install often leaves terraform off PATH until a new shell
-    $wingetTf = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter terraform.exe -ErrorAction SilentlyContinue |
+    $wingetTf = Get-ChildItem "${env:LOCALAPPDATA}\Microsoft\WinGet\Packages" -Recurse -Filter terraform.exe -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
     if ($wingetTf) {
-        $env:Path = "$(Split-Path $wingetTf);$env:Path"
+        $env:Path = (Split-Path -Parent $wingetTf) + [IO.Path]::PathSeparator + $env:Path
         $tf = Get-Command terraform -ErrorAction SilentlyContinue
     }
 }
@@ -108,40 +108,41 @@ $Terraform = $tf.Source
 
 if (-not (Test-TfRootComplete)) {
     if ($Destroy) {
-        # State lives in S3 after devops deploy; local main.tf is often missing on
-        # another laptop. Scaffold a compatible root from remote state, then destroy.
         Ensure-TfRoot
     } else {
-        throw @"
-No Terraform root for '$Feature' at infrastructure/environments/dev/$Feature (need a complete main.tf with module `"app`").
-Create it via devops-agent deploy, or for destroy-only recovery run:
-  python .\scripts\ensure-target-app-tf-root.py --app $Feature
-"@
+        throw "No Terraform root for $Feature. Run: python .\scripts\ensure-target-app-tf-root.py --app $Feature"
     }
 }
 
-Write-Host "`n=== deploy-target-app: $Feature (dev, $Region) ===" -ForegroundColor Green
+$banner = [string]::Format('=== deploy-target-app: {0} (dev, {1}) ===', $Feature, $Region)
+Write-Host $banner -ForegroundColor Green
 
 if (-not $env:TF_VAR_database_url -and $env:POSTGRES_MCP_DB_PASSWORD -and $env:POSTGRES_MCP_DB_ENDPOINT -and $env:POSTGRES_MCP_DATABASE -and $env:POSTGRES_MCP_DB_USER) {
     $dbPort = if ($env:POSTGRES_MCP_PORT) { $env:POSTGRES_MCP_PORT } else { "5432" }
-    # postgresql+psycopg + sslmode: matches target-app SQLAlchemy/psycopg3 expectations
-    $env:TF_VAR_database_url = "postgresql+psycopg://$($env:POSTGRES_MCP_DB_USER):$($env:POSTGRES_MCP_DB_PASSWORD)@$($env:POSTGRES_MCP_DB_ENDPOINT):${dbPort}/$($env:POSTGRES_MCP_DATABASE)?sslmode=require"
+    $env:TF_VAR_database_url = (
+        'postgresql+psycopg://' +
+        $env:POSTGRES_MCP_DB_USER + ':' +
+        $env:POSTGRES_MCP_DB_PASSWORD + '@' +
+        $env:POSTGRES_MCP_DB_ENDPOINT + ':' +
+        $dbPort + '/' +
+        $env:POSTGRES_MCP_DATABASE +
+        '?sslmode=require'
+    )
     Write-Host "TF_VAR_database_url derived from POSTGRES_MCP_* env." -ForegroundColor DarkGray
 }
 
-# Destroy still evaluates var.database_url for apps with a DB secret; a dummy is enough.
 if ($Destroy -and -not $env:TF_VAR_database_url) {
-    $env:TF_VAR_database_url = "postgresql+psycopg://unused:unused@localhost:5432/unused"
+    $env:TF_VAR_database_url = 'postgresql+psycopg://unused:unused@localhost:5432/unused'
 }
 
-# ── AWS identity ───────────────────────────────────────────────────────────────
+# -- AWS identity ---------------------------------------------------------------
 $identityJson = aws sts get-caller-identity --region $Region --output json
 if ($LASTEXITCODE -ne 0) { throw "AWS credentials unavailable. Run: aws sso login --profile $env:AWS_PROFILE" }
 $Account = (ConvertFrom-Json ($identityJson -join "`n")).Account
 $Registry = "$Account.dkr.ecr.$Region.amazonaws.com"
 Write-Host "AWS account: $Account" -ForegroundColor DarkGray
 
-# ── Terraform init ─────────────────────────────────────────────────────────────
+# -- Terraform init -------------------------------------------------------------
 Push-Location $TfRoot
 try {
     Invoke-Native $Terraform @("init", "-input=false", "-upgrade=false") "terraform init"
@@ -157,7 +158,7 @@ try {
         return
     }
 
-    # ── 1) Ensure ECR repos exist before pushing images ────────────────────────
+    # -- 1) Ensure ECR repos exist before pushing images ------------------------
     Write-Host "`n--- [1/4] Terraform: ECR repositories ---" -ForegroundColor Cyan
     Invoke-Native $Terraform @(
         "apply", "-input=false", "-auto-approve",
@@ -165,7 +166,7 @@ try {
         "-target=module.app.aws_ecr_repository.ui"
     ) "terraform apply (ECR)"
 
-    # ── 2) Build + push images ──────────────────────────────────────────────────
+    # -- 2) Build + push images --------------------------------------------------
     if (-not $SkipBuild) {
         if (-not (Test-Path $AppDir)) { throw "App directory not found: $AppDir" }
         docker version --format '{{.Server.Version}}' | Out-Null
@@ -173,13 +174,8 @@ try {
 
         Write-Host "`n--- [2/4] Build + push images to ECR ---" -ForegroundColor Cyan
         if ($IsLinux -or $IsMacOS) {
-            # pwsh on Linux/macOS pipes stdin natively without the CRLF issue
-            # below - no cmd wrapper available there anyway (cmd.exe is
-            # Windows-only), so use a direct pipe.
             aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $Registry
         } else {
-            # cmd /c keeps the pipe out of PowerShell 5.1, which appends CRLF to piped
-            # stdin and breaks --password-stdin with a 400 from the registry.
             cmd /c "aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $Registry"
         }
         if ($LASTEXITCODE -ne 0) { throw "docker login to ECR failed." }
@@ -199,7 +195,7 @@ try {
         }
     }
 
-    # ── 3) Full apply ───────────────────────────────────────────────────────────
+    # -- 3) Full apply -----------------------------------------------------------
     Write-Host "`n--- [3/4] Terraform: full apply ---" -ForegroundColor Cyan
     Invoke-Native $Terraform @("apply", "-input=false", "-auto-approve") "terraform apply"
 
@@ -207,9 +203,6 @@ try {
     $Service = (& $Terraform output -raw service_name)
     $Cluster = (& $Terraform output -raw cluster_name)
 
-    # API-only FastAPI apps have no Streamlit UI — browser root often 404s.
-    # Keep terraform app_url as the base path for health checks; expose /docs
-    # as the human Live URL in the handoff (frontend Open Live App link).
     $hasStreamlitUi = Test-Path (Join-Path (Join-Path $AppDir "ui") "streamlit_app.py")
     $LiveUrl = if ($hasStreamlitUi) {
         $AppUrl.TrimEnd('/')
@@ -217,7 +210,7 @@ try {
         "$($AppUrl.TrimEnd('/'))/docs"
     }
 
-    # ── 4) Roll service (":latest" re-push needs a forced deployment) + wait ────
+    # -- 4) Roll service (":latest" re-push needs a forced deployment) + wait ----
     Write-Host "`n--- [4/4] Roll ECS service + wait for stable ---" -ForegroundColor Cyan
     if (-not $SkipBuild) {
         aws ecs update-service --cluster $Cluster --service $Service --force-new-deployment --region $Region --output text --query 'service.serviceName' | Out-Null
@@ -265,9 +258,6 @@ try {
         $handoff["targetApp"] = $Feature
         $handoff["environment"] = "dev"
         $handoff["region"] = $Region
-        # Only record appUrl when the health check actually passed - an unhealthy
-        # deployment must not be reported as "live" to downstream consumers
-        # (devops_agent.py's CLI output, S3 handoff sync, the frontend).
         if ($healthy) { $handoff["appUrl"] = $LiveUrl } else { $handoff.Remove("appUrl") | Out-Null }
         $handoff["ecsCluster"] = $Cluster
         $handoff["ecsService"] = $Service
@@ -279,8 +269,6 @@ try {
     }
 
     if (-not $healthy) {
-        # Infra apply succeeded but the app never came up healthy - fail loudly
-        # so the caller (devops_agent.py, GitLab CI) doesn't treat this as success.
         exit 2
     }
 }

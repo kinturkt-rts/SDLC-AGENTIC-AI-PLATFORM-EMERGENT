@@ -24,6 +24,7 @@ import {
   developerHandoffExistsForRun,
   developerHandoffFailedForRun,
   developerHandoffSucceededForRun,
+  devopsDeployFailedForRun,
   devopsDeploySucceededForRun,
   devopsHandoffExistsForRun,
   getRunHandoffs,
@@ -31,6 +32,7 @@ import {
   resolveProjectRepositoryLink,
   resolveRunFailureDetail,
 } from './pipeline-handoffs';
+import { getLatestGitlabPipelineDeployStatus } from './gitlab-ci-deploy-status';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
@@ -980,10 +982,44 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const deployIsStale =
     isTerminalForDeploy && s3MtimeMs > 0 && Date.now() - s3MtimeMs > DEPLOY_STALE_MS;
 
-    if (!phaseDone.deploy) {
+  // Sync Deploy UI with GitLab CI + devops handoff failures (not only success via appUrl).
+  let deployCiFailed = false;
+  let deployCiFailedDetail: string | null = null;
+  if (isTerminalForDeploy && phaseDone.publish && !phaseDone.deploy) {
+    if (await devopsDeployFailedForRun(runId, slug)) {
+      deployCiFailed = true;
+      deployCiFailedDetail = 'Deploy health check failed (devops handoff).';
+    } else {
+      const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
+      const branch = handoffs?.gitlab?.branch?.trim() || null;
+      const project = handoffs?.gitlab?.gitlabProject?.trim() || null;
+      if (branch && project) {
+        const ci = await getLatestGitlabPipelineDeployStatus({
+          gitlabProject: project,
+          branch,
+        });
+        if (ci.status === 'failed') {
+          deployCiFailed = true;
+          deployCiFailedDetail = ci.webUrl
+            ? `GitLab deploy pipeline failed — ${ci.webUrl}`
+            : 'GitLab deploy pipeline failed.';
+        }
+      }
+    }
+  }
+
+  if (!phaseDone.deploy) {
     const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
     steps = steps.map((step) => {
       if (step.phase !== 'deploy') return step;
+      if (deployCiFailed) {
+        return {
+          ...step,
+          status: 'failed' as StepStatus,
+          agent: 'devops-agent',
+          error: deployCiFailedDetail ?? step.error ?? null,
+        };
+      }
       if (hasDevopsHandoff) {
         // A handoff exists but phaseDone.deploy is false, so the attempt didn't
         // produce a live appUrl. Keep showing "running" while it's recent (may
@@ -1037,6 +1073,8 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   if (isTerminalForDeploy && phaseDone.publish) {
     if (phaseDone.deploy) {
       deployStatus = 'live';
+    } else if (deployCiFailed) {
+      deployStatus = 'failed';
     } else if (deployIsStale) {
       deployStatus = 'stale';
     } else if (deployStepRunning) {
@@ -1051,7 +1089,11 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   }
 
   const displayStatus: RunStatus =
-    deployStepRunning && reconciled.status === 'completed' ? 'running' : reconciled.status;
+    deployCiFailed
+      ? 'failed'
+      : deployStepRunning && reconciled.status === 'completed'
+        ? 'running'
+        : reconciled.status;
 
   // Prefer the step timeline as source of truth for "where are we" so currentAgent
   // cannot lag behind steps (e.g. strip shows Database while card still says Product).
