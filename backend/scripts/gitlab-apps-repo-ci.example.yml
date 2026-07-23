@@ -1,78 +1,149 @@
-# Optional CI for sdlc-agentic-ai-platform-apps (GITLAB_APPS_REPO=true).
-# Copy into that project's .gitlab-ci.yml (or include via project file).
+# Reference copy of backend/scripts/gitlab-apps-repo-ci.yml — the actual CI config
+# pushed to sdlc-agentic-ai-platform-apps (GITLAB_APPS_REPO=true) as its
+# `.gitlab-ci.yml`. Kept byte-for-byte in sync with that file; if you're editing
+# CI behavior, edit gitlab-apps-repo-ci.yml and copy the result here (or vice
+# versa) — do not let the two drift again.
 #
-# Closes the loop when publish lands on apps-repo branch <slug> instead of
-# monorepo sdlc/<slug>: load PIPELINE_RUN_ID from .sdlc/pipeline-run.json
-# (written by gitlab-agent), clone the platform repo, and run devops --deploy
-# so the live URL is written back to the same S3 run handoff.
+# Closes the loop when publish lands on the apps-repo branch `sdlc/<slug>`:
+# loads PIPELINE_RUN_ID from `.sdlc/pipeline-run.json` (written by gitlab-agent),
+# clones the platform repo, and runs `devops_agent.py --deploy` so the live URL
+# is written back to the same S3 run handoff.
 #
-# Required CI/CD variables on the apps project:
-#   PLATFORM_REPO_URL   — clone URL for sdlc-agentic-ai-platform (with credentials)
-#   ARTIFACT_S3_BUCKET, ARTIFACT_DYNAMODB_TABLE
-#   AWS OIDC role (same gitlab-sdlc-deploy-role pattern as the platform project)
+# Required CI/CD variables (group-level under junolabs, or per-project):
+#   ARTIFACT_S3_BUCKET, ARTIFACT_DYNAMODB_TABLE, GITLAB_PERSONAL_ACCESS_TOKEN
+#   AWS OIDC role: gitlab-sdlc-deploy-role (trust policy scoped to this project)
+#
+# Runner: juno-labs-3 (bind-mounts /var/run/docker.sock — no docker:dind service).
+# See push-deploy-ci-ecr.ps1 for the permanent ECR image this job is meant to use
+# once the runner can pull it (currently on the bare-image temp fix below).
 
-stages:
-  - target-app-deploy
-
-target-app:deploy:
-  stage: target-app-deploy
-  image: mcr.microsoft.com/powershell:7.4-debian-12
-  services:
-    - docker:24-dind
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    TF_VERSION: "1.10.5"
-    AWS_REGION: us-east-2
-    AWS_ROLE_ARN: arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
-    ARTIFACT_STORE: "s3"
-    PLATFORM_CLONE_DIR: /tmp/sdlc-platform
+workflow:
   rules:
-    - if: $CI_COMMIT_BRANCH
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Verify the OIDC role your AWS admin created (gitlab-sdlc-deploy-role)
+# actually works before relying on it in target-app:deploy below. Delete this
+# job once target-app:deploy has been confirmed working end to end.
+oidc:test:
+  stage: test
+  tags: [juno-labs-3]
+  image:
+    name: amazon/aws-cli:2.17.62
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
   id_tokens:
     AWS_OIDC_TOKEN:
       aud: sts.amazonaws.com
-  before_script:
-    - export SLUG="${CI_COMMIT_BRANCH}"
-    - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+  script:
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+    - export AWS_ROLE_ARN=arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
+    - aws sts get-caller-identity
     - |
-      # Apps-repo publish puts the marker at branch root (.sdlc/…).
-      # Also accept monorepo-style target-apps/<slug>/.sdlc/… if present.
+      account=$(aws sts get-caller-identity --query Account --output text)
+      if [ "$account" != "061836593297" ]; then
+        echo "Wrong AWS account: got $account, expected 061836593297. OIDC role assumption is still being shadowed by ambient runner credentials."
+        exit 1
+      fi
+
+target-app:deploy:
+  stage: deploy
+  tags: [juno-labs-3]
+  # TEMP FIX: bare MCR image (ECR sdlc-deploy-ci pull fails without runner host auth).
+  # Permanent: name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
+  image:
+    name: mcr.microsoft.com/powershell:7.4-debian-12
+    entrypoint: [""]
+  resource_group: "deploy-$CI_COMMIT_REF_SLUG"
+  variables:
+    TF_VERSION: "1.10.5"
+    AWS_ROLE_ARN: arn:aws:iam::061836593297:role/gitlab-sdlc-deploy-role
+    AWS_REGION: us-east-2
+    ARTIFACT_STORE: "s3"
+    PLATFORM_REPO_URL: "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform.git"
+    PLATFORM_REPO_BRANCH: "MVP_SDLC_agentic"
+    TF_PLUGIN_CACHE_DIR: "/root/.cache/tf-plugin-cache"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
+  id_tokens:
+    AWS_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  cache:
+    key: "tf-plugin-cache-$TF_VERSION"
+    paths:
+      - $TF_PLUGIN_CACHE_DIR
+  before_script:
+    - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
+    - 'echo "Target app slug: $SLUG"'
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+    - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
+    - export AWS_DEFAULT_REGION="$AWS_REGION"
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    # powershell:7.4-debian-12 is bare — install tools the ECR CI image had baked in.
+    - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+    - pip3 install --no-cache-dir --break-system-packages awscli
+    - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+    - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
+    - |
+      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
+        if [ -z "$(printenv "$v")" ]; then
+          echo "Missing required CI/CD variable: $v — check group-level CI/CD variables under junolabs, or project variables on this repo."
+          exit 1
+        fi
+      done
+    - |
+      # gitlab-agent publishes a feature as several sequential commits (one file/batch
+      # per MCP call), and each push can trigger its own pipeline on this branch. Only
+      # the pipeline for the branch's *final* commit sees the complete file set. If a
+      # newer commit has already landed by the time we get here, this pipeline is a
+      # stale intermediate one — skip cleanly instead of failing, and let the pipeline
+      # for the latest commit do the real marker check + deploy.
+      REMOTE_HEAD="$(git ls-remote "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "refs/heads/${CI_COMMIT_BRANCH}" | cut -f1)"
+      if [ -n "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "$CI_COMMIT_SHA" ]; then
+        echo "Newer commit ($REMOTE_HEAD) already pushed to $CI_COMMIT_BRANCH — this pipeline is for a stale commit ($CI_COMMIT_SHA), skipping. The pipeline for the latest commit will deploy."
+        exit 0
+      fi
+    - |
+      # Link this deploy to the AgentCore/frontend runId written by gitlab-agent.
+      # Apps-repo publish: branch-root .sdlc/pipeline-run.json
+      # Monorepo-style fallback: target-apps/<slug>/.sdlc/pipeline-run.json
       MARKER=""
       for cand in ".sdlc/pipeline-run.json" "target-apps/${SLUG}/.sdlc/pipeline-run.json"; do
         if [ -f "$cand" ]; then MARKER="$cand"; break; fi
       done
       if [ -z "$MARKER" ]; then
-        echo "Missing .sdlc/pipeline-run.json — republish via gitlab-agent so CI can link the frontend run"
+        echo "Missing .sdlc/pipeline-run.json — republish via gitlab-agent so the frontend can receive appUrl"
         exit 1
       fi
       export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
       if [ -z "$PIPELINE_RUN_ID" ]; then
-        echo "pipeline-run.json has empty runId"
+        echo "pipeline-run.json has empty runId ($MARKER)"
         exit 1
       fi
-      echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID SLUG=$SLUG (from $MARKER)"
-    - export AWS_WEB_IDENTITY_TOKEN_FILE=$AWS_OIDC_TOKEN
-    - export AWS_DEFAULT_REGION="$AWS_REGION"
+      echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID (from $MARKER)"
+    - aws sts get-caller-identity || (echo "OIDC role assumption failed — see the comment above this job about trust policy scope, or re-run the oidc:test job." && exit 1)
     - |
-      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE PLATFORM_REPO_URL; do
-        if [ -z "$(printenv "$v")" ]; then
-          echo "Missing required CI/CD variable: $v"
-          exit 1
-        fi
-      done
-    - pip3 install --no-cache-dir --break-system-packages awscli
-    - aws sts get-caller-identity
-    - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
-    - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
-    - git clone --depth 1 "$PLATFORM_REPO_URL" "$PLATFORM_CLONE_DIR"
-    - mkdir -p "$PLATFORM_CLONE_DIR/backend/target-apps/$SLUG"
+      account=$(aws sts get-caller-identity --query Account --output text)
+      if [ "$account" != "061836593297" ]; then
+        echo "Wrong AWS account: got $account, expected 061836593297 — refusing to deploy. Ambient runner credentials are shadowing the OIDC role."
+        exit 1
+      fi
+    - terraform -version
+    - docker info > /dev/null || (echo "Docker daemon not reachable via the host socket — ask whoever manages the runner whether /var/run/docker.sock is still bind-mounted for this runner." && exit 1)
+    - git clone --depth 1 --branch "$PLATFORM_REPO_BRANCH" "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${PLATFORM_REPO_URL#https://}" /tmp/platform
+    - cp -r "$CI_PROJECT_DIR"/. /tmp/platform/backend/
+    - rm -rf /tmp/platform/backend/.git
     - |
-      # Apps branch root is the app tree; overlay into monorepo layout for devops_agent.
-      tar -C . --exclude='.git' --exclude='inputs' -cf - . \
-        | tar -C "$PLATFORM_CLONE_DIR/backend/target-apps/$SLUG" -xf -
-    - pip3 install --no-cache-dir --break-system-packages -r "$PLATFORM_CLONE_DIR/backend/requirements.txt"
+      mkdir -p "/tmp/platform/backend/target-apps/${SLUG}/.sdlc"
+      if [ -f "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" ]; then
+        cp "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" "/tmp/platform/backend/target-apps/${SLUG}/.sdlc/pipeline-run.json"
+      fi
+    - pip3 install --no-cache-dir --break-system-packages -r /tmp/platform/backend/requirements.txt
   script:
-    - cd "$PLATFORM_CLONE_DIR/backend"
+    - cd /tmp/platform/backend
     - export PIPELINE_RUN_ID ARTIFACT_STORE
     - python3 agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy

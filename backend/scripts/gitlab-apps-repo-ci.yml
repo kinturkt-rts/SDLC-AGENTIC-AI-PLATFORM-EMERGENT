@@ -37,8 +37,10 @@ oidc:test:
 target-app:deploy:
   stage: deploy
   tags: [juno-labs-3]
+  # TEMP FIX: bare MCR image (ECR sdlc-deploy-ci pull fails without runner host auth).
+  # Permanent: name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
   image:
-    name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
+    name: mcr.microsoft.com/powershell:7.4-debian-12
     entrypoint: [""]
   resource_group: "deploy-$CI_COMMIT_REF_SLUG"
   variables:
@@ -48,7 +50,6 @@ target-app:deploy:
     ARTIFACT_STORE: "s3"
     PLATFORM_REPO_URL: "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform.git"
     PLATFORM_REPO_BRANCH: "MVP_SDLC_agentic"
-
     TF_PLUGIN_CACHE_DIR: "/root/.cache/tf-plugin-cache"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
@@ -66,8 +67,12 @@ target-app:deploy:
     - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
     - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
     - export AWS_DEFAULT_REGION="$AWS_REGION"
-
     - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    # powershell:7.4-debian-12 is bare — install tools the ECR CI image had baked in.
+    - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
+    - pip3 install --no-cache-dir --break-system-packages awscli
+    - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+    - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
     - |
       for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
         if [ -z "$(printenv "$v")" ]; then
@@ -75,6 +80,18 @@ target-app:deploy:
           exit 1
         fi
       done
+    - |
+      # gitlab-agent publishes a feature as several sequential commits (one file/batch
+      # per MCP call), and each push can trigger its own pipeline on this branch. Only
+      # the pipeline for the branch's *final* commit sees the complete file set. If a
+      # newer commit has already landed by the time we get here, this pipeline is a
+      # stale intermediate one — skip cleanly instead of failing, and let the pipeline
+      # for the latest commit do the real marker check + deploy.
+      REMOTE_HEAD="$(git ls-remote "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "refs/heads/${CI_COMMIT_BRANCH}" | cut -f1)"
+      if [ -n "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "$CI_COMMIT_SHA" ]; then
+        echo "Newer commit ($REMOTE_HEAD) already pushed to $CI_COMMIT_BRANCH — this pipeline is for a stale commit ($CI_COMMIT_SHA), skipping. The pipeline for the latest commit will deploy."
+        exit 0
+      fi
     - |
       # Link this deploy to the AgentCore/frontend runId written by gitlab-agent.
       # Apps-repo publish: branch-root .sdlc/pipeline-run.json

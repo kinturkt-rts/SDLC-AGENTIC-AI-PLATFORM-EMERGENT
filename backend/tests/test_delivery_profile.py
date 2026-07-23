@@ -35,6 +35,23 @@ def test_scan_ignores_negated_streamlit() -> None:
     assert profile["uiRequired"] is False
 
 
+def test_scan_ignores_negated_streamlit_in_comma_list() -> None:
+    """Regression: 'no <list of 3+ items>, Streamlit, <more items>' must negate.
+
+    lab-equipment-booking.txt used this phrasing ("No customer-facing web UI,
+    Streamlit, chatbots, or SSO for this version - API only.") and the old
+    0-2-word gap couldn't reach past "customer-facing web UI," to "Streamlit",
+    so requiresStreamlit came back True for an API-only brief.
+    """
+    profile = scan_delivery_text(
+        "Must have for v1:\n"
+        "- No customer-facing web UI, Streamlit, chatbots, or SSO for this "
+        "version - API only.\n"
+    )
+    assert profile["requiresStreamlit"] is False
+    assert profile["uiRequired"] is False
+
+
 def test_scan_streamlit_not_killed_by_http_client_to_api_only() -> None:
     """PRD architecture rows often say 'HTTP client to API only' while requiring Streamlit."""
     profile = scan_delivery_text(

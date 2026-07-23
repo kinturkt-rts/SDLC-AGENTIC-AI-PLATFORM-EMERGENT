@@ -27,8 +27,14 @@ _REACT_MARKERS = ("react", "next.js", "nextjs", "vite", "frontend/")
 
 # Explicit Streamlit omissions only. Do NOT treat bare "api only" as a negation —
 # PRDs routinely say "HTTP client to API only" while still requiring Streamlit UI.
+#
+# The "no/without/not/omit ... streamlit" clause allows any run of words up to the
+# next clause boundary (., ;, newline, em/en dash) rather than a fixed 0-2 word gap —
+# briefs commonly phrase this as a list ("no web UI, Streamlit, chatbots, or SSO"),
+# where hyphenated words and multiple list items push "streamlit" past a 2-word cap.
+_CLAUSE_GAP = r"[^.;\n–—]{0,80}?"
 _STREAMLIT_NEGATED = re.compile(
-    r"\b(?:no|without|not|omit)\s+(?:\w+\s+){0,2}streamlit\b|"
+    r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP + r"\bstreamlit\b|"
     r"\bno\s+ui\s+folder\b|"
     r"streamlit/react\s+ui|"
     r"\bapi[- ]only\s+(?:app|delivery|service|backend|mode)\b|"
@@ -36,8 +42,16 @@ _STREAMLIT_NEGATED = re.compile(
     re.IGNORECASE,
 )
 _REACT_NEGATED = re.compile(
-    r"\b(?:no|without|not|omit)\s+(?:\w+\s+){0,2}react\b|"
+    r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP + r"\breact\b|"
     r"streamlit/react\s+ui",
+    re.IGNORECASE,
+)
+_GENERIC_UI_MARKERS = ("web ui", "browser ui", "client-facing portal")
+# Same clause-gap negation as Streamlit/React — "no ... web UI ..." lists hit this too
+# (e.g. "No customer-facing web UI, Streamlit, chatbots, or SSO for this version").
+_GENERIC_UI_NEGATED = re.compile(
+    r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP
+    + r"\b(?:web ui|browser ui|client-facing portal)\b",
     re.IGNORECASE,
 )
 _API_ONLY_DELIVERY = re.compile(
@@ -62,17 +76,11 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
     requires_streamlit = _feature_required(lower, _STREAMLIT_MARKERS, _STREAMLIT_NEGATED)
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
     api_only_delivery = bool(_API_ONLY_DELIVERY.search(lower)) and not requires_streamlit
+    generic_ui_required = _feature_required(lower, _GENERIC_UI_MARKERS, _GENERIC_UI_NEGATED)
     ui_required = (
         requires_streamlit
         or requires_react
-        or (
-            not api_only_delivery
-            and (
-                "web ui" in lower
-                or "browser ui" in lower
-                or "client-facing portal" in lower
-            )
-        )
+        or (not api_only_delivery and generic_ui_required)
     )
     ui_pattern: str | None = None
     if requires_streamlit:
