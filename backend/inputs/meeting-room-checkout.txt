@@ -1,0 +1,52 @@
+Build a small internal Meeting Room Equipment Checkout API for shared office equipment.
+
+Problem:
+
+HDMI adapters, webcams, speakers, and presentation remotes are borrowed informally and often go missing.
+Facilities needs one place to track available equipment, who borrowed it, and when it should be returned.
+Internal tools should call a clean API — no browser app required for v1.
+
+Who uses it:
+
+Anyone on the internal network can browse available equipment.
+Employees with a valid API key can check out and return equipment.
+Facilities staff with an admin key can add, update, deactivate, or close overdue checkouts.
+Health checks stay open for ops.
+
+MVP features:
+
+Maintain equipment: name, category, asset code, location, condition, active/inactive.
+Check out an item: borrower email, checkout date, expected return date, optional notes.
+Return an item and record its condition.
+List and filter equipment or checkouts by status, category, borrower, or due date.
+Keep returned and overdue checkout history.
+Seed a few sample items and checkouts.
+
+Business rules:
+
+An item cannot have more than one active checkout.
+Inactive or damaged items cannot be checked out.
+Expected return date cannot be before the checkout date.
+Only the borrower or facilities staff can return an active checkout.
+Returned records must not be hard-deleted.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+A simple FastAPI suitable for demos.
+Swagger/OpenAPI is sufficient.
+No Streamlit, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Email reminders, QR scanning, reservation waitlists, employee login.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+A user can list available equipment, check out a webcam, see a second checkout rejected, return it, and still view the completed checkout history.

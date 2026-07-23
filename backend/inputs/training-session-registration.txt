@@ -1,0 +1,55 @@
+Build a medium internal Training Session Registration App using FastAPI and Streamlit.
+
+Problem:
+
+Employees register for internal training through email, and organizers manually track seats and cancellations.
+Teams need one place to publish sessions, register employees, prevent overbooking, and see attendance lists.
+Employees should use a simple Streamlit interface backed by a clean FastAPI service.
+
+Who uses it:
+
+Employees can browse upcoming sessions, register, cancel, and view their registrations.
+Training coordinators can create sessions, update capacity, close registration, and view attendees.
+Streamlit must call FastAPI and must not connect directly to the database.
+Health checks stay open for ops.
+
+MVP features:
+
+Maintain sessions: title, trainer, date, start time, location, capacity, status.
+Register an employee with name and email.
+Cancel a registration using soft cancellation.
+List and filter sessions by date, trainer, status, or location.
+Show available seats and attendee lists.
+Seed a few upcoming sessions and sample registrations.
+
+Business rules:
+
+An employee cannot have more than one active registration for the same session.
+Registration is rejected when capacity is reached.
+Employees cannot register for cancelled or closed sessions.
+Session date and time must be in the future when created.
+Capacity cannot be reduced below the number of active registrations.
+Cancelled registrations remain in history.
+Only coordinators can create, update, or cancel sessions.
+
+Must have for v1:
+
+Persisted data.
+FastAPI backend and Streamlit frontend.
+Role distinction between employee and coordinator.
+Streamlit uses FastAPI only.
+Open health endpoint.
+
+Nice to have later:
+
+Waitlists, calendar invites, attendance check-in, completion certificates.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+Keep the UI simple and demo-friendly.
+
+Success:
+
+An employee can register for an available session, duplicate registration is rejected, registration stops when capacity is full, cancellation frees a seat, and coordinators can still view cancelled history.
