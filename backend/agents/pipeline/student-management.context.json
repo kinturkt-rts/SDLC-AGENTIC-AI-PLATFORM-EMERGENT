@@ -1,0 +1,49 @@
+{
+  "targetApp": "student-management",
+  "diagramPaths": [
+    "student-management/docs/generated-diagrams/student-management.png"
+  ],
+  "prdPath": "student-management/docs/PRD/student-management.md",
+  "designDocPath": "student-management/docs/design/student-management.md",
+  "preferredNoSqlPath": "student-management/db/nosql",
+  "productBrief": "Feature: Student Management API \u2014 Product Requirements Document
+Student information is currently maintained across disconnected spreadsheets, requiring manual effort to update and leaving no single authoritative source of truth. Errors, duplication, and stale records are common pain points for administrative staff. The proposed solution is a lightweight, internal RESTful API that centralises student record management. Staff and authorised internal systems interact with the service exclusively through a documented HTTP API (Swagger/OpenAPI), with no browser UI required in v1. All writes are protected by API-key authentication, while read-only endpoints are available to authorised internal...",
+  "developerHandoffPath": "student-management/handoffs/developer-handoff.json",
+  "inputFile": "student-management/inputs/student-management.txt",
+  "databaseHandoffPath": "student-management/db/HANDOFF.md",
+  "architectBrief": "Feature: Student Management API \u2014 Product Requirements Document
+
+### Overview
+Student information is currently maintained across disconnected spreadsheets, requiring manual effort to update and leaving no single authoritative source of truth. Errors, duplication, and stale records are common pain points for administrative staff.
+
+The proposed solution is a lightweight, internal RESTful API that centralises student record management. Staff and authorised internal systems interact with the service exclusively through a documented HTTP API (Swagger/OpenAPI), with no browser UI required in v1. All writes are protected by API-key authentication, while read-only endpoints are available to authorised internal consumers.
+
+The v1 scope covers full CRUD operations on student records, soft-deletion (deactivation), filtering by course or status, and a demo-data seeding endpoint. Persistent storage ensures records survive restarts, and all secrets are kept out of source code.
+
+---
+
+### Out of scope
+- Browser-based or mobile UI (Streamlit, React, or any front-end) \u2014 not in v1
+- Single Sign-On (SSO) or OAuth2 / student self-service login
+- Attendance tracking, grade recording, or class-schedule management
+- Customer-facing or public-facing access
+- Hard (permanent) deletion of student records
+- Bulk import from spreadsheets (migration tooling is a separate concern)
+- Role-based access control beyond read vs. write API-key tiers
+- Email notifications or integrations with external SIS plat...",
+  "runId": "fe73db84-a429-436e-a1fd-2cf33b028b74",
+  "dbOutputDir": "student-management/db",
+  "preferredSqlPath": "student-management/db/sql",
+  "dbBackend": "postgres+mongodb",
+  "deliveryProfile": {
+    "uiRequired": true,
+    "requiresStreamlit": true,
+    "requiresReact": true,
+    "uiPattern": "streamlit",
+    "streamlitPath": "ui/streamlit_app.py",
+    "streamlitRequirementsPath": "ui/requirements.txt"
+  },
+  "postgresAppSchema": "student_management",
+  "applyToRdsAfterWrite": true,
+  "targetAppDir": "student-management"
+}

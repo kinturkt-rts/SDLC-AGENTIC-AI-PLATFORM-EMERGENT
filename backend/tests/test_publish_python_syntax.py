@@ -52,6 +52,24 @@ def test_assert_publish_python_syntax_rejects_expanded_backslash_n_corruption() 
         )
 
 
+def test_assert_publish_python_syntax_rejects_lone_surrogate_escape() -> None:
+    """Regression: student-management shipped page_icon="\\ud83c\\udf93" (a raw
+    UTF-16 surrogate pair, JS/JSON-style) instead of the literal emoji or a
+    single \\Uxxxxxxxx escape. py_compile alone accepts this - it's valid
+    syntax - but Streamlit's set_page_config crashes with UnicodeEncodeError
+    ('surrogates not allowed') the moment it tries to UTF-8 encode the icon.
+    """
+    bad = 'page_icon = "\\ud83c\\udf93"\n'
+    with pytest.raises(ValueError, match="lone UTF-16 surrogate"):
+        assert_publish_python_syntax([{"path": "ui/streamlit_app.py", "content": bad}])
+
+
+def test_assert_publish_python_syntax_accepts_literal_emoji() -> None:
+    assert_publish_python_syntax(
+        [{"path": "ui/streamlit_app.py", "content": 'page_icon = "\U0001F393"\n'}]
+    )
+
+
 def test_build_publish_file_py_is_base64_roundtrip() -> None:
     raw = b'msg = "line one\\nline two"\n'
     item = _build_publish_file("app/startup_checks.py", raw)

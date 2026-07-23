@@ -1,13 +1,19 @@
 # This repo (sdlc-agentic-ai-platform-apps) holds generated app output only —
 # devops-agent's own code (agents/, scripts/, infrastructure/) lives in the
 # main platform repo (sdlc-agentic-ai-platform) and is cloned in before_script.
-
+#
+# The included Auto-DevOps template (bottom of this file) brings its own
+# workflow:rules that only creates a pipeline if it detects a Dockerfile /
+# requirements.txt / package.json etc. at THIS repo's root — none of which
+# exist here (they live under target-apps/<app>/ or the platform repo's
+# backend/). That silently blocked every pipeline on this repo before this
+# fix. A local workflow: key overrides the included one.
 workflow:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-
-# Verify the OIDC role your AWS admin created (gitlab-sdlc-deploy-role)
+#
+# One-off: verify the OIDC role your AWS admin created (gitlab-sdlc-deploy-role)
 # actually works before relying on it in target-app:deploy below. Delete this
 # job once target-app:deploy has been confirmed working end to end.
 oidc:test:
@@ -34,14 +40,22 @@ oidc:test:
         exit 1
       fi
 
+# Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
+# fires on branches gitlab-agent publishes here (sdlc/<app>).
 target-app:deploy:
   stage: deploy
   tags: [juno-labs-3]
-  # TEMP FIX: bare MCR image (ECR sdlc-deploy-ci pull fails without runner host auth).
-  # Permanent: name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
   image:
+    # name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
     name: mcr.microsoft.com/powershell:7.4-debian-12
     entrypoint: [""]
+  # gitlab-agent publishes each app as several rapid commits (batch 1, batch
+  # 2, final) - each one independently triggers its own pipeline, and without
+  # this, they race on the runner and on the shared :latest ECR tag. The one
+  # that finishes last wins, regardless of which commit was actually correct
+  # - this is exactly what broke contacts-api (an earlier, incomplete commit's
+  # image silently overwrote the final, correct one). resource_group forces
+  # GitLab to queue deploys for the same app one at a time instead.
   resource_group: "deploy-$CI_COMMIT_REF_SLUG"
   variables:
     TF_VERSION: "1.10.5"
@@ -49,7 +63,14 @@ target-app:deploy:
     AWS_REGION: us-east-2
     ARTIFACT_STORE: "s3"
     PLATFORM_REPO_URL: "https://code.junodev.net/junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform.git"
+    # The platform repo's default branch (main) is stale - missing
+    # requirements.txt and devops_agent.py entirely. All real work lives on
+    # this branch. Update this if/when main catches up or the working branch
+    # changes.
     PLATFORM_REPO_BRANCH: "MVP_SDLC_agentic"
+    # Terraform's AWS provider plugin (~600MB) would otherwise be downloaded
+    # fresh on every single run. Fixed path + job cache below persists it
+    # across pipeline runs on the same runner instead of refetching it.
     TF_PLUGIN_CACHE_DIR: "/root/.cache/tf-plugin-cache"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
@@ -57,18 +78,24 @@ target-app:deploy:
     AWS_OIDC_TOKEN:
       aud: sts.amazonaws.com
   cache:
+    # Static key (not per-branch) so every app's deploy job shares one cache -
+    # the AWS provider version is the same for all of them (TF_VERSION above).
     key: "tf-plugin-cache-$TF_VERSION"
     paths:
       - $TF_PLUGIN_CACHE_DIR
   before_script:
     - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
     - 'echo "Target app slug: $SLUG"'
+    # Same ambient-credential shadowing as oidc:test - strip before OIDC vars.
     - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
     - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
     - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
     - export AWS_DEFAULT_REGION="$AWS_REGION"
+    # GitLab's cache restore only creates this dir if a previous cache archive
+    # exists; on a first-ever run (or a cache miss) terraform needs it to
+    # already be there to use it as a plugin cache.
     - mkdir -p "$TF_PLUGIN_CACHE_DIR"
-    # powershell:7.4-debian-12 is bare — install tools the ECR CI image had baked in.
+     # powershell:7.4-debian-12 is bare — install tools the ECR CI image had baked in.
     - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git
     - pip3 install --no-cache-dir --break-system-packages awscli
     - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
@@ -80,18 +107,6 @@ target-app:deploy:
           exit 1
         fi
       done
-    - |
-      # gitlab-agent publishes a feature as several sequential commits (one file/batch
-      # per MCP call), and each push can trigger its own pipeline on this branch. Only
-      # the pipeline for the branch's *final* commit sees the complete file set. If a
-      # newer commit has already landed by the time we get here, this pipeline is a
-      # stale intermediate one — skip cleanly instead of failing, and let the pipeline
-      # for the latest commit do the real marker check + deploy.
-      REMOTE_HEAD="$(git ls-remote "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "refs/heads/${CI_COMMIT_BRANCH}" | cut -f1)"
-      if [ -n "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "$CI_COMMIT_SHA" ]; then
-        echo "Newer commit ($REMOTE_HEAD) already pushed to $CI_COMMIT_BRANCH — this pipeline is for a stale commit ($CI_COMMIT_SHA), skipping. The pipeline for the latest commit will deploy."
-        exit 0
-      fi
     - |
       # Link this deploy to the AgentCore/frontend runId written by gitlab-agent.
       # Apps-repo publish: branch-root .sdlc/pipeline-run.json
@@ -122,6 +137,7 @@ target-app:deploy:
     - git clone --depth 1 --branch "$PLATFORM_REPO_BRANCH" "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${PLATFORM_REPO_URL#https://}" /tmp/platform
     - cp -r "$CI_PROJECT_DIR"/. /tmp/platform/backend/
     - rm -rf /tmp/platform/backend/.git
+    # Ensure marker is also under target-apps/<slug> for devops_agent fallback.
     - |
       mkdir -p "/tmp/platform/backend/target-apps/${SLUG}/.sdlc"
       if [ -f "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" ]; then

@@ -61,8 +61,37 @@ def _decode_publish_text(item: dict[str, Any]) -> str | None:
     return content
 
 
+def _find_lone_surrogate_consts(code: Any, *, _seen: set[int] | None = None) -> list[str]:
+    """Recursively scan a code object's string constants for lone UTF-16 surrogates.
+
+    Python's `\\uD83C\\uDF93`-style escapes decode into two standalone surrogate
+    *code points* rather than combining into one astral character the way
+    JS/JSON do — `py_compile` happily accepts this (it's valid Python syntax),
+    but the resulting `str` can never be UTF-8 encoded. Streamlit hits exactly
+    this in `st.set_page_config(page_icon=...)`, so this has to be caught
+    before publish, not left to blow up at runtime in production.
+    """
+    if _seen is None:
+        _seen = set()
+    if id(code) in _seen:
+        return []
+    _seen.add(id(code))
+
+    bad: list[str] = []
+    for const in code.co_consts:
+        if isinstance(const, str):
+            try:
+                const.encode("utf-8")
+            except UnicodeEncodeError:
+                bad.append(repr(const))
+        elif hasattr(const, "co_consts"):
+            bad.extend(_find_lone_surrogate_consts(const, _seen=_seen))
+    return bad
+
+
 def assert_publish_python_syntax(files: list[dict[str, Any]]) -> None:
-    """Fail publish early if any .py payload has SyntaxError (avoids green CI + 502 UI)."""
+    """Fail publish early if any .py payload has a SyntaxError or an unencodable
+    string constant (avoids green CI + 502/500 UI at runtime)."""
     import py_compile
     import tempfile
 
@@ -88,6 +117,20 @@ def assert_publish_python_syntax(files: list[dict[str, Any]]) -> None:
             py_compile.compile(tmp_path, doraise=True)
         except py_compile.PyCompileError as exc:
             errors.append(f"{path}: {exc.msg}")
+        else:
+            try:
+                code = compile(text, path, "exec")
+            except SyntaxError:
+                code = None  # already reported above via py_compile
+            if code is not None:
+                lone_surrogates = _find_lone_surrogate_consts(code)
+                for bad_repr in lone_surrogates:
+                    errors.append(
+                        f"{path}: string constant {bad_repr} contains a lone UTF-16 "
+                        "surrogate (from a \\uD800-\\uDFFF escape) and cannot be "
+                        "UTF-8 encoded — use the literal Unicode character or a "
+                        "single \\Uxxxxxxxx escape instead"
+                    )
         finally:
             try:
                 os.unlink(tmp_path)
@@ -95,7 +138,7 @@ def assert_publish_python_syntax(files: list[dict[str, Any]]) -> None:
                 pass
     if errors:
         raise ValueError(
-            "Refusing to publish Python with SyntaxError (would deploy a crashing app):\n"
+            "Refusing to publish Python that would crash at runtime:\n"
             + "\n".join(f"  - {e}" for e in errors)
         )
 
@@ -626,6 +669,16 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
     for source_rel, dest in publish_entries:
         src = root_path / source_rel
         files.append(_build_publish_file(dest, src.read_bytes()))
+
+    # Push the CI template on every publish (new branch or republish) so a
+    # branch never gets stuck with whatever .gitlab-ci.yml existed when it was
+    # first created — inheritance from the apps project's default branch only
+    # happens once, at branch-creation time, which silently strands existing
+    # branches when this template is fixed later.
+    ci_template = root_path / "scripts" / "gitlab-apps-repo-ci.yml"
+    if ci_template.is_file():
+        files.append(_build_publish_file(".gitlab-ci.yml", ci_template.read_bytes()))
+
     return files
 
 
