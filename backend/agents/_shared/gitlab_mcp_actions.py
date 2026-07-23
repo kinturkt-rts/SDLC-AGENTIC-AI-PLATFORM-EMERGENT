@@ -160,8 +160,10 @@ def _build_publish_file(dest_rel: str, data: bytes) -> dict[str, Any]:
             "content": base64.b64encode(data).decode("ascii"),
             "binary": True,
         }
-    text_suffixes = {".md", ".sql", ".txt", ".ini", ".json", ".example"}
-    if name == ".gitignore" or suffix in text_suffixes:
+    # Include .yml/.yaml so apps-repo .gitlab-ci.yml publishes as text (not
+    # base64 binary) — binary uploads were silently unreliable for this path.
+    text_suffixes = {".md", ".sql", ".txt", ".ini", ".json", ".example", ".yml", ".yaml"}
+    if name == ".gitignore" or name == ".gitlab-ci.yml" or suffix in text_suffixes:
         return {
             "path": dest_rel,
             "content": sanitize_publish_content_for_waf(data.decode("utf-8")),
@@ -650,14 +652,15 @@ def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) ->
 
 
 def resolve_apps_repo_ci_template(root: Path | None = None) -> Path | None:
-    """Locate ``scripts/gitlab-apps-repo-ci.yml`` for apps-repo publish.
+    """Locate the apps-repo deploy CI template for every publish.
 
-    Cloud AgentCore publish roots are often a materialized app workspace that
-    does **not** contain ``scripts/``. Always fall back to the packaged backend
-    root (``repo_root()`` next to this module) so every publish still ships the
-    current temp-fix / deploy CI template as ``.gitlab-ci.yml``.
+    Prefer the copy shipped beside this module (``agents/_shared/``) — that path
+    is always inside ``COPY agents`` for AgentCore. Then fall back to
+    ``scripts/gitlab-apps-repo-ci.yml`` under the publish root / backend root.
     """
-    candidates: list[Path] = []
+    candidates: list[Path] = [
+        Path(__file__).resolve().parent / "gitlab_apps_repo_ci.yml",
+    ]
     if root is not None:
         candidates.append(Path(root) / "scripts" / "gitlab-apps-repo-ci.yml")
     candidates.append(repo_root() / "scripts" / "gitlab-apps-repo-ci.yml")
@@ -693,14 +696,25 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
         src = root_path / source_rel
         files.append(_build_publish_file(dest, src.read_bytes()))
 
-    # Push the CI template on every publish (new branch or republish) so a
-    # branch never gets stuck with whatever .gitlab-ci.yml existed when it was
-    # first created — inheritance from the apps project's default branch only
-    # happens once, at branch-creation time, which silently strands existing
-    # branches when this template is fixed later.
+    # ALWAYS overwrite .gitlab-ci.yml on the apps branch with the platform
+    # temp-fix template (MCR image). Inheritance from default branch only
+    # happens at branch creation — without this, branches keep the old ECR image.
     ci_template = resolve_apps_repo_ci_template(root_path)
-    if ci_template is not None:
-        files.append(_build_publish_file(".gitlab-ci.yml", ci_template.read_bytes()))
+    if ci_template is None:
+        raise FileNotFoundError(
+            "apps-repo CI template missing: expected agents/_shared/gitlab_apps_repo_ci.yml "
+            "or scripts/gitlab-apps-repo-ci.yml (required so every publish uses the "
+            "working MCR deploy image, not private ECR sdlc-deploy-ci)"
+        )
+    ci_bytes = ci_template.read_bytes()
+    ci_item = _build_publish_file(".gitlab-ci.yml", ci_bytes)
+    # Put CI first so early pipeline commits already use the correct image.
+    files.insert(0, ci_item)
+    print(
+        f"[gitlab-mcp] apps publish will overwrite .gitlab-ci.yml "
+        f"from {ci_template} ({len(ci_bytes)} bytes, binary={ci_item.get('binary')})",
+        flush=True,
+    )
 
     return files
 

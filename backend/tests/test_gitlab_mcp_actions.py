@@ -167,21 +167,22 @@ def test_apps_repo_publish_includes_local_input_brief(tmp_path: Path) -> None:
 
 
 def test_apps_repo_publish_includes_ci_yml_from_backend_scripts(tmp_path: Path) -> None:
-    """Cloud publish roots omit scripts/; CI must still resolve from packaged backend."""
+    """Cloud publish roots omit scripts/; CI must still resolve from packaged agents/_shared."""
     feature = "demo-app"
     (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
     (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# main", encoding="utf-8")
 
     files = _collect_apps_repo_publish_files(feature, root=tmp_path)
-    by_path = {item["path"]: item for item in files}
-    assert ".gitlab-ci.yml" in by_path
-    content = by_path[".gitlab-ci.yml"]["content"]
-    if by_path[".gitlab-ci.yml"].get("binary") or str(
-        by_path[".gitlab-ci.yml"].get("encoding") or ""
-    ).lower() == "base64":
-        content = base64.b64decode(content).decode("utf-8")
+    assert files[0]["path"] == ".gitlab-ci.yml"
+    assert files[0].get("binary") is False
+    content = files[0]["content"]
     assert "mcr.microsoft.com/powershell:7.4-debian-12" in content
     assert "target-app:deploy" in content
+    # ECR image must not be the active image name
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("name:") and "sdlc-deploy-ci" in stripped:
+            raise AssertionError(f"ECR image still active: {stripped}")
 
 
 def test_collect_input_brief_from_context_path(tmp_path: Path) -> None:

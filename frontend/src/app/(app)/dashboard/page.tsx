@@ -1078,7 +1078,7 @@ export default function DashboardPage() {
               </span>
               {isDeployFollowOnRun(runningRun) ? (
                 <span className="ml-2 text-sky-400">
-                  · Deploying — code is on GitLab; live URL appears when DevOps finishes
+                  · Deploying - code is on GitLab; live URL appears when DevOps finishes
                 </span>
               ) : null}
             </span>
