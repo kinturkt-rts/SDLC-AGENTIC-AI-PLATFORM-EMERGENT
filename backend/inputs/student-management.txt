@@ -1,0 +1,50 @@
+Build a small internal Student Management API for maintaining student records.
+
+Problem:
+
+Student information is currently tracked in spreadsheets and updated manually.
+Staff needs one place to create, view, update, and deactivate student records.
+Internal systems should use a clean API — no browser app required for v1.
+
+Who uses it:
+
+Staff with a valid API key can manage student records.
+Read access can be available to authorized internal users.
+Health checks stay open for ops.
+
+Features:
+
+Create a student: student ID, full name, email, course, enrollment date, and status.
+View one student or list all students.
+Update student details.
+Deactivate a student instead of permanently deleting the record.
+Filter students by course or status.
+Seed a few sample students for demos.
+
+Business rules:
+
+Student ID and email must be unique.
+Full name, student ID, email, and course are required.
+Enrollment date cannot be in the future.
+Inactive students remain available in history.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+Basic CRUD using FastAPI.
+Swagger/OpenAPI is sufficient.
+No Streamlit, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Attendance tracking, grades, class schedules, student login.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+Staff can add a student, list students, update the course, deactivate the record, and still retrieve the inactive student later.
