@@ -143,7 +143,9 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   // Phase A: keep polling handoffs while deploy is pending/running so the
   // live URL and "App is live" banner appear without a manual refresh.
   const deployActive =
-    run?.deployStatus === 'pending' || run?.deployStatus === 'running';
+    run?.deployStatus === 'pending' ||
+    run?.deployStatus === 'running' ||
+    run?.deployStatus === 'failed';
   const { data: events } = useRunEvents(params.id, isLive);
   const { data: runLogs, isLoading: runLogsLoading } = useRunLogs(params.id, isLive);
   const { data: handoffs } = useRunHandoffs(params.id, isLive || deployActive);

@@ -1,0 +1,54 @@
+Build a small internal Hotel Room Operations App using FastAPI and Streamlit.
+
+Problem:
+
+Room status and availability are currently tracked manually.
+Hotel staff need one place to manage rooms and update whether they are available, occupied, or under maintenance.
+Staff should use a simple Streamlit interface backed by a FastAPI service.
+
+Who uses it:
+
+Front desk staff use Streamlit to browse rooms and update room status.
+Hotel administrators can create, update, or deactivate rooms.
+Streamlit must call FastAPI and must not access the database directly.
+Health checks stay open for ops.
+
+MVP features:
+
+Maintain rooms: room number, type, floor, capacity, nightly rate, status, active/inactive.
+View one room or list all rooms.
+Update room details and current status.
+Filter rooms by type, floor, availability, or status.
+Show available and unavailable rooms in Streamlit tables.
+Seed a few sample rooms for demos.
+
+Business rules:
+
+Room number must be unique.
+Capacity must be greater than zero.
+Nightly rate cannot be negative.
+Inactive rooms cannot be marked available.
+Deactivated rooms remain in history.
+Only administrators can create or deactivate rooms.
+
+Must have for v1:
+
+Persisted data.
+FastAPI backend and Streamlit frontend.
+Streamlit uses FastAPI only.
+Basic role distinction between front desk and administrator.
+Open health endpoint.
+
+Nice to have later:
+
+Reservations, housekeeping status, guest profiles, payments.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+Keep the UI simple and suitable for demos.
+
+Success:
+
+Staff can add a room, update its status, filter available rooms, deactivate it, and still retrieve the room record later.

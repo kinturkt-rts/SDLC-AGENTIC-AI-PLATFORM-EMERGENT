@@ -762,17 +762,21 @@ async def _publish_files_via_file_api(
     slug: str,
     files: list[dict[str, Any]],
     existing_paths: set[str],
+    skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
     """Upload one file per MCP call (required for HTTP MCP behind restrictive WAF)."""
     commit_ids: list[str] = []
     for item in files:
         path = item["path"].lstrip("/")
         tool = "gitlab_file_update" if path in existing_paths else "gitlab_file_create"
+        message = _publish_commit_message(slug)
+        if skip_ci_tracker is not None:
+            message = skip_ci_tracker.message(message)
         payload: dict[str, Any] = {
             "project_id": project_id,
             "file_path": path,
             "branch": branch,
-            "commit_message": _publish_commit_message(slug),
+            "commit_message": message,
             "content": item["content"],
         }
         if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
@@ -793,6 +797,7 @@ async def _publish_text_file_batches(
     slug: str,
     text_files: list[dict[str, Any]],
     existing_paths: set[str],
+    skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
     # CloudFront WAF limits POST bodies — one file per MCP call. Direct ALB uses batched commits.
     if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
@@ -803,12 +808,15 @@ async def _publish_text_file_batches(
             slug=slug,
             files=text_files,
             existing_paths=existing_paths,
+            skip_ci_tracker=skip_ci_tracker,
         )
 
     commit_ids: list[str] = []
     batches = _batch_files(text_files)
     for index, batch in enumerate(batches, start=1):
         message = _publish_commit_message(slug, batch=index, total=len(batches))
+        if skip_ci_tracker is not None:
+            message = skip_ci_tracker.message(message)
         commit_result = await call_gitlab_mcp_tool(
             session,
             "gitlab_commit_create",
@@ -974,6 +982,27 @@ def _publish_commit_message(slug: str, *, batch: int | None = None, total: int |
     return f"feat({slug}): SDLC pipeline output"
 
 
+class _SkipCiCommitTracker:
+    """Marks every publish commit except the last with ``[skip ci]``.
+
+    A publish behind CloudFront/WAF pushes one commit per file (see
+    ``_publish_batch_size``); each push otherwise triggers its own GitLab
+    pipeline on the ``sdlc/<slug>`` branch, racing and auto-cancelling on the
+    shared resource_group. Skipping CI for every commit but the true final one
+    means GitLab creates exactly one pipeline per publish, for the complete
+    file set.
+    """
+
+    def __init__(self, total_commits: int) -> None:
+        self._remaining = total_commits
+
+    def message(self, base: str) -> str:
+        self._remaining -= 1
+        if self._remaining > 0:
+            return f"{base} [skip ci]"
+        return base
+
+
 async def _publish_binary_files(
     session: Any,
     *,
@@ -982,6 +1011,7 @@ async def _publish_binary_files(
     slug: str,
     binary_files: list[dict[str, Any]],
     existing_paths: set[str],
+    skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
     """jmrplens commit_create schema has no per-action encoding; use file_create/update."""
     return await _publish_files_via_file_api(
@@ -991,6 +1021,7 @@ async def _publish_binary_files(
         slug=slug,
         files=binary_files,
         existing_paths=existing_paths,
+        skip_ci_tracker=skip_ci_tracker,
     )
 
 
@@ -1127,6 +1158,16 @@ async def publish_feature_async(
         )
 
         text_files, binary_files = _split_publish_files(files)
+
+        if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
+            text_commit_count = len(text_files)
+        else:
+            text_commit_count = len(_batch_files(text_files)) if text_files else 0
+        total_commits = text_commit_count + len(binary_files)
+        # Only worth tracking when a publish produces more than one commit —
+        # that's the case that would otherwise trigger one GitLab pipeline per commit.
+        skip_ci_tracker = _SkipCiCommitTracker(total_commits) if total_commits > 1 else None
+
         commits.extend(
             await _publish_text_file_batches(
                 session,
@@ -1135,6 +1176,7 @@ async def publish_feature_async(
                 slug=slug,
                 text_files=text_files,
                 existing_paths=existing_paths,
+                skip_ci_tracker=skip_ci_tracker,
             )
         )
 
@@ -1146,6 +1188,7 @@ async def publish_feature_async(
                 slug=slug,
                 binary_files=binary_files,
                 existing_paths=existing_paths,
+                skip_ci_tracker=skip_ci_tracker,
             )
         )
 

@@ -32,7 +32,7 @@ import {
   resolveProjectRepositoryLink,
   resolveRunFailureDetail,
 } from './pipeline-handoffs';
-import { getLatestGitlabPipelineDeployStatus } from './gitlab-ci-deploy-status';
+import { getGitlabBranchDeploySignal } from './gitlab-ci-deploy-status';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
@@ -983,28 +983,31 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     isTerminalForDeploy && s3MtimeMs > 0 && Date.now() - s3MtimeMs > DEPLOY_STALE_MS;
 
   // Sync Deploy UI with GitLab CI + devops handoff failures (not only success via appUrl).
+  // Multi-commit publish + resource_group queues many pipelines (Waiting). An earlier
+  // attempt may write healthy:false while a newer deploy is still running/queued —
+  // never mark Failed while any branch pipeline is still in flight.
   let deployCiFailed = false;
   let deployCiFailedDetail: string | null = null;
   if (isTerminalForDeploy && phaseDone.publish && !phaseDone.deploy) {
-    if (await devopsDeployFailedForRun(runId, slug)) {
+    const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
+    const branch = handoffs?.gitlab?.branch?.trim() || null;
+    const project = handoffs?.gitlab?.gitlabProject?.trim() || null;
+    const ci =
+      branch && project
+        ? await getGitlabBranchDeploySignal({ gitlabProject: project, branch })
+        : { status: 'unavailable' as const, webUrl: null, inFlight: false };
+
+    if (ci.inFlight || ci.status === 'running') {
+      // Keep Deploying — resource_group Waiting / active target-app:deploy.
+      deployCiFailed = false;
+    } else if (await devopsDeployFailedForRun(runId, slug)) {
       deployCiFailed = true;
       deployCiFailedDetail = 'Deploy health check failed (devops handoff).';
-    } else {
-      const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
-      const branch = handoffs?.gitlab?.branch?.trim() || null;
-      const project = handoffs?.gitlab?.gitlabProject?.trim() || null;
-      if (branch && project) {
-        const ci = await getLatestGitlabPipelineDeployStatus({
-          gitlabProject: project,
-          branch,
-        });
-        if (ci.status === 'failed') {
-          deployCiFailed = true;
-          deployCiFailedDetail = ci.webUrl
-            ? `GitLab deploy pipeline failed — ${ci.webUrl}`
-            : 'GitLab deploy pipeline failed.';
-        }
-      }
+    } else if (ci.status === 'failed' || ci.status === 'canceled') {
+      deployCiFailed = true;
+      deployCiFailedDetail = ci.webUrl
+        ? `GitLab deploy pipeline failed — ${ci.webUrl}`
+        : 'GitLab deploy pipeline failed.';
     }
   }
 

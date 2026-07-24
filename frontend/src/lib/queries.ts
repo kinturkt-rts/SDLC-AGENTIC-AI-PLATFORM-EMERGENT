@@ -70,7 +70,9 @@ export const useRuns = () =>
             r.status === 'running' ||
             r.status === 'paused' ||
             r.deployStatus === 'running' ||
-            r.deployStatus === 'pending',
+            r.deployStatus === 'pending' ||
+            // Recover when a later CI attempt writes appUrl after a premature/failed handoff.
+            r.deployStatus === 'failed',
         )
       ) {
         return 2_500;
@@ -89,7 +91,13 @@ export const useRun = (id: string) =>
     refetchInterval: (query) => {
       const run = query.state.data;
       if (run?.status === 'running' || run?.status === 'paused') return 2_500;
-      if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 2_500;
+      if (
+        run?.deployStatus === 'running' ||
+        run?.deployStatus === 'pending' ||
+        run?.deployStatus === 'failed'
+      ) {
+        return 2_500;
+      }
       return false;
     },
     refetchOnWindowFocus: true,
@@ -106,7 +114,13 @@ export const useLiveRunsById = (ids: string[]) => {
       refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
         const run = query.state.data;
         if (run?.status === 'running' || run?.status === 'paused') return 2_500;
-        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 2_500;
+        if (
+          run?.deployStatus === 'running' ||
+          run?.deployStatus === 'pending' ||
+          run?.deployStatus === 'failed'
+        ) {
+          return 2_500;
+        }
         return false;
       },
       refetchOnWindowFocus: true,

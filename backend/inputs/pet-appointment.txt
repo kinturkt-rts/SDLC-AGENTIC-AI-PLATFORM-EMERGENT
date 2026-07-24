@@ -1,0 +1,51 @@
+Build a small internal Pet Clinic Appointment API for managing pets and veterinary appointments.
+
+Problem:
+
+Appointments are currently tracked through phone calls and spreadsheets.
+Clinic staff need one place to manage pets, owners, and appointment schedules.
+Internal tools should use a clean API — no browser app required for v1.
+
+Who uses it:
+
+Staff can browse pets and appointments.
+Reception staff with a valid API key can create, update, cancel, or complete appointments.
+Health checks stay open for ops.
+
+MVP features:
+
+Maintain pet records: name, species, breed, age, owner name, owner email, active/inactive.
+Create appointments: pet, appointment date, appointment time, reason, veterinarian, status.
+View one appointment or list appointments.
+Update or cancel appointments.
+Filter appointments by date, veterinarian, pet, or status.
+Seed a few pets and appointments for demos.
+
+Business rules:
+
+Pet name, species, owner name, and owner email are required.
+Appointment date and time cannot be in the past.
+A veterinarian cannot have two active appointments at the same time.
+Inactive pets cannot receive new appointments.
+Cancelled and completed appointments must remain in history.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+Basic CRUD using FastAPI.
+Swagger/OpenAPI is sufficient.
+No Streamlit, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Vaccination records, reminders, billing, prescription tracking.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+Staff can add a pet, create an appointment, reject a conflicting booking, cancel it, and still view the appointment history later.
