@@ -65,6 +65,14 @@ function Test-TfRootComplete {
     return [bool]($text -match 'module\s+"app"')
 }
 
+function Test-TfRootAutoScaffolded {
+    # Only roots written by ensure-target-app-tf-root.py. Never delete devops-agent
+    # / hand-authored roots (e.g. expense-tracker) or shared/control-plane trees.
+    if (-not (Test-Path $TfMain)) { return $false }
+    $head = Get-Content -Path $TfMain -TotalCount 8 -ErrorAction SilentlyContinue
+    return [bool]($head -match 'Auto-scaffolded by scripts/ensure-target-app-tf-root\.py')
+}
+
 function Ensure-TfRoot {
     if (Test-TfRootComplete) { return }
 
@@ -143,13 +151,17 @@ $Registry = "$Account.dkr.ecr.$Region.amazonaws.com"
 Write-Host "AWS account: $Account" -ForegroundColor DarkGray
 
 # -- Terraform init -------------------------------------------------------------
+$cleanupScaffoldedTfRoot = $false
 Push-Location $TfRoot
 try {
     Invoke-Native $Terraform @("init", "-input=false", "-upgrade=false") "terraform init"
 
     if ($Destroy) {
+        $wasAutoScaffolded = Test-TfRootAutoScaffolded
         Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve") "terraform destroy"
         Write-Host "`n[$Feature] destroyed. (ECR repos had force_delete, images are gone too.)" -ForegroundColor Yellow
+        # Only after success — failed destroy must leave the local root for retry.
+        $cleanupScaffoldedTfRoot = $wasAutoScaffolded
         return
     }
 
@@ -274,4 +286,21 @@ try {
 }
 finally {
     Pop-Location
+    # After successful destroy only: drop temporary ensure-*-scaffolded TF roots so
+    # infrastructure/environments/dev/ does not accumulate orphans. Hand-authored
+    # devops roots (no Auto-scaffolded marker) are left alone.
+    if ($cleanupScaffoldedTfRoot -and (Test-TfRootAutoScaffolded)) {
+        $devParent = Join-Path $RepoRoot "infrastructure\environments\dev"
+        $resolvedRoot = [System.IO.Path]::GetFullPath($TfRoot)
+        $resolvedParent = [System.IO.Path]::GetFullPath($devParent)
+        $expected = [System.IO.Path]::GetFullPath((Join-Path $devParent $Feature))
+        if (
+            $resolvedRoot -eq $expected -and
+            $resolvedRoot.StartsWith($resolvedParent, [System.StringComparison]::OrdinalIgnoreCase) -and
+            $Feature -notin @('_shared', 'control-plane-auth')
+        ) {
+            Remove-Item -LiteralPath $resolvedRoot -Recurse -Force -ErrorAction Stop
+            Write-Host "Removed auto-scaffolded TF root: infrastructure/environments/dev/$Feature" -ForegroundColor DarkGray
+        }
+    }
 }
