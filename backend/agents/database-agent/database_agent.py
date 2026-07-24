@@ -83,7 +83,37 @@ _READ_PREFIXES = (
 _written_files: list[str] = []
 _run_context: dict[str, Any] | None = None
 
-DATABASE_SYS_PROMPT = """\
+_JWT_AUTH_TABLE_SECTION = """\
+- - **JWT users table (canonical, required):** the `users` table MUST have these exact columns:
+  `id` (PK), `username` (unique, NOT NULL — the login identifier), `password_hash` (NOT NULL — the bcrypt hash column), `role` (NOT NULL). `email` is optional. Use these EXACT names always.
+  Do **not** use `hashed_password`, `password`, or other aliases, and do **not** use `email` as the login column — login is always by `username`. Split naming across SQL vs ORM breaks the fixed login router. Seed, HANDOFF, ORM, and developer-agent must reuse `username` + `password_hash` exactly.
+- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the `password_hash` column. See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings."""
+
+_API_KEY_AUTH_TABLE_SECTION = """\
+- - **API-key users table (canonical, required, hardcoded — not an LLM choice):** the `users` table MUST have these exact columns: `id` (PK), `token` (unique, NOT NULL — the per-user opaque credential sent as the `X-API-Key` header, e.g. `tok_alice`, `tok_bob_admin`), `role` (NOT NULL — at least `employee`/`manager`/`admin`, per design). There is **no shared secret and no `API_KEY` env var** — every caller has their own row. Do **not** use `password_hash`, `username`, `api_key_hash`, or any other column name for the credential; the fixed `require_api_key` dependency (`app/dependencies.py`) reads `token` and `role` by these exact names.
+- **API-key seed users:** insert the `token` value as **plaintext** (e.g. `'tok_alice'`) — it is looked up by direct equality, never hashed, never `__BCRYPT_PLACEHOLDER__` (that placeholder is for password hashes only and does not apply here). Seed **multiple users spanning every role** the design's RBAC table requires (at least one `employee`, one `manager`, one `admin` row when those roles exist) so role differences are testable, each with its own distinct token:
+  ```sql
+  INSERT INTO users (id, token, role) VALUES
+      ('uuid-1', 'tok_alice_employee', 'employee'),
+      ('uuid-2', 'tok_bob_manager',    'manager'),
+      ('uuid-3', 'tok_carol_admin',    'admin');
+  ```
+  Document these token/role pairs in `HANDOFF.md` under `### seedCredentials` (columns: token | role) so developer-agent's README "Demo accounts" table and QA can reuse them without inventing values."""
+
+
+def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
+    """Render DATABASE_SYS_PROMPT with the auth-mode-specific table section.
+
+    Deterministic on context authMode (set by auth_profile.py, never an LLM
+    judgment) — defaults to "jwt", byte-identical to the prompt before authMode
+    existed. Only authMode == "api-key" swaps in the api-key alternative.
+    """
+    auth_mode = str((ctx or {}).get("authMode") or "jwt").strip().lower()
+    section = _API_KEY_AUTH_TABLE_SECTION if auth_mode == "api-key" else _JWT_AUTH_TABLE_SECTION
+    return _DATABASE_SYS_PROMPT_TEMPLATE.replace("{{AUTH_TABLE_SECTION}}", section)
+
+
+_DATABASE_SYS_PROMPT_TEMPLATE = """\
 You are the **database developer** for the SDLC Agentic AI Platform. You run after architect-agent
 and before developer-agent. You author migrations and dev seeds; the host applies sql/ to RDS when requested.
 
@@ -156,10 +186,7 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
   or seed uses `NULL` for it, DDL must **omit** `NOT NULL`. Call `db_validate_sql` before finishing —
   it blocks NULL inserts into NOT NULL columns. `CREATE TABLE IF NOT EXISTS` does not change nullability
   on existing RDS tables; the host apply script reconciles drift, but your schema files must match design.
-- **JWT users password column (canonical):** always name it `hashed_password` (TEXT NOT NULL).
-  Do **not** use `password_hash`, `password`, or other aliases on new apps — split naming
-  across SQL vs ORM breaks login. Seed, HANDOFF, and developer-agent must reuse this exact name.
-- **JWT seed users:** use `__BCRYPT_PLACEHOLDER__` in the `hashed_password` column. See **Seeding credentials** below for the three mandatory steps. Never invent `$2b$12$...` strings.
+{{AUTH_TABLE_SECTION}}
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 
 ## RDS apply (host — not your job when `applyToRdsAfterWrite` is true)
@@ -171,7 +198,7 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
 
 ## Workflow
 1. Read design (+ PRD when `prdPath` set); list planned tables with PRD FR ids.
-2. `db_list_tree` / overwrite stale files via `db_write_file`; **delete** superseded `sql/` files (do not leave duplicate `00N_*.sql` no-ops).
+2. `sql/` is pre-cleared by the host before you run — write the current migration set fresh. Use `db_list_tree` for `nosql/` only if design requires MongoDB.
 3. Write migrations in §6 order; write seed with `seedMinRows`–`seedMaxRows` rows per §3 table.
 4. `db_validate_sql(service=targetApp)` — must report SQL_VALIDATION OK.
 5. One compact reply (see below).
@@ -217,15 +244,15 @@ Alternatively, use `gen_random_uuid()` as DEFAULT and omit the `id` column from 
 
 ## Seeding credentials — DO NOT invent hashes
 
-When any seed row has a password hash column (`hashed_password` — required for new JWT apps), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
+When any seed row has a password hash column (`password_hash` — required for JWT apps), **NEVER write a literal bcrypt/argon/scrypt string**. The LLM cannot compute real hashes; any `$2b$12$...` string you produce will be random characters that fail every `bcrypt.checkpw(...)` call and break login.
 
 ### All three steps are MANDATORY — skipping any one causes silent 401 on RDS
 
 **Step 1 — Sentinel value in every seed user row**
-Insert `'__BCRYPT_PLACEHOLDER__'` in the `hashed_password` column (canonical name for new apps). Legacy apps may still use `password_hash`; never invent a third name.
+Insert `'__BCRYPT_PLACEHOLDER__'` in the `password_hash` column (canonical name). Login is always by `username`. Never invent a different column name.
 
 ```sql
-INSERT INTO users (id, username, hashed_password, role) VALUES
+INSERT INTO users (id, username, password_hash, role) VALUES
     ('uuid-1', 'alice', '__BCRYPT_PLACEHOLDER__', 'admin'),
     ('uuid-2', 'bob',   '__BCRYPT_PLACEHOLDER__', 'viewer');
 ```
@@ -251,16 +278,18 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 | alice    | admin     | YourPassword123!   |
 | bob      | viewer    | YourPassword123!   |
 ```
-- First column: the login field value (`username` value or `email` value — whichever the app uses to log in)
+- First column: the `username` value (login is ALWAYS by `username`; `email` is never the login column)
 - Third column: the plaintext password (must match the SQL comment exactly)
-- Use `email` values in column 1 when the users table has an `email` login column (no `username`)
 
-The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
+The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the `password_hash` column with a real bcrypt hash computed on CPU.
 
-If users table uses `email` as the login column (no `username`), list emails in `### seedCredentials` and ensure the seed `INSERT` column list includes `email` and `hashed_password`.
+The seed `INSERT INTO users (...)` column list MUST include `username` and `password_hash`.
 
 Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + SQL comment + HANDOFF.md map — all three, every time.
 """
+
+# Backwards-compat alias: jwt-mode prompt (default). Prefer _build_system_prompt(ctx).
+DATABASE_SYS_PROMPT = _build_system_prompt(None)
 
 
 def _service_dir(service: str) -> Path:
@@ -496,13 +525,50 @@ def _build_context(
     return ctx
 
 
+def _clear_sql_output_dir(target_app: str, db_subdir: str = _DEFAULT_DB_SUBDIR) -> None:
+    """Empty target-apps/<app>/<db_subdir>/sql/ before the agent regenerates it.
+
+    Database-agent always rewrites the complete migration set from the design doc
+    each run — it never reads old sql/ files as input (see DEFAULT_PIPELINE_TASK) —
+    so clearing first is safe. This removes the class of bug where an earlier run's
+    differently-named file for the same migration (e.g. 001_zones.sql) survives
+    alongside the new run's file (001_create_zones.sql): the agent's tool set has
+    no delete capability, so previously it could only stub old files with a
+    "-- Superseded by ..." comment, never actually remove them.
+
+    Cloud/S3 mode (ARTIFACT_STORE=s3) is skipped deliberately, not just as cheap
+    insurance: write_repo_artifact keys every write under runs/<runId>/... (a fresh
+    UUID minted per pipeline run — see artifact_store.new_run_id/resolve_run_id), so
+    an old run's files live under an entirely different S3 prefix and can never
+    coexist with a new run's files for the same app. The only way this could recur
+    in cloud mode is an explicit resume that reuses the SAME runId across separate
+    database-agent invocations — a narrow, deliberate case distinct from normal
+    regeneration, and out of scope for this fix.
+    """
+    if _is_cloud_store():
+        return
+    sql_dir = _service_dir(target_app) / db_subdir / "sql"
+    if not sql_dir.is_dir():
+        return
+    removed = list(sql_dir.glob("*.sql"))
+    for path in removed:
+        path.unlink()
+    if removed:
+        print(f"[database-agent] cleared {len(removed)} stale sql files", file=sys.stderr)
+
+
 def _user_message(task: str, context: dict[str, Any] | None) -> str:
     if not context:
         return task
     return f"{task}\n\nContext:\n{json.dumps(context, indent=2)}"
 
 
-def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:
+def _build_agent(
+    tools: list[Any],
+    ctx: dict[str, Any] | None = None,
+    *,
+    telemetry: RunTelemetry | None = None,
+) -> Agent:
     callback = (
         StrandsTelemetryCallback(AGENT_NAME, telemetry)
         if telemetry is not None
@@ -513,7 +579,7 @@ def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> 
         name=AGENT_NAME,
         description="Designs SQL/NoSQL schemas, migrations, and DB execution plans for target apps.",
         model=_coding_model(),
-        system_prompt=DATABASE_SYS_PROMPT,
+        system_prompt=_build_system_prompt(ctx),
         tools=tools,
         callback_handler=callback,
     )
@@ -573,7 +639,7 @@ def run_task(
                 model_id=coding_model_id(),
                 run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
             )
-            agent = _build_agent(toolset, telemetry=telemetry)
+            agent = _build_agent(toolset, ctx, telemetry=telemetry)
             summary = str(agent(_user_message(task, ctx)))
     except MCPClientInitializationError as exc:
         raise SystemExit(
@@ -821,6 +887,16 @@ def main() -> None:
         action="store_true",
         help="Attach MongoDB MCP — apply nosql/ scripts (combine with --with-postgres when design needs both)",
     )
+    parser.add_argument(
+        "--full-regen",
+        action="store_true",
+        help=(
+            "Set only by the orchestrator: this is a full from-scratch regeneration, "
+            "so skip self-apply here — the orchestrator's own dedicated rds-apply step "
+            "(which resets the schema first) is the sole apply for this run. Standalone "
+            "CLI use should never pass this — self-apply is the only apply mechanism there."
+        ),
+    )
     parser.add_argument("--serve-a2a", action="store_true", help=f"Start A2A server on :{A2A_PORT}")
     parser.add_argument("--port", type=int, default=A2A_PORT)
     parser.add_argument("--host", default="127.0.0.1")
@@ -862,6 +938,8 @@ def main() -> None:
     enrich_handoff_context(context)
     _enrich_postgres_mcp_context(context, use_postgres=use_postgres)
 
+    _clear_sql_output_dir(app, args.db_subdir)
+
     task = args.task or DEFAULT_PIPELINE_TASK
 
     model_id = coding_model_id()
@@ -895,7 +973,13 @@ def main() -> None:
         print("[database-agent] No files written under target-apps/.", file=sys.stderr)
 
     rds_applied = False
-    if use_postgres:
+    if use_postgres and args.full_regen:
+        print(
+            "[database-agent] --full-regen: skipping self-apply — the orchestrator's "
+            "dedicated rds-apply step (schema reset first) owns this run's apply.",
+            file=sys.stderr,
+        )
+    elif use_postgres:
         apply_code = _apply_sql_to_rds(app)
         if apply_code != 0:
             handoff_rel = write_db_handoff(

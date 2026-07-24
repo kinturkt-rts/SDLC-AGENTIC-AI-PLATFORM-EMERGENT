@@ -8,6 +8,36 @@
         "app/database.py",
         "app/startup_checks.py",
         "app/dependencies.py",
+        "app/security.py",
+        "app/routers/__init__.py",
+        "app/routers/health.py",
+        "app/routers/auth.py",
+        "app/models/__init__.py",
+        "app/models/pg_types.py",
+        "schemas/__init__.py",
+        "schemas/common.py",
+        "schemas/auth.py",
+        "requirements.txt",
+        ".gitignore",
+        ".env.example",
+        "README.md",
+        "pytest.ini",
+        "tests/test_health.py"
+      ],
+      "copy_as": {
+        "tests/conftest_reference.py": "tests/conftest.py",
+        "tests/test_schema_datetime_reference.py": "tests/test_schema_datetime.py"
+      },
+      "seed_from_template": [
+        "app/config.py",
+        "app/main.py"
+      ]
+    },
+    "B-api-key": {
+      "copy_verbatim": [
+        "app/__init__.py",
+        "app/database.py",
+        "app/startup_checks.py",
         "app/routers/__init__.py",
         "app/routers/health.py",
         "app/models/__init__.py",
@@ -22,6 +52,7 @@
         "tests/test_health.py"
       ],
       "copy_as": {
+        "app/dependencies_apikey.py": "app/dependencies.py",
         "tests/conftest_reference.py": "tests/conftest.py",
         "tests/test_schema_datetime_reference.py": "tests/test_schema_datetime.py"
       },
@@ -67,12 +98,29 @@
         "frontend/src/App.tsx",
         "frontend/src/index.css"
       ]
+    },
+    "F-api-key": {
+      "copy_verbatim": [
+        "frontend/index.html",
+        "frontend/package.json",
+        "frontend/vite.config.ts",
+        "frontend/tsconfig.json",
+        "frontend/tsconfig.app.json",
+        "frontend/tsconfig.node.json",
+        "frontend/.gitignore",
+        "frontend/.env",
+        "frontend/src/main.tsx",
+        "frontend/src/App.tsx",
+        "frontend/src/index.css"
+      ],
+      "copy_as": {
+        "frontend/src/api_apikey.ts": "frontend/src/api.ts"
+      }
     }
   },
   "customize_after_scaffold": [
     "app/config.py",
     "app/main.py",
-    "app/dependencies.py",
     "tests/conftest.py",
     ".env.example",
     "README.md",

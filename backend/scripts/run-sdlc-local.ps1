@@ -265,6 +265,16 @@ function Invoke-DeliveryVerify {
     }
 }
 
+function Sync-AuthMode {
+    # Deterministic (not LLM) — derives authMode from designDocPath's Auth line(s) and
+    # logs it so the value is visible on every run, regardless of entry point. Nothing
+    # consumes authMode yet.
+    if (-not (Test-Path $ctxPath)) { return }
+    Invoke-PipelinePython -ArgumentList @(
+        "agents/_shared/auth_profile.py", "--context-file", $ContextFile, "--repo-root", $RepoRoot, "--sync"
+    ) | Out-Null
+}
+
 function Get-DeveloperStepLabel {
     param([string]$ContextPath = $ctxPath)
     $stack = @("FastAPI")
@@ -285,7 +295,7 @@ function Invoke-RdsApply {
         return
     }
     Write-Host "`n=== Apply SQL to RDS (apply_sql_to_rds.py) ===" -ForegroundColor Green
-    if ((Invoke-PipelinePython -ArgumentList @("scripts/apply_sql_to_rds.py", "--target-app", $Feature)) -ne 0) {
+    if ((Invoke-PipelinePython -ArgumentList @("scripts/apply_sql_to_rds.py", "--target-app", $Feature, "--reset-schema")) -ne 0) {
         throw "RDS apply failed. Fix network/credentials (.env.local POSTGRES_MCP_*) then re-run: python scripts/apply_sql_to_rds.py --target-app $Feature"
     }
 }
@@ -297,6 +307,18 @@ function Invoke-SeedMaterialize {
         "agents/_shared/materialize_seed_passwords.py", "--target-app", $TargetFeature, "--repo-root", $RepoRoot
     )) -ne 0) {
         throw "Seed password materialization failed - check HANDOFF seedCredentials or seed SQL password comment."
+    }
+}
+
+function Invoke-GenerateEnv {
+    param([string]$TargetFeature)
+    $targetDir = Join-Path $RepoRoot "target-apps\$TargetFeature"
+    if (-not (Test-Path (Join-Path $targetDir ".env.example"))) { return }
+    Write-Host "`n=== Generate .env from .env.example + .env.local (generate_target_app_env.py) ===" -ForegroundColor Green
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/_shared/generate_target_app_env.py", "--target-app", $TargetFeature
+    )) -ne 0) {
+        Write-Warning ".env generation failed - copy target-apps/$TargetFeature/.env.example to .env by hand."
     }
 }
 
@@ -395,7 +417,7 @@ function Write-RunInstructions {
         Write-Host "  pip install -r requirements.txt"
     }
     if ($UsesDb) {
-        Write-Host "  copy .env.example .env   # DATABASE_URL (?sslmode=require), POSTGRES_SCHEMA, auth secret"
+        Write-Host "  .env already generated (target-apps/$TargetFeature/.env) - edit only if you need to override it"
         Write-Host "  RDS smoke: GET /health then one DB list/read route (pytest SQLite != RDS proof)"
     }
     Write-Host "  uvicorn app.main:app --reload --port 8000"
@@ -491,6 +513,7 @@ if (-not $SkipArchitect) {
 else {
     Update-Context @{ diagramPaths = @("docs/generated-diagrams/$Feature.png") }
 }
+Sync-AuthMode
 
 # 2b) Web crawler (optional)
 $runWebCrawler = $WithWebCrawler -and -not $SkipWebCrawler
@@ -553,6 +576,7 @@ if (-not $SkipDeveloper) {
     )) -ne 0) { throw "developer-agent failed" }
     $pipelineAgentsRun += "developer-agent"
 }
+Invoke-GenerateEnv -TargetFeature $Feature
 
 # 5) Local verify (before publish - do not push broken code)
 if (-not $SkipVerify) {

@@ -50,11 +50,12 @@ class Settings(BaseSettings):
     postgres_schema: str = Field("public", alias="POSTGRES_SCHEMA")
 
     # ── Auth ─────────────────────────────────────────────────────────────
-    api_key: str = Field("", alias="API_KEY")
-    # Uncomment for JWT auth:
-    # jwt_secret_key: str = Field("", alias="JWT_SECRET_KEY")
-    # jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
-    # jwt_expire_minutes: int = Field(60, alias="JWT_EXPIRE_MINUTES")
+    # api-key mode has no shared-secret env var: identity/role come from the
+    # users table (token + role columns) via app/dependencies.py's
+    # require_api_key — do not add an API_KEY/ADMIN_KEY Field for it.
+    jwt_secret_key: str = Field("", alias="JWT_SECRET_KEY")
+    jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
+    jwt_expire_minutes: int = Field(60, alias="JWT_EXPIRE_MINUTES")
 
     # ── CORS ─────────────────────────────────────────────────────────────
     cors_origins: list[str] = Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")

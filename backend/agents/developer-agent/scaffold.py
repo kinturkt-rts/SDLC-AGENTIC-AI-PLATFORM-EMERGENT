@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-_VALID_PATTERNS = ("B", "B+", "B++", "C", "F")
+_VALID_PATTERNS = ("B", "B-api-key", "B+", "B++", "C", "F", "F-api-key")
 
 
 def load_manifest(manifest_path: Path) -> dict[str, Any]:
@@ -71,8 +71,13 @@ def scaffold_service(
 ) -> dict[str, Any]:
     """Copy golden template files into target-apps/<service>/.
 
-    When force=False (default), existing files are left untouched.
-    When force=True, all manifest files are overwritten from _template/.
+    copy_verbatim / copy_as destinations NOT listed in customize_after_scaffold
+    always refresh from _template/, even if the destination already exists —
+    so regenerating an app never leaves a stale protected file (security.py,
+    dependencies.py, routers/auth.py, schemas/auth.py, etc.) in place.
+    customize_after_scaffold destinations (app-specific config.py, main.py,
+    .env.example, README.md, requirements.txt, tests/conftest.py, ...) are left
+    untouched unless force=True, which overwrites everything in the manifest.
     """
     manifest_path = template_dir / "scaffold-manifest.json"
     manifest = load_manifest(manifest_path)
@@ -80,6 +85,16 @@ def scaffold_service(
 
     customize: set[str] = set(manifest.get("customize_after_scaffold", []))
     seed_files = set(spec["seed_from_template"])
+
+    # Protected destinations that refresh every run regardless of `force`.
+    # developer_agent.py's _VERBATIM_SCAFFOLD_SUFFIXES (~line 1263) is a hand-maintained
+    # subset of this set, used to hard-block LLM writes (not just force-copy). Any new
+    # copy_verbatim/copy_as file that should also be hard-blocked from LLM writes needs
+    # a matching entry added there. Covered by
+    # tests/test_developer_agent.py::test_verbatim_scaffold_suffixes_is_subset_of_manifest_force_refresh.
+    always_refresh: set[str] = (
+        set(spec["copy_verbatim"]) | set(spec["copy_as"].values())
+    ) - customize
 
     service_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,7 +108,7 @@ def scaffold_service(
         if not src.is_file():
             missing.append(src_rel)
             return
-        if dest.is_file() and not force:
+        if dest.is_file() and not (force or dest_rel in always_refresh):
             skipped.append(dest_rel)
             return
         dest.parent.mkdir(parents=True, exist_ok=True)

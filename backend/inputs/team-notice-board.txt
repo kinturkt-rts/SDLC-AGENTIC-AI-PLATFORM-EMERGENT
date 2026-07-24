@@ -1,0 +1,56 @@
+Team Notice Board — internal announcements with JWT auth and React UI
+
+Client story:
+Internal updates (policy changes, all-hands, team wins) get posted in chat and vanish.
+We need a small FastAPI + Postgres notice board with a React browser UI so staff can browse
+published notices and managers/admins can create, edit, pin, and archive them. Login is the
+same username + password → JWT pattern as our other target-apps (inventory-app, shift-swap-board).
+
+MVP:
+- Notices: title, body (plain text), status (draft | published | archived), pinned (bool),
+  author_id, created_at, updated_at.
+- Staff can create and edit their own notices; managers can pin any notice and archive any notice;
+  admins can list users and read an audit trail.
+- Browse default list shows published notices (not draft/archived); optional filter by status
+  and pinned.
+- React + TypeScript (Vite) frontend under frontend/: login, notice list, create/edit form.
+  UI talks to the API over HTTP only (never imports backend code).
+
+Personas & auth:
+| Role    | Login | Can do |
+|---------|-------|--------|
+| staff   | JWT   | Browse published; create/edit own notices; archive own |
+| manager | JWT   | Staff + pin any; archive any |
+| admin   | JWT   | Manager + list users; read audit logs |
+| anonymous | —   | GET /health only |
+
+Auth: POST /api/v1/auth/login → JWT (HS256, JWT_SECRET_KEY). Bearer on protected routes.
+Passwords bcrypt-hashed in seed data. No corporate SSO.
+
+API surface (MVP):
+- POST /api/v1/auth/login
+- GET  /api/v1/notices (query: status, pinned)
+- POST /api/v1/notices
+- GET  /api/v1/notices/{id}
+- PATCH /api/v1/notices/{id}
+- POST /api/v1/notices/{id}/archive
+- GET  /api/v1/users (admin)
+- GET  /api/v1/audit-logs (admin; limit/offset)
+
+Data / delivery:
+- Postgres on shared RDS; schema naming POSTGRES_SCHEMA=team_notice_board.
+- Seed at least one user per role with a documented shared password for local login
+  (__BCRYPT_PLACEHOLDER__ + password comment in seed SQL).
+- FastAPI + Pydantic v2; pytest for health + main CRUD paths.
+- deliveryProfile: requires React frontend (Vite under frontend/), not Streamlit.
+- CORS must allow the Vite origin (e.g. http://localhost:5173) as well as local API tooling.
+- No hardcoded localhost in app Python; use DATABASE_URL / CORS_ORIGINS / JWT_* from env.
+
+Non-goals:
+- Email/Slack notifications, file attachments, full-text search index, multi-tenant orgs,
+  calendar invites.
+
+Success criteria:
+- PRD, design, SQL migrations + seed, FastAPI app under target-apps/team-notice-board/,
+  and a React frontend that calls the real OpenAPI.
+- Local: uvicorn :8000; Vite defaults to VITE_API_URL or http://localhost:8000.

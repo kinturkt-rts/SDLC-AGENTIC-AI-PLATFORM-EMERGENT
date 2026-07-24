@@ -34,6 +34,12 @@ _DOLLAR_QUOTED_BCRYPT_RE = re.compile(
     re.IGNORECASE,
 )
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
+# Matches the bare placeholder AND per-row suffixed variants (e.g.
+# __BCRYPT_PLACEHOLDER_VIEWER__), any case, wrapped in either quote style.
+_QUOTED_PLACEHOLDER_RE = re.compile(
+    r"""['"]__BCRYPT_PLACEHOLDER(?:_[A-Za-z0-9]+)*__['"]""",
+    re.IGNORECASE,
+)
 
 
 def seed_targets_user_passwords(seed_text: str) -> bool:
@@ -74,16 +80,16 @@ def scan_sql_antipatterns(path: Path) -> list[str]:
 def verify_seed_file(path: Path) -> list[str]:
     errors = scan_sql_antipatterns(path)
     text = path.read_text(encoding="utf-8")
-    if not seed_targets_user_passwords(text):
-        if f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text:
-            return [f"{path}: __BCRYPT_PLACEHOLDER__ literal without documented password in SQL comment"]
-        return errors
 
-    if f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text:
+    if _QUOTED_PLACEHOLDER_RE.search(text):
         password = documented_password(text)
         if password:
-            return []  # pipeline runs materialize_seed_passwords.py after RDS apply
-        return [f"{path}: __BCRYPT_PLACEHOLDER__ literal without documented password in SQL comment"]
+            return errors  # pipeline runs materialize_seed_passwords.py after RDS apply
+        errors.append(f"{path}: __BCRYPT_PLACEHOLDER__ literal without documented password in SQL comment")
+        return errors
+
+    if not seed_targets_user_passwords(text):
+        return errors
 
     password = documented_password(text)
     if not password:

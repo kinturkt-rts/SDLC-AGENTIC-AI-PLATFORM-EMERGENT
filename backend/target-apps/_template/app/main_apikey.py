@@ -1,7 +1,7 @@
-"""Application entry-point.
+"""Application entry-point (api-key mode — no login flow, no auth router).
 
 Replace 'service-template' with the real service name. Add domain routers
-below the health/auth routers in the order they appear in design §4.
+below the health router in the order they appear in design §4.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.routers import auth, health
+from app.routers import health
 from app.startup_checks import validate_runtime_config
 
 logger = logging.getLogger(__name__)
@@ -61,10 +61,9 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
-    # Fixed — do not remove. auth.router's path is already fully qualified
-    # (/api/v1/auth/login), so it registers with NO prefix.
+    # No auth router in api-key mode — there is no login flow. Routes that need
+    # auth use require_api_key (app/dependencies.py) directly on the route.
     application.include_router(health.router)
-    application.include_router(auth.router, tags=["auth"])
     # TODO: add domain routers — e.g. application.include_router(items.router, prefix="/items")
 
     @application.get("/")

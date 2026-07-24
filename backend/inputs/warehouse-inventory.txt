@@ -1,0 +1,49 @@
+Warehouse Inventory — internal stock tracking API for a warehouse team, with movements, running quantities, and an immutable audit ledger.
+
+Client story:
+A warehouse team tracks stock in spreadsheets and the numbers drift. They want an internal service where every stock change is a recorded movement (receipt in, pick out, or manual adjustment), the on-hand quantity per item is always derived correctly from those movements, and nothing can be silently edited after the fact. Different staff have different power: floor staff record receipts and picks, supervisors can make adjustments, admins manage items and users.
+
+MVP:
+- Track items (sku, name, unit, reorder_threshold) and their current on-hand quantity.
+- Record stock movements: type in (receipt), out (pick), or adjustment (+/-). Each movement changes the item's on-hand quantity and appends to an immutable ledger.
+- On-hand quantity is always the sum of movement deltas for that item; it must never go negative (reject a pick/adjustment that would drive it below zero).
+- Every movement is permanent: movements can be listed and read but never edited or deleted.
+- Low-stock report: items whose on-hand quantity is at or below their reorder_threshold.
+- Role-gated actions: staff record in/out movements; supervisors additionally record adjustments; admins manage items and assign roles.
+
+Auth: X-API-Key header carrying a per-user token; identity and role resolved from the users table. No JWT.
+
+Data model (DDL under target-apps/warehouse-inventory/db/sql/):
+- users: id, token unique NOT NULL (the per-user opaque key sent as X-API-Key, e.g. tok_sam_staff), role NOT NULL (staff, supervisor, admin), name
+- items: id, sku unique, name, unit, reorder_threshold int, on_hand int NOT NULL default 0, created_at
+- movements: id, item_id FK, movement_type (in, out, adjustment), quantity_delta int (positive for in, negative for out/negative adjustment), reason nullable, actor_user_id FK, created_at — IMMUTABLE (no update/delete route)
+- (on_hand is maintained on items as movements are applied, and must equal the sum of that item's movement quantity_delta values)
+
+Business rules (enforce in API):
+- A movement's effect on on_hand: in adds quantity, out subtracts, adjustment applies the signed delta.
+- Reject (422) any movement that would make an item's on_hand negative.
+- 'in' quantity_delta must be positive; 'out' quantity_delta must be negative (or supplied as a positive quantity the server negates — pick one and be consistent); adjustment may be positive or negative but not zero.
+- Movements are immutable: no PUT/PATCH/DELETE on a movement.
+- Role gating: record 'in'/'out' requires staff+; record 'adjustment' requires supervisor+; create/edit items and assign user roles requires admin. Enforce with the provided require_role helper.
+- on_hand returned on the item must always reconcile with the ledger sum (a consistency the tests will check).
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+|--------|------|------|----------|
+| GET | /health | none | DB ping |
+| GET | /api/v1/items | X-API-Key (any role) | list items with on_hand |
+| POST | /api/v1/items | X-API-Key (admin) | create item |
+| GET | /api/v1/items/{id} | X-API-Key (any role) | item detail |
+| GET | /api/v1/items/{id}/movements | X-API-Key (any role) | ledger for an item |
+| POST | /api/v1/items/{id}/movements | X-API-Key (staff+ for in/out, supervisor+ for adjustment) | record a movement; updates on_hand; appends ledger; rejects negative on_hand |
+| GET | /api/v1/reports/low-stock | X-API-Key (any role) | items at or below reorder_threshold |
+| PUT | /api/v1/users/{id}/role | X-API-Key (admin) | change a user's role |
+
+Stack:
+- FastAPI + Postgres + pytest
+- React/Vite under frontend/
+
+Seed: 6 users across roles with distinct tokens (e.g. tok_sam_staff, tok_lee_staff, tok_pat_supervisor, tok_rob_admin, plus two more), 8 items with varied on_hand and thresholds (some at/below threshold for the low-stock report), and a handful of seeded movements whose deltas sum to each item's on_hand.
+Tests: pick that would drive on_hand negative -> 422; staff attempting an adjustment -> 403; supervisor adjustment -> ok; on_hand equals ledger sum after a sequence of movements; low-stock report returns only items <= threshold; attempt to PATCH/DELETE a movement -> not allowed (no such route).
+Out of scope: multi-warehouse, purchase orders, barcode scanning.
+Target app slug: warehouse-inventory

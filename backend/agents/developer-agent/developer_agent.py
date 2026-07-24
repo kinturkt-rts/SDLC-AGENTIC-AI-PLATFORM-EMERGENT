@@ -32,6 +32,7 @@ from _shared.artifact_store import (
 from _shared import template_store
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.env import load_repo_env
+from _shared.derive_enums import derive_enums_for_app
 from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     PIPELINE_DIR,
@@ -181,20 +182,18 @@ Rules — apply to every FR regardless of domain:
     Then write ONLY the files listed under "Customize next" in the scaffold report (batch them):
     - `app/config.py` — service_name + env Fields (keep Field(alias=...) pattern)
     - `app/main.py` — add domain router imports + include_router calls
-    - `app/dependencies.py` — auth per Rules (API-key or JWT)
     - `tests/conftest.py` — replace SCHEMA_NAME, match auth mode, add seed fixtures
-    - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix
+    - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix. JWT vars MUST be named exactly JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRE_MINUTES (never JWT_SECRET, JWT_TTL_HOURS, or any other name) — the fixed auth code reads these exact names.
     - `ui/streamlit_app.py` (streamlit pattern) — tabs/forms only; keep HTTP helpers
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
-      (**JWT users:** password column attribute MUST be `hashed_password` —
-      same name as DDL. Never invent `password_hash` if SQL says `hashed_password`, or the reverse.)
+      (**JWT users:** password column attribute MUST be `password_hash` —
+      same name as DDL — the users password column is ALWAYS `password_hash`.)
     - `app/routers/<domain>.py` — route handlers with business logic
     - `schemas/<domain>.py` — Pydantic request/response models
     - `app/services/bedrock_client.py` — copy from _template for B+/B++ patterns
     - `app/services/prompts.py` — app-specific system prompts
-    - `app/dependencies.py` — auth dependency (API-key: `require_api_key`; JWT: `get_current_user`)
     - `tests/test_<domain>.py` — route tests
     - `requirements.txt` — match all actual imports
     - `README.md` — setup instructions (see Step 4c)
@@ -211,14 +210,24 @@ Rules — apply to every FR regardless of domain:
     - status_code= on DECORATOR (not in comments): POST→201, DELETE→204 with response_model=None.
     - Postgres: sync SQLAlchemy SessionLocal + Depends(get_db) in EVERY DB-backed handler.
     - Auth per design **Rules** only — do NOT add JWT if Rules specify API-key only:
-      * API-key → `dependencies=[Depends(require_api_key)]` or `Depends(require_api_key)` in signature
-      * JWT bearer → `Depends(get_current_user)` / `require_admin` per RBAC table
+      * API-key → `Depends(require_api_key)` (public role check) or `Depends(require_role("role1","role2"))` in signature — never a second header
+      * JWT bearer → `Depends(get_current_user)` / `require_role(...)` per RBAC table
       * Public routes → no auth dependency
+      - Auth is PROVIDED as fixed infrastructure — do NOT create or edit app/security.py or app/dependencies.py, and NEVER create app/auth.py.
+      JWT mode: import `from app.security import hash_password, verify_password, create_access_token`
+      and `from app.dependencies import get_current_user, CurrentUser, require_role, DbSession`.
+      Wire `Depends(get_current_user)` / `CurrentUser` and `Depends(require_role("role1","role2"))` onto routes per the RBAC table.
+      Do NOT generate the auth router or auth schema — routers/auth.py and schemas/auth.py are FIXED (provided, copied verbatim, POST /api/v1/auth/login). Still generate the User ORM model (with columns id, username, password_hash, role). main.py's scaffold already pre-wires `app.include_router(auth.router, tags=["auth"])` with NO prefix, right next to health — do NOT remove it (its route path is already fully qualified as /api/v1/auth/login; adding a prefix would double it, and dropping the line breaks login entirely).
+      API-key mode: import `from app.dependencies import require_api_key, CurrentUser, require_role, DbSession` — same names, same fixed file. There is no login route in this mode. Still generate the User ORM model (with columns id, token, role — see database-agent handoff). See "Auth — implement only what design Rules specify" below for the full, non-negotiable API-key rule.
     - List endpoints: match API surface response shape exactly:
       * Paginated page `{items, total, limit, offset}` when design specifies it
       * Bare `list[Schema]` only when design explicitly returns an array
       * Always include pagination query params the design documents (limit/offset or skip/limit)
     - ORM models matching database-agent SQL exactly (column names, types, nullable, FKs).
+    - Workflow transitions (status/assign/archive/return/...): implement ONE route — the
+      dedicated `/{id}/<action>` sub-path. Do NOT also add a bare `PATCH/PUT /{id}` route that
+      takes the same request schema as the dedicated action route — see "Never ship a bare-id
+      update route that clones a dedicated action route" below; it's a hard-fail validation check.
 3b. Implement business logic from design **Rules** and PRD **acceptance criteria**.
     Return error shapes consistent with the API surface error contract.
 3c. MongoDB: motor async. Never SQLAlchemy for MongoDB collections.
@@ -298,6 +307,8 @@ Rules — apply to every FR regardless of domain:
   - Every DB-backed route: db: Session = Depends(get_db) in signature
   - Every auth-required route uses the auth mode from Rules (API-key OR JWT — not both unless required)
   - List routes match API surface shape (page object OR list[T]) with documented pagination params
+  - No bare `PATCH/PUT /{id}` route shares a request schema with a dedicated `/{id}/<action>`
+    route on the same resource — that's a redundant clone route, not a general update
 
   Code quality:
   - Postgres: psycopg[binary] in requirements; ENUM + uuid ORM parity per HANDOFF §ORM parity
@@ -356,6 +367,17 @@ After all files are written and the checklist above is done:
        users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
      - UI_PARITY FAILED: missing design §4 routes, POST without GET list, Streamlit not calling
        collection GETs, or raw UUID text_input when list APIs exist (see validate_ui_parity.py)
+     - DUPLICATE_ACTION_ROUTE FAILED: a bare `{id}` PATCH/PUT route takes the same request schema
+       as a dedicated `{id}/<action>` route — delete the bare-id clone (or give it its own distinct
+       general-update schema if the design truly needs both a general update and an action route)
+     - AUTH_MODE_FILES FAILED: dependencies.py, the JWT trio, or main.py don't match authMode —
+       call dev_scaffold(service, pattern="B", force=True) to re-copy the right variant, and remove
+       any auth router import/registration in main.py when authMode is api-key
+     - API_KEY_ROUTE_USAGE FAILED (api-key mode only): no route applies Depends(require_api_key) —
+       wire it onto every route design Rules require auth on
+     - AUTH_HEADER_NAMES FAILED (api-key mode only): design names a header (e.g. X-Admin-Key) that
+       nothing in app/auth.py or app/dependencies.py reads — add an APIKeyHeader-based dependency
+       for that exact header in app/auth.py; never substitute require_api_key's X-API-Key for it
 
 **Step 6 — handoff summary (LAST)**
 1. stack — language, framework, pattern, DB driver(s).
@@ -412,7 +434,8 @@ app/main.py          [SCAFFOLD seed — add domain router imports]
 app/config.py        [SCAFFOLD seed — add/remove env var Fields]
 app/database.py      [SCAFFOLD — do not edit]
 app/startup_checks.py [SCAFFOLD — do not edit]
-app/dependencies.py  [SCAFFOLD seed — auth per Rules]
+app/dependencies.py  [SCAFFOLD — do not edit, fixed auth]
+app/security.py      [SCAFFOLD — do not edit, fixed auth]
 app/models/__init__.py, app/models/pg_types.py [SCAFFOLD], app/models/<entity>.py [GENERATE]
 app/routers/__init__.py, app/routers/health.py [SCAFFOLD], app/routers/<domain>.py [GENERATE]
 schemas/__init__.py, schemas/<domain>.py [GENERATE]
@@ -541,6 +564,63 @@ def _select_pattern_keys(ctx: dict[str, Any] | None) -> tuple[str, ...] | None:
     return (inferred,) if inferred else None
 
 
+_JWT_MAIN_PY_SECTION = """\
+### main.py — register EVERY router
+
+The scaffolded main.py already pre-wires health and auth (do not remove either
+— see target-apps/_template/app/main.py). Add every domain router below them.
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.routers import health, items, auth   # import every router module
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup: CREATE EXTENSION vector; mkdir UPLOAD_DIR; etc.
+    yield
+
+app = FastAPI(title="My Service", lifespan=lifespan)
+app.include_router(health.router, prefix="/health")
+app.include_router(auth.router, tags=["auth"])
+app.include_router(items.router, prefix="/api/v1/items", tags=["items"])
+```
+
+Pre-handoff: count `.py` files in `app/routers/` minus `__init__.py` ==
+count `include_router` calls in `main.py` (auth and health both count — they're
+pre-wired, not something you add). If they differ, fix main.py now."""
+
+_API_KEY_MAIN_PY_SECTION = """\
+### main.py — register EVERY router (api-key mode — no auth router)
+
+The scaffolded main.py already pre-wires health only (do not remove it — see
+target-apps/_template/app/main_apikey.py, the api-key-mode reference). There is
+no login route and no auth router in this mode — do NOT add
+`from app.routers import auth` or `app.include_router(auth.router, ...)`; routes
+that need auth use `require_api_key` from `app/dependencies.py` directly. Add
+every domain router below health.
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.routers import health, items   # import every router module — no auth router here
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup: CREATE EXTENSION vector; mkdir UPLOAD_DIR; etc.
+    yield
+
+app = FastAPI(title="My Service", lifespan=lifespan)
+app.include_router(health.router, prefix="/health")
+app.include_router(items.router, prefix="/api/v1/items", tags=["items"])
+```
+
+Pre-handoff: count `.py` files in `app/routers/` minus `__init__.py` ==
+count `include_router` calls in `main.py` (health counts — it's pre-wired, not
+something you add; there is no auth router to count in this mode). If they
+differ, fix main.py now."""
+
+
 def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
     keys = _select_pattern_keys(ctx)
     section = _compose_pattern_section(keys)
@@ -550,7 +630,10 @@ def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
             "(DEVELOPER_AGENT_AUTO_PATTERN=1)",
             file=sys.stderr,
         )
-    return _DEVELOPER_SYS_PROMPT_TEMPLATE.replace("{{PATTERN_LAYOUTS}}", section.rstrip())
+    auth_mode = str((ctx or {}).get("authMode") or "jwt").strip().lower()
+    main_py_section = _API_KEY_MAIN_PY_SECTION if auth_mode == "api-key" else _JWT_MAIN_PY_SECTION
+    rendered = _DEVELOPER_SYS_PROMPT_TEMPLATE.replace("{{PATTERN_LAYOUTS}}", section.rstrip())
+    return rendered.replace("{{MAIN_PY_SECTION}}", main_py_section)
 
 
 _DEVELOPER_SYS_PROMPT_TEMPLATE = """\
@@ -599,7 +682,7 @@ Section numbers vary per feature. Locate content by heading text:
 - **API-only (Pattern B/B+/B++ without Streamlit):** FastAPI routes + pytest only — no `ui/` folder.
   `dev_validate_app` skips Streamlit checks when `requiresStreamlit` is false.
 - **JWT vs API key:** Match design **Rules** and PRD — Streamlit must use the same auth mode
-  (Bearer JWT from `POST /auth/login`, or `X-API-Key` header when API-key auth).
+  (Bearer JWT from `POST /api/v1/auth/login`, or `X-API-Key` header when API-key auth).
 - **Out of scope (unless deliveryProfile.requiresReact):** `frontend/`, React, Next.js, Vite.
   If React is required later, note `frontend/` in open_questions when not yet in profile.
 
@@ -715,12 +798,66 @@ add app-specific seed fixtures. Do NOT rewrite the engine, session, or UUID-patc
 
 | Rules say | Implementation |
 |-----------|----------------|
-| API-key (`X-API-Key`) | `require_api_key` in `dependencies.py`; document header in README/Swagger |
-| JWT bearer + roles | `get_current_user`, `require_admin` / RBAC deps; bcrypt hashes in DB when users table exists |
+| API-key (`X-API-Key`) | `require_api_key` / `CurrentUser` / `require_role(...)` from fixed `app/dependencies.py`; never a second header |
+| JWT bearer + roles | Import `get_current_user` / `require_role` from fixed `app/dependencies.py` (do not write them); apply on routes per RBAC; bcrypt hashes in DB when users table exists |
 | Public read, protected write | Apply auth dependency only on write routes listed in API surface |
 | No auth | Do not add JWT, API-key middleware, or fake secrets |
 
 Never add JWT scaffolding when Rules specify API-key only. Never add API-key when Rules specify JWT only.
+
+**Public routes stay public — do not add auth "just to be safe."** When the PRD/brief's
+persona-auth table or the design's API surface Notes column marks a route anonymous /
+public / no-auth (a common pattern: list/read routes like `GET /desks`, `GET /availability`
+are public while writes and admin routes are gated), that route MUST have ZERO auth
+dependency — not `require_api_key`, nothing. Check the PRD/brief's auth table for
+per-route exceptions even when the design doc's compact "Auth:" Rules line only states
+the general shape without repeating which specific routes are exempt — the design doc's
+summary line can compress away an exception the brief/PRD stated explicitly; the more
+detailed source wins. Defaulting every route to some credential when in doubt is the
+wrong instinct in api-key mode — it silently breaks anonymous access design explicitly
+required.
+
+### API-key mode — ONE fixed auth model, hardcoded, no exceptions
+
+There is exactly one header, ever: `X-API-Key`. There is no `X-User-Id`, no
+`X-User-Token`, no `X-Admin-Key`, no second header of any kind, regardless of
+what the design doc's Rules section says about "employee vs admin" or
+"two-tier" auth. Role differences described in the design are RBAC — express
+them with `require_role(...)`, never with a second credential/header.
+
+`require_api_key`, `CurrentUser`, and `require_role(*roles)` all live in the
+FIXED, write-guard-protected `app/dependencies.py` (do not edit it, do not
+reuse its names for something else). `require_api_key` already resolves the
+caller's identity and role by looking the `X-API-Key` value up in the `users`
+table (`token` column) — that lookup is infrastructure, not something you
+implement:
+
+```python
+from app.dependencies import CurrentUser, require_role, DbSession
+
+@router.get("/api/v1/items")
+def list_items(current_user: CurrentUser, db: DbSession): ...
+
+@router.post("/api/v1/items", status_code=201)
+def create_item(body: ItemCreate, current_user: Annotated[dict, Depends(require_role("manager", "admin"))], db: DbSession): ...
+```
+
+Hard rules (each is a validation gate — `validate_no_invented_auth_headers`
+fails the build on any violation):
+
+1. **Never create `app/auth.py`.** In api-key mode this file does not exist —
+   the write-guard rejects it outright. There is no dependency to add outside
+   `app/dependencies.py`.
+2. **Never declare a second `APIKeyHeader(...)` scheme or a bare
+   `Header(alias="X-...")` auth parameter anywhere** — not in routers, not in
+   a helper module. Any header-reading code outside the fixed
+   `app/dependencies.py` is an invented auth scheme and fails the build, even
+   if the design doc's prose suggests a named header like "X-Admin-Key".
+3. Every route that needs a specific role gates with
+   `Depends(require_role("role1", "role2"))`; every route that just needs
+   *some* authenticated caller gates with `Depends(require_api_key)` /
+   `CurrentUser`. Both come from the same header, the same table lookup —
+   only the role check differs.
 
 ## LLM / Bedrock — when architecture specifies AI inference
 
@@ -796,6 +933,7 @@ def require_api_key(x_api_key: str = Header(alias="X-API-Key")) -> str: ...
 ### Router prefix vs route path — no double prefix
 
 The final URL is `app.include_router(prefix=...) + @router.get(...)`. Concatenating
+PREFIX STANDARD: every domain router MUST be registered with the /api/v1 prefix (each domain at prefix="/api/v1/<domain>"). The auth router is already fully qualified (/api/v1/auth/login) and comes pre-wired in main.py's scaffold with NO prefix: app.include_router(auth.router, tags=["auth"]) — do not remove it or add a prefix to it. Only health uses bare "/health".
 the same name in both produces a 404 at the expected route:
 
 ```python
@@ -815,6 +953,37 @@ app.include_router(health.router)
 Be consistent across routers. If you use `prefix="/contacts"` for the contacts
 router, the route handlers inside should use relative paths (`""`, `"/{id}"`),
 NOT absolute (`"/contacts"`, `"/contacts/{id}"`).
+
+### Never ship a bare-id update route that clones a dedicated action route
+
+When a resource has a workflow transition (status, assignment, archive, return, etc.),
+implement it as **one** route: the dedicated sub-path action (`PATCH/PUT /{id}/status`,
+`/{id}/assign`, `/{id}/archive`, ...). Do **not** also add a general `PATCH/PUT /{id}`
+route that takes the *same request schema* as the dedicated action — that is a
+redundant clone, not a real general-update endpoint, and it lets callers bypass the
+route named for the transition while doing the exact same thing under a different,
+ambiguous URL.
+
+```python
+# wrong — both routes take StatusUpdate and do the identical transition; the bare
+# PATCH /{id} is a dead-weight clone of PATCH /{id}/status, not a general update
+@router.patch("/api/v1/findings/{id}")
+def patch_finding(id: str, body: StatusUpdate, ...): ...
+
+@router.put("/api/v1/findings/{id}/status")
+def update_finding_status(id: str, body: StatusUpdate, ...): ...
+
+# right — only the dedicated action route exists
+@router.put("/api/v1/findings/{id}/status")
+def update_finding_status(id: str, body: StatusUpdate, ...): ...
+```
+
+If the design genuinely calls for both a general field update (title, description,
+assigned_to, ...) **and** a dedicated status/action transition, give the general
+route its own distinct request schema (e.g. `FindingUpdate` with editable fields,
+never `StatusUpdate`) — never reuse the action route's schema on the bare `{id}`
+route. `dev_validate_app` enforces this with a hard-fail
+`DUPLICATE_ACTION_ROUTE` check; do not add a second route around it.
 
 ### Handler parameter ordering — dependencies before explicit defaults
 
@@ -850,7 +1019,7 @@ as a plain parameter type only. **Never** add `= Depends()` — FastAPI rejects
 
 ```python
 # dependencies.py
-CurrentUser = Annotated[User, Depends(get_current_user)]
+CurrentUser = Annotated[dict, Depends(get_current_user)]  # returns {"user_id","role"}
 
 # correct
 def list_assets(current_user: CurrentUser, db: DbSession) -> list[AssetOut]: ...
@@ -935,7 +1104,7 @@ This is the most common circular import. Enforce unconditionally.
 Do NOT write config.py from scratch. Copy `_template/app/config.py` and adapt:
 - Change `service_name` default to your app name
 - Uncomment Bedrock/RAG fields for B+/B++ patterns
-- Uncomment JWT fields if design uses JWT auth
+- JWT fields (jwt_secret_key, jwt_algorithm, jwt_expire_minutes) are active in config.py by default; do not comment them out or rename them
 - NEVER set `database_url` default to `sqlite://...` — leave empty string `""`
 - NEVER call `Settings()` at module level outside `get_settings()`
 - ALWAYS use `Field(alias="ENV_VAR")` for every settings field
@@ -964,26 +1133,7 @@ Required per operation:
 - Unauthorized → `raise HTTPException(status_code=401, detail="Not authenticated")`
 - Forbidden → `raise HTTPException(status_code=403, detail="Forbidden")`
 
-### main.py — register EVERY router
-
-```python
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from app.routers import health, items, auth   # import every router module
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # startup: CREATE EXTENSION vector; mkdir UPLOAD_DIR; etc.
-    yield
-
-app = FastAPI(title="My Service", lifespan=lifespan)
-app.include_router(health.router)
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(items.router, prefix="/items", tags=["items"])
-```
-
-Pre-handoff: count `.py` files in `app/routers/` minus `__init__.py` ==
-count `include_router` calls in `main.py`. If they differ, fix main.py now.
+{{MAIN_PY_SECTION}}
 
 ### Dependency injection — explicit in every handler signature
 
@@ -1158,7 +1308,20 @@ App code rules (container-ready without refactors):
 - No `eval()`, `exec()`, `pickle.loads()`, or `subprocess` with user-controlled strings.
 - Generic error messages to clients — no stack traces or internal paths in HTTP responses.
 - Auth: implement only when Rules require it. RBAC: 401 unauthenticated, 403 forbidden.
-- CORS: explicit origin list; never `allow_origins=["*"]` with credentials.
+- CORS: app/main.py MUST register `CORSMiddleware` (from `fastapi.middleware.cors`)
+  right after the `FastAPI()` call — every generated app ships a browser frontend
+  that sends a custom header (`X-API-Key` or `Authorization`), so the browser
+  always preflights with an OPTIONS request first. Without CORSMiddleware,
+  Starlette 405s that OPTIONS request and the real call never reaches the API —
+  the frontend just shows "failed to load", with no other symptom. Read
+  `allow_origins` from `settings.cors_origins` (add a `cors_origins: list[str] =
+  Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")` field to
+  app/config.py's Settings), set `allow_credentials=True`, and set both
+  `allow_methods` and `allow_headers` to `["*"]` so the preflight's
+  `Access-Control-Request-Headers` is always satisfied. Copy the exact block from
+  `target-apps/_template/app/main.py` (jwt mode) or `main_apikey.py` (api-key
+  mode) — do not improvise it. `dev_validate_app` hard-fails the build if this
+  is missing (see `validate_cors_configured`).
 - Write ONLY under `target-apps/`. Do not modify `db/sql/`. Do not claim Jira/GitLab actions.
 
 ## Pre-handoff self-review (mandatory after all writes, before summary)
@@ -1172,6 +1335,10 @@ App code rules (container-ready without refactors):
 7. List routes match API surface (page object or list[T]) with documented pagination params.
 8. conftest.py sets env before app import; uses `fastapi_app` alias; no module-level TestClient.
 9. No circular imports: schemas → nothing from app/; models → enums only.
+9b. app/main.py registers `CORSMiddleware` right after `FastAPI()`, reading
+    `allow_origins=settings.cors_origins`; app/config.py's Settings has a
+    `cors_origins` field. Copied from `_template/app/main.py` /
+    `main_apikey.py`, not hand-rolled.
 10. requirements.txt matches actual imports — no psycopg2-binary, no missing packages.
 11. .env.example has every env var config.py reads; .gitignore has .env and .venv/.
 12. Postgres apps: every ENUM mapped with SAEnum+with_variant; every uuid with PG_UUID.
@@ -1254,12 +1421,81 @@ def _ensure_service_exists(service: str) -> Path:
     return dest
 
 
+def _clear_app_tree(target_app: str) -> None:
+    """Empty target-apps/<app>/{app,schemas,tests,.env} before a full regeneration.
+
+    developer-agent always rewrites the complete app from the design/PRD on every
+    orchestrator-driven run (DEV_TASK_DB/DEV_TASK_NO_DB always mean full regen —
+    see _step_developer in sdlc_pipeline.py), so clearing first is safe there. Only
+    fires when the orchestrator explicitly signals a full regeneration (--full-regen
+    CLI flag, or "fullRegen" in the A2A context) — a standalone/custom --task
+    invocation (e.g. a narrow manual edit) never sets this, so existing files are
+    left untouched by default, matching every "must not wipe" case already audited
+    (custom --task edits, frontend-only reruns, qa-agent reading the existing app).
+    frontend/ belongs to a separate agent (frontend_agent.py) and is not covered here.
+    """
+    if _is_cloud_store():
+        return
+    service_dir = _service_dir(target_app)
+    removed = 0
+    for name in ("app", "schemas", "tests"):
+        path = service_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed += 1
+    env_path = service_dir / ".env"
+    if env_path.is_file():
+        env_path.unlink()
+        removed += 1
+    if removed:
+        print(
+            f"[developer-agent] --full-regen: cleared {removed} stale app-tree entries",
+            file=sys.stderr,
+        )
+
+
+# Deliberately-curated SUBSET of scaffold.py's manifest-derived force-refresh set
+# (see `always_refresh` in scaffold.py, ~line 89) — used here to hard-block LLM
+# writes rather than just force-copy. Must stay a subset: anything added here must
+# also exist in scaffold-manifest.json's copy_verbatim/copy_as for its pattern, and
+# must NOT be listed in customize_after_scaffold. Covered by
+# tests/test_developer_agent.py::test_verbatim_scaffold_suffixes_is_subset_of_manifest_force_refresh.
 _VERBATIM_SCAFFOLD_SUFFIXES = (
     ("app", "database.py"),
     ("app", "startup_checks.py"),
     ("app", "routers", "health.py"),
     ("app", "models", "pg_types.py"),
+    ("app", "security.py"),
+    ("app", "dependencies.py"),
+    ("app", "routers", "auth.py"),
+    ("schemas", "auth.py"),
 )
+
+# The JWT-only trio within _VERBATIM_SCAFFOLD_SUFFIXES — never scaffolded in
+# api-key mode (pattern "B-api-key" has no security.py/routers/auth.py/schemas/auth.py
+# in its copy_verbatim). app/dependencies.py is NOT in this set: it's the fixed,
+# force-refreshed file in both modes (JWT dependencies.py vs api-key dependencies.py),
+# just sourced from a different template file.
+_JWT_ONLY_VERBATIM_SUFFIXES = (
+    ("app", "security.py"),
+    ("app", "routers", "auth.py"),
+    ("schemas", "auth.py"),
+)
+
+
+def _verbatim_scaffold_suffixes_for_mode(auth_mode: str) -> tuple[tuple[str, ...], ...]:
+    """Mode-aware view of _VERBATIM_SCAFFOLD_SUFFIXES.
+
+    In api-key mode, blocking writes to the JWT trio's paths would be actively
+    misleading — those files are never scaffolded, so the block's own error message
+    ("call dev_scaffold(..., force=True) to re-copy it unchanged") is a dead end.
+    """
+    if auth_mode == "api-key":
+        return tuple(
+            suffix for suffix in _VERBATIM_SCAFFOLD_SUFFIXES
+            if suffix not in _JWT_ONLY_VERBATIM_SUFFIXES
+        )
+    return _VERBATIM_SCAFFOLD_SUFFIXES
 
 
 def _validate_dev_write_path(file_path: Path) -> str | None:
@@ -1282,8 +1518,19 @@ def _validate_dev_write_path(file_path: Path) -> str | None:
             "Error: cannot write .env or .env.* secret files — "
             "write .env.example with placeholders; users copy to .env locally"
         )
+    if (
+        _current_auth_mode() == "api-key"
+        and name == "auth.py"
+        and file_path.parent.name == "app"
+    ):
+        return (
+            "Error: app/auth.py is forbidden in api-key mode — there is exactly one "
+            "fixed auth header (X-API-Key) and it lives entirely in app/dependencies.py. "
+            "Import require_api_key / CurrentUser / require_role from there; do not add "
+            "a second auth file or a second header."
+        )
     path_parts = file_path.parts
-    for suffix in _VERBATIM_SCAFFOLD_SUFFIXES:
+    for suffix in _verbatim_scaffold_suffixes_for_mode(_current_auth_mode()):
         if path_parts[-len(suffix) :] == suffix:
             rel = "/".join(suffix)
             return (
@@ -1391,24 +1638,50 @@ def dev_list_tree(service: str, subpath: str = "") -> str:
     return "\n".join(lines) if lines else "(no files)"
 
 
+def _current_auth_mode() -> str:
+    """Read authMode from the pipeline context passed into this developer-agent run.
+
+    Not surfaced to the LLM — only used internally to resolve which scaffold
+    pattern/write-guard applies. Defaults to "jwt" (byte-identical to pre-authMode
+    behavior) when authMode is absent, exactly like auth_profile.py's own default.
+    """
+    ctx = _run_context or {}
+    return str(ctx.get("authMode") or "jwt").strip().lower()
+
+
+def _resolve_scaffold_pattern_for_auth_mode(pattern: str, auth_mode: str) -> str:
+    """Swap base pattern "B" for "B-api-key" when authMode is api-key.
+
+    jwt (default) is byte-identical to today: "B" resolves to "B" exactly.
+    B+/B++/C (which extend "B") are not branched yet — an api-key app needing
+    Bedrock/Streamlit is a follow-up, not handled here.
+    """
+    if pattern == "B" and auth_mode == "api-key":
+        return "B-api-key"
+    return pattern
+
+
 @tool
 def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
     """Copy golden template infrastructure into target-apps/<service>/.
 
     Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++, C.
     Manifest: target-apps/_template/scaffold-manifest.json
+    Pattern "B" automatically resolves to the api-key file set instead of the JWT
+    trio when the run's authMode context is "api-key" — callers still just pass "B".
 
     Args:
         service: target app slug (e.g. standup-tracker)
         pattern: B | B+ | B++ | C
         force: when True, overwrite existing scaffold files from _template/
     """
+    resolved_pattern = _resolve_scaffold_pattern_for_auth_mode(pattern, _current_auth_mode())
     try:
         dest = _ensure_service_exists(service)
         result = scaffold_service(
             template_dir=_TEMPLATE_DIR,
             service_dir=dest,
-            pattern=pattern,
+            pattern=resolved_pattern,
             force=force,
         )
     except (ValueError, FileNotFoundError) as exc:
@@ -1699,6 +1972,734 @@ def _ensure_service_requirements_installed(
 
     return True, ""
 
+def validate_users_auth_columns(service_dir: Path, auth_mode: str = "jwt") -> list[str]:
+    """Ensure the users table has the standard auth columns the fixed auth code needs.
+
+    jwt mode: the fixed auth router queries User.username and User.password_hash.
+    If the generated users table lacks either, login fails at runtime.
+
+    api-key mode: the fixed require_api_key dependency (app/dependencies.py)
+    looks callers up by User.token and reads User.role. This is a hardcoded
+    requirement (see auth_profile.py / the api-key design) — every api-key app
+    MUST have a users table with token (unique, opaque per-user secret) and
+    role columns; there is no "no users table" escape hatch in this mode
+    because the fixed dependency has nowhere else to resolve identity from.
+
+    Returns a list of error strings (empty = OK).
+    """
+    errors: list[str] = []
+    sql_dir = service_dir / "db" / "sql"
+    if not sql_dir.is_dir():
+        if auth_mode == "api-key":
+            errors.append(
+                "USERS TABLE MISSING: api-key mode requires a users table with "
+                "token and role columns (db/sql/ not found)."
+            )
+        return errors
+
+    users_sql = ""
+    for sql_file in sorted(sql_dir.glob("*.sql")):
+        text = sql_file.read_text(encoding="utf-8", errors="ignore")
+        m = re.search(
+            r"create\s+table\s+(if\s+not\s+exists\s+)?[\"\w\.]*users\b.*?\((.*?)\)\s*;",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if m:
+            users_sql = m.group(2).lower()
+            break
+
+    if auth_mode == "api-key":
+        if not users_sql:
+            errors.append(
+                "USERS TABLE MISSING: api-key mode's fixed require_api_key dependency "
+                "requires a users table with token and role columns, but no users "
+                "CREATE TABLE was found in db/sql/."
+            )
+            return errors
+        if "token" not in users_sql:
+            errors.append(
+                "USERS TABLE MISSING COLUMN: 'token' not found in the users table. "
+                "The fixed require_api_key dependency (app/dependencies.py) looks callers "
+                "up by users.token — this is a hardcoded requirement, not optional."
+            )
+        if "role" not in users_sql:
+            errors.append(
+                "USERS TABLE MISSING COLUMN: 'role' not found in the users table. "
+                "The fixed require_role helper (app/dependencies.py) reads users.role."
+            )
+        return errors
+
+    if not users_sql:
+        if (service_dir / "app" / "routers" / "auth.py").is_file():
+            errors.append(
+                "USERS TABLE MISSING: the fixed auth router requires a users table with "
+                "username and password_hash columns, but no users CREATE TABLE was found in db/sql/."
+            )
+        return errors
+
+    if "username" not in users_sql:
+        errors.append(
+            "USERS TABLE MISSING COLUMN: 'username' not found in the users table. "
+            "The fixed auth router logs in by username."
+        )
+    if "password_hash" not in users_sql:
+        errors.append(
+            "USERS TABLE MISSING COLUMN: 'password_hash' not found in the users table. "
+            "The fixed auth router verifies against password_hash."
+        )
+    return errors
+
+
+_MAIN_AUTH_IMPORT_RE = re.compile(
+    r"^\s*from\s+app\.routers\s+import\s+.*\bauth\b|^\s*import\s+app\.routers\.auth\b",
+    re.MULTILINE,
+)
+_MAIN_AUTH_INCLUDE_RE = re.compile(r"include_router\(\s*auth\.router\b")
+
+
+def validate_main_registers_auth(service_dir: Path, auth_mode: str = "jwt") -> list[str]:
+    """Ensure app/main.py actually imports and registers the fixed auth router.
+
+    routers/auth.py is force-refreshed onto disk (_VERBATIM_SCAFFOLD_SUFFIXES) and
+    the template's main.py pre-wires the registration, but neither guarantees the
+    LLM's generated main.py keeps the `from app.routers import auth` +
+    `include_router(auth.router, ...)` lines — main.py is LLM-written from a seed,
+    not force-refreshed. Proven to drift in practice: present on it-asset-lifecycle,
+    silently dropped on desk-booking, same prompt instruction both times. This is
+    the deterministic backstop. Returns a list of error strings (empty = OK).
+
+    api-key mode has no auth router at all — skip immediately on auth_mode
+    rather than relying only on routers/auth.py's absence (kept as a second,
+    redundant guard below in case auth_mode is somehow wrong).
+    """
+    if auth_mode == "api-key":
+        return []
+    errors: list[str] = []
+    if not (service_dir / "app" / "routers" / "auth.py").is_file():
+        return errors  # no fixed auth router scaffolded for this app/pattern
+
+    main_path = service_dir / "app" / "main.py"
+    if not main_path.is_file():
+        errors.append("MAIN.PY MISSING: app/main.py not found — cannot register the fixed auth router.")
+        return errors
+
+    text = main_path.read_text(encoding="utf-8", errors="ignore")
+    if not _MAIN_AUTH_IMPORT_RE.search(text):
+        errors.append(
+            "AUTH ROUTER NOT IMPORTED: app/main.py does not import auth from app.routers — "
+            "login will 404. Add `from app.routers import auth` "
+            "(see target-apps/_template/app/main.py)."
+        )
+    if not _MAIN_AUTH_INCLUDE_RE.search(text):
+        errors.append(
+            "AUTH ROUTER NOT REGISTERED: app/main.py does not call "
+            'app.include_router(auth.router, tags=["auth"]) — login will 404. '
+            "Register it with NO prefix, right next to the health router "
+            "(see target-apps/_template/app/main.py)."
+        )
+    return errors
+
+
+_CORS_IMPORT_RE = re.compile(r"from\s+fastapi\.middleware\.cors\s+import\s+CORSMiddleware")
+_CORS_ADD_MIDDLEWARE_RE = re.compile(r"add_middleware\s*\(\s*CORSMiddleware\b")
+_CORS_ORIGINS_FIELD_RE = re.compile(r"\bcors_origins\s*:")
+
+
+def validate_cors_configured(service_dir: Path) -> list[str]:
+    """Ensure app/main.py registers CORSMiddleware and app/config.py exposes
+    cors_origins for it to read.
+
+    Both target-apps/_template/app/main.py and main_apikey.py wire this
+    correctly, but neither app/main.py nor app/config.py is force-refreshed
+    (they're not in _VERBATIM_SCAFFOLD_SUFFIXES — the LLM hand-writes both per
+    app), so the wiring can silently drop the same way validate_main_registers_
+    auth's docstring describes for the auth router. Every generated app ships
+    a browser frontend that sends a custom header (Authorization or
+    X-API-Key), so the browser always preflights with an OPTIONS request first.
+    Starlette's router 405s an OPTIONS request for a path with no OPTIONS
+    handler unless CORSMiddleware is registered — with no login/API call ever
+    reaching the backend, the frontend just shows "Failed to load" and the
+    only signal is 405s on every OPTIONS line in the server log. Returns a
+    list of error strings (empty = OK).
+    """
+    errors: list[str] = []
+    main_path = service_dir / "app" / "main.py"
+    if not main_path.is_file():
+        return ["MAIN.PY MISSING: cannot check CORS configuration."]
+    main_text = main_path.read_text(encoding="utf-8", errors="ignore")
+
+    if not _CORS_IMPORT_RE.search(main_text):
+        errors.append(
+            "CORS MIDDLEWARE MISSING: app/main.py does not import CORSMiddleware "
+            "from fastapi.middleware.cors. Without it every browser preflight "
+            "OPTIONS request gets FastAPI's default 405 and no real request from "
+            "the frontend ever reaches the API. Add `from fastapi.middleware.cors "
+            "import CORSMiddleware` and `app.add_middleware(CORSMiddleware, "
+            "allow_origins=settings.cors_origins, allow_credentials=True, "
+            'allow_methods=["*"], allow_headers=["*"])` right after the FastAPI() '
+            "call (see target-apps/_template/app/main.py or main_apikey.py)."
+        )
+    elif not _CORS_ADD_MIDDLEWARE_RE.search(main_text):
+        errors.append(
+            "CORS MIDDLEWARE NOT REGISTERED: CORSMiddleware is imported in "
+            "app/main.py but never passed to add_middleware(...) — preflight "
+            "OPTIONS requests will still 405. Add "
+            "`app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, "
+            'allow_credentials=True, allow_methods=["*"], allow_headers=["*"])`.'
+        )
+
+    config_path = service_dir / "app" / "config.py"
+    config_text = config_path.read_text(encoding="utf-8", errors="ignore") if config_path.is_file() else ""
+    if not _CORS_ORIGINS_FIELD_RE.search(config_text):
+        errors.append(
+            "CORS_ORIGINS MISSING: app/config.py has no cors_origins setting — "
+            "app/main.py's CORSMiddleware(allow_origins=settings.cors_origins) has "
+            'nothing to read. Add `cors_origins: list[str] = Field(default_factory='
+            'lambda: ["*"], alias="CORS_ORIGINS")` to the Settings class.'
+        )
+    return errors
+
+
+_REQUIRE_API_KEY_DEF_RE = re.compile(r"\bdef\s+require_api_key\s*\(")
+_GET_CURRENT_USER_DEF_RE = re.compile(r"\bdef\s+get_current_user\s*\(")
+
+# Only ever scaffolded in jwt mode (pattern "B") — never present in "B-api-key".
+_JWT_ONLY_TRIO_RELPATHS: tuple[tuple[str, ...], ...] = (
+    ("app", "security.py"),
+    ("app", "routers", "auth.py"),
+    ("schemas", "auth.py"),
+)
+
+
+def validate_auth_mode_files(service_dir: Path, auth_mode: str) -> list[str]:
+    """Cross-check authMode against what's actually on disk in app/dependencies.py,
+    the JWT-only trio, and app/main.py — catches auth files leaking across modes
+    (e.g. a full-regen that didn't clear stale files, or dev_scaffold called with
+    the wrong pattern for the declared authMode).
+
+    api-key mode:
+      - app/dependencies.py must be the api-key variant (require_api_key present).
+      - none of the JWT-only trio (security.py, routers/auth.py, schemas/auth.py)
+        may exist — those are only ever scaffolded in jwt mode.
+      - app/main.py must not import or register an auth router — there is no
+        login route in this mode.
+
+    jwt mode:
+      - app/dependencies.py must not be the api-key variant (require_api_key
+        present with no get_current_user) — the reverse leak.
+
+    Returns a list of error strings (empty = OK).
+    """
+    errors: list[str] = []
+    deps_path = service_dir / "app" / "dependencies.py"
+    deps_text = deps_path.read_text(encoding="utf-8", errors="ignore") if deps_path.is_file() else ""
+    has_require_api_key = bool(_REQUIRE_API_KEY_DEF_RE.search(deps_text))
+    has_get_current_user = bool(_GET_CURRENT_USER_DEF_RE.search(deps_text))
+
+    if auth_mode == "api-key":
+        if not deps_path.is_file():
+            errors.append(
+                "DEPENDENCIES.PY MISSING: api-key mode requires app/dependencies.py with "
+                'require_api_key. Call dev_scaffold(service, pattern="B", force=True) to '
+                "copy it."
+            )
+        elif not has_require_api_key:
+            errors.append(
+                "DEPENDENCIES.PY WRONG VARIANT: authMode is api-key but app/dependencies.py "
+                "has no require_api_key function — this looks like the JWT variant leaked in "
+                '(no login flow exists in api-key mode). Call dev_scaffold(service, pattern="B", '
+                "force=True) to re-copy the api-key variant."
+            )
+        for suffix in _JWT_ONLY_TRIO_RELPATHS:
+            if (service_dir / Path(*suffix)).is_file():
+                rel = "/".join(suffix)
+                errors.append(
+                    f"JWT FILE LEAKED: {rel} exists but authMode is api-key — this file is only "
+                    "ever scaffolded in jwt mode (pattern B). Delete it; api-key apps have no "
+                    "login flow."
+                )
+        main_path = service_dir / "app" / "main.py"
+        if main_path.is_file():
+            main_text = main_path.read_text(encoding="utf-8", errors="ignore")
+            if _MAIN_AUTH_IMPORT_RE.search(main_text) or _MAIN_AUTH_INCLUDE_RE.search(main_text):
+                errors.append(
+                    "AUTH ROUTER IN API-KEY APP: app/main.py imports or registers an auth "
+                    "router, but authMode is api-key — there is no login route in this mode. "
+                    "Remove `from app.routers import auth` and "
+                    "`app.include_router(auth.router, ...)` (see "
+                    "target-apps/_template/app/main_apikey.py)."
+                )
+    else:
+        if deps_path.is_file() and has_require_api_key and not has_get_current_user:
+            errors.append(
+                "DEPENDENCIES.PY WRONG VARIANT: authMode is jwt but app/dependencies.py has "
+                "require_api_key and no get_current_user — this looks like the api-key variant "
+                'leaked in. Call dev_scaffold(service, pattern="B", force=True) to re-copy the '
+                "JWT variant."
+            )
+    return errors
+
+
+_API_KEY_DEPENDS_RE = re.compile(
+    r"Depends\(\s*require_api_key\s*\)|dependencies\s*=\s*\[[^\]]*\brequire_api_key\b"
+)
+_REQUIRE_ROLE_DEPENDS_RE = re.compile(
+    r"Depends\(\s*require_role\(|dependencies\s*=\s*\[[^\]]*\brequire_role\("
+)
+
+
+def validate_api_key_route_usage(service_dir: Path) -> list[str]:
+    """api-key mode only: at least one route must actually apply the fixed
+    require_api_key / require_role(...) dependency.
+
+    Catches the case where app/dependencies.py has the right shape
+    (validate_auth_mode_files passes) but no route ever wires it in — auth is
+    defined but never applied, so every endpoint is effectively public. Only
+    two names ever count, matching the hardcoded single-header design: there
+    is no per-app auth-enforcing function to discover anymore.
+
+    Returns a list of error strings (empty = OK).
+    """
+    routers_dir = service_dir / "app" / "routers"
+    if not routers_dir.is_dir():
+        return ["NO ROUTERS: app/routers/ not found — cannot check require_api_key usage."]
+    for path in routers_dir.glob("*.py"):
+        if path.name.startswith("_"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if _API_KEY_DEPENDS_RE.search(text) or _REQUIRE_ROLE_DEPENDS_RE.search(text):
+            return []
+    return [
+        "REQUIRE_API_KEY NEVER APPLIED: authMode is api-key but no route in "
+        "app/routers/*.py applies Depends(require_api_key) or "
+        "Depends(require_role(...)) — every endpoint is effectively public. "
+        "Apply one on at least the routes design Rules require auth on."
+    ]
+
+
+# Any APIKeyHeader(...) declaration, or a bare Header(...) call whose alias
+# looks like an auth/identity header (X-...) — both are ways a second,
+# invented auth header could sneak in outside the one fixed scheme in
+# app/dependencies.py. Restricting the alias capture to "X-..." avoids
+# matching unrelated kwargs like scheme_name=.
+_APIKEYHEADER_DECL_RE = re.compile(r"\bAPIKeyHeader\s*\(")
+_HEADER_CALL_RE = re.compile(r"\bHeader\s*\(")
+_HEADER_ALIAS_RE = re.compile(r'(?:alias|name)\s*=\s*["\'](X-[^"\']+)["\']')
+
+
+def _scan_invented_auth_headers(service_dir: Path) -> list[str]:
+    """Find any auth-header declaration in generated app code OUTSIDE the fixed
+    app/dependencies.py — the only file allowed to read X-API-Key. Catches an
+    invented second APIKeyHeader scheme (e.g. X-Admin-Key) and a bare
+    Header(alias="X-User-Id")-style parameter alike; both are forbidden by the
+    hardcoded single-header design regardless of what the design doc's prose
+    suggests.
+    """
+    findings: list[str] = []
+    app_dir = service_dir / "app"
+    if not app_dir.is_dir():
+        return findings
+    fixed_deps_path = (app_dir / "dependencies.py").resolve()
+    for path in app_dir.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        if path.resolve() == fixed_deps_path:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel = path.relative_to(service_dir).as_posix()
+        if _APIKEYHEADER_DECL_RE.search(text):
+            findings.append(f"{rel}: declares a second APIKeyHeader(...) scheme")
+        for m in _HEADER_CALL_RE.finditer(text):
+            window = text[m.start() : m.start() + 200]
+            alias_m = _HEADER_ALIAS_RE.search(window)
+            if alias_m:
+                findings.append(
+                    f'{rel}: bare Header(alias="{alias_m.group(1)}") auth parameter'
+                )
+    return findings
+
+
+_FRONTEND_HEADER_ENV_RE = re.compile(r"^\s*VITE_API_KEY_HEADER\s*=\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _frontend_configured_header(service_dir: Path) -> str | None:
+    """Header name the frontend will actually send, read from frontend/.env
+    (falling back to frontend/.env.example). Returns the api_apikey.ts template's
+    own runtime default ("X-API-Key") when a frontend exists but neither file
+    sets VITE_API_KEY_HEADER, and None when there's no frontend at all (nothing
+    to cross-check).
+    """
+    for rel in ("frontend/.env", "frontend/.env.example"):
+        path = service_dir / rel
+        if not path.is_file():
+            continue
+        m = _FRONTEND_HEADER_ENV_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
+        if m:
+            return m.group(1).strip().strip('"').strip("'")
+    if (service_dir / "frontend").is_dir():
+        return "X-API-Key"
+    return None
+
+
+def validate_no_invented_auth_headers(service_dir: Path, auth_mode: str) -> list[str]:
+    """api-key mode only: hard-fail if anything besides the fixed
+    app/dependencies.py reads an auth header, or if app/auth.py exists at all.
+
+    This is the deterministic backstop for the hardcoded single-header design
+    (ONE auth header, ever: X-API-Key; no X-User-Id, no X-Admin-Key, no second
+    header of any kind) — the write-guard in _validate_dev_write_path already
+    blocks writing app/auth.py, and app/dependencies.py's shape is fixed, but
+    neither stops a route file from declaring its own Header(...)/
+    APIKeyHeader(...) parameter inline. This is exactly the bug class that
+    broke a prior run (a bare X-User-Id Header() the LLM added despite the
+    design instructing otherwise).
+
+    Returns a list of error strings (empty = OK).
+    """
+    if auth_mode != "api-key":
+        return []
+    errors: list[str] = []
+    if (service_dir / "app" / "auth.py").is_file():
+        errors.append(
+            "APP/AUTH.PY FORBIDDEN: api-key mode has exactly one fixed auth file, "
+            "app/dependencies.py. Delete app/auth.py and move any route wiring to "
+            "use require_api_key / CurrentUser / require_role from there."
+        )
+    for finding in _scan_invented_auth_headers(service_dir):
+        errors.append(
+            f"INVENTED AUTH HEADER: {finding} — the only allowed auth header is "
+            "X-API-Key via app/dependencies.py's require_api_key. Remove it and "
+            "use require_api_key / require_role instead."
+        )
+    frontend_header = _frontend_configured_header(service_dir)
+    if frontend_header and frontend_header.strip().lower() != "x-api-key":
+        errors.append(
+            "FRONTEND HEADER MISMATCH: frontend is configured (VITE_API_KEY_HEADER) "
+            f"to send {frontend_header}, but api-key mode has exactly one header, "
+            "X-API-Key. Set VITE_API_KEY_HEADER=X-API-Key (or remove the override)."
+        )
+    return errors
+
+
+# Broad type categories shared by both the applied-DB side and the ORM side of
+# validate_schema_parity. Only cross-category drift is a real bug (e.g. DB array
+# vs ORM string); same-category spelling differences (VARCHAR vs String,
+# TIMESTAMP vs TIMESTAMPTZ) are intentionally not distinguished.
+_DB_COLUMN_CATEGORY_MAP: dict[str, str] = {
+    "uuid": "string",  # folded into string — a DB uuid vs an ORM String must not fail
+    "character varying": "string",
+    "character": "string",
+    "text": "string",
+    "citext": "string",
+    "USER-DEFINED": "string",  # native Postgres ENUM types (pg_enum in the ORM)
+    "integer": "integer",
+    "bigint": "integer",
+    "smallint": "integer",
+    "numeric": "numeric",
+    "double precision": "numeric",
+    "real": "numeric",
+    "money": "numeric",
+    "boolean": "boolean",
+    "timestamp without time zone": "timestamp",
+    "timestamp with time zone": "timestamp",
+    "date": "timestamp",
+    "time without time zone": "timestamp",
+    "time with time zone": "timestamp",
+    "json": "json",
+    "jsonb": "json",
+}
+
+# Ordered ORM type-expression keyword -> category. Order only matters where a
+# keyword is a substring of another (e.g. "Time" in "TimestampTZ"); those cases
+# all resolve to the same category so the ambiguity is harmless.
+_ORM_TYPE_CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("pg_uuid_column", "string"),  # folded into string — see _DB_COLUMN_CATEGORY_MAP note
+    ("PG_UUID", "string"),
+    ("UUID", "string"),
+    ("pg_enum", "string"),
+    ("SAEnum", "string"),
+    ("Enum", "string"),
+    ("String", "string"),
+    ("Unicode", "string"),
+    ("Text", "string"),
+    ("VARCHAR", "string"),
+    ("CHAR", "string"),
+    ("BigInteger", "integer"),
+    ("SmallInteger", "integer"),
+    ("Integer", "integer"),
+    ("Numeric", "numeric"),
+    ("Float", "numeric"),
+    ("Decimal", "numeric"),
+    ("Boolean", "boolean"),
+    ("TimestampTZ", "timestamp"),
+    ("DateTime", "timestamp"),
+    ("Date", "timestamp"),
+    ("Time", "timestamp"),
+    ("JSONB", "json"),
+    ("JSON", "json"),
+    ("ARRAY", "array"),
+)
+
+_MODEL_TABLENAME_RE = re.compile(r'__tablename__\s*=\s*["\']([^"\']+)["\']')
+_MODEL_COLUMN_RE = re.compile(
+    r'^[ \t]+(\w+)\s*:\s*Mapped\[([^\]]*)\]\s*=\s*mapped_column\(',
+    re.MULTILINE,
+)
+# No-annotation styles: legacy `col = Column(Type, ...)` and bare
+# `col = mapped_column(Type, ...)` (mapped_column with no `Mapped[...]` type hint —
+# expense-tracker uses this heavily, e.g. `original_amount = mapped_column(Numeric(19,4), ...)`).
+# Both lack a Python annotation, so both fall back to the same nullable default.
+# Cannot false-match the Mapped[...] style above — that form has a ":" between
+# the name and "=", which breaks this pattern before it reaches "= Column("/"= mapped_column(".
+_MODEL_COLUMN_LEGACY_RE = re.compile(
+    r'^[ \t]+(\w+)\s*=\s*(?:Column|mapped_column)\(',
+    re.MULTILINE,
+)
+
+
+def _db_column_category(data_type: str, udt_name: str) -> str:
+    if data_type == "ARRAY" or udt_name.startswith("_"):
+        return "array"
+    return _DB_COLUMN_CATEGORY_MAP.get(data_type, "other")
+
+
+def _orm_column_category(type_expr: str) -> str:
+    for keyword, category in _ORM_TYPE_CATEGORY_KEYWORDS:
+        if keyword in type_expr:
+            return category
+    return "other"
+
+
+def _find_matching_paren_py(text: str, open_index: int) -> int:
+    """Return the index of the ')' matching the '(' at open_index, or -1."""
+    depth = 0
+    i = open_index
+    while i < len(text):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    """Split on commas not nested inside (), [], or {} — mirrors validate_sql_artifacts'
+    CSV splitting, simplified for Python call-argument text."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _call_arg_tokens(text: str, open_paren_index: int) -> list[str] | None:
+    """Top-level comma-split argument tokens for the call whose '(' is at open_paren_index."""
+    close_idx = _find_matching_paren_py(text, open_paren_index)
+    if close_idx == -1:
+        return None
+    return _split_top_level_commas(text[open_paren_index + 1 : close_idx])
+
+
+def _scan_nullable_pk(kwargs_tokens: list[str]) -> tuple[bool | None, bool, bool]:
+    """(explicit nullable=... value if present else None, primary_key=True present,
+    server_default=/default= present — a default supplies the value, so the DB
+    column is legitimately NOT NULL even when the Python annotation is Optional)."""
+    nullable: bool | None = None
+    primary_key = False
+    has_default = False
+    for tok in kwargs_tokens:
+        low = tok.lower().replace(" ", "")
+        if low.startswith("nullable="):
+            nullable = "true" in low.split("=", 1)[1]
+        elif low.startswith("primary_key=") and "true" in low:
+            primary_key = True
+        elif low.startswith("server_default=") or low.startswith("default="):
+            has_default = True
+    return nullable, primary_key, has_default
+
+
+def _parse_orm_models(models_dir: Path) -> dict[str, dict[str, tuple[str, bool]]]:
+    """Static parse of app/models/*.py — no import. {table: {column: (category, nullable)}}.
+
+    Handles three column styles: SQLAlchemy 2.0 annotated (`col: Mapped[T] = mapped_column(...)`),
+    legacy (`col = Column(...)`), and bare mapped_column with no annotation
+    (`col = mapped_column(...)`) — an app tends to use one style consistently, but all
+    regexes always run and results are merged so a mixed file would still parse. A table
+    whose file parses to zero columns is dropped (not compared), so a parse miss produces
+    one WARN instead of a wall of false "missing column" errors.
+    """
+    orm_map: dict[str, dict[str, tuple[str, bool]]] = {}
+    if not models_dir.is_dir():
+        return orm_map
+
+    for path in sorted(models_dir.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        table_match = _MODEL_TABLENAME_RE.search(text)
+        if not table_match:
+            continue
+        table_name = table_match.group(1)
+
+        columns: dict[str, tuple[str, bool]] = {}
+
+        for col_match in _MODEL_COLUMN_RE.finditer(text):
+            col_name = col_match.group(1)
+            annotation = col_match.group(2)
+            tokens = _call_arg_tokens(text, col_match.end() - 1)
+            if not tokens:
+                continue
+            type_expr, kwargs_tokens = tokens[0], tokens[1:]
+
+            nullable, primary_key, has_default = _scan_nullable_pk(kwargs_tokens)
+            if nullable is None:
+                if primary_key or has_default:
+                    nullable = False
+                else:
+                    low_annotation = annotation.lower()
+                    nullable = "none" in low_annotation or "optional[" in low_annotation
+
+            columns[col_name] = (_orm_column_category(type_expr), nullable)
+
+        for col_match in _MODEL_COLUMN_LEGACY_RE.finditer(text):
+            col_name = col_match.group(1)
+            if col_name in columns:
+                continue  # already captured via the Mapped[...] regex above
+            tokens = _call_arg_tokens(text, col_match.end() - 1)
+            if not tokens:
+                continue
+            type_expr, kwargs_tokens = tokens[0], tokens[1:]
+
+            nullable, primary_key, has_default = _scan_nullable_pk(kwargs_tokens)
+            if nullable is None:
+                # No Mapped[...] annotation to infer from (Column(...) or bare
+                # mapped_column(...)) — SQLAlchemy's own default is nullable=True,
+                # unless a default supplies the value (server_default=/default=)
+                # or it's a primary key.
+                nullable = False if (primary_key or has_default) else True
+
+            columns[col_name] = (_orm_column_category(type_expr), nullable)
+
+        if not columns:
+            print(
+                f"[schema_parity] WARN: could not parse columns for table '{table_name}' "
+                f"in {path.name}, skipping parity check for this table"
+            )
+            continue
+
+        orm_map[table_name] = columns
+
+    return orm_map
+
+
+def validate_schema_parity(service_dir: Path) -> list[str]:
+    """Compare the applied Postgres schema against the static ORM models.
+
+    DB side: introspects information_schema.columns for the app's applied schema
+    (same connection approach as _shared/derive_enums.py). ORM side: static text
+    parse of app/models/*.py — models are never imported, so this can't crash on
+    app-specific import errors. Returns a list of error strings (empty = OK);
+    a non-empty list fails the developer step the same way validate_rds_parity
+    and validate_users_auth_columns do.
+    """
+    errors: list[str] = []
+    app = service_dir.name
+
+    try:
+        import psycopg
+
+        from _shared.rds_env import connection_url, load_target_app_env, schema_for_app
+
+        load_target_app_env(app)
+        app_schema = schema_for_app(app)
+        url = connection_url().replace("postgresql+psycopg://", "postgresql://")
+
+        db_map: dict[str, dict[str, tuple[str, bool]]] = {}
+        with psycopg.connect(url) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name, column_name, data_type, udt_name, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = %s
+                ORDER BY table_name, column_name
+                """,
+                (app_schema,),
+            )
+            for table_name, column_name, data_type, udt_name, is_nullable in cur.fetchall():
+                category = _db_column_category(data_type, udt_name)
+                nullable = is_nullable == "YES"
+                db_map.setdefault(table_name, {})[column_name] = (category, nullable)
+    except Exception as exc:  # never crash validation on a connectivity/env problem
+        return [f"schema_parity: could not introspect applied DB (non-fatal check skipped): {exc!r}"]
+
+    orm_map = _parse_orm_models(service_dir / "app" / "models")
+
+    db_tables = set(db_map)
+    orm_tables = set(orm_map)
+
+    for table in sorted(orm_tables - db_tables):
+        errors.append(
+            f"schema_parity: ORM model defines table '{table}' but it does not exist in "
+            f"applied DB schema '{app_schema}' — check db/sql/ was applied, or table name typo"
+        )
+
+    for table in sorted(db_tables - orm_tables):
+        # Judgment call: a DB table with no ORM model may be intentional (e.g. an
+        # association/join table with no Python-side model) — note only, not a
+        # blocking error, so it never triggers _fail.
+        print(
+            f"[schema_parity] NOTE: DB table '{table}' (schema '{app_schema}') has no "
+            "matching ORM model — skipped comparison"
+        )
+
+    for table in sorted(db_tables & orm_tables):
+        db_cols = db_map[table]
+        orm_cols = orm_map[table]
+        db_col_names = set(db_cols)
+        orm_col_names = set(orm_cols)
+
+        for col in sorted(db_col_names - orm_col_names):
+            errors.append(
+                f"schema_parity: {table}.{col} exists in applied DB schema '{app_schema}' "
+                "but has no matching column in the ORM model"
+            )
+        for col in sorted(orm_col_names - db_col_names):
+            errors.append(
+                f"schema_parity: {table}.{col} is defined in the ORM model but does not exist "
+                f"in applied DB schema '{app_schema}' — check db/sql/ was applied, or column name typo"
+            )
+        for col in sorted(db_col_names & orm_col_names):
+            db_category, db_nullable = db_cols[col]
+            orm_category, orm_nullable = orm_cols[col]
+            if db_category != orm_category:
+                errors.append(
+                    f"schema_parity: {table}.{col} type category mismatch — DB is "
+                    f"'{db_category}' but ORM maps to '{orm_category}'"
+                )
+            if db_nullable != orm_nullable:
+                errors.append(
+                    f"schema_parity: {table}.{col} nullability mismatch — DB "
+                    f"{'allows NULL' if db_nullable else 'is NOT NULL'} but ORM "
+                    f"{'allows NULL' if orm_nullable else 'is NOT NULL'}"
+                )
+
+    return errors
+
 
 def _validation_env(service_dir: Path) -> dict[str, str]:
     """Test env: SQLite for smoke tests; schema/keys from .env.example when present."""
@@ -1710,10 +2711,9 @@ def _validation_env(service_dir: Path) -> dict[str, str]:
     env["DATABASE_URL"] = "sqlite:///:memory:"
     if not env.get("API_KEY"):
         env["API_KEY"] = "test-key"
-    env.setdefault("JWT_SECRET", example_vars.get("JWT_SECRET") or "test-secret-not-for-prod")
-    env.setdefault("JWT_SECRET_KEY", env["JWT_SECRET"])
+    env.setdefault("JWT_SECRET_KEY", example_vars.get("JWT_SECRET_KEY") or "test-secret-not-for-prod")
+    env.setdefault("JWT_ALGORITHM", "HS256")
     env.setdefault("JWT_EXPIRE_MINUTES", "60")
-    env.setdefault("JWT_TTL_HOURS", "8")
     # Valid Fernet key for encryption smoke tests (32 zero bytes, url-safe base64)
     env.setdefault(
         "ASSET_ENCRYPTION_KEY",
@@ -1771,13 +2771,120 @@ def _scan_router_antipatterns(service_dir: Path) -> list[str]:
     return errors
 
 
+_ROUTE_DECORATOR_RE = re.compile(
+    r'@router\.(get|post|put|patch|delete)\(\s*["\']([^"\']*)["\']'
+)
+_DEF_RE = re.compile(r"\bdef\s+\w+\s*\(")
+_BODY_PARAM_TYPE_RE = re.compile(r"(?:^|,)\s*body\s*:\s*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _matching_close_paren(text: str, open_paren_idx: int) -> int:
+    """Return the index of the ')' matching the '(' at open_paren_idx (paren-depth scan)."""
+    depth = 0
+    for i in range(open_paren_idx, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _scan_duplicate_action_routes(service_dir: Path) -> list[str]:
+    """Flag a bare `{id}` PATCH/PUT route that clones a dedicated `{id}/<action>` route.
+
+    A workflow transition (status/assign/archive/return/...) should exist as exactly
+    ONE route: the dedicated sub-path action. When a bare `PATCH/PUT /{id}` route on
+    the same resource takes the *same request body schema* as a sibling `{id}/<action>`
+    route in the same router file, it is not a real general-update endpoint — it is a
+    redundant clone that lets callers bypass the dedicated route while doing the exact
+    same state transition (and, in practice, frontends pick the wrong one). Proven live
+    on audit-finding-tracker: PATCH /api/v1/findings/{id} and
+    PUT /api/v1/findings/{id}/status both took `StatusUpdate`.
+
+    Body-schema-type equality (not just path overlap) is the signal — apps that
+    legitimately have both a general update and an unrelated action route use a
+    distinct schema for each (or no body at all on the action route), so they don't
+    trip this. Returns a list of error strings (empty = OK).
+    """
+    errors: list[str] = []
+    routers = service_dir / "app" / "routers"
+    if not routers.is_dir():
+        return errors
+
+    for path in sorted(routers.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel = path.relative_to(service_dir).as_posix()
+
+        routes: list[tuple[str, str, str | None]] = []
+        for m in _ROUTE_DECORATOR_RE.finditer(text):
+            method, url_path = m.group(1), m.group(2)
+            if method not in ("patch", "put"):
+                continue
+            def_match = _DEF_RE.search(text, m.end())
+            if not def_match:
+                continue
+            open_paren = def_match.end() - 1
+            close_paren = _matching_close_paren(text, open_paren)
+            if close_paren < 0:
+                continue
+            sig = text[open_paren + 1 : close_paren]
+            body_match = _BODY_PARAM_TYPE_RE.search(sig)
+            body_type = body_match.group(1) if body_match else None
+            routes.append((method, url_path, body_type))
+
+        seen: set[tuple[str, str]] = set()
+        for i, (method_a, path_a, body_a) in enumerate(routes):
+            if not body_a:
+                continue
+            for method_b, path_b, body_b in routes[i + 1 :]:
+                if body_b != body_a or path_a == path_b:
+                    continue
+                shorter, longer = sorted((path_a, path_b), key=len)
+                if not shorter.endswith("}"):
+                    continue  # shorter side must itself be a bare resource-id route
+                suffix = longer[len(shorter) :]
+                if not suffix.startswith("/") or "/" in suffix[1:] or "{" in suffix:
+                    continue  # longer side must add exactly one literal path segment
+                key = (shorter, longer)
+                if key in seen:
+                    continue
+                seen.add(key)
+                bare_method = method_a if path_a == shorter else method_b
+                action_method = method_b if path_a == shorter else method_a
+                errors.append(
+                    f"{rel}: {bare_method.upper()} {shorter} and {action_method.upper()} {longer} "
+                    f"both take `body: {body_a}` — a bare-id route must not clone a dedicated "
+                    "action route's request schema. Keep only the dedicated action route, or give "
+                    "the bare-id route its own distinct general-update schema."
+                )
+    return errors
+
+
 def run_service_validation(
     service: str,
     *,
     run_pytest: bool = True,
+    auth_mode: str | None = None,
 ) -> tuple[bool, str]:
-    """Host-side validation gate. Returns (passed, full report)."""
+    """Host-side validation gate. Returns (passed, full report).
+
+    auth_mode: explicit override for the auth-mode-aware gates below. Pass this
+    whenever calling from outside the LLM tool-call loop — _run_context (which
+    _current_auth_mode() reads) is only guaranteed set while run_task()'s
+    agent(...) call is in progress; run_task's own `finally` clears it to None
+    before returning. main()'s host-validation retry loop calls this function
+    AFTER run_task() has already returned, so relying on the global there silently
+    defaulted every call to "jwt" regardless of the app's real authMode — this
+    parameter is the fix. Defaults to _current_auth_mode() (the global) so the
+    dev_validate_app tool, which does run mid-conversation, is unaffected.
+    """
     import subprocess
+
+    resolved_auth_mode = auth_mode if auth_mode is not None else _current_auth_mode()
 
     service_dir = _service_dir(service)
     if not service_dir.is_dir():
@@ -1866,6 +2973,14 @@ def run_service_validation(
         return _fail("router_antipattern", detail)
     _ok("router_antipattern")
 
+    duplicate_action_errors = _scan_duplicate_action_routes(service_dir)
+    if duplicate_action_errors:
+        detail = "DUPLICATE_ACTION_ROUTE FAILED (redundant clone of a dedicated action route):\n" + "\n".join(
+            f"  - {e}" for e in duplicate_action_errors
+        )
+        return _fail("duplicate_action_route", detail)
+    _ok("duplicate_action_route")
+
     from _shared.validate_conftest import validate_conftest
 
     conftest_errors = validate_conftest(service_dir)
@@ -1936,6 +3051,53 @@ def run_service_validation(
         )
         return _fail("rds_parity", detail)
     _ok("rds_parity")
+    auth_mode = resolved_auth_mode
+    users_auth_errors = validate_users_auth_columns(service_dir, auth_mode)
+    if users_auth_errors:
+        detail = "\n".join(f"  - {e}" for e in users_auth_errors)
+        return _fail("users_auth_columns", detail)
+    _ok("users_auth_columns")
+    main_auth_errors = validate_main_registers_auth(service_dir, auth_mode)
+    if main_auth_errors:
+        detail = "\n".join(f"  - {e}" for e in main_auth_errors)
+        return _fail("main_registers_auth", detail)
+    _ok("main_registers_auth")
+    cors_errors = validate_cors_configured(service_dir)
+    if cors_errors:
+        detail = "CORS_CONFIGURED FAILED (browser preflight OPTIONS requests will 405):\n" + "\n".join(
+            f"  - {e}" for e in cors_errors
+        )
+        return _fail("cors_configured", detail)
+    _ok("cors_configured")
+    auth_mode_file_errors = validate_auth_mode_files(service_dir, auth_mode)
+    if auth_mode_file_errors:
+        detail = f"AUTH_MODE_FILES FAILED (authMode={auth_mode}):\n" + "\n".join(
+            f"  - {e}" for e in auth_mode_file_errors
+        )
+        return _fail("auth_mode_files", detail)
+    _ok("auth_mode_files")
+    if auth_mode == "api-key":
+        api_key_usage_errors = validate_api_key_route_usage(service_dir)
+        if api_key_usage_errors:
+            detail = "API_KEY_ROUTE_USAGE FAILED:\n" + "\n".join(
+                f"  - {e}" for e in api_key_usage_errors
+            )
+            return _fail("api_key_route_usage", detail)
+        _ok("api_key_route_usage")
+        invented_header_errors = validate_no_invented_auth_headers(service_dir, auth_mode)
+        if invented_header_errors:
+            detail = "NO_INVENTED_AUTH_HEADERS FAILED:\n" + "\n".join(
+                f"  - {e}" for e in invented_header_errors
+            )
+            return _fail("no_invented_auth_headers", detail)
+        _ok("no_invented_auth_headers")
+    schema_parity_errors = validate_schema_parity(service_dir)
+    if schema_parity_errors:
+        detail = "SCHEMA_PARITY FAILED (applied DB vs ORM models):\n" + "\n".join(
+            f"  - {e}" for e in schema_parity_errors
+        )
+        return _fail("schema_parity", detail)
+    _ok("schema_parity")
     for warn in validate_rds_parity_warnings(service_dir):
         _warn(f"rds_parity: {warn}")
 
@@ -2098,7 +3260,31 @@ with TestClient(app) as client:
     else:
         raise SystemExit("No working health endpoint at /health or /healthz")
 
-    # 2. Auto-discover GET routes from OpenAPI and smoke-test them
+    # 2. CORS preflight — every generated app ships a browser frontend that sends
+    # a custom auth header (X-API-Key or Authorization), so the browser always
+    # preflights with OPTIONS first. Starlette 405s OPTIONS on routes with no
+    # CORSMiddleware registered, silently breaking the frontend while curl/pytest
+    # (no Origin header) keep passing. This runs the ASGI app directly, so it
+    # catches real runtime behavior, not just source-level wiring.
+    preflight = client.options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "x-api-key",
+        },
+    )
+    allow_origin = preflight.headers.get("access-control-allow-origin")
+    if preflight.status_code != 200 or not allow_origin:
+        raise SystemExit(
+            f"CORS_PREFLIGHT_FAILED status={preflight.status_code} "
+            f"headers={dict(preflight.headers)} — CORSMiddleware is missing or "
+            "misconfigured in app/main.py (browser OPTIONS preflight would 405; "
+            "see target-apps/_template/app/main.py or main_apikey.py)"
+        )
+    print(f"CORS_PREFLIGHT_OK status={preflight.status_code} allow-origin={allow_origin}")
+
+    # 3. Auto-discover GET routes from OpenAPI and smoke-test them
     api_key = os.environ.get("API_KEY", "test-key")
     headers = {"X-API-Key": api_key}
     tested = 0
@@ -2545,6 +3731,11 @@ def run_task(
         )
         agent = _build_agent(ctx, telemetry=telemetry)
         summary = _strip_duplicate_handoff_sections(str(agent(_user_message(task, ctx))))
+        try:
+            _derive_msg = derive_enums_for_app(app)
+            print(_derive_msg)
+        except Exception as _e:
+            print(f"[derive-enums] {app}: unexpected error (non-fatal): {_e!r}")
         summary = _append_required_validation(summary, app)
     except BaseException as exc:
         agent_error = exc
@@ -2718,6 +3909,8 @@ def _execute_developer_pipeline_message(message: Any) -> str:
     task, ctx = parse_task_and_context(text)
     if not task.strip():
         task = DEFAULT_PIPELINE_TASK
+    if ctx.get("fullRegen"):
+        _clear_app_tree(_resolve_target_app(None, ctx))
     async_ack = _start_developer_pipeline_async(task, ctx)
     if async_ack is not None:
         return async_ack
@@ -2828,6 +4021,15 @@ def main() -> None:
         help="Do not load agents/pipeline/<target-app>.context.json automatically.",
     )
     parser.add_argument("--jira-key", help="Jira key (e.g. SAAP-3)")
+    parser.add_argument(
+        "--full-regen",
+        action="store_true",
+        help=(
+            "Set only by the orchestrator: this is a full from-scratch regeneration, "
+            "so clear app/, schemas/, tests/, .env before writing. Standalone CLI use "
+            "(e.g. a custom --task for a narrow edit) should never pass this."
+        ),
+    )
     load_context_extra(parser)
     parser.add_argument(
         "--serve-a2a", action="store_true", help=f"Start A2A server on :{A2A_PORT}"
@@ -2891,6 +4093,9 @@ def main() -> None:
         )
     print("[developer-agent] Running...", file=sys.stderr)
 
+    if args.full_regen:
+        _clear_app_tree(target)
+
     max_validate_retries = int(os.getenv("DEVELOPER_AGENT_VALIDATE_RETRIES", "2"))
     task = args.task
     result = ""
@@ -2909,7 +4114,11 @@ def main() -> None:
             target_app=target,
             jira_key=args.jira_key,
         )
-        passed, validate_report = run_service_validation(target, run_pytest=True)
+        passed, validate_report = run_service_validation(
+            target,
+            run_pytest=True,
+            auth_mode=str(ctx.get("authMode") or "jwt").strip().lower(),
+        )
         if passed:
             print(f"[developer-agent] Host validation passed — {validate_report}", file=sys.stderr)
             break

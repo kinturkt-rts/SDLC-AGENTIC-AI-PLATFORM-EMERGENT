@@ -43,7 +43,8 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("SKIP_STARTUP_CHECKS", "1")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("POSTGRES_SCHEMA", "SCHEMA_NAME")  # ADAPT: actual schema
-os.environ.setdefault("API_KEY", "test-key")              # ADAPT: if API-key auth
+# api-key mode has no shared-secret env var — auth is per-user tokens seeded
+# into the users table; see the "API-key variant" fixtures below.
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-not-for-prod")  # ADAPT: if JWT auth
 os.environ.setdefault("JWT_EXPIRE_MINUTES", "60")
 
@@ -184,11 +185,29 @@ def client(engine: Engine, db_session: Session) -> Generator[TestClient, None, N
 
 # ── 6. Auth fixtures (ADAPT: keep only what the app uses) ───────────────────
 
-# --- API-key variant ---
-@pytest.fixture()
-def api_headers():
-    """Headers for API-key auth apps."""
-    return {"X-API-Key": os.environ["API_KEY"]}
+# --- API-key variant (per-user token + role, looked up via app/dependencies.py) ---
+# Uncomment + adapt: seed one user per role your app's RBAC needs, each with its
+# own distinct token, then build headers from the seeded token — never a shared
+# secret, never a second header.
+#
+# @pytest.fixture()
+# def seeded_users(db_session):
+#     """Seed users across roles with distinct tokens; return their tokens."""
+#     from app.models.user import User
+#     users = {
+#         "employee": User(token="tok_employee_test", role="employee"),
+#         "manager": User(token="tok_manager_test", role="manager"),
+#         "admin": User(token="tok_admin_test", role="admin"),
+#     }
+#     db_session.add_all(users.values())
+#     db_session.commit()
+#     return {role: user.token for role, user in users.items()}
+#
+# @pytest.fixture()
+# def api_headers(seeded_users):
+#     def _factory(role: str = "employee"):
+#         return {"X-API-Key": seeded_users[role]}
+#     return _factory
 
 
 # --- JWT variant (uncomment + adapt when app uses JWT) ---

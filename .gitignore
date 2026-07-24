@@ -99,3 +99,14 @@ backend/docs/design/rag-app-streamlit.md
 backend/docs/design/rag-pdf-system.md
 backend/docs/design/test-dev.md
 backend/docs/design/test-medium-app.md
+
+# Local debug/scratch scripts (never commit)
+backend/check_*.py
+backend/drop_schema.py
+backend/list_tables.py
+backend/introspect_*.py
+backend/derive_enums_prototype.py
+backend/derive_enums.py
+backend/inventory-app/
+package-lock.json
+backend/docs/generated-diagrams/

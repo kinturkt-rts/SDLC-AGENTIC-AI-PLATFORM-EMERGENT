@@ -305,3 +305,257 @@ def test_ensure_delivery_files_copies_template_seed_files(
     assert "target-apps/demo-api/README.md" in written
     assert (service / ".env.example").read_text(encoding="utf-8") == "APP_ENV=test\n"
     assert (service / "README.md").read_text(encoding="utf-8") == "# Demo API\n"
+
+
+def test_verbatim_scaffold_suffixes_is_subset_of_manifest_force_refresh() -> None:
+    """Drift guard between two hand-maintained lists in different modules:
+    developer_agent.py's _VERBATIM_SCAFFOLD_SUFFIXES (blocks LLM writes) and
+    scaffold.py's manifest-derived always_refresh (force-copies on every
+    dev_scaffold call). The block list must stay a subset of the force-refresh
+    set — see the cross-reference comments at both definitions. If someone adds
+    a file to the block list without also adding it to scaffold-manifest.json's
+    copy_verbatim/copy_as (outside customize_after_scaffold), this fails.
+    """
+    mod = _load_agent_module()  # also puts agents/developer-agent on sys.path and imports scaffold
+    import scaffold
+
+    manifest_path = _REPO_ROOT / "target-apps" / "_template" / "scaffold-manifest.json"
+    manifest = scaffold.load_manifest(manifest_path)
+    customize = set(manifest.get("customize_after_scaffold", []))
+
+    always_refresh: set[str] = set()
+    for pattern in scaffold._VALID_PATTERNS:
+        spec = scaffold.resolve_pattern_spec(manifest, pattern)
+        always_refresh |= set(spec["copy_verbatim"]) | set(spec["copy_as"].values())
+    always_refresh -= customize
+
+    block_list = {"/".join(suffix) for suffix in mod._VERBATIM_SCAFFOLD_SUFFIXES}
+
+    missing = block_list - always_refresh
+    assert not missing, (
+        "developer_agent.py's _VERBATIM_SCAFFOLD_SUFFIXES has entries not covered "
+        "by scaffold.py's manifest-derived always_refresh set — the two lists have "
+        f"drifted: {sorted(missing)}"
+    )
+
+
+# ── api-key mode: hardcoded single-header auth model ─────────────────────────
+
+
+def test_validate_dev_write_path_blocks_app_auth_py_in_api_key_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """api-key mode has exactly one fixed auth file (app/dependencies.py) — the
+    LLM must never be able to add a second one (app/auth.py) to smuggle in an
+    invented header."""
+    mod = _load_agent_module()
+    monkeypatch.setattr(mod, "_current_auth_mode", lambda: "api-key")
+    service = tmp_path / "target-apps" / "demo-svc"
+    (service / "app").mkdir(parents=True)
+
+    blocked = mod._validate_dev_write_path(service / "app" / "auth.py")
+    assert blocked is not None
+    assert "forbidden" in blocked.lower()
+
+
+def test_validate_dev_write_path_allows_app_auth_py_in_jwt_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The app/auth.py block is api-key-only — jwt mode never had this file and
+    must stay byte-identical (no new restriction leaking into the JWT path)."""
+    mod = _load_agent_module()
+    monkeypatch.setattr(mod, "_current_auth_mode", lambda: "jwt")
+    service = tmp_path / "target-apps" / "demo-svc"
+    (service / "app").mkdir(parents=True)
+
+    assert mod._validate_dev_write_path(service / "app" / "auth.py") is None
+
+
+def test_validate_users_auth_columns_requires_token_and_role_in_api_key_mode(
+    tmp_path: Path,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    sql_dir = service / "db" / "sql"
+    sql_dir.mkdir(parents=True)
+    (sql_dir / "001_schema.sql").write_text(
+        "CREATE TABLE users (id uuid PRIMARY KEY, username text);\n",
+        encoding="utf-8",
+    )
+
+    errors = mod.validate_users_auth_columns(service, auth_mode="api-key")
+    joined = "\n".join(errors)
+    assert "token" in joined.lower()
+    assert "role" in joined.lower()
+
+
+def test_validate_users_auth_columns_passes_with_token_and_role(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    sql_dir = service / "db" / "sql"
+    sql_dir.mkdir(parents=True)
+    (sql_dir / "001_schema.sql").write_text(
+        "CREATE TABLE users (id uuid PRIMARY KEY, token text UNIQUE, role text);\n",
+        encoding="utf-8",
+    )
+
+    assert mod.validate_users_auth_columns(service, auth_mode="api-key") == []
+
+
+def test_validate_no_invented_auth_headers_catches_bare_x_user_id_header(
+    tmp_path: Path,
+) -> None:
+    """Regression for the bug that motivated this gate: a route declaring its
+    own bare Header(alias="X-User-Id") instead of using the fixed
+    app/dependencies.py::require_api_key."""
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app" / "routers").mkdir(parents=True)
+    (service / "app" / "dependencies.py").write_text(
+        "def require_api_key(): ...\n", encoding="utf-8"
+    )
+    (service / "app" / "routers" / "items.py").write_text(
+        'from fastapi import Header\n'
+        'def list_items(x_user_id: str = Header(alias="X-User-Id")): ...\n',
+        encoding="utf-8",
+    )
+
+    errors = mod.validate_no_invented_auth_headers(service, "api-key")
+    assert any("X-User-Id" in e for e in errors)
+
+
+def test_validate_no_invented_auth_headers_catches_second_apikeyheader_scheme(
+    tmp_path: Path,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app" / "routers").mkdir(parents=True)
+    (service / "app" / "dependencies.py").write_text(
+        "def require_api_key(): ...\n", encoding="utf-8"
+    )
+    (service / "app" / "auth.py").write_text(
+        'from fastapi.security import APIKeyHeader\n'
+        '_admin_key_scheme = APIKeyHeader(name="X-Admin-Key")\n',
+        encoding="utf-8",
+    )
+
+    errors = mod.validate_no_invented_auth_headers(service, "api-key")
+    assert any("app/auth.py" in e and "forbidden" in e.lower() for e in errors)
+    assert any("APIKeyHeader" in e for e in errors)
+
+
+def test_validate_no_invented_auth_headers_passes_clean_app(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app" / "routers").mkdir(parents=True)
+    (service / "app" / "dependencies.py").write_text(
+        'from fastapi.security import APIKeyHeader\n'
+        '_api_key_scheme = APIKeyHeader(name="X-API-Key")\n'
+        "def require_api_key(): ...\n"
+        "def require_role(*roles): ...\n",
+        encoding="utf-8",
+    )
+    (service / "app" / "routers" / "items.py").write_text(
+        "from app.dependencies import require_api_key, require_role\n"
+        "def list_items(current_user=Depends(require_api_key)): ...\n",
+        encoding="utf-8",
+    )
+
+    assert mod.validate_no_invented_auth_headers(service, "api-key") == []
+
+
+def test_validate_no_invented_auth_headers_noops_in_jwt_mode(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app").mkdir(parents=True)
+    (service / "app" / "auth.py").write_text(
+        'from fastapi import Header\n'
+        'def x(x_user_id: str = Header(alias="X-User-Id")): ...\n',
+        encoding="utf-8",
+    )
+
+    assert mod.validate_no_invented_auth_headers(service, "jwt") == []
+
+
+def test_validate_api_key_route_usage_requires_require_api_key_or_require_role(
+    tmp_path: Path,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    routers = service / "app" / "routers"
+    routers.mkdir(parents=True)
+    (routers / "items.py").write_text(
+        "def list_items(): ...\n", encoding="utf-8"
+    )
+
+    errors = mod.validate_api_key_route_usage(service)
+    assert errors and "NEVER APPLIED" in errors[0]
+
+    (routers / "items.py").write_text(
+        "def list_items(current_user=Depends(require_api_key)): ...\n",
+        encoding="utf-8",
+    )
+    assert mod.validate_api_key_route_usage(service) == []
+
+
+def test_validate_cors_configured_catches_missing_middleware(tmp_path: Path) -> None:
+    """Regression for warehouse-inventory: app/main.py and app/config.py are
+    LLM-authored (not force-refreshed from _template), so CORSMiddleware can
+    silently drop out — leaving every browser OPTIONS preflight to 405."""
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app").mkdir(parents=True)
+    (service / "app" / "main.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8"
+    )
+    (service / "app" / "config.py").write_text(
+        "class Settings:\n    app_env: str = 'production'\n", encoding="utf-8"
+    )
+
+    errors = mod.validate_cors_configured(service)
+    assert any("CORS MIDDLEWARE MISSING" in e for e in errors)
+    assert any("CORS_ORIGINS MISSING" in e for e in errors)
+
+
+def test_validate_cors_configured_catches_imported_but_unregistered(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app").mkdir(parents=True)
+    (service / "app" / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from fastapi.middleware.cors import CORSMiddleware\n"
+        "app = FastAPI()\n",
+        encoding="utf-8",
+    )
+    (service / "app" / "config.py").write_text(
+        "    cors_origins: list[str] = Field(default_factory=lambda: ['*'])\n",
+        encoding="utf-8",
+    )
+
+    errors = mod.validate_cors_configured(service)
+    assert any("NOT REGISTERED" in e for e in errors)
+
+
+def test_validate_cors_configured_passes_clean_app(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    (service / "app").mkdir(parents=True)
+    (service / "app" / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from fastapi.middleware.cors import CORSMiddleware\n"
+        "app = FastAPI()\n"
+        "app.add_middleware(\n"
+        "    CORSMiddleware,\n"
+        "    allow_origins=settings.cors_origins,\n"
+        "    allow_credentials=True,\n"
+        "    allow_methods=['*'],\n"
+        "    allow_headers=['*'],\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    (service / "app" / "config.py").write_text(
+        "    cors_origins: list[str] = Field(default_factory=lambda: ['*'], alias='CORS_ORIGINS')\n",
+        encoding="utf-8",
+    )
+
+    assert mod.validate_cors_configured(service) == []

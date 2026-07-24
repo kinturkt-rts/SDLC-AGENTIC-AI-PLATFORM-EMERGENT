@@ -291,6 +291,8 @@ class SdlcPipelineRunner:
             if not self.options.skip_developer:
                 self._step_developer()
 
+            self._step_generate_env()
+
             if not self.options.skip_verify and not self.options.skip_developer:
                 self._step_verify()
             
@@ -793,6 +795,7 @@ class SdlcPipelineRunner:
         png_rel = diagram_paths[0]
         self._update_context({"diagramPaths": diagram_paths, "designDocPath": design_rel})
         self._delivery_check("design")
+        self._sync_auth_mode()
         self.agents_run.append("architect-agent")
         self.artifacts["Design"] = design_rel
         self.artifacts["Diagram"] = png_rel
@@ -836,13 +839,19 @@ class SdlcPipelineRunner:
                 self.context_file,
                 "--task",
                 DB_AGENT_TASK,
+                "--full-regen",
             ]
             if not self.options.skip_postgres:
                 args.append("--with-postgres")
             self._run_python(args, step="database-agent")
         else:
             task = DB_AGENT_TASK
-            self._invoke_a2a("database-agent", task, step="database-agent")
+            self._invoke_a2a(
+                "database-agent",
+                task,
+                step="database-agent",
+                extra_context={"fullRegen": True},
+            )
 
         if self.transport == "a2a" and self.run_id:
             self._merge_run_context_from_s3()
@@ -1014,6 +1023,7 @@ class SdlcPipelineRunner:
                             self.context_file,
                             "--task",
                             attempt_task,
+                            "--full-regen",
                         ],
                         step="developer-agent",
                         env_overrides=(
@@ -1021,14 +1031,15 @@ class SdlcPipelineRunner:
                         ),
                     )
                 else:
+                    extra_context: dict[str, Any] = {"fullRegen": True}
+                    if use_fallback:
+                        extra_context["codingModelOverride"] = fallback_model
                     self._invoke_a2a(
                         "developer-agent",
                         attempt_task,
                         step="developer-agent",
                         include_db_paths=not self.options.skip_db,
-                        extra_context=(
-                            {"codingModelOverride": fallback_model} if use_fallback else None
-                        ),
+                        extra_context=extra_context,
                     )
                     # AgentCore may return before developer-agent finishes writing S3 artifacts.
                     self._wait_for_developer_handoff()
@@ -1181,6 +1192,51 @@ class SdlcPipelineRunner:
             f"(runs/{self.run_id}/{rel})"
         )
 
+    def _step_generate_env(self) -> None:
+        """Generate target-apps/<app>/.env from .env.example (skip-if-exists).
+
+        Runs unconditionally after the developer step — even when developer-agent
+        itself was skipped (resume runs) — because this must fire no matter how the
+        pipeline is launched (run-sdlc-local.ps1, orchestrator-agent, A2A), not just
+        from the PowerShell wrapper. No-op if there's no local .env.example (e.g.
+        pure S3/AgentCore runs with no materialized workspace).
+        """
+        app_root = target_app_root_rel(self.feature)
+        app_dir = self.root / app_root.replace("/", os.sep)
+        if not (app_dir / ".env.example").is_file():
+            legacy = self.root / "target-apps" / self.feature
+            if (legacy / ".env.example").is_file():
+                app_dir = legacy
+            else:
+                return
+
+        self._update_run_json(current_step="generate-env")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "agents/_shared/generate_target_app_env.py",
+                "--target-app",
+                self.feature,
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if proc.stdout:
+            _safe_print(proc.stdout)
+        if proc.stderr:
+            _safe_print(proc.stderr, file=sys.stderr)
+        if proc.returncode != 0:
+            logger.warning(
+                "[generate-env] .env generation failed (exit %s) - copy %s/.env.example "
+                "to .env by hand.",
+                proc.returncode,
+                app_root,
+            )
+
     def _step_verify(self) -> None:
         app_root = target_app_root_rel(self.feature)
         app_dir = self.root / app_root.replace("/", os.sep)
@@ -1310,10 +1366,13 @@ class SdlcPipelineRunner:
                     self.feature,
                     "--context-file",
                     self.context_file,
+                    "--full-regen",
                 ],
                 step="frontend-agent",
             )
         else:
+            # frontend-agent has no A2A/AgentCore handler today (not in
+            # config/agentcore/runtimes.json) — nothing to thread fullRegen into yet.
             self._invoke_a2a(
                 "frontend-agent",
                 f"Generate the React frontend for {self.feature} from the OpenAPI spec.",
@@ -1343,6 +1402,33 @@ class SdlcPipelineRunner:
             on_disk = json.loads(self.ctx_path.read_text(encoding="utf-8-sig"))
             if on_disk.get("deliveryProfile"):
                 self.context["deliveryProfile"] = on_disk["deliveryProfile"]
+
+    def _sync_auth_mode(self) -> None:
+        """Derive authMode ("jwt"/"api-key") from the design doc and log it.
+
+        Not consumed anywhere yet — this only makes the value visible in context.json
+        and the run log on every pipeline run, regardless of entry point (orchestrator
+        or run-sdlc-local.ps1), so database/developer/frontend-agent can read it once
+        something is wired to branch on it.
+        """
+        if not self.ctx_path.is_file():
+            return
+        self._run_python(
+            [
+                "agents/_shared/auth_profile.py",
+                "--context-file",
+                self.context_file,
+                "--repo-root",
+                str(self.root),
+                "--sync",
+            ],
+            step="auth-mode-sync",
+        )
+        if self.ctx_path.is_file():
+            on_disk = json.loads(self.ctx_path.read_text(encoding="utf-8-sig"))
+            if on_disk.get("authMode"):
+                self.context["authMode"] = on_disk["authMode"]
+        _safe_print(f"[pipeline] authMode: {self.context.get('authMode', 'jwt')}")
 
     def _delivery_check(self, stage: str) -> None:
         if not self.ctx_path.is_file():
