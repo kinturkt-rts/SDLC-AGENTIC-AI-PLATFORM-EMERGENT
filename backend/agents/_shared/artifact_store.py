@@ -15,6 +15,7 @@ from _shared.pipeline_context import (
     _is_cloud_store,
     db_dir_rel_for_app,
     db_handoff_rel_for_app,
+    devops_handoff_rel_for_app,
     gitlab_handoff_rel_for_app,
     infer_target_app_from_context,
     is_pipeline_context_rel,
@@ -131,6 +132,16 @@ def put_artifact(
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(body)
     return rel
+
+
+def delete_artifact(run_id: str, rel_path: str) -> None:
+    """Delete a stored artifact (no-op if it doesn't exist)."""
+    rel = rel_path.lstrip("/").replace("\\", "/")
+    if is_s3_store():
+        key = f"{run_s3_prefix(run_id)}{rel}"
+        _s3_client().delete_object(Bucket=s3_bucket(), Key=key)
+        return
+    _local_path(rel, run_id=run_id).unlink(missing_ok=True)
 
 
 def get_artifact(run_id: str, rel_path: str) -> bytes:
@@ -425,6 +436,8 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
         paths.append(gitlab_handoff_rel_for_app(slug))
     elif agent_name == "qa-agent":
         paths.append(qa_handoff_rel_for_app(slug))
+    elif agent_name == "devops-agent":
+        paths.append(devops_handoff_rel_for_app(slug))
     return paths
 
 
@@ -556,6 +569,23 @@ def write_repo_artifact(
     else:
         dest.write_bytes(content)
     return rel_path
+
+
+def delete_repo_artifact(rel_path: str, *, context: dict[str, Any] | None = None) -> None:
+    """Delete from local repo path or run artifact store when runId is present.
+
+    No-op if the path doesn't exist — callers (e.g. db_delete_file) use this to
+    remove superseded generated files (stale db/sql/ migrations from an earlier
+    schema design) without needing to know whether the run is local-disk or S3-backed.
+    """
+    run_id = resolve_run_id(context)
+    rel = rel_path.lstrip("/").replace("\\", "/")
+    if run_id and is_pipeline_context_rel(rel):
+        return
+    if run_id:
+        delete_artifact(run_id, rel_path)
+        return
+    (repo_root() / rel).unlink(missing_ok=True)
 
 
 def read_repo_artifact(rel_path: str, *, context: dict[str, Any] | None = None) -> bytes:

@@ -27,21 +27,53 @@ const MAX_BYTES = 256 * 1024;
 const S3_UPLOAD_TIMEOUT_MS = 45_000;
 const MAX_CONCURRENT_RUNS = Math.max(1, parseInt(process.env.SDLC_MAX_CONCURRENT_RUNS ?? '3', 10) || 3);
 
-/** Active pipeline runs that still occupy a concurrency slot. */
+/** True when only DevOps/CI deploy remains (agents already finished). */
+export function isDeployFollowOn(run: {
+  status?: string;
+  currentPhase?: string | null;
+  currentAgent?: string | null;
+  deployStatus?: string | null;
+}): boolean {
+  if (run.deployStatus === 'pending' || run.deployStatus === 'running') return true;
+  return (
+    run.status === 'running' &&
+    (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent')
+  );
+}
+
+/** Active pipeline runs that still occupy a concurrency slot (agent chain only). */
 export async function getActiveRuns() {
   try {
     const runs = await listRuns();
-    return runs.filter((r) => r.status === 'running' || r.status === 'paused');
+    return runs.filter((r) => {
+      if (r.status === 'paused') return true;
+      if (r.status !== 'running') return false;
+      // Deploy follow-on stays visible as "running" for UX but does not hold a slot.
+      return !isDeployFollowOn(r);
+    });
   } catch {
     return [];
   }
 }
 
-/** Returns the conflicting run if this targetApp already has an active pipeline. */
+/** Returns the conflicting run if this targetApp already has an active pipeline (incl. deploy). */
 export async function findRunningTargetApp(targetApp: string) {
   const slug = targetApp.trim().toLowerCase();
-  const active = await getActiveRuns();
-  return active.find((r) => r.projectId === slug) ?? null;
+  try {
+    const runs = await listRuns();
+    return (
+      runs.find(
+        (r) =>
+          r.projectId === slug &&
+          (r.status === 'running' ||
+            r.status === 'paused' ||
+            r.deployStatus === 'pending' ||
+            r.deployStatus === 'running'),
+      ) ?? null
+    );
+  } catch {
+    return null;
+  }
 }
 
 export function maxConcurrentRuns(): number {

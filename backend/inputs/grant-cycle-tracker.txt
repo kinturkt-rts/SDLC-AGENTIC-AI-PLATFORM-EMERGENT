@@ -1,4 +1,4 @@
-Grant Cycle Tracker — nonprofit tracks opportunities, applications, awards, and reporting deadlines
+Grant Cycle Tracker for our nonprofit grants team.
 
 Client story:
 Priya is the grants lead at a mid-size nonprofit. Opportunities live in email, drafts in
@@ -6,39 +6,42 @@ shared drives, and reporting deadlines on sticky notes. They miss renewals and s
 a funder asks for a progress report. She wants one place to see every grant from “we might
 apply” through “we must report,” with clear owners and due dates — not a full CRM.
 
-What the product should do:
-- Track grant opportunities: funder name, program title, focus area, estimated award size,
-  and application deadline.
-- Move each opportunity through a simple lifecycle: researching → drafting → submitted →
-  awarded / declined / withdrawn.
-- For awarded grants: record award amount, start/end dates, and required reporting milestones
-  (what is due, when, and who owns it).
-- Attach plain notes and checklist items to an opportunity or award (no fancy document
-  management — just “what still needs doing”).
-- Surface a “coming due” view: applications due soon and reports overdue or due this month.
-- Let leadership see a portfolio snapshot: how many in flight, dollars awarded this year,
-  and at-risk deadlines — without editing grant records.
+Problem:
+- Grant opportunities and deadlines are scattered and easy to miss.
+- Awarded grants need reporting milestones with owners, but there is no single portfolio view.
+- Leadership wants risk and dollars in flight without editing records.
 
 Who uses it:
-- Grants coordinator — create and update opportunities, submit status, manage reporting tasks.
+- Grants coordinator — create and update opportunities, move status, manage reporting tasks.
 - Program lead — own specific applications/reports; update notes and mark tasks done.
 - Executive director — read-only portfolio and deadline risk view.
 
-Rules that matter in real life:
-- An opportunity can’t jump to “awarded” without going through submitted (or a clear exception
-  note for rare cases staff explicitly allow).
+MVP features:
+- Track grant opportunities: funder, program title, focus area, estimated award size, application deadline.
+- Move each opportunity through a simple lifecycle: researching → drafting → submitted → awarded / declined / withdrawn.
+- For awarded grants: award amount, start/end dates, and required reporting milestones (what is due, when, who owns it).
+- Attach plain notes and checklist items to an opportunity or award (lightweight — not a full document system).
+- “Coming due” view: applications due soon and reports overdue or due this month.
+- Leadership snapshot: how many in flight, dollars awarded this year, and at-risk deadlines — read-only.
+- Seed a mix of opportunities across stages, a few awards with milestones, at least one overdue report and one application due within a week.
+
+Business rules:
+- An opportunity should not jump to “awarded” without going through submitted (unless staff record a clear exception note).
 - Reporting milestones only exist once a grant is awarded.
-- Closing or withdrawing an opportunity should keep history for learning (“why we walked away”).
-- Overdue reports should stay loudly visible until marked complete.
-- Dollar amounts are for planning conversations — keep them simple and editable by coordinators.
+- Closing or withdrawing keeps history so the team can learn why they walked away.
+- Overdue reports stay highly visible until marked complete.
+- Dollar amounts stay simple and editable by coordinators for planning conversations.
 
-Demo data expectations:
-- Mix of opportunities across stages, including a few awards with reporting milestones.
-- At least one overdue report and one application due within a week.
-- A couple of funders with more than one opportunity over time.
+Must have for v1:
+- Persisted data and clear ownership on applications and reports.
+- Deadline and portfolio views that leadership can trust in a meeting.
 
-Out of scope:
-- Writing the grant narrative with AI, funder portals login, budgeting modules, donor CRM
+Nice to have (later):
+- AI-written grant narratives, funder portal logins, full budgeting, donor CRM.
 
-Target app slug: grant-cycle-tracker
-Output directory: target-apps/grant-cycle-tracker/
+Constraints:
+- Internal nonprofit use.
+- Keep secrets out of source code.
+
+Success:
+- Priya opens the tracker, sees what is due this week, updates an opportunity through submitted to awarded, adds a reporting milestone, and leadership sees portfolio risk without editing grants.

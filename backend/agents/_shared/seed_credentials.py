@@ -255,17 +255,23 @@ def collect_credentials(app_dir: Path) -> list[tuple[str, str, str, str]]:
 
 
 def seed_sql_has_placeholders(app_dir: Path) -> bool:
-    """True when any seed file has the literal placeholder token, in any table/column.
+    """True when any seed file has bcrypt or SHA-256 placeholder tokens (any table).
 
     Deliberately not scoped to the users table: materialize_seed_passwords.py's
     find_remaining_placeholder_columns() checks every text/varchar column on RDS, so
     the pre-check that decides whether to bother running it must be equally broad —
     narrowing this to "looks like a users INSERT" previously let placeholders in other
     tables (e.g. api_keys.key_hash) skip the post-apply safety-net scan entirely.
+
+    Also true for invented ``sha256_*`` fake digests so materialize can repair them.
     """
+    from _shared.sha256_api_keys import seed_sql_has_sha256_work
+
     sql_dir = app_dir / "db" / "sql"
     if not sql_dir.is_dir():
         return False
+    if seed_sql_has_sha256_work(app_dir):
+        return True
     for seed in sorted(sql_dir.glob("*seed*.sql")):
         if "fix" in seed.name.lower():
             continue

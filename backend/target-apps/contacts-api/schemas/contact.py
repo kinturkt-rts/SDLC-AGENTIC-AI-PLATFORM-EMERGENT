@@ -1,44 +1,41 @@
-"""Contact Pydantic schemas for request/response."""
+"""Contact request/response schemas."""
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-
-from schemas.department import DepartmentRead
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class ContactBase(BaseModel):
-    """Base contact fields."""
+class ContactCreate(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=120)
-    email: EmailStr
-    phone: Optional[str] = Field(None, max_length=30)
-    title: Optional[str] = Field(None, max_length=80)
-
-
-class ContactCreate(ContactBase):
-    """Request schema for creating contacts."""
+    email: str = Field(..., min_length=1)
     department_id: str
+    phone: Optional[str] = Field(default=None, max_length=30)
+    title: Optional[str] = Field(default=None, max_length=80)
 
 
 class ContactUpdate(BaseModel):
-    """Request schema for updating contacts."""
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    email: Optional[str] = Field(default=None, min_length=1)
     department_id: Optional[str] = None
-    full_name: Optional[str] = Field(None, min_length=1, max_length=120)
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = Field(None, max_length=30)
-    title: Optional[str] = Field(None, max_length=80)
+    phone: Optional[str] = Field(default=None, max_length=30)
+    title: Optional[str] = Field(default=None, max_length=80)
+    is_active: Optional[bool] = None
 
 
-class ContactRead(ContactBase):
-    """Response schema for contacts."""
+class ContactOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     department_id: str
+    full_name: str
+    email: str
+    phone: Optional[str] = None
+    title: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
-    department: Optional[DepartmentRead] = None
 
     @field_validator("id", "department_id", mode="before")
     @classmethod
@@ -47,8 +44,7 @@ class ContactRead(ContactBase):
 
 
 class ContactListPage(BaseModel):
-    """Paginated contact list response."""
-    items: list[ContactRead]
+    items: list[ContactOut]
     total: int
     limit: int
     offset: int

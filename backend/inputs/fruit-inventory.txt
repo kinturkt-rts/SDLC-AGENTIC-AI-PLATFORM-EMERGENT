@@ -1,0 +1,51 @@
+Build a small internal Fruit Inventory API for tracking fruit stock in a cafeteria or grocery storage area.
+
+Problem:
+
+Fruit quantities are currently tracked manually, causing stock mismatches and expired items.
+Staff needs one place to maintain fruit records and update available quantities.
+Internal tools should use a simple API — no browser app required for v1.
+
+Who uses it:
+
+Staff with a valid API key can add, update, or deactivate fruit items.
+Internal users can browse the current inventory.
+Health checks stay open for ops.
+
+Features:
+
+Create a fruit item: name, category, quantity, unit, price, received date, and active status.
+View one fruit item or list all inventory.
+Update quantity, price, or other details.
+Deactivate an item instead of permanently deleting it.
+Filter by category, active status, or low stock.
+Seed a few fruits such as apples, bananas, oranges, and grapes.
+
+Business rules:
+
+Fruit name must be unique.
+Quantity and price cannot be negative.
+Received date cannot be in the future.
+Inactive fruit items cannot receive stock updates.
+Deactivated records must remain in the database.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+Basic CRUD using FastAPI.
+Swagger/OpenAPI is sufficient.
+No Streamlit, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Expiration tracking, supplier management, stock alerts, sales tracking.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+Staff can add apples, list inventory, update the quantity, filter low-stock items, deactivate a fruit record, and still retrieve its history.

@@ -111,7 +111,8 @@ Open http://localhost:3000/login
 | Requirement | Notes |
 |-------------|--------|
 | **IAM task role** | `sdlc-control-plane-task` — S3 artifact bucket, CloudWatch Logs, `bedrock-agentcore:InvokeAgentRuntime` |
-| **Env vars** | `ARTIFACT_STORE=s3`, `ARTIFACT_S3_BUCKET`, `AWS_REGION` — set in ECS task definition (not in image) |
+| **Env vars** | `ARTIFACT_STORE=s3`, `ARTIFACT_S3_BUCKET`, `AWS_REGION`, `GITLAB_URL` — set in ECS task definition (not in image) |
+| **Secrets** | `GITLAB_PERSONAL_ACCESS_TOKEN` from Secrets Manager `sdlc/control-plane/gitlab-pat` (synced from `.env.local` by `deploy-frontend-ecs.ps1`) — used to mark Deploy failed when apps-repo CI fails |
 | **Transport** | `SDLC_PIPELINE_TRANSPORT=a2a` (default in Dockerfile) |
 
 Do **not** bake `.env` or `.env.local` into the image.

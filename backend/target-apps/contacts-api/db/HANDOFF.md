@@ -1,6 +1,6 @@
 # Database handoff — contacts-api
 
-_Generated 2026-06-18 16:04 UTC by database-agent._
+_Generated 2026-07-21 18:51 UTC by database-agent._
 
 ## For developer-agent
 
@@ -25,21 +25,16 @@ Add `sqlalchemy`, `psycopg[binary]`, and `alembic` in the service `requirements.
 | Item | Value |
 |------|--------|
 | Postgres schema | `contacts_api` |
-| Database | `(set POSTGRES_MCP_DATABASE)` |
-| Endpoint | `(set POSTGRES_MCP_DB_ENDPOINT)` |
-| SQL artifacts | `target-apps/contacts-api/db/sql/` |
-| RDS apply (last run) | not this session |
-| Dev seed rows/table | 5–10 (see `*_seed.sql`) |
+| Database | `sdlc_agentic_ai` |
+| Endpoint | `agenticaidbinstance.c1u0cggiolxp.us-east-2.rds.amazonaws.com` |
+| SQL artifacts | `contacts-api/db/sql/` |
+| RDS apply (last run) | yes — apply_sql_to_rds.py |
 
 ## SQL files (apply order)
 
-1. `target-apps/contacts-api/db/sql/001_create_departments.sql`
-2. `target-apps/contacts-api/db/sql/001_create_schema.sql`
-3. `target-apps/contacts-api/db/sql/002_create_contacts.sql`
-4. `target-apps/contacts-api/db/sql/002_create_departments.sql`
-5. `target-apps/contacts-api/db/sql/003_add_indexes.sql`
-6. `target-apps/contacts-api/db/sql/003_create_contacts.sql`
-7. `target-apps/contacts-api/db/sql/004_seed.sql`
+1. `contacts-api/db/sql/001_create_departments.sql`
+2. `contacts-api/db/sql/002_create_contacts.sql`
+3. `contacts-api/db/sql/003_seed.sql`
 
 **Connection:** load credentials from env/Key Vault (NFR-5). Use schema `contacts_api` (`search_path` or qualified table names). Do not rely on unqualified `public` for app tables.
 
@@ -50,8 +45,8 @@ Add `sqlalchemy`, `psycopg[binary]`, and `alembic` in the service `requirements.
 
 ## Developer-agent checklist
 
-1. `dev_read_file` → `docs/design/contacts-api.md`
-2. `dev_read_file` → `target-apps/contacts-api/db/sql/` migrations + seed
+1. `dev_read_file` → `contacts-api/docs/design/contacts-api.md`
+2. `dev_read_file` → `contacts-api/db/sql/` migrations + seed
 3. Scaffold `target-apps/<app>/` from `_template` if empty; extend `requirements.txt` for DB libs
 4. SQLAlchemy models aligned with DDL (ENUM + uuid rules above); Pydantic schemas for §4 API
 5. README: Windows+bash setup, `.env` copy, uvicorn, Swagger auth, seed UUIDs, RDS smoke test

@@ -1,0 +1,42 @@
+Build a medium internal Supply Closet Request desk for office supplies.
+
+Problem:
+- Teams Slack facilities for pens, notebooks, and HDMI cables with no tracking.
+- Facilities cannot see what was requested, approved, or fulfilled last week.
+- Need a simple request/approve/fulfill flow with clear statuses.
+
+Who uses it:
+- Employees sign in and submit supply requests (item name, quantity, optional note, urgency).
+- Facilities/admin users review, approve or reject, and mark requests fulfilled.
+- Health checks stay open for ops (no auth).
+
+MVP features:
+- Sign in with username/email and password. Employee and facilities/admin roles.
+- Create a request: item name, quantity (>0), optional note, urgency (normal, high).
+- List my requests (employees) or all requests (admin) with filters by status and urgency.
+- Admin actions: approve, reject (with optional reason), mark fulfilled.
+- Soft status history — do not hard-delete requests in v1.
+- Seed demo users (at least one employee and one admin) plus a few requests in mixed statuses.
+
+Business rules:
+- Quantity must be a positive integer.
+- Only the owning employee can cancel their own request while it is still pending.
+- Only admin can approve, reject, or fulfill.
+- Rejected or fulfilled requests cannot move back to pending in v1.
+- Cannot fulfill a request that was never approved.
+
+Must have for v1:
+- Persisted data (not in-memory only).
+- JWT (or equivalent) login with role-based access.
+- A simple FastAPI suitable for demos (Swagger is fine).
+- No customer-facing web UI, Streamlit, or SSO for this version — API only.
+
+Nice to have (later):
+- Browser UI, inventory stock levels, purchase-order export, Slack notifications.
+
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
+
+Success:
+- Employee logs in, submits a request; admin approves then fulfills it; employee sees status updates; a rejected request stays in history with a reason.

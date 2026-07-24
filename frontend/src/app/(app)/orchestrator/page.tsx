@@ -33,8 +33,8 @@ export default function OrchestratorPage() {
     <>
       <PageHeader
         eyebrow="Design"
-        title="Orchestrator"
-        description="How the orchestrator hands work to specialist agents. The message log is built from live pipeline runs — assign, progress, and result for each phase."
+        title="Orchestrator Handoffs"
+        description="The orchestrator hands each SDLC phase to one specialist agent, then waits for it to report progress and a result before moving on. This page shows who is assigned to what right now, live while a pipeline runs."
         actions={
           <Button asChild variant="outline" size="sm" className="gap-1.5 border-white/[0.08]">
             <Link href="/orchestrator/messages">Message log <ArrowRight className="h-4 w-4" /></Link>
@@ -78,7 +78,7 @@ export default function OrchestratorPage() {
           <span className="absolute left-[18px] top-4 h-[calc(100%-2rem)] w-px bg-white/[0.06]" />
           {timeline.length === 0 ? (
             <li className="relative py-6 text-sm text-muted-foreground">
-              No handoffs yet. Start a pipeline from the Dashboard — assign and result messages appear here as phases run.
+              No handoffs yet. Start a pipeline from the Dashboard - assign and result messages appear here as phases run.
             </li>
           ) : (
             timeline.map((m) => (
@@ -101,7 +101,7 @@ export default function OrchestratorPage() {
         </ol>
       </Card>
 
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Bot className="h-3.5 w-3.5" /> Read-only view of pipeline handoffs — this page does not start or stop agents.</p>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Bot className="h-3.5 w-3.5" /> Read-only view of pipeline handoffs - this page does not start or stop agents.</p>
     </>
   );
 }

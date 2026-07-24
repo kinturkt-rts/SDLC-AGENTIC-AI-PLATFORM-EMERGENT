@@ -331,6 +331,15 @@ def developer_handoff_rel_for_app(target_app: str) -> str:
     return f"agents/pipeline/{slug}.developer-handoff.json"
 
 
+def devops_handoff_rel_for_app(target_app: str) -> str:
+    slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/handoffs/devops-handoff.json"
+    if artifact_layout() == "target-app-root":
+        return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.devops-handoff.json"
+    return f"agents/pipeline/{slug}.devops-handoff.json"
+
+
 def slugify(text: str) -> str:
     """Convert text to a kebab-case app slug."""
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")

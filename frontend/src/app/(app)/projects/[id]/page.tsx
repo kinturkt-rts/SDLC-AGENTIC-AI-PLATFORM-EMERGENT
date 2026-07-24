@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
+import { OpenLiveAppLink } from '@/src/components/common/OpenLiveAppLink';
 import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { ContextView } from '@/src/features/context/ContextView';
@@ -80,7 +81,12 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         title={project?.name ?? params.id}
         eyebrow={project?.slug}
         description={project?.description}
-        actions={headerStatus ? <StatusBadge status={headerStatus} /> : null}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {project?.liveUrl ? <OpenLiveAppLink href={project.liveUrl} variant="button" /> : null}
+            {headerStatus ? <StatusBadge status={headerStatus} /> : null}
+          </div>
+        }
       />
 
       <Tabs defaultValue="overview">
@@ -109,6 +115,14 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
           </div>
           <Card className="border-white/[0.06] bg-card/80 p-4">
             {project ? <ProjectRepositoryLink project={project} /> : null}
+            {project?.liveUrl ? (
+              <div className="mt-3 border-t border-white/[0.06] pt-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                  Deploy
+                </p>
+                <OpenLiveAppLink href={project.liveUrl} className="mt-1.5" />
+              </div>
+            ) : null}
           </Card>
         </TabsContent>
 

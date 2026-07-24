@@ -9,11 +9,29 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.validate_sql_artifacts import (  # noqa: E402
+    check_ddl_column_drift,
     check_seed_schema_nullability,
     check_uuid_literals,
+    check_vector_literal_format,
     parse_seed_inserts,
     validate_sql_dir,
 )
+
+
+class _FakeCursor:
+    """Stubs information_schema.columns lookups for check_ddl_column_drift tests."""
+
+    def __init__(self, live_columns: dict[tuple[str, str], list[str]]) -> None:
+        self._live_columns = live_columns
+        self._last_result: list[tuple[str]] = []
+
+    def execute(self, _query: str, params: tuple[str, str]) -> None:
+        schema, table = params
+        cols = self._live_columns.get((schema, table), [])
+        self._last_result = [(c,) for c in cols]
+
+    def fetchall(self) -> list[tuple[str]]:
+        return self._last_result
 
 
 def test_gitlab_pipeline_smoke_seed_nullable_ends_at_passes() -> None:
@@ -106,6 +124,126 @@ INSERT INTO t (id, name) VALUES
     assert check_uuid_literals(sql_dir) == []
 
 
+def test_check_vector_literal_format_rejects_array_to_string(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT array_to_string(array_fill(0.01::float, ARRAY[1024]), ','))::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "array_to_string" in errors[0]
+
+
+def test_check_vector_literal_format_rejects_string_agg(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT string_agg('0.0', ',') FROM generate_series(1, 1024))::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "string_agg" in errors[0]
+
+
+def test_check_vector_literal_format_passes_array_cast(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT array_fill(0.01::real, ARRAY[1024])::vector)),
+    ('d1000000-0000-4000-8000-000000000002',
+     (SELECT array_agg(0.0)::vector FROM generate_series(1, 1024)));
+""",
+        encoding="utf-8",
+    )
+    assert check_vector_literal_format(sql_dir) == []
+
+
+def test_check_vector_literal_format_ignores_unrelated_array_to_string(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO logs (id, tags) VALUES
+    ('d1000000-0000-4000-8000-000000000001', array_to_string(ARRAY['a', 'b'], ','));
+""",
+        encoding="utf-8",
+    )
+    assert check_vector_literal_format(sql_dir) == []
+
+
+def test_check_vector_literal_format_rejects_bare_csv_string_literal(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001', '0.01,0.02,0.03'::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "missing leading '['" in errors[0]
+
+
+def test_check_vector_literal_format_accepts_bracketed_string_literal(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001', '[0.01,0.02,0.03]'::vector);
+""",
+        encoding="utf-8",
+    )
+    assert check_vector_literal_format(sql_dir) == []
+
+
+def test_check_vector_literal_format_rejects_concat_near_vector(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     ('[' || '0.01,0.02' || ']')::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert any("||" in e for e in errors)
+
+
+def test_check_vector_literal_format_rejects_format_fn(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "010_seed.sql").write_text(
+        """\
+INSERT INTO chunks (id, embedding) VALUES
+    ('d1000000-0000-4000-8000-000000000001',
+     (SELECT format('%s', '0.01,0.02'))::vector);
+""",
+        encoding="utf-8",
+    )
+    errors = check_vector_literal_format(sql_dir)
+    assert len(errors) == 1
+    assert "format" in errors[0]
+
+
 def test_validate_sql_dir_catches_bad_uuids(tmp_path: Path) -> None:
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()
@@ -124,3 +262,59 @@ INSERT INTO t (id, name) VALUES
     errors = validate_sql_dir(sql_dir)
     assert len(errors) == 1
     assert "hhhhhhhh" in errors[0]
+
+
+def test_check_ddl_column_drift_detects_renamed_column(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_departments.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS departments (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            code text UNIQUE NOT NULL
+        );
+        """,
+        encoding="utf-8",
+    )
+    # Live table predates the code/uuid redesign: integer PK, short_code instead of code.
+    cur = _FakeCursor({("contacts_api", "departments"): ["id", "name", "short_code", "created_at"]})
+    drift = check_ddl_column_drift(cur, app_schema="contacts_api", sql_dir=sql_dir)
+    assert len(drift) == 1
+    assert "code" in drift[0]
+    assert "contacts_api.departments" in drift[0]
+    assert "--reset-schema" in drift[0]
+
+
+def test_check_ddl_column_drift_clean_when_columns_match(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_departments.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS departments (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            code text UNIQUE NOT NULL
+        );
+        """,
+        encoding="utf-8",
+    )
+    cur = _FakeCursor({("contacts_api", "departments"): ["id", "name", "code", "created_at"]})
+    assert check_ddl_column_drift(cur, app_schema="contacts_api", sql_dir=sql_dir) == []
+
+
+def test_check_ddl_column_drift_skips_table_not_yet_created(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_departments.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS departments (
+            id uuid PRIMARY KEY,
+            code text UNIQUE NOT NULL
+        );
+        """,
+        encoding="utf-8",
+    )
+    # No pre-existing table at all -> CREATE TABLE created it fresh, nothing to flag.
+    cur = _FakeCursor({})
+    assert check_ddl_column_drift(cur, app_schema="contacts_api", sql_dir=sql_dir) == []

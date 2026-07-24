@@ -41,6 +41,3 @@ Demo data expectations:
 
 Out of scope:
 - Rent payments, lease documents, smart locks, full vendor marketplace, photo storage vault
-
-Target app slug: apartment-maintenance-desk
-Output directory: target-apps/apartment-maintenance-desk/

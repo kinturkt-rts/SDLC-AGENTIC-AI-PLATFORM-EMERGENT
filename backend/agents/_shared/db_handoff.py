@@ -91,6 +91,7 @@ def build_handoff_markdown(
 
     schema_summary = extract_agent_section(agent_result, "schema_summary")
     handoff_notes = extract_agent_section(agent_result, "handoff_for_developer")
+    seed_credentials = extract_agent_section(agent_result, "seedCredentials")
 
     seed_min = ctx.get("seedMinRows", "")
     seed_max = ctx.get("seedMaxRows", "")
@@ -150,6 +151,11 @@ def build_handoff_markdown(
 
     if handoff_notes:
         lines.extend(["", "## Implementation notes (database-agent)", "", handoff_notes])
+
+    # Copied from the agent's reply (### seedCredentials). Do not require the
+    # agent to write HANDOFF.md — host owns that file.
+    if seed_credentials:
+        lines.extend(["", "### seedCredentials", "", seed_credentials.strip(), ""])
 
     orm_notes = _infer_orm_notes_from_sql(sql_dir, schema)
     if orm_notes:

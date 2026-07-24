@@ -54,7 +54,7 @@ module "app" {
   alb_listener_arn      = data.terraform_remote_state.shared.outputs.alb_listener_arn
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
-  enable_ui      = false
+  enable_ui      = true
   enable_bedrock = true
   has_database         = true
   db_secret_arn        = aws_secretsmanager_secret.db.arn

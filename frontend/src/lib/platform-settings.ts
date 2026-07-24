@@ -16,11 +16,12 @@ export interface PlatformSettings {
   };
   pipeline: {
     deployedAgentCount: number;
-    totalMvpAgents: number;
+    totalAgents: number;
   };
 }
 
 interface RuntimesConfig {
+  /** AgentCore pipeline agent list (JSON key kept for backend compatibility). */
   mvpPipeline?: string[];
   agents?: Record<string, { deployed?: boolean }>;
 }
@@ -40,9 +41,9 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
   loadBackendEnv();
 
   const runtimes = await readRuntimesConfig();
-  const mvp = runtimes?.mvpPipeline ?? [];
+  const pipelineAgents = runtimes?.mvpPipeline ?? [];
   const agents = runtimes?.agents ?? {};
-  const deployedAgentCount = mvp.filter((name) => agents[name]?.deployed).length;
+  const deployedAgentCount = pipelineAgents.filter((name) => agents[name]?.deployed).length;
 
   const remoteApi = Boolean(process.env.NEXT_PUBLIC_API_BASE_URL?.trim());
   const store = artifactStoreMode();
@@ -59,7 +60,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
     },
     pipeline: {
       deployedAgentCount,
-      totalMvpAgents: mvp.length || 5,
+      totalAgents: pipelineAgents.length || 5,
     },
   };
 }

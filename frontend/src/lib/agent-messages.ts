@@ -1,11 +1,6 @@
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import type { AgentMessage, PipelineRun, PipelineStep } from '@/src/types';
 
-/**
- * Derive orchestration-bus messages from live pipeline runs.
- * This is a read-only view of phase handoffs (orchestrator ↔ specialist) —
- * not a separate A2A message store. Does not invoke agents or change runs.
- */
 export function messagesFromRun(run: PipelineRun): AgentMessage[] {
   const messages: AgentMessage[] = [];
   const runKey = run.id.slice(0, 8);

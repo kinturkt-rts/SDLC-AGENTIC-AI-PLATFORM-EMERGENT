@@ -4,7 +4,8 @@ import { loadBackendEnv } from './backend-env';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
 
 const S3_INDEX_CACHE_KEY = 's3RunArtifactIndex';
-const S3_INDEX_TTL_MS = 30_000;
+/** Short TTL so phase completion (and current agent) stays near real-time. */
+const S3_INDEX_TTL_MS = 4_000;
 
 let _s3Client: S3Client | null = null;
 
@@ -247,7 +248,7 @@ function earliestModifiedMs(files: S3ArtifactFile[]): number {
   return min;
 }
 
-/** One paginated S3 list for all runs/<runId>/ keys - cached 30s. */
+/** One paginated S3 list for all runs/<runId>/ keys — short TTL for live progress. */
 export async function getS3RunArtifactIndex(): Promise<Map<string, S3ArtifactFile[]>> {
   if (!isS3Store()) return new Map();
 

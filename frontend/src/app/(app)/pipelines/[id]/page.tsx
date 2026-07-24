@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, GitBranch, Zap, FileText, Building2, Database, Code2 } from 'lucide-react';
+import { ArrowLeft, GitBranch, Zap, FileText, Building2, Database, Code2, Rocket } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,7 +16,8 @@ const PHASE_OUTPUT: Partial<Record<SdlcPhase, { icon: typeof FileText; output: s
   architecture: { icon: Building2, output: 'Solution design + architecture diagram' },
   data: { icon: Database, output: 'SQL migrations and DB handoff' },
   implementation: { icon: Code2, output: 'FastAPI app, tests, and README' },
-  deploy: { icon: GitBranch, output: 'Publish to GitLab branch sdlc/<app>' },
+  publish: { icon: GitBranch, output: 'Publish to GitLab branch sdlc/<app>' },
+  deploy: { icon: Rocket, output: 'Deploy to AWS and expose a live app URL' },
 };
 
 export default function PipelineDetailPage({ params }: { params: { id: string } }) {

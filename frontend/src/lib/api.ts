@@ -195,7 +195,7 @@ export const api = {
       data = text ? JSON.parse(text) : {};
     } catch {
       throw new Error(
-        `Save failed (HTTP ${r.status}). Server returned a non-JSON response — check control-plane logs.`,
+        `Save failed (HTTP ${r.status}). Server returned a non-JSON response - check control-plane logs.`,
       );
     }
     if (!r.ok) throw new Error(Array.isArray(data.errors) ? data.errors.join(' ') : data.error || 'Save failed');

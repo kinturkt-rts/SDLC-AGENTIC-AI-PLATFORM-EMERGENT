@@ -1,0 +1,42 @@
+We need an internal AI system that records meeting transcripts, generates summaries, extracts action items, and tracks follow-ups.
+
+Current pain:
+- Meeting notes are scattered across Teams recordings, shared documents, and personal notebooks.
+- Action items often get forgotten because there is no central tracking.
+- Managers spend time manually summarizing meetings and following up with team members.
+
+What we want:
+- Upload meeting transcripts or recordings (transcripts can be generated separately for MVP).
+- Automatically generate concise meeting summaries.
+- Extract action items, owners, due dates, and decisions.
+- Search past meetings using natural-language questions.
+- Dashboard showing pending, completed, and overdue action items.
+
+Initial scope:
+Upload meeting transcript files (PDF, DOCX, or TXT).
+AI-generated summary of each meeting.
+Extract:
+    Action items
+    Owners
+    Due dates
+    Key decisions
+Search meetings by keyword or natural-language query.
+View meeting history and action-item status.
+Audit log of uploads and generated summaries.
+
+Data and integrations:
+- Object storage for uploaded transcripts.
+- Relational database for meetings and action items.
+- LLM for summarization and extraction (prefer Amazon Bedrock).
+
+Constraints:
+- Meeting data is confidential.
+- Access should be restricted to authorized users.
+- Generated summaries should reference the original meeting transcript when possible.
+- Secrets managed securely.
+- MVP is internal use only.
+
+Success expectation:
+- Users can upload a transcript and receive a summary with action items in under a minute.
+- Managers can quickly review previous meetings.
+- Teams reduce missed follow-ups and manual note-taking.`

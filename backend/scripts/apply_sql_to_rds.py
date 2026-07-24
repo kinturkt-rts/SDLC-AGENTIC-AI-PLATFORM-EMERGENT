@@ -389,20 +389,13 @@ _QUOTED_BCRYPT_PLACEHOLDER_RE = re.compile(
 )
 
 
-def _preprocess_seed_sql(sql: str) -> str:
+def _preprocess_bcrypt_placeholders(sql: str) -> str:
     """Replace __BCRYPT_PLACEHOLDER__ (and suffixed variants) with a real bcrypt hash
     before executing.
 
-    Eliminates the fragile post-apply UPDATE pass: the hash is embedded directly
-    in the INSERT so rows always land with a valid bcrypt string, never a placeholder.
-
     Each occurrence gets its OWN freshly-salted hash of the same documented password —
-    not one shared digest reused everywhere. bcrypt.checkpw still validates every one
-    of them against the same plaintext (the salt lives inside each hash string), so
-    this is free for the common "all seed users share one dev password" case, and it
-    is required whenever the placeholder lands in a column with a UNIQUE constraint
-    (e.g. api_keys.key_hash) — a shared digest would collide and the INSERT would fail
-    with "duplicate key value violates unique constraint".
+    required when the placeholder lands in a UNIQUE column (e.g. api_keys.key_hash).
+    Use this only when the app verifies with bcrypt.checkpw — not for SHA-256 hex lookup.
     """
     if not _QUOTED_BCRYPT_PLACEHOLDER_RE.search(sql):
         return sql
@@ -444,6 +437,39 @@ def _preprocess_seed_sql(sql: str) -> str:
         file=sys.stderr,
     )
     return result
+
+
+def _preprocess_sha256_placeholders(sql: str) -> str:
+    """Replace __SHA256_PLACEHOLDER:<label>__ with sha256(plaintext).hexdigest()."""
+    try:
+        from _shared.sha256_api_keys import (
+            replace_sha256_placeholders,
+            seed_text_has_sha256_placeholders,
+        )
+    except ImportError:
+        return sql
+
+    if not seed_text_has_sha256_placeholders(sql):
+        return sql
+
+    result, replaced, errors = replace_sha256_placeholders(sql)
+    for err in errors:
+        print(f"[apply-sql] ERROR: {err}", file=sys.stderr)
+    if errors:
+        raise ValueError(
+            "SHA-256 API-key placeholder preprocess failed:\n" + "\n".join(errors)
+        )
+    print(
+        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} "
+        "__SHA256_PLACEHOLDER__ occurrence(s) with real sha256 hex digests",
+        file=sys.stderr,
+    )
+    return result
+
+
+def _preprocess_seed_sql(sql: str) -> str:
+    """Replace bcrypt and SHA-256 seed placeholders before executing INSERT SQL."""
+    return _preprocess_sha256_placeholders(_preprocess_bcrypt_placeholders(sql))
 
 
 def apply_sql_files(
@@ -569,7 +595,44 @@ def apply_sql_files(
 
                 _apply_paths(ddl_files, label="ddl")
                 if app_schema and ddl_files:
-                    from _shared.validate_sql_artifacts import reconcile_nullability_from_ddl
+                    from _shared.validate_sql_artifacts import (
+                        check_ddl_column_drift,
+                        reconcile_nullability_from_ddl,
+                    )
+
+                    drift = check_ddl_column_drift(cur, app_schema=app_schema, sql_dir=sql_dir)
+                    if drift:
+                        for msg in drift:
+                            print(f"[apply-sql] Schema drift detected: {msg}", file=sys.stderr)
+                        print(
+                            f"[apply-sql] Auto-healing: resetting schema {app_schema!r} "
+                            "(DROP CASCADE + CREATE) and reapplying DDL — this is safe on "
+                            "dev/seed RDS; the stale table was from an earlier, differently "
+                            "shaped generation of this app, not the current one.",
+                            file=sys.stderr,
+                        )
+                        from psycopg import sql as psql
+
+                        cur.execute(psql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(psql.Identifier(app_schema)))
+                        cur.execute(psql.SQL("CREATE SCHEMA {}").format(psql.Identifier(app_schema)))
+                        cur.execute(
+                            psql.SQL("SET search_path TO {}, public").format(
+                                psql.Identifier(app_schema), psql.Identifier("public")
+                            )
+                        )
+                        _apply_paths(ddl_files, label="ddl")
+                        drift_after = check_ddl_column_drift(cur, app_schema=app_schema, sql_dir=sql_dir)
+                        if drift_after:
+                            for msg in drift_after:
+                                print(f"FAILED (schema drift persists after reset): {msg}", file=sys.stderr)
+                            print(
+                                "Auto-heal reset the schema but drift persists — this means two "
+                                "DDL files in db/sql/ declare the same table differently (a stale "
+                                "file from an earlier design still sitting alongside the current "
+                                "one). Remove the stale file(s) from db/sql/ and re-run.",
+                                file=sys.stderr,
+                            )
+                            return 1
 
                     reconciled = reconcile_nullability_from_ddl(
                         cur,

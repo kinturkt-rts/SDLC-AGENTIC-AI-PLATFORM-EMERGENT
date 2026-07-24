@@ -1,0 +1,39 @@
+Build a small internal Parking Permit Log for our campus lots.
+
+Problem:
+- Temporary parking permits are tracked in email threads and a whiteboard that gets wiped weekly.
+- Security needs a reliable list of active permits by plate, building, and expiry date.
+- Integrators should add or revoke permits safely; casual lookup should stay easy.
+
+Who uses it:
+- Anyone on the internal network can look up permits by plate or building (read).
+- Security staff with a shared API key can create, update, or revoke permits.
+- Health checks stay open for ops (no auth).
+
+MVP features:
+- Maintain permits: license plate, vehicle description (optional), owner name, owner email, building/lot code, valid-from, valid-until, status (active, expired, revoked).
+- Browse and search by plate, owner email, building, or status.
+- Revoke a permit early (soft status change — keep the record).
+- List permits that expire within a chosen number of days.
+- Seed a few sample permits (active, soon-expiring, revoked) so demos work out of the box.
+
+Business rules:
+- License plate must be unique among active permits (case-insensitive).
+- valid-until must be on or after valid-from.
+- Expired/revoked permits cannot be updated back to active without creating a new permit row (v1 keeps it simple).
+- Writes without a valid API key should be rejected; reads stay open.
+
+Must have for v1:
+- Persisted data (not in-memory only).
+- A simple FastAPI suitable for demos (Swagger is fine).
+- No customer-facing web UI, Streamlit, chatbots, or SSO for this version — API only.
+
+Nice to have (later):
+- Browser UI, gate integration, auto-expire job, personal logins.
+
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
+
+Success:
+- Someone can look up a plate, add a temporary permit with the API key, see soon-expiring permits listed, revoke one, and still find it in history.

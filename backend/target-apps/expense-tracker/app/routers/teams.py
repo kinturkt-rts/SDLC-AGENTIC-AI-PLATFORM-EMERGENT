@@ -1,33 +1,34 @@
-"""Teams router — CRUD and monthly report."""
+"""Teams management and summary routes."""
 from __future__ import annotations
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import func, select
 
-from app.database import get_db
-from app.dependencies import Actor, AuthActor, require_role
-from app.models.team import Team
+from app.dependencies import AdminUser, AuthUser, DbSession
 from app.models.expense import Expense
+from app.models.team import Team
+from app.models.user import User
+from app.schemas.summary import CategoryTotal, SummaryOut
+from app.schemas.team import MemberAction, TeamCreate, TeamOut
+from app.schemas.user import UserOut
 
-from schemas.teams import TeamCreate, TeamOut, ReportOut, CategoryTotal
-
-router = APIRouter()
+router = APIRouter(tags=["teams"])
 
 
 @router.post("/api/v1/teams", response_model=TeamOut, status_code=201)
 def create_team(
     body: TeamCreate,
-    actor: Actor = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
+    current_user: AdminUser,
+    db: DbSession,
 ) -> Team:
-    """FR-7: Create a team (admin only)."""
-    existing = db.scalars(select(Team).where(Team.name == body.name)).first()
+    """Create a new team \u2014 admin only."""
+    existing = db.scalars(select(Team).where(Team.name == body.name, Team.deleted_at.is_(None))).first()
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Team name already exists")
-    team = Team(name=body.name)
+        raise HTTPException(status_code=409, detail="Team name already exists")
+
+    team = Team(name=body.name, description=body.description)
     db.add(team)
     db.commit()
     db.refresh(team)
@@ -36,60 +37,92 @@ def create_team(
 
 @router.get("/api/v1/teams", response_model=list[TeamOut])
 def list_teams(
-    actor: Actor = Depends(require_role("admin")),
-    db: Session = Depends(get_db),
+    current_user: AuthUser,
+    db: DbSession,
 ) -> list[Team]:
-    """FR-7: List teams (admin only)."""
-    return list(db.scalars(select(Team).where(Team.deleted_at.is_(None))).all())
+    """List teams \u2014 admin or manager."""
+    if current_user.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    teams = db.scalars(select(Team).where(Team.deleted_at.is_(None)).order_by(Team.name)).all()
+    return list(teams)
 
 
-@router.get("/api/v1/teams/{team_id}/report", response_model=ReportOut)
-def team_report(
-    team_id: int,
-    actor: AuthActor,
-    db: Session = Depends(get_db),
-    year: int = Query(...),
-    month: int = Query(...),
-) -> ReportOut:
-    """FR-6: Monthly team aggregation report (manager scoped to team)."""
-    if actor.role == "manager":
-        if team_id not in actor.team_ids:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this team")
-    elif actor.role == "admin":
-        pass
-    else:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-
+@router.patch("/api/v1/teams/{team_id}/members", response_model=UserOut)
+def manage_team_members(
+    team_id: str,
+    body: MemberAction,
+    current_user: AdminUser,
+    db: DbSession,
+) -> User:
+    """Assign or remove a user from a team \u2014 admin only."""
     team = db.scalars(select(Team).where(Team.id == team_id, Team.deleted_at.is_(None))).first()
     if not team:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+        raise HTTPException(status_code=404, detail="Team not found")
 
-    rows = db.execute(
-        select(
-            Expense.category,
-            func.sum(Expense.usd_amount).label("total"),
-        )
+    user = db.scalars(select(User).where(User.id == body.user_id, User.deleted_at.is_(None))).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if body.action == "assign":
+        user.team_id = team_id
+    elif body.action == "remove":
+        user.team_id = None
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/api/v1/teams/{team_id}/expenses/summary", response_model=SummaryOut)
+def team_expense_summary(
+    team_id: str,
+    current_user: AuthUser,
+    db: DbSession,
+    year: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+) -> dict:
+    """Monthly expense summary by category for a team \u2014 manager/admin only."""
+    if current_user.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Verify team exists
+    team = db.scalars(select(Team).where(Team.id == team_id, Team.deleted_at.is_(None))).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    from datetime import date
+
+    start_date = date(year, month, 1)
+    if month == 12:
+        end_date = date(year + 1, 1, 1)
+    else:
+        end_date = date(year, month + 1, 1)
+
+    stmt = (
+        select(Expense.category, func.sum(Expense.amount_usd).label("total_usd"))
         .where(
             Expense.team_id == team_id,
             Expense.status == "approved",
             Expense.deleted_at.is_(None),
-            func.extract("year", Expense.expense_date) == year,
-            func.extract("month", Expense.expense_date) == month,
+            Expense.expense_date >= start_date,
+            Expense.expense_date < end_date,
         )
         .group_by(Expense.category)
-    ).all()
+    )
 
+    rows = db.execute(stmt).all()
     categories = []
     grand_total = Decimal("0")
     for row in rows:
-        total_val = Decimal(str(row.total)) if row.total else Decimal("0")
-        categories.append(CategoryTotal(category=row.category, total=total_val))
-        grand_total += total_val
+        total = row.total_usd or Decimal("0")
+        categories.append(CategoryTotal(category=row.category, total_usd=total))
+        grand_total += total
 
-    return ReportOut(
-        team_id=team_id,
-        year=year,
-        month=month,
-        categories=categories,
-        grand_total=grand_total,
-    )
+    return {
+        "team_id": team_id,
+        "year": year,
+        "month": month,
+        "categories": categories,
+        "grand_total_usd": grand_total,
+    }

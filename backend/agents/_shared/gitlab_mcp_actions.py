@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -45,6 +46,134 @@ def sanitize_publish_content_for_waf(content: str) -> str:
         return f"{scheme}://127.0.0.1"
 
     return _WAF_LOCALHOST_HTTP.sub(_replace, content)
+
+
+def _decode_publish_text(item: dict[str, Any]) -> str | None:
+    """Return UTF-8 text for a publish payload (plain or base64-encoded)."""
+    content = item.get("content")
+    if not isinstance(content, str):
+        return None
+    if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
+        try:
+            return base64.b64decode(content).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+    return content
+
+
+def _find_lone_surrogate_consts(code: Any, *, _seen: set[int] | None = None) -> list[str]:
+    """Recursively scan a code object's string constants for lone UTF-16 surrogates.
+
+    Python's `\\uD83C\\uDF93`-style escapes decode into two standalone surrogate
+    *code points* rather than combining into one astral character the way
+    JS/JSON do — `py_compile` happily accepts this (it's valid Python syntax),
+    but the resulting `str` can never be UTF-8 encoded. Streamlit hits exactly
+    this in `st.set_page_config(page_icon=...)`, so this has to be caught
+    before publish, not left to blow up at runtime in production.
+    """
+    if _seen is None:
+        _seen = set()
+    if id(code) in _seen:
+        return []
+    _seen.add(id(code))
+
+    bad: list[str] = []
+    for const in code.co_consts:
+        if isinstance(const, str):
+            try:
+                const.encode("utf-8")
+            except UnicodeEncodeError:
+                bad.append(repr(const))
+        elif hasattr(const, "co_consts"):
+            bad.extend(_find_lone_surrogate_consts(const, _seen=_seen))
+    return bad
+
+
+def assert_publish_python_syntax(files: list[dict[str, Any]]) -> None:
+    """Fail publish early if any .py payload has a SyntaxError or an unencodable
+    string constant (avoids green CI + 502/500 UI at runtime)."""
+    import py_compile
+    import tempfile
+
+    errors: list[str] = []
+    for item in files:
+        path = str(item.get("path") or "")
+        if not path.endswith(".py"):
+            continue
+        text = _decode_publish_text(item)
+        if text is None:
+            errors.append(f"{path}: could not decode publish payload as UTF-8 Python source")
+            continue
+        with tempfile.NamedTemporaryFile(
+            "w",
+            suffix=".py",
+            encoding="utf-8",
+            delete=False,
+            newline="",
+        ) as tmp:
+            tmp.write(text)
+            tmp_path = tmp.name
+        try:
+            py_compile.compile(tmp_path, doraise=True)
+        except py_compile.PyCompileError as exc:
+            errors.append(f"{path}: {exc.msg}")
+        else:
+            try:
+                code = compile(text, path, "exec")
+            except SyntaxError:
+                code = None  # already reported above via py_compile
+            if code is not None:
+                lone_surrogates = _find_lone_surrogate_consts(code)
+                for bad_repr in lone_surrogates:
+                    errors.append(
+                        f"{path}: string constant {bad_repr} contains a lone UTF-16 "
+                        "surrogate (from a \\uD800-\\uDFFF escape) and cannot be "
+                        "UTF-8 encoded — use the literal Unicode character or a "
+                        "single \\Uxxxxxxxx escape instead"
+                    )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    if errors:
+        raise ValueError(
+            "Refusing to publish Python that would crash at runtime:\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        )
+
+
+def _build_publish_file(dest_rel: str, data: bytes) -> dict[str, Any]:
+    """Build one GitLab publish payload.
+
+    Python sources are always base64. The MCP/text JSON path expands literal
+    ``\\n`` sequences into real newlines, which turns golden files like
+    ``app/startup_checks.py`` into byte-identical SyntaxErrors across every app.
+    Base64 + ``encoding=base64`` on file_create/update preserves bytes exactly
+    (same path already used for PNGs).
+    """
+    suffix = Path(dest_rel).suffix.lower()
+    name = Path(dest_rel).name
+    if suffix == ".py" or suffix == ".png":
+        return {
+            "path": dest_rel,
+            "content": base64.b64encode(data).decode("ascii"),
+            "binary": True,
+        }
+    # Include .yml/.yaml so apps-repo .gitlab-ci.yml publishes as text (not
+    # base64 binary) — binary uploads were silently unreliable for this path.
+    text_suffixes = {".md", ".sql", ".txt", ".ini", ".json", ".example", ".yml", ".yaml"}
+    if name == ".gitignore" or name == ".gitlab-ci.yml" or suffix in text_suffixes:
+        return {
+            "path": dest_rel,
+            "content": sanitize_publish_content_for_waf(data.decode("utf-8")),
+            "binary": False,
+        }
+    return {
+        "path": dest_rel,
+        "content": base64.b64encode(data).decode("ascii"),
+        "binary": True,
+    }
 
 
 def _publish_batch_size() -> int:
@@ -276,6 +405,50 @@ def apps_branch_name(feature: str) -> str:
     return slugify_feature(feature)
 
 
+def pipeline_run_marker_repo_rel(feature: str) -> str:
+    """Monorepo-relative path for the CI pipeline-run marker under a target app."""
+    return f"target-apps/{slugify_feature(feature)}/.sdlc/pipeline-run.json"
+
+
+def write_pipeline_run_marker(
+    feature: str,
+    run_id: str,
+    *,
+    root: Path | None = None,
+) -> str | None:
+    """Write ``.sdlc/pipeline-run.json`` so GitLab CI can export ``PIPELINE_RUN_ID``.
+
+    Returns the monorepo-relative path written, or ``None`` when skipped (no run id /
+    no app tree). Works for local monorepo and cloud-materialized workspaces.
+    """
+    rid = (run_id or "").strip()
+    if not rid:
+        return None
+    root = root or repo_root()
+    slug = slugify_feature(feature)
+    payload = {
+        "runId": rid,
+        "targetApp": slug,
+        "writtenBy": "gitlab-agent",
+    }
+    text = json.dumps(payload, indent=2) + "\n"
+
+    if is_cloud_materialized_workspace(root, slug):
+        app_root = root / slug
+        if not app_root.is_dir():
+            return None
+        path = app_root / ".sdlc" / "pipeline-run.json"
+    else:
+        app_root = root / "target-apps" / slug
+        if not app_root.is_dir():
+            return None
+        path = app_root / ".sdlc" / "pipeline-run.json"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return pipeline_run_marker_repo_rel(slug)
+
+
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     """Map monorepo-relative paths to apps-repo branch root (target-apps stripped)."""
     if rel_path.startswith("inputs/") and rel_path.endswith(".txt"):
@@ -426,9 +599,14 @@ def publish_branch_name(feature: str) -> str:
 
 
 def _branch_tree_url(web_url: str, branch: str) -> str:
+    """GitLab branch browse URL.
+
+    Prefer an unencoded path segment (``sdlc/app``) plus ``ref_type=heads``.
+    Encoded forms like ``sdlc%2Fapp`` work less reliably in the GitLab UI.
+    """
     base = web_url.rstrip("/")
-    encoded = branch.replace("/", "%2F")
-    return f"{base}/-/tree/{encoded}"
+    branch_path = branch.strip().lstrip("/")
+    return f"{base}/-/tree/{branch_path}?ref_type=heads"
 
 
 def gitlab_repo_config(
@@ -442,7 +620,9 @@ def gitlab_repo_config(
     }
 
 
-def _batch_files(files: list[dict[str, str]], batch_size: int | None = None) -> list[list[dict[str, str]]]:
+def _batch_files(
+    files: list[dict[str, Any]], batch_size: int | None = None
+) -> list[list[dict[str, Any]]]:
     size = batch_size if batch_size is not None else _publish_batch_size()
     return [files[i : i + size] for i in range(0, len(files), size)]
 
@@ -459,35 +639,41 @@ def _mr_body(slug: str, paths: list[str]) -> str:
     )
 
 
-def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, str]]:
+def _collect_monorepo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, Any]]:
     root_path = root or repo_root()
     slug = slugify_feature(feature)
-    text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
-    files: list[dict[str, str]] = []
+    files: list[dict[str, Any]] = []
     for source_rel, dest_rel in collect_feature_artifact_entries(slug, root=root_path):
         if dest_rel.endswith(".devops-handoff.json"):
             continue
         src = root_path / source_rel
-        data = src.read_bytes()
-        if src.suffix.lower() == ".png":
-            import base64
-
-            content = base64.b64encode(data).decode("ascii")
-        elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
-        else:
-            import base64
-
-            content = base64.b64encode(data).decode("ascii")
-        files.append({"path": dest_rel, "content": content, "binary": src.suffix.lower() == ".png"})
+        files.append(_build_publish_file(dest_rel, src.read_bytes()))
     return files
 
 
-def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, str]]:
+def resolve_apps_repo_ci_template(root: Path | None = None) -> Path | None:
+    """Locate the apps-repo deploy CI template for every publish.
+
+    Prefer the copy shipped beside this module (``agents/_shared/``) — that path
+    is always inside ``COPY agents`` for AgentCore. Then fall back to
+    ``scripts/gitlab-apps-repo-ci.yml`` under the publish root / backend root.
+    """
+    candidates: list[Path] = [
+        Path(__file__).resolve().parent / "gitlab_apps_repo_ci.yml",
+    ]
+    if root is not None:
+        candidates.append(Path(root) / "scripts" / "gitlab-apps-repo-ci.yml")
+    candidates.append(repo_root() / "scripts" / "gitlab-apps-repo-ci.yml")
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, Any]]:
     """Publish target-apps/<slug>/ at branch root plus inputs/<brief>.txt (apps GitLab project)."""
     root_path = root or repo_root()
     slug = slugify_feature(feature)
-    text_suffixes = {".py", ".md", ".sql", ".txt", ".ini", ".json", ".example"}
     seen_dest: set[str] = set()
     publish_entries: list[tuple[str, str]] = []
 
@@ -505,27 +691,37 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
         seen_dest.add(dest)
         publish_entries.append((source_rel, dest))
 
-    files: list[dict[str, str]] = []
+    files: list[dict[str, Any]] = []
     for source_rel, dest in publish_entries:
         src = root_path / source_rel
-        data = src.read_bytes()
-        if src.suffix.lower() == ".png":
-            import base64
+        files.append(_build_publish_file(dest, src.read_bytes()))
 
-            content = base64.b64encode(data).decode("ascii")
-        elif src.name == ".gitignore" or src.suffix.lower() in text_suffixes:
-            content = sanitize_publish_content_for_waf(data.decode("utf-8"))
-        else:
-            import base64
+    # ALWAYS overwrite .gitlab-ci.yml on the apps branch with the platform
+    # temp-fix template (MCR image). Inheritance from default branch only
+    # happens at branch creation — without this, branches keep the old ECR image.
+    ci_template = resolve_apps_repo_ci_template(root_path)
+    if ci_template is None:
+        raise FileNotFoundError(
+            "apps-repo CI template missing: expected agents/_shared/gitlab_apps_repo_ci.yml "
+            "or scripts/gitlab-apps-repo-ci.yml (required so every publish uses the "
+            "working MCR deploy image, not private ECR sdlc-deploy-ci)"
+        )
+    ci_bytes = ci_template.read_bytes()
+    ci_item = _build_publish_file(".gitlab-ci.yml", ci_bytes)
+    # Put CI first so early pipeline commits already use the correct image.
+    files.insert(0, ci_item)
+    print(
+        f"[gitlab-mcp] apps publish will overwrite .gitlab-ci.yml "
+        f"from {ci_template} ({len(ci_bytes)} bytes, binary={ci_item.get('binary')})",
+        flush=True,
+    )
 
-            content = base64.b64encode(data).decode("ascii")
-        files.append({"path": dest, "content": content, "binary": src.suffix.lower() == ".png"})
     return files
 
 
-def _split_publish_files(files: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    text_files: list[dict[str, str]] = []
-    binary_files: list[dict[str, str]] = []
+def _split_publish_files(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    text_files: list[dict[str, Any]] = []
+    binary_files: list[dict[str, Any]] = []
     for item in files:
         if item.get("binary"):
             binary_files.append(item)
@@ -540,19 +736,21 @@ def _commit_content(content: str) -> str:
 
 
 def _commit_actions(
-    batch: list[dict[str, str]],
+    batch: list[dict[str, Any]],
     existing_paths: set[str],
-) -> list[dict[str, str]]:
-    actions: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
     for item in batch:
         path = item["path"].lstrip("/")
-        actions.append(
-            {
-                "action": "update" if path in existing_paths else "create",
-                "file_path": path,
-                "content": _commit_content(item["content"]),
-            }
-        )
+        action: dict[str, Any] = {
+            "action": "update" if path in existing_paths else "create",
+            "file_path": path,
+            "content": _commit_content(item["content"]),
+        }
+        # Prefer base64 when present — commit_create text path expands \\n and corrupts .py.
+        if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
+            action["encoding"] = "base64"
+        actions.append(action)
     return actions
 
 
@@ -562,7 +760,7 @@ async def _publish_files_via_file_api(
     project_id: str,
     branch: str,
     slug: str,
-    files: list[dict[str, str]],
+    files: list[dict[str, Any]],
     existing_paths: set[str],
 ) -> list[str]:
     """Upload one file per MCP call (required for HTTP MCP behind restrictive WAF)."""
@@ -575,12 +773,10 @@ async def _publish_files_via_file_api(
             "file_path": path,
             "branch": branch,
             "commit_message": _publish_commit_message(slug),
+            "content": item["content"],
         }
-        if item.get("binary"):
-            payload["content"] = item["content"]
+        if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
             payload["encoding"] = "base64"
-        else:
-            payload["content"] = item["content"]
         result = await call_gitlab_mcp_tool(session, tool, payload)
         existing_paths.add(path)
         commit_id = result.get("id") or result.get("short_id") or result.get("commit_id")
@@ -595,7 +791,7 @@ async def _publish_text_file_batches(
     project_id: str,
     branch: str,
     slug: str,
-    text_files: list[dict[str, str]],
+    text_files: list[dict[str, Any]],
     existing_paths: set[str],
 ) -> list[str]:
     # CloudFront WAF limits POST bodies — one file per MCP call. Direct ALB uses batched commits.
@@ -784,7 +980,7 @@ async def _publish_binary_files(
     project_id: str,
     branch: str,
     slug: str,
-    binary_files: list[dict[str, str]],
+    binary_files: list[dict[str, Any]],
     existing_paths: set[str],
 ) -> list[str]:
     """jmrplens commit_create schema has no per-action encoding; use file_create/update."""
@@ -894,6 +1090,17 @@ async def publish_feature_async(
         return {
             "ok": False,
             "error": f"No publishable artifacts found for '{slug}'{detail}",
+            "targetApp": slug,
+            "branch": publish_branch,
+            **cfg,
+        }
+
+    try:
+        assert_publish_python_syntax(files)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
             "targetApp": slug,
             "branch": publish_branch,
             **cfg,

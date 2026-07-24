@@ -81,17 +81,24 @@ def verify_seed_file(path: Path) -> list[str]:
     errors = scan_sql_antipatterns(path)
     text = path.read_text(encoding="utf-8")
 
-    if _QUOTED_PLACEHOLDER_RE.search(text):
-        password = documented_password(text)
+    has_placeholder = bool(_QUOTED_PLACEHOLDER_RE.search(text))
+    password = documented_password(text)
+
+    # Apps may put __BCRYPT_PLACEHOLDER__ in hashed_password OR in token_hash / key_hash.
+    # Materialize replaces any remaining literal when a password is documented in SQL.
+    # Do NOT fail solely because the column isn't named password_hash/hashed_password —
+    # that was blocking opaque-token apps that still documented a seed password.
+    if has_placeholder:
         if password:
             return errors  # pipeline runs materialize_seed_passwords.py after RDS apply
-        errors.append(f"{path}: __BCRYPT_PLACEHOLDER__ literal without documented password in SQL comment")
-        return errors
+        return [
+            f"{path}: __BCRYPT_PLACEHOLDER__ without documented password in SQL comment "
+            f'(add e.g. -- Password for all seed users: "DevPass123!")'
+        ]
 
     if not seed_targets_user_passwords(text):
         return errors
 
-    password = documented_password(text)
     if not password:
         return errors
 

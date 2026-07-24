@@ -19,15 +19,20 @@ import {
   getS3RunArtifactIndex,
   isHiddenAppSlug,
 } from './artifact-store';
-import { MVP_TIMELINE_PHASES, PHASE_AGENT } from './pipeline-phases';
+import { TIMELINE_PHASES, PHASE_AGENT, COMPLETION_PHASES } from './pipeline-phases';
 import {
   developerHandoffExistsForRun,
   developerHandoffFailedForRun,
   developerHandoffSucceededForRun,
+  devopsDeployFailedForRun,
+  devopsDeploySucceededForRun,
+  devopsHandoffExistsForRun,
+  getRunHandoffs,
   gitlabPublishSucceededForRun,
   resolveProjectRepositoryLink,
   resolveRunFailureDetail,
 } from './pipeline-handoffs';
+import { getLatestGitlabPipelineDeployStatus } from './gitlab-ci-deploy-status';
 import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
@@ -73,7 +78,8 @@ import type {
   SdlcPhase,
   StepStatus,
 } from '@/src/types';
-const LIST_RUNS_TTL_MS = 30_000;
+/** Keep short so the dashboard pipeline strip tracks live agent progress. */
+const LIST_RUNS_TTL_MS = 2_500;
 const ACTIVITY_CACHE_KEY = 'listRecentActivity';
 const ARTIFACTS_CACHE_KEY = 'listArtifacts';
 const PROJECTS_CACHE_KEY = 'listProjects';
@@ -90,6 +96,7 @@ function emptyPhaseDone(): Record<SdlcPhase, boolean> {
     implementation: false,
     qa: false,
     security: false,
+    publish: false,
     deploy: false,
   };
 }
@@ -160,6 +167,7 @@ const PHASES: SdlcPhase[] = [
   'implementation',
   'qa',
   'security',
+  'publish',
   'deploy',
 ];
 
@@ -170,7 +178,8 @@ const phaseAgent: Record<SdlcPhase, AgentName> = {
   implementation: 'developer-agent',
   qa: 'qa-agent',
   security: 'security-agent',
-  deploy: 'gitlab-agent',
+  publish: 'gitlab-agent',
+  deploy: 'devops-agent',
 };
 
 const agentPhase: Record<string, SdlcPhase> = {
@@ -180,7 +189,8 @@ const agentPhase: Record<string, SdlcPhase> = {
   'developer-agent': 'implementation',
   'qa-agent': 'qa',
   'security-agent': 'security',
-  'gitlab-agent': 'deploy',
+  'gitlab-agent': 'publish',
+  'devops-agent': 'deploy',
 };
 
 interface LiveStepState {
@@ -220,7 +230,7 @@ const AGENT_DISPLAY: Record<
   'developer-agent': { displayName: 'Developer', phase: 'implementation' },
   'qa-agent': { displayName: 'QA', phase: 'qa' },
   'devops-agent': { displayName: 'DevOps', phase: 'deploy' },
-  'gitlab-agent': { displayName: 'GitLab', phase: 'deploy' },
+  'gitlab-agent': { displayName: 'GitLab', phase: 'publish' },
   'security-agent': { displayName: 'Security', phase: 'security' },
   'web-crawler-agent': { displayName: 'Web Crawler', phase: 'requirements' },
 };
@@ -238,26 +248,27 @@ const AGENT_BUILTIN_TOOLS: Record<string, string[]> = {
   'orchestrator-agent': ['pipeline coordination (A2A)'],
 };
 
-/** Phase 1 MVP agents deployed on AgentCore. */
-const MVP_ONLINE_AGENTS = new Set<string>([
+/**  Agents deployed on AgentCore and shown online in the control plane. */
+const ONLINE_AGENTS = new Set<string>([
   'product-agent',
   'architect-agent',
   'database-agent',
   'developer-agent',
   'gitlab-agent',
+  'devops-agent',
 ]);
 
-/** Reserved for phase 2 - shown offline in the UI. */
-const PHASE2_OFFLINE_AGENTS = new Set<string>(['qa-agent', 'devops-agent', 'security-agent']);
+/** Not yet in the live pipeline path — shown offline in the UI. */
+const OFFLINE_AGENTS = new Set<string>(['qa-agent', 'security-agent']);
 
 function resolveAgentAvailability(agentId: string): AgentAvailability {
-  if (MVP_ONLINE_AGENTS.has(agentId)) return 'online';
-  if (PHASE2_OFFLINE_AGENTS.has(agentId)) return 'offline';
+  if (ONLINE_AGENTS.has(agentId)) return 'online';
+  if (OFFLINE_AGENTS.has(agentId)) return 'offline';
   if (agentId === 'orchestrator-agent') return 'online';
   return 'unknown';
 }
 
-const MCP_NAME_MAP: Record<string, McpServerName> = {
+const NAME_MAP: Record<string, McpServerName> = {
   atlassian: 'Atlassian',
   'aws-diagram': 'AWS Diagram',
   'aws-postgres': 'Postgres',
@@ -281,7 +292,7 @@ async function mcpServersByAgent(): Promise<Map<AgentName, McpServerName[]>> {
   if (!catalog?.servers) return map;
 
   for (const [key, srv] of Object.entries(catalog.servers)) {
-    const mcpName = MCP_NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
+    const mcpName = NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
     for (const usedBy of srv.usedBy ?? []) {
       const agentId = parseUsedByAgent(usedBy);
       if (!agentId) continue;
@@ -575,8 +586,6 @@ async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   if (isS3Store()) {
     const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
 
-    // Prefer cancel from either side — cloud finalize can overwrite S3 to
-    // "completed" after the user already cancelled locally (or vice versa).
     if (local?.status === 'cancelled') {
       return { ...local, runId: local.runId || runId };
     }
@@ -628,7 +637,7 @@ async function listPipelineLogRunIds(): Promise<string[]> {
   }
 }
 
-import { MVP_LOG_AGENT_SET } from './pipeline-phases';
+import { LOG_AGENT_SET } from './pipeline-phases';
 
 function inferLogLevel(line: string): LogEntry['level'] {
   const lower = line.toLowerCase();
@@ -652,7 +661,7 @@ function parseLogLine(line: string): { agent: AgentName; message: string } {
     const raw = agentMatch[1];
     const agentId = raw.endsWith('-agent') ? raw : `${raw === 'orchestrator' ? 'orchestrator' : raw}-agent`;
     const normalized =
-      agentId === 'orchestrator-agent' || MVP_LOG_AGENT_SET.has(agentId)
+      agentId === 'orchestrator-agent' || LOG_AGENT_SET.has(agentId)
         ? (agentId as AgentName)
         : null;
     if (normalized) {
@@ -733,7 +742,7 @@ export async function listRunLogs(runId: string): Promise<LogEntry[]> {
     startMs,
     endMs,
     limit: 2000,
-    mvpOnly: true,
+    pipelineOnly: true,
     timeWindowForRun: true,
   });
 }
@@ -758,7 +767,6 @@ async function latestUuidRunMtime(runId: string): Promise<string> {
 function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   const next: LiveRunState = { ...live, steps: live.steps ? [...live.steps] : live.steps };
 
-  // User cancel is sticky — log success/failure markers must not resurrect the run.
   if (next.status === 'cancelled') {
     return next;
   }
@@ -814,7 +822,7 @@ function mergeStepProgressFromPhases(
   if (status === 'completed') {
     return live.steps.map((step) => {
       const phase = agentPhase[step.name];
-      if (!phase || !MVP_TIMELINE_PHASES.includes(phase)) return step;
+      if (!phase || !TIMELINE_PHASES.includes(phase)) return step;
       if (step.status === 'skipped' || skipFlags?.[phase]) return { ...step, status: 'skipped' };
       return { ...step, status: 'completed' };
     });
@@ -905,12 +913,27 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     logText: log,
     phaseDone,
     error: enriched.error,
+    reportedCurrentStep: enriched.currentStep,
   });
 
   let reconciledError = reconciled.error ?? enriched.error ?? null;
   if (reconciled.status === 'failed') {
     const detail = await resolveRunFailureDetail(runId, slug);
     if (detail) reconciledError = detail;
+  }
+
+  // When run.json/log already advanced past a stale S3 artifact index, treat earlier
+  // phases as done so the timeline strip does not flash an older agent.
+  if (reconciled.currentStep && reconciled.status === 'running') {
+    const currentPhase = agentPhase[reconciled.currentStep];
+    if (currentPhase) {
+      const order = COMPLETION_PHASES;
+      const idx = order.indexOf(currentPhase);
+      if (idx > 0) {
+        phaseDone = { ...phaseDone };
+        for (let i = 0; i < idx; i++) phaseDone[order[i]] = true;
+      }
+    }
   }
 
   enriched = {
@@ -943,7 +966,81 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   let steps = (enriched.steps?.length
     ? buildStepsFromLive(runId, enriched)
     : buildSteps(runId, phaseDone, reconciled.status)
-  ).filter((step) => MVP_TIMELINE_PHASES.includes(step.phase));
+  ).filter((step) => TIMELINE_PHASES.includes(step.phase));
+
+  const isTerminalForDeploy =
+    reconciled.status === 'completed' ||
+    reconciled.status === 'failed' ||
+    reconciled.status === 'cancelled';
+
+  // A real GitLab CI deploy (oidc:test + target-app:deploy, terraform apply, ECS
+  // health check) has never taken more than a few minutes in practice. If publish
+  // finished and 30+ minutes have passed with still no devops handoff at all, the
+  // branch's CI was never wired up / never triggered a deploy - deploy step should
+  // not be shown as running forever with no handoff to ever resolve it.
+  const DEPLOY_STALE_MS = 30 * 60 * 1000;
+  const deployIsStale =
+    isTerminalForDeploy && s3MtimeMs > 0 && Date.now() - s3MtimeMs > DEPLOY_STALE_MS;
+
+  // Sync Deploy UI with GitLab CI + devops handoff failures (not only success via appUrl).
+  let deployCiFailed = false;
+  let deployCiFailedDetail: string | null = null;
+  if (isTerminalForDeploy && phaseDone.publish && !phaseDone.deploy) {
+    if (await devopsDeployFailedForRun(runId, slug)) {
+      deployCiFailed = true;
+      deployCiFailedDetail = 'Deploy health check failed (devops handoff).';
+    } else {
+      const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
+      const branch = handoffs?.gitlab?.branch?.trim() || null;
+      const project = handoffs?.gitlab?.gitlabProject?.trim() || null;
+      if (branch && project) {
+        const ci = await getLatestGitlabPipelineDeployStatus({
+          gitlabProject: project,
+          branch,
+        });
+        if (ci.status === 'failed') {
+          deployCiFailed = true;
+          deployCiFailedDetail = ci.webUrl
+            ? `GitLab deploy pipeline failed — ${ci.webUrl}`
+            : 'GitLab deploy pipeline failed.';
+        }
+      }
+    }
+  }
+
+  if (!phaseDone.deploy) {
+    const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
+    steps = steps.map((step) => {
+      if (step.phase !== 'deploy') return step;
+      if (deployCiFailed) {
+        return {
+          ...step,
+          status: 'failed' as StepStatus,
+          agent: 'devops-agent',
+          error: deployCiFailedDetail ?? step.error ?? null,
+        };
+      }
+      if (hasDevopsHandoff) {
+        // A handoff exists but phaseDone.deploy is false, so the attempt didn't
+        // produce a live appUrl. Keep showing "running" while it's recent (may
+        // still be mid-deploy), but past DEPLOY_STALE_MS treat it as the failed
+        // attempt it is instead of "running" forever.
+        return {
+          ...step,
+          status: (deployIsStale ? 'failed' : 'running') as StepStatus,
+          agent: 'devops-agent',
+        };
+      }
+      if (isTerminalForDeploy && phaseDone.publish && !deployIsStale) {
+        return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
+      }
+      return { ...step, agent: 'devops-agent' };
+    });
+  } else {
+    steps = steps.map((step) =>
+      step.phase === 'deploy' ? { ...step, status: 'completed' as StepStatus, agent: 'devops-agent' } : step,
+    );
+  }
 
   const runError = reconciled.error ?? enriched.error ?? null;
   if (runError) {
@@ -965,11 +1062,75 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     telemetryElapsedSec = await loadRunTelemetryElapsedSec(slug, runId);
   }
 
+  // AgentCore marks the run completed after gitlab-agent. Deploy continues in
+  // GitLab CI asynchronously — keep the control-plane run "running" on Deploy
+  // so the dashboard strip, active-run cards, and polling stay live until appUrl.
+  const deployStep = steps.find((step) => step.phase === 'deploy');
+  const deployStepRunning = deployStep?.status === 'running';
+
+  type DeployStatus = 'pending' | 'running' | 'live' | 'failed' | 'stale' | null;
+  let deployStatus: DeployStatus = null;
+  if (isTerminalForDeploy && phaseDone.publish) {
+    if (phaseDone.deploy) {
+      deployStatus = 'live';
+    } else if (deployCiFailed) {
+      deployStatus = 'failed';
+    } else if (deployIsStale) {
+      deployStatus = 'stale';
+    } else if (deployStepRunning) {
+      deployStatus = 'running';
+    } else if (deployStep?.status === 'failed') {
+      deployStatus = 'failed';
+    } else {
+      deployStatus = 'pending';
+    }
+  } else if (phaseDone.deploy) {
+    deployStatus = 'live';
+  }
+
+  const displayStatus: RunStatus =
+    deployCiFailed
+      ? 'failed'
+      : deployStepRunning && reconciled.status === 'completed'
+        ? 'running'
+        : reconciled.status;
+
+  // Prefer the step timeline as source of truth for "where are we" so currentAgent
+  // cannot lag behind steps (e.g. strip shows Database while card still says Product).
+  const activeStep = steps.find(
+    (s) => s.status === 'running' || s.status === 'waiting_for_human',
+  );
+  const displayPhase: SdlcPhase | null = deployStepRunning
+    ? 'deploy'
+    : displayStatus === 'completed' ||
+        displayStatus === 'failed' ||
+        displayStatus === 'cancelled'
+      ? null
+      : (activeStep?.phase ?? currentPhase);
+  const displayAgent: AgentName | null = deployStepRunning
+    ? 'devops-agent'
+    : displayStatus === 'completed' ||
+        displayStatus === 'failed' ||
+        displayStatus === 'cancelled'
+      ? null
+      : ((activeStep?.agent as AgentName | undefined) ??
+        (currentAgentName ? (currentAgentName as AgentName) : null));
+
+  // While Deploy is still in flight, keep finishedAt null so elapsed time continues.
+  // When deploy completes, extend end time to latest artifact activity (devops.json).
+  let liveFinishedAt: string | null = deployStepRunning ? null : (enriched.finishedAt ?? null);
+  if (!deployStepRunning && phaseDone.deploy && s3MtimeMs > 0) {
+    const liveMs = liveFinishedAt ? Date.parse(liveFinishedAt) : 0;
+    if (s3MtimeMs > (Number.isFinite(liveMs) ? liveMs : 0)) {
+      liveFinishedAt = new Date(s3MtimeMs).toISOString();
+    }
+  }
+
   const timings = resolveRunTimings({
     startedAt,
-    status: reconciled.status,
+    status: displayStatus,
     liveStartedAt: enriched.startedAt,
-    liveFinishedAt: enriched.finishedAt,
+    liveFinishedAt,
     logMtimeMs,
     s3LatestMs: s3MtimeMs,
     s3EarliestMs,
@@ -982,26 +1143,16 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     projectId: slug,
     projectName: slugToTitle(slug),
     pipeline: 'Standard SDLC',
-    status: reconciled.status,
-    currentPhase:
-      reconciled.status === 'completed' ||
-      reconciled.status === 'failed' ||
-      reconciled.status === 'cancelled'
-        ? null
-        : currentPhase,
-    currentAgent:
-      reconciled.status === 'completed' ||
-      reconciled.status === 'failed' ||
-      reconciled.status === 'cancelled' ||
-      !currentAgentName
-        ? null
-        : (currentAgentName as AgentName),
+    status: displayStatus,
+    currentPhase: displayPhase,
+    currentAgent: displayAgent,
     startedAt: timings.startedAt,
-    finishedAt: timings.finishedAt,
+    finishedAt: deployStepRunning ? null : timings.finishedAt,
     elapsedSec: timings.elapsedSec,
     triggeredBy: enriched.triggeredBy ?? 'frontend',
     steps,
     error: runError,
+    deployStatus,
   };
 }
 
@@ -1271,6 +1422,7 @@ async function listProjectsFromS3(): Promise<Project[]> {
     ]);
 
     const repoLink = await resolveProjectRepositoryLink(slug, runId);
+    const devops = await getRunHandoffs(runId, slug).then((h) => h.devops).catch(() => null);
 
     projects.push({
       id: slug,
@@ -1284,6 +1436,7 @@ async function listProjectsFromS3(): Promise<Project[]> {
       repoHref: repoLink.href,
       repoExternal: repoLink.external,
       runId,
+      liveUrl: devops?.appUrl ?? null,
       environment: 'dev' as Environment,
     });
   }
@@ -1429,7 +1582,8 @@ async function phaseCompletion(slug: string, ctx: PipelineContextFile | null): P
     implementation: await handoffExists(slug, 'developer-handoff.json'),
     qa: await handoffExists(slug, 'qa-handoff.json'),
     security: await handoffExists(slug, 'security-handoff.json'),
-    deploy: await handoffExists(slug, 'gitlab-handoff.json'),
+    publish: await handoffExists(slug, 'gitlab-handoff.json'),
+    deploy: await handoffExists(slug, 'devops-handoff.json'),
   };
 }
 
@@ -1453,9 +1607,10 @@ async function phaseCompletionForRun(
     const hasAppCode =
       has((r) => r.includes('/app/') && r.endsWith('.py')) ||
       has((r) => r.endsWith('/requirements.txt'));
-    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
+    const [devSuccess, gitlabSuccess, devopsSuccess, hasDevHandoff] = await Promise.all([
       developerHandoffSucceededForRun(runId, slug),
       gitlabPublishSucceededForRun(runId, slug),
+      devopsDeploySucceededForRun(runId, slug),
       developerHandoffExistsForRun(runId, slug),
     ]);
     return {
@@ -1467,7 +1622,8 @@ async function phaseCompletionForRun(
       implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: gitlabSuccess,
+      publish: gitlabSuccess,
+      deploy: devopsSuccess,
     };
   }
 
@@ -1489,9 +1645,10 @@ async function phaseCompletionForRun(
     const rels = await walk(runRoot);
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
     const hasAppCode = has((r) => r.includes('/app/') && r.endsWith('.py'));
-    const [devSuccess, gitlabSuccess, hasDevHandoff] = await Promise.all([
+    const [devSuccess, gitlabSuccess, devopsSuccess, hasDevHandoff] = await Promise.all([
       developerHandoffSucceededForRun(runId, slug),
       gitlabPublishSucceededForRun(runId, slug),
+      devopsDeploySucceededForRun(runId, slug),
       developerHandoffExistsForRun(runId, slug),
     ]);
     return {
@@ -1503,7 +1660,8 @@ async function phaseCompletionForRun(
       implementation: devSuccess || (!hasDevHandoff && hasAppCode),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
-      deploy: gitlabSuccess,
+      publish: gitlabSuccess,
+      deploy: devopsSuccess,
     };
   }
 
@@ -1916,7 +2074,7 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
   if (!catalog?.servers) return [];
 
   return Object.entries(catalog.servers).map(([key, srv]) => {
-    const name = MCP_NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
+    const name = NAME_MAP[key] ?? (srv.name.split('(')[0].trim() as McpServerName);
     const usedBy = (srv.usedBy ?? [])
       .filter((u) => u.endsWith('-agent') || u === 'orchestrator-agent')
       .map((u) => u as AgentName);
@@ -1957,14 +2115,13 @@ async function getDashboardSummaryUncached(): Promise<DashboardSummary> {
 }
 
 export async function listPipelines(): Promise<PipelineDefinition[]> {
-  // Live MVP definition (not the old multi-recipe mock catalog).
   return [
     {
       id: 'standard-sdlc',
       name: 'Standard SDLC',
       description:
-        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish. Fully automated in the current MVP.',
-      phases: MVP_TIMELINE_PHASES.map((phase) => ({
+        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy is the demo-2 phase that puts a live URL in front of users.',
+      phases: TIMELINE_PHASES.map((phase) => ({
         phase,
         agent: PHASE_AGENT[phase],
         hitl: false,
@@ -1980,7 +2137,7 @@ async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> 
     startMs,
     endMs,
     limit: 120,
-    mvpOnly: true,
+    pipelineOnly: true,
     timeWindowForRun: true,
   });
   if (withRunFilter.length > 0) return withRunFilter;
@@ -1990,7 +2147,7 @@ async function fetchCloudWatchLogsForRun(run: PipelineRun): Promise<LogEntry[]> 
   }
 
   const minutes = Math.min(Math.max(minutesSince(run.startedAt), 15), 240);
-  const broad = await listCloudWatchLogs({ minutes, limit: 120, mvpOnly: true });
+  const broad = await listCloudWatchLogs({ minutes, limit: 120, pipelineOnly: true });
   return broad.filter((log) => matchCloudWatchLogToRun(log, [run])?.id === run.id);
 }
 

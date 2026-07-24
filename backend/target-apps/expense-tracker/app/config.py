@@ -31,19 +31,22 @@ class Settings(BaseSettings):
             return (init_settings, env_settings, dotenv_settings, file_secret_settings)
         return (init_settings, dotenv_settings, env_settings, file_secret_settings)
 
-    # -- App --
+    # ── App ──
     app_env: str = Field("development", alias="APP_ENV")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
     service_name: str = Field("expense-tracker", alias="SERVICE_NAME")
 
-    # -- Postgres (RDS) --
+    # ── Postgres (RDS) ──
     database_url: str = Field("", alias="DATABASE_URL")
     postgres_schema: str = Field("expense_tracker", alias="POSTGRES_SCHEMA")
 
-    # -- CORS --
+    # ── Auth (API key) ──
+    api_key: str = Field("", alias="API_KEY")
+
+    # ── CORS ──
     cors_origins: list[str] = Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")
 
-    # -- AWS --
+    # ── AWS ──
     aws_region: str = Field("us-east-2", alias="AWS_REGION")
 
 

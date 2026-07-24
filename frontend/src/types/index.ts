@@ -35,6 +35,7 @@ export type SdlcPhase =
   | 'implementation'
   | 'qa'
   | 'security'
+  | 'publish'
   | 'deploy';
 
 export type AgentAvailability = 'online' | 'offline' | 'unknown';
@@ -90,6 +91,8 @@ export interface PipelineStep {
   error?: string | null;
 }
 
+export type DeployStatus = 'pending' | 'running' | 'live' | 'failed' | 'stale' | null;
+
 export interface PipelineRun {
   id: string;
   projectId: string;
@@ -104,6 +107,8 @@ export interface PipelineRun {
   triggeredBy: string;
   steps: PipelineStep[];
   error?: string | null;
+  /** Follow-on deploy status — independent of run.status after publish completes. */
+  deployStatus?: DeployStatus;
 }
 
 /** GitLab publish result from gitlab-agent (handoffs/gitlab.json or legacy slug file). */
@@ -116,6 +121,21 @@ export interface GitlabHandoffInfo {
   gitlabProject?: string | null;
   repoUrl?: string | null;
   pathsPublishedCount: number;
+  error?: string | null;
+  source: 's3' | 'local';
+  path: string;
+}
+
+/** AWS deploy result from devops-agent (live app URL for users). */
+export interface DevopsHandoffInfo {
+  status: string;
+  targetApp: string;
+  appUrl?: string | null;
+  environment?: string | null;
+  region?: string | null;
+  healthy?: boolean | null;
+  ecsService?: string | null;
+  deployedAt?: string | null;
   error?: string | null;
   source: 's3' | 'local';
   path: string;
@@ -138,6 +158,7 @@ export interface RunHandoffs {
   projectSlug: string;
   gitlab: GitlabHandoffInfo | null;
   developer: DeveloperHandoffInfo | null;
+  devops: DevopsHandoffInfo | null;
   /** From shared context.json when gitlab handoff is missing. */
   contextMergeRequestUrl?: string | null;
   contextFeatureBranch?: string | null;
@@ -187,6 +208,8 @@ export interface Project {
   repoExternal?: boolean;
   /** Latest cloud pipeline run id when known (S3 mode). */
   runId?: string | null;
+  /** Live app URL from devops-agent when a deploy succeeded. */
+  liveUrl?: string | null;
   environment: Environment;
 }
 

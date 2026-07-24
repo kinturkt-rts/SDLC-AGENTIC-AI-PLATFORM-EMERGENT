@@ -1,7 +1,0 @@
--- Create api_keys table
-CREATE TABLE IF NOT EXISTS api_keys (
-    key_hash VARCHAR(255) PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN NOT NULL DEFAULT true
-);

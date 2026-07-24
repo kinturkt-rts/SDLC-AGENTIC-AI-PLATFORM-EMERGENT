@@ -31,13 +31,14 @@ const TIME_WINDOWS: { value: string; minutes?: number; label: string }[] = [
   { value: '1440', minutes: 1440, label: 'Last 24 hours' },
 ];
 
-const MVP_AGENTS: { id: AgentName; label: string }[] = [
+const LOG_AGENTS: { id: AgentName; label: string }[] = [
   { id: 'orchestrator-agent', label: 'Orchestrator' },
   { id: 'product-agent', label: 'Product' },
   { id: 'architect-agent', label: 'Architect' },
   { id: 'database-agent', label: 'Database' },
   { id: 'developer-agent', label: 'Developer' },
   { id: 'gitlab-agent', label: 'GitLab' },
+  { id: 'devops-agent', label: 'DevOps' },
 ];
 
 export default function LogsPage() {
@@ -169,7 +170,7 @@ function LogsInner() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All agents</SelectItem>
-                {MVP_AGENTS.map((a) => (
+                {LOG_AGENTS.map((a) => (
                   <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
                 ))}
               </SelectContent>
@@ -201,9 +202,7 @@ function LogsInner() {
               Run detail
             </Link>
           </>
-        ) : (
-          <> Default view is the last 15 minutes; widen the window if you need older lines.</>
-        )}
+        ) : null}
       </p>
 
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">

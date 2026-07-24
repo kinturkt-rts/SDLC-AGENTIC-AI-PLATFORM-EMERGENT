@@ -1,8 +1,0 @@
-{
-  "targetApp": "library-catalog",
-  "prdPath": "docs/PRD/library-catalog.md",
-  "designDocPath": "docs/design/library-catalog.md",
-  "diagramPaths": [
-    "docs/generated-diagrams/library-catalog.png"
-  ]
-}

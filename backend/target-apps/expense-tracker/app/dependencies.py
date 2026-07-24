@@ -1,92 +1,110 @@
-"""Shared FastAPI dependencies — auth via Bearer token (employees) and X-Api-Key (managers/admins)."""
+"""Shared FastAPI dependencies — auth via X-API-Key header with bcrypt hash lookup."""
 from __future__ import annotations
 
-import hashlib
-from dataclasses import dataclass
-from typing import Annotated, Optional
+import logging
+from typing import Annotated
 
+import bcrypt
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 
-# -- DB session shorthand --
+logger = logging.getLogger(__name__)
+
+# ── DB session shorthand ──
 DbSession = Annotated[Session, Depends(get_db)]
 
 
-@dataclass
-class Actor:
-    """Resolved identity of the requesting actor."""
-    id: int
-    role: str  # 'employee', 'manager', 'admin'
-    team_ids: list[int]  # for employees: [team_id]; for manager: scoped team_ids; admin: all
+# ── Auth context ──
+class CurrentUser:
+    """Token-derived user/api-key context."""
+
+    def __init__(self, user_id: str, email: str | None, role: str, team_id: str | None) -> None:
+        self.user_id = user_id
+        self.email = email
+        self.role = role
+        self.team_id = team_id
 
 
-def _sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _verify_hash(plain: str, hashed: str) -> bool:
+    """Check plaintext against bcrypt hash."""
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 
-def _parse_team_ids(raw) -> list[int]:
-    """Parse team_ids from either a Postgres ARRAY (list[int]) or SQLite string repr."""
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        return [int(x) for x in raw]
-    if isinstance(raw, str):
-        parts = [p.strip() for p in raw.split(",") if p.strip()]
-        return [int(p) for p in parts if p.isdigit()]
-    return []
-
-
-def get_current_actor(
+def get_current_user(
     db: DbSession,
-    authorization: Optional[str] = Header(default=None, alias="Authorization"),
-    x_api_key: Optional[str] = Header(default=None, alias="X-Api-Key"),
-) -> Actor:
-    """Resolve the requesting actor from Bearer token or X-Api-Key header."""
-    from app.models.employee import Employee
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> CurrentUser:
+    """Authenticate via X-API-Key header.
+
+    Checks api_keys table first (admin/manager), then users.token_hash (employee).
+    """
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-API-Key header",
+        )
+
     from app.models.api_key import ApiKey
+    from app.models.user import User
 
-    if authorization:
-        parts = authorization.split(" ", 1)
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Authorization header format")
-        token = parts[1]
-        token_hash = _sha256(token)
-        try:
-            emp = db.scalars(select(Employee).where(Employee.token_hash == token_hash)).first()
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-        if not emp:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-        return Actor(id=emp.id, role=emp.role, team_ids=[emp.team_id] if emp.team_id else [])
+    try:
+        # Try api_keys table (admin/manager)
+        api_keys = db.scalars(select(ApiKey).where(ApiKey.revoked_at.is_(None))).all()
+        for key_row in api_keys:
+            if _verify_hash(x_api_key, key_row.key_hash):
+                return CurrentUser(
+                    user_id=key_row.id,
+                    email=None,
+                    role=key_row.role,
+                    team_id=None,
+                )
 
-    if x_api_key:
-        key_hash = _sha256(x_api_key)
-        try:
-            api_key = db.scalars(select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))).first()
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked API key")
-        if not api_key:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked API key")
-        team_ids = _parse_team_ids(api_key.team_ids)
-        return Actor(id=api_key.id, role=api_key.role, team_ids=team_ids)
+        # Try users table (employee tokens)
+        users = db.scalars(select(User).where(User.deleted_at.is_(None))).all()
+        for user_row in users:
+            if user_row.token_hash and _verify_hash(x_api_key, user_row.token_hash):
+                return CurrentUser(
+                    user_id=user_row.id,
+                    email=user_row.email,
+                    role=user_row.role,
+                    team_id=user_row.team_id,
+                )
+    except Exception as exc:
+        logger.warning("Auth lookup failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
 
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing authentication credentials")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API key",
+    )
 
 
-AuthActor = Annotated[Actor, Depends(get_current_actor)]
+AuthUser = Annotated[CurrentUser, Depends(get_current_user)]
 
 
 def require_role(*roles: str):
-    """Factory that returns a dependency enforcing role membership."""
-    def _check(actor: AuthActor) -> Actor:
-        if actor.role not in roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-        return actor
-    return _check
+    """Factory: returns a dependency that checks the user has one of the given roles."""
+
+    def _checker(current_user: AuthUser) -> CurrentUser:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden",
+            )
+        return current_user
+
+    return _checker
 
 
-AdminActor = Annotated[Actor, Depends(require_role("admin"))]
-ManagerActor = Annotated[Actor, Depends(require_role("manager"))]
+AdminUser = Annotated[CurrentUser, Depends(require_role("admin"))]
+ManagerUser = Annotated[CurrentUser, Depends(require_role("manager", "admin"))]
+EmployeeUser = Annotated[CurrentUser, Depends(require_role("employee"))]

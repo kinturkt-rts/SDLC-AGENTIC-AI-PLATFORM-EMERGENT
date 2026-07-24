@@ -1,4 +1,4 @@
-"""Application entry-point for Expense Tracker."""
+"""Application entry-point for expense-tracker."""
 from __future__ import annotations
 
 import logging
@@ -10,7 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.routers import health, health_v1, expenses, teams, employees
+from app.routers import health
+from app.routers import expenses
+from app.routers import teams
+from app.routers import fx_snapshots
 from app.startup_checks import validate_runtime_config
 
 logger = logging.getLogger(__name__)
@@ -57,10 +60,9 @@ def create_app() -> FastAPI:
         )
 
     application.include_router(health.router)
-    application.include_router(health_v1.router)
     application.include_router(expenses.router)
     application.include_router(teams.router)
-    application.include_router(employees.router)
+    application.include_router(fx_snapshots.router)
 
     @application.get("/")
     def root() -> dict[str, str]:
@@ -69,14 +71,4 @@ def create_app() -> FastAPI:
     return application
 
 
-def _init_sqlite_tables() -> None:
-    """Auto-create tables for SQLite (dev/test/validation). Postgres uses DDL migrations."""
-    _url = (get_settings().database_url or "").strip()
-    if _url.startswith("sqlite"):
-        from app.database import Base, engine
-        import app.models as _models  # noqa: F401
-        Base.metadata.create_all(bind=engine)
-
-
 app = create_app()
-_init_sqlite_tables()

@@ -1,0 +1,39 @@
+Build a small internal Lost & Found Desk for our office.
+
+Problem:
+- Lost badges, chargers, and water bottles pile up at reception with sticky notes that nobody updates.
+- Facilities and front desk need one place to log found items, mark them claimed, and close old entries.
+- Integrators and internal tools should call a clean API — no browser app required for v1.
+
+Who uses it:
+- Anyone on the internal network can browse open found items (read).
+- Staff with a shared API key can create, update, claim, or close items.
+- Health checks stay open for ops (no auth).
+
+MVP features:
+- Log a found item: title, location found, found date, optional description and finder email, status (open, claimed, closed).
+- List and filter items by status, location, or date range.
+- Mark an item claimed (claimant name + optional email) or close it when discarded/returned to owner offline.
+- Soft-close only — keep the record; do not hard-delete in v1.
+- Seed a few sample open and claimed items so demos work out of the box.
+
+Business rules:
+- Title and location are required.
+- Claimed items must include a claimant name.
+- Closed or claimed items cannot be claimed again.
+- Writes without a valid API key should be rejected; reads stay open.
+
+Must have for v1:
+- Persisted data (not in-memory only).
+- A simple FastAPI suitable for demos (Swagger is fine).
+- No customer-facing web UI, Streamlit, chatbots, or SSO for this version — API only.
+
+Nice to have (later):
+- Browser UI, photo uploads, Slack alerts, personal logins.
+
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
+
+Success:
+- Someone can list open items, add a found badge with the API key, mark it claimed with a name, and still find the closed history later.

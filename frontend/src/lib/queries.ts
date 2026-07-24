@@ -1,7 +1,8 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from './api';
+import type { PipelineRun } from '@/src/types';
 
 export const queryKeys = {
   agents: ['agents'] as const,
@@ -60,24 +61,59 @@ export const useRuns = () =>
   useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.getRuns,
-    staleTime: 10_000,
+    staleTime: 0,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 8_000;
+      if (
+        runs?.some(
+          (r) =>
+            r.status === 'running' ||
+            r.status === 'paused' ||
+            r.deployStatus === 'running' ||
+            r.deployStatus === 'pending',
+        )
+      ) {
+        return 2_500;
+      }
       return 20_000;
     },
     refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 export const useRun = (id: string) =>
   useQuery({
     queryKey: queryKeys.run(id),
     queryFn: () => api.getRun(id),
     enabled: !!id,
+    staleTime: 0,
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === 'running' || status === 'paused' ? 4000 : false;
+      const run = query.state.data;
+      if (run?.status === 'running' || run?.status === 'paused') return 2_500;
+      if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 2_500;
+      return false;
     },
+    refetchOnWindowFocus: true,
   });
+
+/** Live-poll each active run (bypasses listRuns cache) so strip + cards stay in sync. */
+export const useLiveRunsById = (ids: string[]) => {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  return useQueries({
+    queries: uniqueIds.map((id) => ({
+      queryKey: queryKeys.run(id),
+      queryFn: () => api.getRun(id),
+      staleTime: 0,
+      refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
+        const run = query.state.data;
+        if (run?.status === 'running' || run?.status === 'paused') return 2_500;
+        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') return 2_500;
+        return false;
+      },
+      refetchOnWindowFocus: true,
+    })),
+  });
+};
+
 export const useRunLogs = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runLogs(id),

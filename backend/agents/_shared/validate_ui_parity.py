@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from _shared.api_surface import (
@@ -133,17 +134,57 @@ def check_streamlit_no_raw_uuid_fields(
 
 
 def check_streamlit_no_deprecated_width_api(app_dir: Path) -> list[str]:
-    """Block deprecated use_container_width (Streamlit 1.41+ prefers width=)."""
+    """Block deprecated/invalid Streamlit width APIs (Streamlit 1.41+)."""
     ui = app_dir / "ui" / "streamlit_app.py"
     if not ui.is_file():
         return []
     text = ui.read_text(encoding="utf-8", errors="replace")
-    if "use_container_width" not in text:
+    errors: list[str] = []
+    if "use_container_width" in text:
+        errors.append(
+            "UI_PARITY: ui/streamlit_app.py uses deprecated `use_container_width` — "
+            'replace True with width="stretch" and False with width="content"'
+        )
+    # width=0 / width=False crash Streamlit 1.41+ with StreamlitInvalidWidthError
+    if re.search(r"\bwidth\s*=\s*(0|False)\b", text):
+        errors.append(
+            "UI_PARITY: ui/streamlit_app.py uses invalid `width=0`/`width=False` — "
+            'use width="stretch" (full width) or width="content"'
+        )
+    return errors
+
+
+# Deterministic rewrites for the same anti-patterns `check_streamlit_no_deprecated_width_api`
+# flags. Applied as a self-heal pass so a model that ignores the prompt guidance doesn't need
+# a regenerate round-trip — the file is repaired in place before the blocking check runs.
+_WIDTH_AUTOFIX_PATTERNS = (
+    (re.compile(r"use_container_width\s*=\s*True"), 'width="stretch"'),
+    (re.compile(r"use_container_width\s*=\s*False"), 'width="content"'),
+    (re.compile(r"\bwidth\s*=\s*0\b"), 'width="stretch"'),
+    (re.compile(r"\bwidth\s*=\s*False\b"), 'width="content"'),
+)
+
+
+def autofix_streamlit_width_api(app_dir: Path) -> list[str]:
+    """Rewrite deprecated/invalid Streamlit width kwargs in place.
+
+    Returns a description of each substitution applied (empty if the file was already clean
+    or doesn't exist). Safe to call unconditionally before the blocking check — it is a no-op
+    when there's nothing to fix.
+    """
+    ui = app_dir / "ui" / "streamlit_app.py"
+    if not ui.is_file():
         return []
-    return [
-        "UI_PARITY: ui/streamlit_app.py uses deprecated `use_container_width` — "
-        'replace True with width="stretch" and False with width="content"'
-    ]
+    text = ui.read_text(encoding="utf-8", errors="replace")
+    fixes: list[str] = []
+    for pattern, replacement in _WIDTH_AUTOFIX_PATTERNS:
+        count = len(pattern.findall(text))
+        if count:
+            fixes.append(f'{pattern.pattern!r} -> {replacement!r} ({count}x)')
+            text = pattern.sub(replacement, text)
+    if fixes:
+        ui.write_text(text, encoding="utf-8")
+    return fixes
 
 
 def validate_ui_parity(app_dir: Path, repo_root: Path) -> list[str]:

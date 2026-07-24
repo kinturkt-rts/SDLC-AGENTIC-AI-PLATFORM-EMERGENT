@@ -85,7 +85,7 @@ export async function cancelPipelineRun(runId: string): Promise<CancelRunResult>
   }
 
   const now = new Date().toISOString();
-  // User-facing copy only — keep AgentCore/session internals out of the UI.
+
   const userError = sessionStopped
     ? 'Cancelled by user'
     : sessionId

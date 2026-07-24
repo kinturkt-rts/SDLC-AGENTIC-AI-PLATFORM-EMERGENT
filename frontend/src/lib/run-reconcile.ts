@@ -1,9 +1,21 @@
-import { MVP_TIMELINE_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
+import { COMPLETION_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-phases';
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
 
 export const RUN_NO_PROGRESS_IDLE_MS = 12 * 60 * 1000;
+
+/** Pipeline agent order used to prefer the furthest live step when sources disagree. */
+const AGENT_PROGRESS_ORDER = [
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+  'qa-agent',
+  'security-agent',
+  'devops-agent',
+] as const;
 
 export interface ReconcileRunInput {
   status: RunStatus;
@@ -13,6 +25,18 @@ export interface ReconcileRunInput {
   logText: string | null;
   phaseDone: Record<SdlcPhase, boolean>;
   error?: string | null;
+  /** From run.json / log markers — used when artifact index lags behind live progress. */
+  reportedCurrentStep?: string | null;
+}
+
+function furthestAgentStep(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const ai = AGENT_PROGRESS_ORDER.indexOf(a as (typeof AGENT_PROGRESS_ORDER)[number]);
+  const bi = AGENT_PROGRESS_ORDER.indexOf(b as (typeof AGENT_PROGRESS_ORDER)[number]);
+  if (ai < 0) return b;
+  if (bi < 0) return a;
+  return ai >= bi ? a : b;
 }
 
 export interface ReconcileRunResult {
@@ -109,7 +133,8 @@ export function parseLogSkipFlags(
       architecture: parsed.skip_architect === true,
       data: parsed.skip_db === true,
       implementation: parsed.skip_developer === true,
-      deploy: parsed.skip_gitlab === true,
+      publish: parsed.skip_gitlab === true,
+      deploy: parsed.skip_devops === true,
       qa: parsed.skip_verify === true,
     };
   } catch {
@@ -130,14 +155,14 @@ export function lastRunActivityMs(input: {
   );
 }
 
-export function mvpPipelineComplete(phaseDone: Record<SdlcPhase, boolean>): boolean {
-  return MVP_TIMELINE_PHASES.every((phase) => phaseDone[phase]);
+export function pipelineComplete(phaseDone: Record<SdlcPhase, boolean>): boolean {
+  return COMPLETION_PHASES.every((phase) => phaseDone[phase]);
 }
 
-export function firstIncompleteMvpPhase(
+export function firstIncompletePhase(
   phaseDone: Record<SdlcPhase, boolean>,
 ): SdlcPhase | null {
-  for (const phase of MVP_TIMELINE_PHASES) {
+  for (const phase of COMPLETION_PHASES) {
     if (!phaseDone[phase]) return phase;
   }
   return null;
@@ -159,7 +184,7 @@ function firstMissingRequired(
   phaseDone: Record<SdlcPhase, boolean>,
   skipFlags: Partial<Record<SdlcPhase, boolean>>,
 ): SdlcPhase | null {
-  for (const phase of MVP_TIMELINE_PHASES) {
+  for (const phase of COMPLETION_PHASES) {
     if (skipFlags[phase]) continue;
     if (!phaseDone[phase]) return phase;
   }
@@ -173,9 +198,12 @@ function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   if (missing === 'implementation') {
     error =
       'Developer-agent did not complete successfully. Open the run and check the developer handoff for the concrete error.';
-  } else if (missing === 'deploy') {
+  } else if (missing === 'publish') {
     error =
       'GitLab publish did not complete successfully. Open the run and check the GitLab handoff for the concrete error.';
+  } else if (missing === 'deploy') {
+    error =
+      'AWS deploy did not complete successfully. Open the run and check the DevOps handoff for the concrete error.';
   } else if (agent) {
     error = `Pipeline stopped before ${label} finished (${agent}).`;
   }
@@ -186,34 +214,14 @@ function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   };
 }
 
-/**
- * Derive truthful run status from verified evidence, not just whatever run.json / logs claim.
- *
- * Rules (in order):
- *   1. User cancel is sticky — never upgrade `cancelled` to completed/failed from
- *      artifacts or log success markers. Cancel is an explicit operator decision.
- *   2. VERIFIED SUCCESS - every non-skipped required MVP phase has real artifacts →
- *      completed. This is the ONLY path to a green pipeline (except cancel above).
- *   3. Explicit failure signals (log/run.json) → failed.
- *   4. Claimed completion (from run.json OR a "pipeline completed" log line) that
- *      CANNOT be verified against artifacts → failed with the first missing phase named,
- *      as long as we have some evidence the run actually started in the artifact store.
- *      This is how a run that silently died mid-way stops showing as "green".
- *   5. Claimed completion with NO artifact evidence at all (very old runs whose S3
- *      lifecycle has purged everything) → trust the recorded status; we have no way to
- *      disprove it and downgrading them all to failed would be dishonest.
- *   6. Otherwise fall through to active/stalled logic.
- */
 export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult {
   const skipFlags = parseLogSkipFlags(input.logText);
   const effectiveDone = effectivePhaseDone(input.phaseDone, skipFlags);
   const missingRequired = firstMissingRequired(input.phaseDone, skipFlags);
   const verifiedComplete = missingRequired === null;
-  const hasAnyEvidence = MVP_TIMELINE_PHASES.some((p) => input.phaseDone[p]);
+  const hasAnyEvidence = COMPLETION_PHASES.some((p) => input.phaseDone[p]);
   const terminal = parseLogTerminalStatus(input.logText);
 
-  // Cancel must win over artifact/log "success" — otherwise a cancelled run that
-  // already had (or later gained) MVP artifacts flips green on the dashboard.
   if (input.status === 'cancelled') {
     return {
       status: 'cancelled',
@@ -270,10 +278,11 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   if (isActiveStatus) {
-    const phase = firstIncompleteMvpPhase(effectiveDone);
+    const phase = firstIncompletePhase(effectiveDone);
+    const fromArtifacts = phase ? PHASE_AGENT[phase] : null;
     return {
       status: 'running',
-      currentStep: phase ? PHASE_AGENT[phase] : null,
+      currentStep: furthestAgentStep(fromArtifacts, input.reportedCurrentStep),
     };
   }
 

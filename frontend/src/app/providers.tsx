@@ -22,7 +22,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="dark"
+      enableSystem={false}
+      storageKey="theme"
+      disableTransitionOnChange
+    >
       <QueryClientProvider client={queryClient}>
         {children}
         <Toaster position="top-right" richColors closeButton />

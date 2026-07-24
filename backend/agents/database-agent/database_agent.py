@@ -7,9 +7,10 @@ import json
 import os
 import re
 import sys
-from contextlib import ExitStack
+import tempfile
+from collections.abc import AsyncIterator, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from collections.abc import AsyncIterator
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -18,11 +19,14 @@ _DEFAULT_DB_SUBDIR = "db"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.artifact_store import (
+    delete_repo_artifact,
+    get_artifact,
     is_s3_store,
     list_run_artifact_keys,
     put_context,
     read_repo_artifact,
     resolve_run_id,
+    run_sql_artifact_keys,
     write_repo_artifact,
 )
 from _shared.context_cli import load_context_extra, parse_context_args
@@ -60,7 +64,6 @@ A2A_PORT = 9108
 _SEED_MIN_ROWS = os.getenv("SEED_MIN_ROWS", "5")
 _SEED_MAX_ROWS = os.getenv("SEED_MAX_ROWS", "10")
 
-# Used when --task is omitted: agent reads design/PRD from Context, not from the CLI string.
 DEFAULT_PIPELINE_TASK = """\
 Implement the database layer as a DB developer using Context handoff.
 1. db_read_file(designDocPath) — §3 (tables) and §6 (migration order + seed).
@@ -81,6 +84,7 @@ _READ_PREFIXES = (
 )
 
 _written_files: list[str] = []
+_deleted_files: list[str] = []
 _run_context: dict[str, Any] | None = None
 
 _JWT_AUTH_TABLE_SECTION = """\
@@ -141,7 +145,7 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 
 ## Artifacts
 Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `target-apps/<service>/db/` locally):
-- `HANDOFF.md` — host-written after each CLI run (developer-agent reads `databaseHandoffPath`)
+- `HANDOFF.md` — **host-written only** after your run (do not `db_write_file` it). Put `### seedCredentials` in your reply so the host can copy it in. Developer-agent reads `databaseHandoffPath`.
 - `sql/001_*.sql` … numbered, idempotent DDL (`IF NOT EXISTS` where possible)
 - **`SET search_path` rule — applies to every migration file:**
   `apply_sql_to_rds.py` already sets `search_path = <app_schema>, public` at the **connection level** before each file runs.
@@ -177,7 +181,28 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
   - HNSW index (after table DDL): `USING hnsw (embedding vector_cosine_ops)` with `CREATE INDEX IF NOT EXISTS`.
   - App-schema `SET search_path` belongs in **later** migrations (enums/tables), not in `001_enable_pgvector.sql`.
   - **Shared RDS:** pgvector must live in `public`. If an older app installed `vector` in its own schema, the host apply script relocates it with `ALTER EXTENSION vector SET SCHEMA public` before DDL.
-  - **`api_keys.key_hash` UNIQUE:** never insert multiple rows with the same `__BCRYPT_PLACEHOLDER__` — use one row per tier or pre-hash distinct API key strings; placeholders are for `users` password columns only.
+  - **Seed placeholder embeddings — use one of these idioms:**
+    ```sql
+    (SELECT array_fill(0.01::real, ARRAY[1024])::vector)
+    -- or a bracketed text literal:
+    '[0.01,0.01,...]'::vector
+    ```
+    `array_fill(...)::vector` / `array_agg(...)::vector` cast a native Postgres array — preferred.
+    **Never** use `array_to_string` / `string_agg` / `format` / `||` to build CSV text for `::vector`, and never cast a bare `'0.01,0.01,…'` string (must start with `[`). `db_validate_sql` rejects these; fix before finishing.
+  - **`api_keys.key_hash` — match the design hash algorithm (MANDATORY):**
+    - **bcrypt.verify apps** (e.g. expense-tracker): use `'__BCRYPT_PLACEHOLDER__'` per row. Host
+      replaces each with a *distinct* salted bcrypt hash (UNIQUE-safe). Never invent `$2b$12$…`.
+    - **SHA-256 hex lookup apps** (`hashlib.sha256(raw).hexdigest()` in dependencies): use
+      **labeled** sentinels `'__SHA256_PLACEHOLDER:<label>__'` (label must match the row's
+      `label` / name column). Add one comment per key at the top of the seed file:
+      `-- API key for demo-standard: "demo-standard-key-2024"`
+      Host replaces with the real 64-char hex digest. **Never** invent fake tokens like
+      `'sha256_standard_demo_001'` — those are not digests and live UI/Swagger always 401.
+      Reference: `target-apps/_template/db/reference/sha256_api_keys_seed_reference.sql`
+      (`db_validate_sql` blocks invented `sha256_*` tokens).
+    - Do **not** put `__BCRYPT_PLACEHOLDER__` into `key_hash` when the app looks up SHA-256 hex
+      (bcrypt strings will never match). Do **not** put SHA-256 placeholders into JWT
+      `hashed_password` columns.
 - `sql/*_seed.sql` or `011_seed.sql` — **dev/test fixture rows only** per design §6.2 (not production CUR data).
   Use `seedMinRows`–`seedMaxRows` from Context: **every RDS table in §3 must get that many INSERT rows**
   (realistic names/emails/dates; stable UUIDs only where tests need them; respect FK order; `ON CONFLICT DO NOTHING`).
@@ -198,20 +223,22 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
 
 ## Workflow
 1. Read design (+ PRD when `prdPath` set); list planned tables with PRD FR ids.
-2. `sql/` is pre-cleared by the host before you run — write the current migration set fresh. Use `db_list_tree` for `nosql/` only if design requires MongoDB.
+2. `sql/` is cleared automatically at database-agent startup for local runs (S3/cloud mode skips this) — normally just write the current migration set fresh, and use `db_list_tree` for `nosql/` only if design requires MongoDB. If any stale `sql/` file could survive (cloud mode, or a superseded migration under a different filename), `db_delete_file` it first: `apply_sql_to_rds.py` runs every `*.sql` it finds, so a leftover old migration can win via `CREATE TABLE IF NOT EXISTS` and leave RDS on the old schema. Do not leave duplicate `00N_*.sql` no-ops.
 3. Write migrations in §6 order; write seed with `seedMinRows`–`seedMaxRows` rows per §3 table.
 4. `db_validate_sql(service=targetApp)` — must report SQL_VALIDATION OK.
 5. One compact reply (see below).
 
 ## Response format (single pass — no duplication)
-Return **once**, in order:
-1. **schema_summary** — table/collection count, enums, PRD FR mapping (≤12 bullets)
-2. **sql_artifacts** — ordered paths only (table, no prose repeat)
-3. **handoff_for_developer** — DSN pattern, SQLAlchemy/ORM notes, stable seed UUIDs if any (≤8 bullets)
-4. **execution_commands** — **omit** when `applyToRdsAfterWrite` is true; include **only** for files-only runs (short apply note, not a full bash essay)
+Return **once**, using `###` headings in this order:
+1. `### schema_summary` — table/collection count, enums, PRD FR mapping (≤12 bullets)
+2. `### sql_artifacts` — ordered paths only (table, no prose repeat)
+3. `### handoff_for_developer` — DSN pattern, SQLAlchemy/ORM notes, stable seed UUIDs if any (≤8 bullets)
+4. `### seedCredentials` — **required when JWT/password seed users exist** (markdown table; see Seeding credentials). Host copies this into `HANDOFF.md`.
+5. `### execution_commands` — **omit** when `applyToRdsAfterWrite` is true; include **only** for files-only runs (short apply note)
 
 Do **not** repeat sections. Do **not** paste full SQL bodies in the reply.
 Do **not** add a `## Files written` section — the CLI logs written paths on stderr.
+Do **not** `db_write_file` `HANDOFF.md` — the host writes it after your reply.
 Use **one `db_write_file` call per sql file**; put full SQL only in the tool `content` argument, not in chat text.
 
 ## UUID literals in seed SQL — hex digits only
@@ -270,7 +297,10 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 - Put it as the first comment in the file, before any `SET search_path` or `INSERT` statements
 - One comment covers all users when they share a password; add separate comments when roles have different passwords (first match wins)
 
-**Step 3 — Credential map in `HANDOFF.md` under `### seedCredentials` (MANDATORY)**
+**Step 3 — Credential map in your reply under `### seedCredentials` (MANDATORY)**
+Put this section in your **chat reply** (Response format). The host copies it into `db/HANDOFF.md`.
+**Do not** `db_write_file` `HANDOFF.md` yourself — that file is host-owned.
+
 ```
 ### seedCredentials
 | username | role      | plaintext_password |
@@ -281,11 +311,14 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 - First column: the `username` value (login is ALWAYS by `username`; `email` is never the login column)
 - Third column: the plaintext password (must match the SQL comment exactly)
 
-The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the `password_hash` column with a real bcrypt hash computed on CPU.
+The host pipeline runs `agents/_shared/materialize_seed_passwords.py` after RDS apply — it reads **Step 2** for the password, then **Step 3** (from HANDOFF, copied from your reply) and/or parses `INSERT INTO users (...)` column order from seed SQL to find which rows to update, then UPDATEs the hash column with a real bcrypt hash computed on CPU.
 
 The seed `INSERT INTO users (...)` column list MUST include `username` and `password_hash`.
 
-Same rule for `api_key_hash`, `verification_token`, or any column storing a hash-of-known-plaintext. Sentinel + SQL comment + HANDOFF.md map — all three, every time.
+Same rule for JWT `hashed_password` (bcrypt placeholder). For **SHA-256 API-key**
+`key_hash` columns, use `__SHA256_PLACEHOLDER:<label>__` + `-- API key for <label>: "…"`
+comments instead — never invent `sha256_*` fake tokens or literal hex digests.
+Mandatory trio: sentinel in SQL + password/API-key comment in seed file + `### seedCredentials` in your reply.
 """
 
 # Backwards-compat alias: jwt-mode prompt (default). Prefer _build_system_prompt(ctx).
@@ -383,8 +416,18 @@ def db_write_file(path: str, content: str) -> str:
     # ``<slug>/...`` keys as ``backend/<slug>/...`` on local disk (that created
     # the stale backend/demo-api/ tree).
     if _is_cloud_store():
-        if _run_context is not None:
-            write_repo_artifact(artifact_rel, content, context=_run_context)
+        if _run_context is None:
+            return (
+                "Error: cloud write requires active run context "
+                "(run_task must set _run_context before db_write_file)."
+            )
+        run_id = resolve_run_id(_run_context)
+        if not run_id:
+            return (
+                "Error: cloud write requires runId in Context "
+                f"(refused to claim write of {artifact_rel})."
+            )
+        write_repo_artifact(artifact_rel, content, context=_run_context)
         _written_files.append(artifact_rel)
         return f"Wrote {artifact_rel} ({len(content)} bytes)"
     try:
@@ -401,22 +444,107 @@ def db_write_file(path: str, content: str) -> str:
 
 
 @tool
-def db_validate_sql(service: str) -> str:
-    """Validate db/sql/ schema vs seed nullability (blocks NULL inserts into NOT NULL columns)."""
-    from _shared.validate_sql_artifacts import validate_sql_dir
+def db_delete_file(path: str) -> str:
+    """Delete a superseded generated file under the app db tree (cloud: ``<slug>/db/...``).
 
-    sql_dir = _service_dir(service) / "db" / "sql"
-    if not sql_dir.is_dir():
-        return f"Error: no sql directory at {sql_dir.relative_to(_REPO_ROOT).as_posix()}"
-    errors = validate_sql_dir(sql_dir)
+    Use this before writing a redesigned schema so old ``sql/`` migrations from an earlier
+    generation don't linger alongside the new ones — ``apply_sql_to_rds.py`` runs every
+    ``*.sql`` file it finds, and a stale file left behind can silently win over the current
+    design via ``CREATE TABLE IF NOT EXISTS``. No-op (not an error) if the file is already gone.
+    """
+    raw = path.strip()
+    artifact_rel = cloud_artifact_rel(raw)
+    if _is_cloud_store():
+        if _run_context is None:
+            return (
+                "Error: cloud delete requires active run context "
+                "(run_task must set _run_context before db_delete_file)."
+            )
+        run_id = resolve_run_id(_run_context)
+        if not run_id:
+            return (
+                "Error: cloud delete requires runId in Context "
+                f"(refused to claim delete of {artifact_rel})."
+            )
+        delete_repo_artifact(artifact_rel, context=_run_context)
+        _deleted_files.append(artifact_rel)
+        return f"Deleted {artifact_rel}"
+    try:
+        file_path = _resolve_repo_path(raw, write=True)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    file_path.unlink(missing_ok=True)
+    rel = cloud_artifact_rel(file_path.relative_to(_REPO_ROOT).as_posix())
+    _deleted_files.append(rel)
+    if _run_context is not None:
+        delete_repo_artifact(rel, context=_run_context)
+    return f"Deleted {rel}"
+
+
+def _format_sql_validation_result(errors: list[str]) -> str:
     if not errors:
-        return "SQL_VALIDATION OK — schema and seed nullability are consistent."
+        return (
+            "SQL_VALIDATION OK — schema/seed nullability, UUID literals, "
+            "search_path, and vector seed casts are consistent."
+        )
     lines = "\n".join(f"  - {e}" for e in errors)
     return (
         "SQL_VALIDATION FAILED — fix schema or seed before RDS apply:\n"
         f"{lines}\n"
-        "Rule: optional columns omit NOT NULL in DDL; seed NULL only for nullable columns."
+        "Rules: optional columns omit NOT NULL; seed NULL only for nullable columns; "
+        "UUIDs hex-only; never SET search_path = public alone; "
+        "cast arrays with array_fill(...)::vector (never array_to_string(...)::vector)."
     )
+
+
+@contextmanager
+def _cloud_sql_dir_for_validation(service: str, run_id: str) -> Iterator[Path]:
+    """Download run ``db/sql/*.sql`` into a temp dir for validate_sql_dir."""
+    slug = slugify(service)
+    keys = run_sql_artifact_keys(run_id, slug)
+    if not keys:
+        raise FileNotFoundError(
+            f"no SQL artifacts in run {run_id} under {slug}/db/sql/ "
+            f"(or target-apps/{slug}/db/sql/)"
+        )
+    with tempfile.TemporaryDirectory(prefix="db-sql-validate-") as tmp:
+        sql_dir = Path(tmp) / "sql"
+        sql_dir.mkdir(parents=True)
+        for key in keys:
+            name = Path(key).name
+            if not name.lower().endswith(".sql"):
+                continue
+            (sql_dir / name).write_bytes(get_artifact(run_id, key))
+        if not any(sql_dir.glob("*.sql")):
+            raise FileNotFoundError(
+                f"run {run_id} listed SQL keys but none were writable as *.sql files"
+            )
+        yield sql_dir
+
+
+@tool
+def db_validate_sql(service: str) -> str:
+    """Validate db/sql/ (local disk or cloud run artifacts) before finishing."""
+    from _shared.validate_sql_artifacts import validate_sql_dir
+
+    ctx = _run_context
+    run_id = resolve_run_id(ctx) if ctx else None
+
+    # Cloud pipeline: SQL lives in S3 under runs/<runId>/<slug>/db/sql/ — not on
+    # the AgentCore container disk. Materialize only those files for validation.
+    if _is_cloud_store() and run_id:
+        try:
+            with _cloud_sql_dir_for_validation(service, run_id) as sql_dir:
+                return _format_sql_validation_result(validate_sql_dir(sql_dir))
+        except FileNotFoundError as exc:
+            return f"Error: {exc}"
+        except Exception as exc:
+            return f"Error: failed to load SQL artifacts for validation: {exc}"
+
+    sql_dir = _service_dir(service) / "db" / "sql"
+    if not sql_dir.is_dir():
+        return f"Error: no sql directory at {sql_dir.relative_to(_REPO_ROOT).as_posix()}"
+    return _format_sql_validation_result(validate_sql_dir(sql_dir))
 
 
 def _enrich_postgres_mcp_context(ctx: dict[str, Any], *, use_postgres: bool) -> None:
@@ -586,7 +714,7 @@ def _build_agent(
 
 
 def _file_tools() -> list[Any]:
-    return [db_list_tree, db_read_file, db_write_file, db_validate_sql]
+    return [db_list_tree, db_read_file, db_write_file, db_delete_file, db_validate_sql]
 
 
 def _mongodb_mcp_tools(stack: ExitStack) -> list[Any]:
@@ -616,8 +744,9 @@ def run_task(
     use_postgres: bool = False,
     use_mongodb: bool = False,
 ) -> tuple[str, list[str]]:
-    global _written_files, _run_context
+    global _written_files, _deleted_files, _run_context
     _written_files = []
+    _deleted_files = []
     _run_context = None
 
     app = resolve_target_app(target_app, context, env_var="DATABASE_TARGET_APP")
@@ -655,7 +784,7 @@ def run_task(
             "\n\n> No files were written under target-apps/. "
             "Use db_write_file to persist SQL/NoSQL scripts.\n"
         )
-    telemetry.extra = {"filesWritten": len(_written_files)}
+    telemetry.extra = {"filesWritten": len(_written_files), "filesDeleted": len(_deleted_files)}
     telemetry.finalize(context=ctx)
 
     run_id = resolve_run_id(ctx)

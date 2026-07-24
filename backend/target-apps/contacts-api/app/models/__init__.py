@@ -1,2 +1,3 @@
-# SQLAlchemy ORM models — one file per database table / domain entity.
-# Import Base from app.database, not from here, to avoid circular imports.
+"""ORM models package — import all models so Base.metadata sees them."""
+from app.models.department import Department  # noqa: F401
+from app.models.contact import Contact  # noqa: F401

@@ -8,6 +8,7 @@ const phaseAgent: Record<SdlcPhase, AgentName> = {
   implementation: 'developer-agent',
   qa: 'qa-agent',
   security: 'security-agent',
+  publish: 'gitlab-agent',
   deploy: 'devops-agent',
 };
 
@@ -18,6 +19,7 @@ const PHASES: SdlcPhase[] = [
   'implementation',
   'qa',
   'security',
+  'publish',
   'deploy',
 ];
 

@@ -14,10 +14,28 @@ infrastructure/
 └── environments/
     └── dev/
         ├── _shared/               # One-time: ECS cluster + shared ALB + listener
+        ├── control-plane-auth/    # Cognito User Pool for control-plane UI login
         └── <app>/                 # Per-app root calling the module
                                    #   (hello-fastapi is the hand-written example;
                                    #    devops-agent generates these in Phase B)
 ```
+
+## Control-plane UI auth (Cognito)
+
+Standalone from agents/pipeline. Users + password hashes live in Cognito only.
+
+```powershell
+cd backend/infrastructure/environments/dev/control-plane-auth
+terraform init
+terraform apply
+terraform output frontend_env
+# Set COGNITO_USER_POOL_ID / COGNITO_CLIENT_ID / COGNITO_REGION on the ECS task
+# (see deploy/control-plane-frontend/task-definition.json), then:
+cd ../../../../
+.\scripts\create-control-plane-user.ps1 -Email you@company.com
+```
+
+Cost (dev): Cognito free tier (50k MAU) — typically $0 for internal demos.
 
 ## State
 

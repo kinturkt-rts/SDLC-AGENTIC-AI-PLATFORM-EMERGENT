@@ -60,7 +60,7 @@ function MessagesInner() {
       ),
     },
     { key: 'summary', header: 'Summary', className: 'max-w-md', render: (m) => <span className="line-clamp-2 text-muted-foreground">{m.summary}</span> },
-    { key: 'correlationId', header: 'correlationId', render: (m) => <button onClick={() => setCorrelationId(m.correlationId)} className="font-mono text-[11px] text-teal-600 hover:underline dark:text-teal-400">{m.correlationId}</button> },
+    { key: 'correlationId', header: 'Thread', render: (m) => <button onClick={() => setCorrelationId(m.correlationId)} className="font-mono text-[11px] text-teal-600 hover:underline dark:text-teal-400" title="Click to filter to this thread">{m.correlationId}</button> },
     { key: 'runId', header: 'Run', render: (m) => <Link href={`/runs/${m.runId}`} className="font-mono text-[11px] text-muted-foreground hover:text-teal-600 hover:underline">{m.runId}</Link> },
   ];
 
@@ -73,10 +73,10 @@ function MessagesInner() {
       <PageHeader
         eyebrow="Design"
         title="Agent Messages"
-        description="Live handoff log from pipeline runs: when the orchestrator assigns a phase, the specialist reports progress or completion. Filter by thread to follow one phase."
+        description="Every message the orchestrator and a specialist agent exchange for one phase, generated live as runs progress (assign → in progress → done, or failed). Each row belongs to a thread - one phase within one run - so you can follow a single handoff from start to finish."
         actions={
           <Select value={correlationId} onValueChange={setCorrelationId}>
-            <SelectTrigger className="h-9 w-[220px]"><SelectValue placeholder="correlationId" /></SelectTrigger>
+            <SelectTrigger className="h-9 w-[220px]"><SelectValue placeholder="Filter by thread" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All threads</SelectItem>
               {correlationIds.map((c) => (

@@ -1,91 +1,47 @@
-Employee Leave Manager — HR leave requests, approvals, balances, team calendar
+Employee Leave Manager for HR and people managers.
 
-Client story (why we're building this):
-James (HR) says ~120 employees request PTO via email; managers reply "approved" with no central
-record. Payroll needs balances and an "who is out today" view. This must replace email for the pilot.
+Client story:
+James in HR says about 120 employees request PTO by email; managers reply “approved” with no
+central record. Payroll needs balances and a “who is out today” view. This should replace email
+for the pilot.
 
-MVP (product summary):
-- Employees submit leave (PTO | sick | unpaid), half-day or full-day per date.
-- Manager approves/denies direct reports; HR admin sees all, adjusts balances with reason.
-- Approved leave deducts balance atomically; calendar shows team availability by department.
-- Manager cannot approve own request — routes to HR admin.
+Problem:
+- Leave requests and approvals live in email with no reliable history.
+- Nobody trusts PTO/sick balances or knows who is out today by team.
+- Managers must not approve their own leave — those need an HR path.
 
-Personas & auth:
-| Role | Login | Can do |
-|------|-------|--------|
-| employee | JWT | Submit/cancel own pending; view own balance & history |
-| manager | JWT | Approve/deny direct reports; team calendar; cannot approve self |
-| hr_admin | JWT | All reads; balance adjustments; approve when manager is requester; reports |
-| anonymous | — | GET /health only |
+Who uses it:
+- Employees submit and cancel their own pending leave; see their balance and history.
+- Managers approve or deny direct reports and see a team calendar — not their own requests.
+- HR admins see everything, adjust balances with a reason, and approve when the requester is a manager.
+- Sign-in with username and password and roles (employee, manager, HR admin). Health checks stay open.
 
-Auth: `POST /auth/login` → JWT (HS256, `JWT_SECRET_KEY`). Bearer on protected routes.
-Passwords bcrypt-hashed. Seed 8+ users across 3 departments with manager chain (manager_id FK).
+MVP features:
+- Submit leave (PTO, sick, or unpaid) for a date range; support half-day or full-day per date.
+- Approval workflow: pending → approved or denied; employees can cancel while still pending.
+- Approved PTO/sick deducts from the employee’s balance; unpaid does not.
+- Team calendar and “who is out today” for managers and HR.
+- HR balance adjustments with a note and an audit trail.
+- Streamlit (or similar) UI: submit leave, my requests, team calendar (role-gated), HR adjustments.
+- Seed several departments, a manager chain, mixed balances, and requests in various statuses for demos.
 
-Data model (DDL under target-apps/employee-leave-manager/db/sql/):
-- users: id uuid PK, username unique, password_hash, role enum, employee_id uuid FK nullable, is_active, created_at
-- employees: id uuid PK, full_name, email unique, department varchar(64), manager_id uuid FK→employees nullable,
-  hire_date date, is_active bool default true
-- leave_balances: id uuid PK, employee_id uuid FK unique, pto_hours numeric(6,2) >= 0, sick_hours numeric(6,2) >= 0,
-  updated_at timestamptz
-- leave_requests: id uuid PK, employee_id FK, leave_type enum (pto|sick|unpaid), status enum
-  (draft|pending|approved|denied|cancelled), start_date date, end_date date, total_hours numeric(6,2),
-  note text nullable, decided_by uuid FK→users nullable, decision_note text nullable,
-  created_at, updated_at
-- leave_request_days: id uuid PK, request_id FK cascade, work_date date, hours numeric(4,2) (0.5 or 8.0 for demo),
-  UNIQUE(request_id, work_date)
-- balance_ledger: id uuid PK, employee_id FK, delta_hours numeric(6,2), reason enum
-  (accrual|adjustment|leave_deduction|reversal), reference_request_id uuid nullable,
-  note text, performed_by uuid FK→users, created_at
-- Indexes: employees(department), leave_requests(employee_id, status), leave_request_days(work_date)
+Business rules:
+- Cannot request more PTO/sick hours than available balance at submit time.
+- Block overlapping approved leave for the same person.
+- Half-day and full-day hours are fixed and consistent (e.g. 4 vs 8 for the demo).
+- Only the employee’s manager or HR can approve; nobody approves their own request.
+- Denying or cancelling before approval does not change balances; approving writes a clear ledger entry.
 
-Leave request state machine:
-- draft → pending (employee submit)
-- pending → approved | denied (manager or hr_admin for edge cases)
-- pending → cancelled (employee only, before decision)
-- approved → no edit except hr_admin reversal via new ledger entry + status cancelled (audit trail)
+Must have for v1:
+- Persisted data, login with roles, and an audit trail for balance changes.
+- A usable internal UI for the pilot — not email-only.
 
-Business rules (must enforce in API, not UI only):
-- PTO/sick: sum(leave_request_days.hours) <= available balance at submit time.
-- Unpaid: no balance check.
-- Block overlapping approved leave for same employee (any intersecting work_date).
-- Half-day = 4 hours, full day = 8 hours (config constant).
-- Manager approval only if approver is employee.manager_id OR role=hr_admin.
-- On approve: insert balance_ledger negative delta; on deny/cancel before approve: no ledger.
-- hr_admin POST /balances/{employee_id}/adjust requires {delta_hours, leave_type, note} → ledger row.
+Nice to have (later):
+- Workday sync, Outlook calendar, accrual by tenure, email notifications.
 
-API contracts (implement all):
-| Method | Path | Auth | Behavior |
-| GET | /health | none | DB ping; 200 or 503 |
-| POST | /auth/login | none | JWT + role + employee_id |
-| GET | /employees/me | JWT | profile + balances |
-| GET | /employees | hr_admin, manager | list; ?department= ?manager_id= paginated |
-| POST | /leave-requests | employee+ | body dates + days[]; validate balance/overlap; status pending |
-| GET | /leave-requests | JWT | employee: own; manager: reports; hr: all; filters status, date range |
-| GET | /leave-requests/{id} | JWT | 403 if out of scope |
-| POST | /leave-requests/{id}/approve | manager, hr_admin | 422 invalid transition; ledger on approve |
-| POST | /leave-requests/{id}/deny | manager, hr_admin | body decision_note? |
-| POST | /leave-requests/{id}/cancel | employee (own pending) | |
-| GET | /calendar | manager, hr_admin | ?from= ?to= ?department= → {items: [{employee, date, hours, type}]} |
-| GET | /reports/out-today | hr_admin, manager | who's out today |
-| POST | /balances/{employee_id}/adjust | hr_admin | ledger + update leave_balances |
+Constraints:
+- Internal pilot only.
+- Keep secrets out of source code.
 
-Stack:
-- Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x sync + psycopg, JWT, passlib.
-- Streamlit UI: tabs Submit Leave, My Requests, Team Calendar (role-gated), HR Adjustments.
-- Fail-fast if DATABASE_URL missing.
-
-Seed: 3 departments, 8 employees, manager chain, mixed balances, 4 requests in various statuses,
-one overlapping test case prevented. Stable UUIDs.
-
-Tests (pytest):
-- login per role, 403 on wrong role, approve deducts balance, overlap 422, self-approve blocked,
-  manager sees only reports, hr adjustment creates ledger, cancel pending, health 503 when DB down.
-
-Out of scope: Workday sync, Outlook calendar, accrual by tenure, email notifications.
-
-Success criteria:
-- Full pipeline produces target-apps/employee-leave-manager/ with green pytest.
-- Streamlit + uvicorn documented; Swagger shows auth.
-
-Target app slug: employee-leave-manager
-Output directory: target-apps/employee-leave-manager/
+Success:
+- An employee submits PTO; their manager approves and the balance drops; HR sees who is out today; a manager’s own request goes to HR instead of self-approval.

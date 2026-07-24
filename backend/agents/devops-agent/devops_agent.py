@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Windows consoles default to cp1252; model output streams UTF-8 (arrows, emoji).
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -23,6 +22,7 @@ _INFRA_DIR = _REPO_ROOT / "infrastructure"
 _PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
+from _shared.artifact_store import is_s3_store, put_handoff, resolve_run_id, update_pipeline_run
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.deploy_manifest import (
     build_deploy_manifest,
@@ -49,6 +49,44 @@ from strands.tools.decorator import tool
 
 AGENT_NAME = "devops-agent"
 A2A_PORT = 9105
+
+
+def _pipeline_run_marker_candidates(target: str) -> list[Path]:
+    """Locations gitlab-agent may write ``.sdlc/pipeline-run.json``.
+
+    Monorepo / platform CI: ``target-apps/<slug>/.sdlc/…``
+    Apps-repo publish (branch root = app tree) overlaid onto ``backend/``: ``.sdlc/…``
+    """
+    slug = (target or "").strip()
+    return [
+        _REPO_ROOT / "target-apps" / slug / ".sdlc" / "pipeline-run.json",
+        _REPO_ROOT / ".sdlc" / "pipeline-run.json",
+    ]
+
+
+def _ensure_pipeline_run_id_from_marker(target: str, ctx: dict[str, Any]) -> None:
+    """If PIPELINE_RUN_ID is unset, load it from the gitlab-agent publish marker."""
+    if resolve_run_id(ctx):
+        return
+    for marker in _pipeline_run_marker_candidates(target):
+        if not marker.is_file():
+            continue
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        rid = str(data.get("runId") or "").strip()
+        if not rid:
+            continue
+        os.environ["PIPELINE_RUN_ID"] = rid
+        ctx["runId"] = rid
+        try:
+            rel = marker.relative_to(_REPO_ROOT).as_posix()
+        except ValueError:
+            rel = str(marker)
+        print(f"[{AGENT_NAME}] Loaded PIPELINE_RUN_ID from {rel}")
+        return
+
 
 _WINGET_TF_DIR = (
     Path.home()
@@ -444,11 +482,26 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
     return result
 
 
+def _powershell_exe() -> str:
+    """'powershell' (5.1) is what this repo's scripts are tested against on
+    Windows; Linux/macOS runners (e.g. GitLab CI) only have 'pwsh' (PowerShell
+    Core), if installed at all. Prefer the Windows-native binary so local
+    behavior is unchanged; fall back to pwsh for non-Windows runners."""
+    for candidate in ("powershell", "pwsh"):
+        if shutil.which(candidate):
+            return candidate
+    raise RuntimeError(
+        "No PowerShell found on PATH (tried 'powershell' and 'pwsh'). Install "
+        "PowerShell Core (https://aka.ms/powershell) to run "
+        "scripts/deploy-target-app.ps1 in this environment."
+    )
+
+
 def run_deploy(app: str, *, plan_only: bool = False, destroy: bool = False) -> int:
     """Invoke the deterministic deploy script (build + push + terraform apply + wait)."""
     script = _REPO_ROOT / "scripts" / "deploy-target-app.ps1"
     cmd = [
-        "powershell",
+        _powershell_exe(),
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
@@ -546,6 +599,8 @@ def main() -> None:
     except TargetAppRequiredError as exc:
         parser.error(str(exc))
 
+    _ensure_pipeline_run_id_from_marker(target, ctx)
+
     if args.destroy:
         raise SystemExit(run_deploy(target, destroy=True))
 
@@ -555,13 +610,40 @@ def main() -> None:
 
     if args.deploy or args.plan_only:
         rc = run_deploy(target, plan_only=args.plan_only)
+        handoff = _PIPELINE_DIR / f"{target}.devops-handoff.json"
+        data = (
+            json.loads(handoff.read_text(encoding="utf-8-sig"))
+            if handoff.is_file()
+            else None
+        )
+
+        # Record handoff + run status even on failure — this stage may run
+        # standalone (e.g. GitLab CI), outside the orchestrator that normally
+        # does this after every other agent's step. Mirrors gitlab-agent's own
+        # put_handoff() call, gated the same way (put_handoff builds an S3 URI
+        # unconditionally, so it isn't safe to call outside S3 mode).
+        run_id = resolve_run_id(ctx)
+        if is_s3_store():
+            if run_id:
+                if data:
+                    put_handoff(run_id, "devops", data)
+                update_pipeline_run(
+                    run_id,
+                    status="completed" if rc == 0 else "failed",
+                    last_agent=AGENT_NAME,
+                )
+            else:
+                print(
+                    f"[{AGENT_NAME}] WARN: ARTIFACT_STORE=s3 but no PIPELINE_RUN_ID "
+                    f"(checked marker paths under target-apps/{target}/.sdlc and .sdlc/) "
+                    "— frontend will not get appUrl for this deploy",
+                    file=sys.stderr,
+                )
+
         if rc != 0:
             raise SystemExit(rc)
-        handoff = _PIPELINE_DIR / f"{target}.devops-handoff.json"
-        if handoff.is_file():
-            data = json.loads(handoff.read_text(encoding="utf-8-sig"))
-            if data.get("appUrl"):
-                print(f"\n[{AGENT_NAME}] Live UI: {data['appUrl']}")
+        if data and data.get("appUrl"):
+            print(f"\n[{AGENT_NAME}] Live UI: {data['appUrl']}")
 
 
 if __name__ == "__main__":

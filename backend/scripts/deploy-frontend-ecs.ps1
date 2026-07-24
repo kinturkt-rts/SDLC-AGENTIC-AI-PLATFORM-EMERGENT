@@ -33,9 +33,119 @@ param(
 $ErrorActionPreference = "Stop"
 $env:AWS_PROFILE = $Profile
 $BackendRoot = Split-Path $PSScriptRoot -Parent
+$MonorepoRoot = Split-Path $BackendRoot -Parent
 $ImageUri = "$AccountId.dkr.ecr.$Region.amazonaws.com/${Repository}:$ImageTag"
 $ExecutionRoleName = "ecsTaskExecutionRole"
 $TaskRoleName = "sdlc-control-plane-task"
+$GitlabPatSecretName = "sdlc/control-plane/gitlab-pat"
+
+function Import-DotenvKeys([string[]] $Keys) {
+    foreach ($path in @(
+        (Join-Path $MonorepoRoot ".env.local"),
+        (Join-Path $BackendRoot ".env.local"),
+        (Join-Path $MonorepoRoot ".env"),
+        (Join-Path $BackendRoot ".env")
+    )) {
+        if (-not (Test-Path $path)) { continue }
+        Get-Content $path | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -match '^\s*#' -or -not $line) { return }
+            if ($line -match '^\s*([^=]+)=(.*)$') {
+                $key = $matches[1].Trim()
+                $val = $matches[2].Trim().Trim('"').Trim("'")
+                if ($val -and ($Keys -contains $key) -and -not [Environment]::GetEnvironmentVariable($key)) {
+                    [Environment]::SetEnvironmentVariable($key, $val, "Process")
+                }
+            }
+        }
+    }
+}
+
+function Ensure-GitlabPatSecret {
+    Import-DotenvKeys @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_URL", "GITLAB_TOKEN")
+    $pat = $env:GITLAB_PERSONAL_ACCESS_TOKEN
+    if (-not $pat) { $pat = $env:GITLAB_TOKEN }
+    if (-not $pat) {
+        throw "GITLAB_PERSONAL_ACCESS_TOKEN not set. Add it to .env.local before deploying control-plane (needed for Deploy/GitLab sync)."
+    }
+
+    $secretArn = $null
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $describedRaw = aws secretsmanager describe-secret `
+        --secret-id $GitlabPatSecretName `
+        --region $Region `
+        --profile $Profile `
+        --output json 2>$null
+    $describeOk = ($LASTEXITCODE -eq 0 -and $describedRaw)
+    $ErrorActionPreference = $prevEap
+
+    if ($describeOk) {
+        $secretArn = ($describedRaw | ConvertFrom-Json).ARN
+        Write-Host "Updating Secrets Manager $GitlabPatSecretName ..." -ForegroundColor Cyan
+        if (-not $WhatIf) {
+            $ErrorActionPreference = "Continue"
+            aws secretsmanager put-secret-value `
+                --secret-id $GitlabPatSecretName `
+                --secret-string $pat `
+                --region $Region `
+                --profile $Profile | Out-Null
+            $putOk = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = $prevEap
+            if (-not $putOk) { throw "put-secret-value failed for $GitlabPatSecretName" }
+        }
+    } else {
+        Write-Host "Creating Secrets Manager $GitlabPatSecretName ..." -ForegroundColor Cyan
+        if ($WhatIf) {
+            return "arn:aws:secretsmanager:${Region}:${AccountId}:secret:${GitlabPatSecretName}-XXXXXX"
+        }
+        $ErrorActionPreference = "Continue"
+        $createdRaw = aws secretsmanager create-secret `
+            --name $GitlabPatSecretName `
+            --description "GitLab PAT for SDLC control-plane Deploy status sync" `
+            --secret-string $pat `
+            --region $Region `
+            --profile $Profile `
+            --output json 2>&1
+        $createOk = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prevEap
+        if (-not $createOk) {
+            throw "create-secret failed for $GitlabPatSecretName : $createdRaw"
+        }
+        $created = $createdRaw | ConvertFrom-Json
+        if (-not $created.ARN) {
+            throw "create-secret failed for $GitlabPatSecretName (no ARN)"
+        }
+        $secretArn = $created.ARN
+    }
+
+    # Execution role must read the secret at task start (ECS injects env from secrets).
+    $policyDoc = @{
+        Version = "2012-10-17"
+        Statement = @(
+            @{
+                Sid      = "ControlPlaneGitlabPat"
+                Effect   = "Allow"
+                Action   = @("secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret")
+                Resource = @($secretArn, "arn:aws:secretsmanager:${Region}:${AccountId}:secret:sdlc/control-plane/gitlab-pat*")
+            }
+        )
+    } | ConvertTo-Json -Depth 6 -Compress
+    $policyFile = Join-Path $env:TEMP "sdlc-cp-gitlab-pat-exec-policy.json"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($policyFile, $policyDoc, $utf8NoBom)
+    if (-not $WhatIf) {
+        Write-Host "Attaching gitlab-pat read policy to $ExecutionRoleName ..." -ForegroundColor Cyan
+        aws iam put-role-policy `
+            --role-name $ExecutionRoleName `
+            --policy-name sdlc-control-plane-gitlab-pat `
+            --policy-document "file://$($policyFile.Replace('\', '/'))" `
+            --profile $Profile | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to attach gitlab-pat policy to $ExecutionRoleName" }
+    }
+
+    return $secretArn
+}
 
 function Invoke-Aws([string[]] $AwsArgs) {
     if ($WhatIf) {
@@ -94,11 +204,25 @@ Then re-run this script.
     }
 }
 
+$gitlabPatArn = Ensure-GitlabPatSecret
+$gitlabUrl = if ($env:GITLAB_URL) { $env:GITLAB_URL.Trim().TrimEnd('/') } else { "https://code.junodev.net" }
+
 $taskDefTemplate = Join-Path $BackendRoot "deploy\control-plane-frontend\task-definition.json"
 $taskDefRaw = Get-Content $taskDefTemplate -Raw
 $taskDefRaw = $taskDefRaw.Replace(
     "061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane:latest",
     $ImageUri
+)
+# Prefer full secret ARN (includes random suffix) so ECS can resolve GetSecretValue.
+$taskDefRaw = $taskDefRaw.Replace(
+    "arn:aws:secretsmanager:us-east-2:061836593297:secret:sdlc/control-plane/gitlab-pat",
+    $gitlabPatArn
+)
+# Keep GITLAB_URL in sync with .env.local when present.
+$taskDefRaw = [regex]::Replace(
+    $taskDefRaw,
+    '"name":\s*"GITLAB_URL",\s*"value":\s*"[^"]*"',
+    ('"name": "GITLAB_URL", "value": "' + $gitlabUrl + '"')
 )
 $taskDefFile = Join-Path $env:TEMP "sdlc-control-plane-task-def.json"
 # AWS CLI rejects UTF-8 BOM in --cli-input-json files (PowerShell 5 default utf8 adds BOM).
@@ -113,8 +237,11 @@ $albSg = Get-OrCreateSecurityGroup -Name "sdlc-cp-alb-sg" -Description "ALB for 
 $taskSg = Get-OrCreateSecurityGroup -Name "sdlc-cp-task-sg" -Description "ECS tasks for SDLC control plane"
 
 if (-not $WhatIf) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     aws ec2 authorize-security-group-ingress --group-id $albSg --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $Region --profile $Profile 2>$null | Out-Null
     aws ec2 authorize-security-group-ingress --group-id $taskSg --protocol tcp --port 3000 --source-group $albSg --region $Region --profile $Profile 2>$null | Out-Null
+    $ErrorActionPreference = $prevEap
 }
 
 Write-Host "Ensuring ALB $AlbName ..." -ForegroundColor Cyan

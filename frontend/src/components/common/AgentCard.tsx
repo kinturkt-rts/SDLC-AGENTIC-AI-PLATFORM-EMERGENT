@@ -40,9 +40,9 @@ export function AgentCard({
   const successLabel =
     metrics?.successRatePct != null
       ? `${metrics.successRatePct}% (${metrics.sampleSize})`
-      : '—';
+      : '-';
   const avgLabel =
-    metrics?.avgDurationSec != null ? formatDuration(Math.round(metrics.avgDurationSec)) : '—';
+    metrics?.avgDurationSec != null ? formatDuration(Math.round(metrics.avgDurationSec)) : '-';
 
   return (
     <Link href={`/agents/${agent.id}`} className="group block">

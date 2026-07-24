@@ -1,232 +1,163 @@
-"""Expense endpoint integration tests."""
+"""Expense endpoint tests."""
+from __future__ import annotations
+
+import uuid
+from datetime import date
 from decimal import Decimal
 
-
-def test_create_expense(client, emp_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={
-            "amount": "100.00",
-            "currency": "EUR",
-            "category": "travel",
-            "description": "Test expense",
-            "expense_date": "2024-06-15",
-        },
-        headers=emp_headers,
-    )
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["status"] == "submitted"
-    assert data["currency"] == "EUR"
-    assert Decimal(data["usd_amount"]) == Decimal("108.0000")
-    assert data["employee_id"] == 1
+import pytest
 
 
-def test_create_expense_invalid_currency(client, emp_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={
-            "amount": "100.00",
-            "currency": "XYZ",
-            "category": "travel",
-            "expense_date": "2024-06-15",
-        },
-        headers=emp_headers,
-    )
-    assert resp.status_code == 422
-
-
-def test_create_expense_no_auth(client):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={
-            "amount": "100.00",
-            "currency": "EUR",
-            "category": "travel",
-            "expense_date": "2024-06-15",
-        },
-    )
-    assert resp.status_code == 401
-
-
-def test_patch_expense(client, emp_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={
+class TestCreateExpense:
+    def test_create_success(self, client, auth_as_employee, seed_user, seed_fx):
+        resp = client.post("/api/v1/expenses", json={
             "amount": "50.00",
-            "currency": "EUR",
+            "currency": "GBP",
             "category": "meals",
-            "expense_date": "2024-06-15",
-        },
-        headers=emp_headers,
-    )
-    assert resp.status_code == 201
-    expense_id = resp.json()["id"]
+            "description": "Team lunch",
+            "expense_date": "2024-06-01",
+        })
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["status"] == "submitted"
+        assert data["currency"] == "GBP"
+        assert data["category"] == "meals"
+        # amount_usd = 50 * 1.27 = 63.5
+        assert Decimal(str(data["amount_usd"])) == Decimal("63.5000")
 
-    resp2 = client.patch(
-        f"/api/v1/expenses/{expense_id}",
-        json={"amount": "75.00"},
-        headers=emp_headers,
-    )
-    assert resp2.status_code == 200
-    assert Decimal(resp2.json()["original_amount"]) == Decimal("75.0000")
-    assert Decimal(resp2.json()["usd_amount"]) == Decimal("81.0000")
+    def test_create_missing_fx_rate(self, client, auth_as_employee, seed_user):
+        resp = client.post("/api/v1/expenses", json={
+            "amount": "100.00",
+            "currency": "JPY",
+            "category": "travel",
+            "description": "Taxi",
+            "expense_date": "2024-06-01",
+        })
+        assert resp.status_code == 422
+        assert "No FX rate available for JPY on 2024-06-01" in resp.json()["detail"]
 
-
-def test_patch_approved_expense_fails(client, emp_headers, admin_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={
+    def test_create_forbidden_admin(self, client, auth_as_admin, seed_team, seed_fx):
+        resp = client.post("/api/v1/expenses", json={
             "amount": "50.00",
-            "currency": "EUR",
-            "category": "meals",
-            "expense_date": "2024-06-15",
-        },
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    client.post(f"/api/v1/expenses/{expense_id}/approve", headers=admin_headers)
-    resp2 = client.patch(
-        f"/api/v1/expenses/{expense_id}",
-        json={"amount": "100.00"},
-        headers=emp_headers,
-    )
-    assert resp2.status_code == 409
-
-
-def test_delete_expense(client, emp_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={
-            "amount": "50.00",
-            "currency": "EUR",
+            "currency": "USD",
             "category": "other",
-            "expense_date": "2024-06-15",
-        },
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    resp2 = client.delete(f"/api/v1/expenses/{expense_id}", headers=emp_headers)
-    assert resp2.status_code == 204
-    resp3 = client.get("/api/v1/expenses", headers=emp_headers)
-    assert resp3.status_code == 200
-    assert all(e["id"] != expense_id for e in resp3.json()["items"])
+            "expense_date": "2024-06-01",
+        })
+        assert resp.status_code == 403
+
+    def test_create_unauthenticated(self, client):
+        resp = client.post("/api/v1/expenses", json={
+            "amount": "10.00",
+            "currency": "USD",
+            "category": "other",
+            "expense_date": "2024-06-01",
+        })
+        assert resp.status_code == 401
 
 
-def test_list_expenses(client, emp_headers):
-    for cat in ["travel", "meals"]:
-        client.post(
-            "/api/v1/expenses",
-            json={
-                "amount": "100.00",
-                "currency": "EUR",
-                "category": cat,
-                "expense_date": "2024-06-15",
-            },
-            headers=emp_headers,
-        )
-    resp = client.get("/api/v1/expenses", headers=emp_headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["total"] == 2
-    assert len(data["items"]) == 2
+class TestListExpenses:
+    def test_list_employee_own(self, client, auth_as_employee, seed_expense):
+        resp = client.get("/api/v1/expenses")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "items" in data
+        assert data["total"] >= 1
+
+    def test_list_admin_sees_all(self, client, auth_as_admin, seed_expense):
+        resp = client.get("/api/v1/expenses")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 1
 
 
-def test_list_expenses_filter_category(client, emp_headers):
-    client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    client.post(
-        "/api/v1/expenses",
-        json={"amount": "50.00", "currency": "EUR", "category": "meals", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    resp = client.get("/api/v1/expenses?category=travel", headers=emp_headers)
-    assert resp.status_code == 200
-    assert resp.json()["total"] == 1
+class TestGetExpense:
+    def test_get_by_owner(self, client, auth_as_employee, seed_expense):
+        resp = client.get(f"/api/v1/expenses/{seed_expense}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == seed_expense
+
+    def test_get_not_found(self, client, auth_as_admin):
+        resp = client.get("/api/v1/expenses/00000000-0000-0000-0000-000000000000")
+        assert resp.status_code == 404
 
 
-def test_get_expense(client, emp_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    resp2 = client.get(f"/api/v1/expenses/{expense_id}", headers=emp_headers)
-    assert resp2.status_code == 200
-    assert resp2.json()["id"] == expense_id
+class TestUpdateExpense:
+    def test_update_success(self, client, auth_as_employee, seed_expense, seed_fx):
+        resp = client.patch(f"/api/v1/expenses/{seed_expense}", json={
+            "description": "Updated description",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["description"] == "Updated description"
+
+    def test_update_finalized_409(self, client, auth_as_employee, db_session, seed_expense, seed_fx):
+        from app.models.expense import Expense
+        exp = db_session.get(Expense, seed_expense)
+        exp.status = "approved"
+        db_session.commit()
+
+        resp = client.patch(f"/api/v1/expenses/{seed_expense}", json={
+            "description": "Try update",
+        })
+        assert resp.status_code == 409
 
 
-def test_approve_expense(client, emp_headers, admin_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    resp2 = client.post(f"/api/v1/expenses/{expense_id}/approve", headers=admin_headers)
-    assert resp2.status_code == 200
-    assert resp2.json()["status"] == "approved"
+class TestDeleteExpense:
+    def test_delete_success(self, client, auth_as_employee, seed_expense):
+        resp = client.delete(f"/api/v1/expenses/{seed_expense}")
+        assert resp.status_code == 204
+
+    def test_delete_finalized_409(self, client, auth_as_employee, db_session, seed_expense):
+        from app.models.expense import Expense
+        exp = db_session.get(Expense, seed_expense)
+        exp.status = "approved"
+        db_session.commit()
+
+        resp = client.delete(f"/api/v1/expenses/{seed_expense}")
+        assert resp.status_code == 409
 
 
-def test_reject_expense(client, emp_headers, admin_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    resp2 = client.post(f"/api/v1/expenses/{expense_id}/reject", headers=admin_headers)
-    assert resp2.status_code == 200
-    assert resp2.json()["status"] == "rejected"
+class TestApproveReject:
+    def test_approve_success(self, client, auth_as_admin, seed_expense):
+        resp = client.post(f"/api/v1/expenses/{seed_expense}/approve", json={
+            "reason": "Valid trip",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "approved"
+        assert data["reason"] == "Valid trip"
+
+    def test_reject_success(self, client, auth_as_admin, seed_expense):
+        resp = client.post(f"/api/v1/expenses/{seed_expense}/reject", json={
+            "reason": "Not valid",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "rejected"
+        assert data["reason"] == "Not valid"
+
+    def test_approve_already_approved_409(self, client, auth_as_admin, db_session, seed_expense):
+        from app.models.expense import Expense
+        exp = db_session.get(Expense, seed_expense)
+        exp.status = "approved"
+        db_session.commit()
+
+        resp = client.post(f"/api/v1/expenses/{seed_expense}/approve", json={})
+        assert resp.status_code == 409
+
+    def test_approve_forbidden_employee(self, client, auth_as_employee, seed_expense):
+        resp = client.post(f"/api/v1/expenses/{seed_expense}/approve", json={})
+        assert resp.status_code == 403
 
 
-def test_approve_already_approved_fails(client, emp_headers, admin_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    client.post(f"/api/v1/expenses/{expense_id}/approve", headers=admin_headers)
-    resp2 = client.post(f"/api/v1/expenses/{expense_id}/approve", headers=admin_headers)
-    assert resp2.status_code == 409
+class TestAuditLog:
+    def test_audit_trail(self, client, auth_as_admin, seed_expense):
+        resp = client.get(f"/api/v1/expenses/{seed_expense}/audit")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+        assert data[0]["action"] == "created"
 
-
-def test_audit_log(client, emp_headers, admin_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    client.post(f"/api/v1/expenses/{expense_id}/approve", headers=admin_headers)
-    resp2 = client.get(f"/api/v1/expenses/{expense_id}/audit-log", headers=emp_headers)
-    assert resp2.status_code == 200
-    entries = resp2.json()
-    assert len(entries) == 2
-    assert entries[0]["to_status"] == "submitted"
-    assert entries[1]["to_status"] == "approved"
-
-
-def test_non_employee_cannot_create(client, admin_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=admin_headers,
-    )
-    assert resp.status_code == 403
-
-
-def test_employee_cannot_approve(client, emp_headers):
-    resp = client.post(
-        "/api/v1/expenses",
-        json={"amount": "100.00", "currency": "EUR", "category": "travel", "expense_date": "2024-06-15"},
-        headers=emp_headers,
-    )
-    expense_id = resp.json()["id"]
-    resp2 = client.post(f"/api/v1/expenses/{expense_id}/approve", headers=emp_headers)
-    assert resp2.status_code == 403
+    def test_audit_forbidden_employee(self, client, auth_as_employee, seed_expense):
+        resp = client.get(f"/api/v1/expenses/{seed_expense}/audit")
+        assert resp.status_code == 403

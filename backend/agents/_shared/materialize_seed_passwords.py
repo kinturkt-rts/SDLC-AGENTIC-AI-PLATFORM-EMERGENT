@@ -1,24 +1,17 @@
-"""Materialize bcrypt password hashes on RDS after seed SQL (no LLM-computed hashes).
+"""Materialize bcrypt / SHA-256 seed hashes on RDS after seed SQL (no LLM-computed hashes).
 
-Database-agent writes __BCRYPT_PLACEHOLDER__ in seed SQL. apply_sql_to_rds.py's own
-pre-apply preprocessing already replaces every occurrence with a freshly-salted bcrypt
-hash directly in the INSERT text, regardless of which table/column it lands in — so by
-the time this module runs, RDS should already have zero placeholders. This module's
-primary job is therefore to VERIFY that against live RDS (schema-agnostic: scans every
-text-like column, not just users.password_hash), and only falls back to hashing rows
-in place if verification finds the preprocessing did not run (e.g. bcrypt missing at
-apply time). Neither path depends on parsing seed SQL for a login-identifying column —
-that used to be required and broke on every schema shape (integer PKs, no login column,
-UNIQUE-constrained hash columns) that database-agent produced but this parser didn't
-anticipate. See _shared/seed_credentials.py for the legacy parser, still used for
-optional HANDOFF.md credential documentation and QA login verification, never as a
-pipeline-blocking gate.
+Database-agent writes ``__BCRYPT_PLACEHOLDER__`` (bcrypt.verify apps) or
+``__SHA256_PLACEHOLDER:<label>__`` (opaque X-API-Key apps that store sha256 hex).
+``apply_sql_to_rds.py`` preprocessing normally replaces both before INSERT. This
+module verifies live RDS and repairs leftovers — including invented ``sha256_*``
+fake tokens that never match a real digest lookup.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -26,16 +19,27 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.rds_env import connection_url, load_target_app_env, schema_for_app
+
+from _shared.seed_credentials import _PLACEHOLDER
+from _shared.sha256_api_keys import (
+    collect_documented_api_keys,
+    is_sha256_placeholder_or_fake,
+    sha256_hex,
+)
+
 from _shared.verify_seed_bcrypt import documented_password
 
 import bcrypt
 import psycopg
 from psycopg import sql as psql
 
+
 # Matches the bare placeholder AND per-row suffixed variants (e.g.
 # __BCRYPT_PLACEHOLDER_VIEWER__), any case. Used with Postgres's case-insensitive
 # ~* operator, not exact equality, so live rows holding a variant are still found.
 _PLACEHOLDER_PG_RE = r"__BCRYPT_PLACEHOLDER(?:_[A-Za-z0-9]+)*__"
+_LABELED_SHA256_RE = re.compile(r"^__SHA256_PLACEHOLDER:([A-Za-z0-9_-]+)__$")
+
 
 
 def _connect(conn_url: str) -> psycopg.Connection:
@@ -93,13 +97,7 @@ def _materialize_columns_in_place(
     columns: list[tuple[str, str]],
     password: str,
 ) -> None:
-    """Hash each remaining placeholder row in place, one fresh hash per physical row.
-
-    Uses Postgres's built-in `ctid` (physical row identity) instead of a primary key
-    column, so this needs zero knowledge of table shape — no PK type, no login column,
-    no schema-specific parsing. Each row gets its own salted hash so UNIQUE-constrained
-    columns (e.g. api_keys.key_hash) never collide the way a single shared hash would.
-    """
+    """Hash each remaining bcrypt placeholder row in place, one fresh hash per row."""
     schema = schema_for_app(target_app)
     with _connect(connection_url()) as conn:
         with conn.cursor() as cur:
@@ -128,21 +126,120 @@ def _materialize_columns_in_place(
         conn.commit()
 
 
+def _resolve_plaintext_for_hash_value(
+    value: str,
+    *,
+    row_label: str | None,
+    documented: dict[str, str],
+) -> str | None:
+    labeled = _LABELED_SHA256_RE.fullmatch((value or "").strip())
+    if labeled:
+        return documented.get(labeled.group(1))
+    if row_label and row_label in documented:
+        return documented[row_label]
+    return None
+
+
+def materialize_sha256_api_key_hashes(target_app: str, app_dir: Path) -> list[str]:
+    """Replace leftover SHA-256 placeholders / fake ``sha256_*`` tokens on RDS.
+
+    Prefers tables with a ``label`` column (api_keys pattern). Also resolves
+    ``__SHA256_PLACEHOLDER:<label>__`` values without needing the label column.
+    """
+    documented = collect_documented_api_keys(app_dir)
+    schema = schema_for_app(target_app)
+    errors: list[str] = []
+    updated = 0
+    unresolved = 0
+
+    with _connect(connection_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name, column_name FROM information_schema.columns
+                WHERE table_schema = %s AND data_type IN ('text', 'character varying')
+                """,
+                (schema,),
+            )
+            text_cols = cur.fetchall()
+            tables: dict[str, list[str]] = {}
+            for table_name, column_name in text_cols:
+                tables.setdefault(table_name, []).append(column_name)
+
+            for table_name, columns in tables.items():
+                has_label = "label" in columns
+                for column_name in columns:
+                    if column_name == "label":
+                        continue
+                    if has_label:
+                        cur.execute(
+                            psql.SQL(
+                                "SELECT ctid, {}, label FROM {}.{} "
+                                "WHERE {} IS NOT NULL"
+                            ).format(
+                                psql.Identifier(column_name),
+                                psql.Identifier(schema),
+                                psql.Identifier(table_name),
+                                psql.Identifier(column_name),
+                            )
+                        )
+                    else:
+                        cur.execute(
+                            psql.SQL(
+                                "SELECT ctid, {}, NULL::text FROM {}.{} "
+                                "WHERE {} IS NOT NULL"
+                            ).format(
+                                psql.Identifier(column_name),
+                                psql.Identifier(schema),
+                                psql.Identifier(table_name),
+                                psql.Identifier(column_name),
+                            )
+                        )
+                    for ctid, value, row_label in cur.fetchall():
+                        if not is_sha256_placeholder_or_fake(str(value)):
+                            continue
+                        plaintext = _resolve_plaintext_for_hash_value(
+                            str(value),
+                            row_label=row_label,
+                            documented=documented,
+                        )
+                        if not plaintext:
+                            unresolved += 1
+                            continue
+                        cur.execute(
+                            psql.SQL(
+                                "UPDATE {}.{} SET {} = %s WHERE ctid = %s"
+                            ).format(
+                                psql.Identifier(schema),
+                                psql.Identifier(table_name),
+                                psql.Identifier(column_name),
+                            ),
+                            (sha256_hex(plaintext), ctid),
+                        )
+                        updated += 1
+        conn.commit()
+
+    if unresolved:
+        errors.append(
+            f"{target_app}: {unresolved} SHA-256 placeholder/fake key_hash row(s) "
+            "could not be resolved — add `-- API key for <label>: \"…\"` comments "
+            "matching api_keys.label (or use __SHA256_PLACEHOLDER:<label>__)"
+        )
+    if updated:
+        print(
+            f"[materialize] Updated {updated} SHA-256 API-key hash row(s) for {target_app}",
+            file=sys.stderr,
+        )
+    return errors
+
+
 def materialize(
     target_app: str,
     repo_root: Path | None = None,
     *,
     strict: bool = True,
 ) -> list[str]:
-    """Ensure no live row in the app's schema still holds the literal placeholder.
-
-    Schema-agnostic: this checks and (if needed) fixes RDS directly via
-    find_remaining_placeholder_columns(), which discovers table/column shape from
-    information_schema rather than assuming a users table with a specific PK type
-    or a login-identifying column. In the common case apply_sql_to_rds.py's own
-    pre-apply preprocessing already replaced every occurrence, so this returns []
-    immediately without touching RDS again.
-    """
+    """Ensure no live row still holds bcrypt or SHA-256 seed placeholders/fakes."""
     from _shared.pipeline_context import target_app_root_rel
 
     root = repo_root or _REPO_ROOT
@@ -151,31 +248,43 @@ def materialize(
     if not (app_dir / "db").is_dir():
         app_dir = root / "target-apps" / target_app
 
+    errors: list[str] = []
+
     remaining = find_remaining_placeholder_columns(target_app)
-    if not remaining:
-        return []
+    if remaining:
+        password = _resolve_fallback_password(app_dir)
+        _materialize_columns_in_place(target_app, remaining, password)
+        still_remaining = find_remaining_placeholder_columns(target_app)
+        if still_remaining and strict:
+            locations = ", ".join(f"{t}.{c}" for t, c in still_remaining)
+            errors.append(
+                f"{target_app}: placeholder/invalid password hash still present in "
+                f"{locations} after materialize (RDS login will 401)"
+            )
 
-    password = _resolve_fallback_password(app_dir)
-    _materialize_columns_in_place(target_app, remaining, password)
+    from _shared.sha256_api_keys import seed_sql_has_sha256_work
 
-    still_remaining = find_remaining_placeholder_columns(target_app)
-    if still_remaining and strict:
-        locations = ", ".join(f"{t}.{c}" for t, c in still_remaining)
-        return [
-            f"{target_app}: placeholder/invalid password hash still present in "
-            f"{locations} after materialize (RDS login will 401)"
-        ]
-    return []
+    if seed_sql_has_sha256_work(app_dir):
+        sha_errors = materialize_sha256_api_key_hashes(target_app, app_dir)
+        if sha_errors and strict:
+            errors.extend(sha_errors)
+        elif sha_errors:
+            for msg in sha_errors:
+                print(msg, file=sys.stderr)
+
+    return errors
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Materialize seed bcrypt hashes on RDS")
+    parser = argparse.ArgumentParser(
+        description="Materialize seed bcrypt / SHA-256 API-key hashes on RDS"
+    )
     parser.add_argument("--target-app", required=True)
     parser.add_argument("--repo-root", default=str(_REPO_ROOT))
     parser.add_argument(
         "--no-strict",
         action="store_true",
-        help="Do not fail when no rows updated (already materialized)",
+        help="Do not fail when placeholders cannot be fully resolved",
     )
     args = parser.parse_args()
 

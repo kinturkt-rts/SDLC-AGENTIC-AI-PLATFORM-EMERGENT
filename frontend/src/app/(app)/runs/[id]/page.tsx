@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
+import { OpenLiveAppLink } from '@/src/components/common/OpenLiveAppLink';
 import { EmptyState } from '@/src/components/common/EmptyState';
 import { LogTable } from '@/src/components/logs/LogTable';
 import { useRouter } from 'next/navigation';
@@ -47,7 +48,7 @@ import {
 import { api } from '@/src/lib/api';
 import { formatRelative, formatDuration } from '@/src/lib/format';
 import { LiveRunMonitoringLine } from '@/src/components/common/LiveElapsed';
-import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
+import { TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import { useUiStore } from '@/src/store/ui-store';
 import type { RunStatus, StepStatus, PipelineStep, RunEvent } from '@/src/types';
@@ -139,9 +140,13 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const queryClient = useQueryClient();
   const { data: run, isLoading } = useRun(params.id);
   const isLive = run?.status === 'running' || run?.status === 'paused';
+  // Phase A: keep polling handoffs while deploy is pending/running so the
+  // live URL and "App is live" banner appear without a manual refresh.
+  const deployActive =
+    run?.deployStatus === 'pending' || run?.deployStatus === 'running';
   const { data: events } = useRunEvents(params.id, isLive);
   const { data: runLogs, isLoading: runLogsLoading } = useRunLogs(params.id, isLive);
-  const { data: handoffs } = useRunHandoffs(params.id, isLive);
+  const { data: handoffs } = useRunHandoffs(params.id, isLive || deployActive);
   const { data: artifacts } = useArtifacts();
   const { data: checkpoints } = useCheckpoints();
   const setArtifactsProjectId = useUiStore((s) => s.setArtifactsProjectId);
@@ -187,6 +192,18 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const gitlabBranchUrl = handoffs?.gitlab?.branchUrl ?? null;
   const gitlabMrUrl = handoffs?.gitlab?.mergeRequestUrl ?? handoffs?.contextMergeRequestUrl ?? null;
   const developerStepStatus = run?.steps.find((step) => step.agent === 'developer-agent')?.status;
+  const appIsLive = Boolean(handoffs?.devops?.appUrl?.trim());
+  const deployFailed =
+    !appIsLive &&
+    (run?.deployStatus === 'failed' ||
+      run?.deployStatus === 'stale' ||
+      run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'failed'));
+  const deployFollowOn =
+    !appIsLive && !deployFailed &&
+    (deployActive ||
+      run?.currentPhase === 'deploy' ||
+      run?.currentAgent === 'devops-agent' ||
+      run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'running'));
 
   const resolveHitl = (id: string, title: string, decision: 'approved' | 'rejected') => {
     setHitlOverride((o) => ({ ...o, [id]: decision }));
@@ -195,7 +212,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
   const controls = (
     <div className="flex items-center gap-2">
-      {(status === 'running' || status === 'paused') ? (
+      {(status === 'running' || status === 'paused') && !deployFollowOn ? (
         <Button
           size="sm"
           variant="outline"
@@ -207,16 +224,28 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
           Cancel
         </Button>
       ) : null}
-      <StatusBadge status={status} />
+      <StatusBadge
+        status={deployFailed ? 'failed' : deployFollowOn ? 'running' : status}
+        label={
+          deployFailed
+            ? 'Deploy failed'
+            : deployFollowOn
+              ? 'Deploying'
+              : appIsLive && status === 'completed'
+                ? 'Live'
+                : undefined
+        }
+      />
     </div>
   );
 
-  const runDescription =
-    run && status !== 'running' && status !== 'paused'
-      ? `Started ${formatRelative(run.startedAt)}${
-          run.finishedAt ? ` · finished ${formatRelative(run.finishedAt)}` : ''
-        }`
-      : undefined;
+  const runDescription = React.useMemo(() => {
+    if (!run || status === 'running' || status === 'paused') return undefined;
+    if (run.elapsedSec != null && run.elapsedSec > 0) {
+      return `Completed in ${formatDuration(run.elapsedSec)}`;
+    }
+    return 'Completed';
+  }, [run, status]);
 
   return (
     <>
@@ -244,8 +273,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
         </div>
       ) : (
         <>
-          {/* Active agent banner */}
-          {status === 'running' && run.currentAgent ? (
+          {/* Active agent / deploy banner */}
+          {status === 'running' && run.currentAgent && !deployFollowOn ? (
             <Card className="flex items-center gap-3 border-blue-500/30 bg-blue-500/[0.05] p-4">
               <span className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/15 text-blue-400">
                 <Bot className="h-4 w-4" />
@@ -258,6 +287,53 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
                 <p className="text-[11px] text-muted-foreground">Live status from the platform - the control plane does not run the agent.</p>
               </div>
               <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+            </Card>
+          ) : null}
+
+          {deployFollowOn ? (
+            <Card className="flex flex-col gap-3 border-sky-500/30 bg-sky-500/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">Agents finished - deploying to AWS</p>
+                  <p className="mt-0.5 text-[12px] text-muted-foreground">
+                    Code is published on GitLab. DevOps is building and deploying the app. The live URL will appear here automatically when it is ready.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                {gitlabBranchUrl ? (
+                  <a
+                    href={gitlabBranchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/15"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                    View code on GitLab
+                    <ExternalLink className="h-3 w-3 opacity-70" />
+                  </a>
+                ) : null}
+              </div>
+            </Card>
+          ) : null}
+
+          {deployFailed ? (
+            <Card className="flex items-start gap-3 border-red-500/30 bg-red-500/[0.05] p-4">
+              <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-400">
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">
+                  Code published - deployment did not become healthy
+                </p>
+                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                  The agent workflow and GitLab publish completed, but no working live URL was produced.
+                  Review the DevOps handoff before retrying.
+                </p>
+              </div>
             </Card>
           ) : null}
 
@@ -289,22 +365,33 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
             </Card>
           ) : null}
 
-          {status === 'completed' ? (
-            <Card className="flex flex-col gap-3 border-emerald-500/30 bg-emerald-500/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between">
+          {(status === 'completed' && !deployFailed) || appIsLive ? (
+            <Card className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between ${
+              appIsLive
+                ? 'border-emerald-500/30 bg-emerald-500/[0.05]'
+                : 'border-emerald-500/30 bg-emerald-500/[0.05]'
+            }`}>
               <div className="flex items-start gap-3">
                 <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
                   <CheckCircle2 className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">Pipeline complete</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {appIsLive ? 'App is live' : 'Pipeline complete'}
+                  </p>
                   <p className="mt-0.5 text-[12px] text-muted-foreground">
-                    {handoffs?.gitlab?.status === 'published'
-                      ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
-                      : 'All SDLC phases finished. Review artifacts and handoffs below.'}
+                    {appIsLive
+                      ? 'DevOps finished deploying. Open the live app or review the GitLab branch.'
+                      : handoffs?.gitlab?.status === 'published'
+                        ? `${handoffs.gitlab.pathsPublishedCount} paths published to GitLab.`
+                        : 'All SDLC phases finished. Review artifacts and handoffs below.'}
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                {handoffs?.devops?.appUrl ? (
+                  <OpenLiveAppLink href={handoffs.devops.appUrl} variant="button" className="text-xs" />
+                ) : null}
                 {gitlabBranchUrl ? (
                   <a
                     href={gitlabBranchUrl}
@@ -377,7 +464,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </div>
               <ol className="p-4">
                 {run.steps
-                  .filter((step) => MVP_TIMELINE_PHASES.includes(step.phase))
+                  .filter((step) => TIMELINE_PHASES.includes(step.phase))
                   .map((step: PipelineStep, i: number, arr) => {
                   const Icon = STEP_ICON[step.status];
                   const last = i === arr.length - 1;

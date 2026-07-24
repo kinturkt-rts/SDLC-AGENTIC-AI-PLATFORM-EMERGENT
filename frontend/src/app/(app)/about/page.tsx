@@ -76,13 +76,13 @@ export default function AboutPage() {
                 <dt className="text-muted-foreground">Ready to run</dt>
                 <dd className="text-foreground">
                   {settings
-                    ? `${settings.pipeline.deployedAgentCount} of ${settings.pipeline.totalMvpAgents}`
+                    ? `${settings.pipeline.deployedAgentCount} of ${settings.pipeline.totalAgents}`
                     : '-'}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Outputs stored in</dt>
-                <dd className="text-foreground">{settings?.storage.label ?? '—'}</dd>
+                <dd className="text-foreground">{settings?.storage.label ?? '-'}</dd>
               </div>
             </dl>
           )}

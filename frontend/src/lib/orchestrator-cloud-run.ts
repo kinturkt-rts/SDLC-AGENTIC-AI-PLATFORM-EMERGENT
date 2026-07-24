@@ -438,9 +438,6 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
         timeoutSec: handoffWaitSec,
       });
 
-      // If orchestrator's own retry loop got killed with its session, the frontend
-      // re-invokes developer-agent here so a stuck status="in_progress" handoff cannot
-      // silently masquerade as success (and cannot get partial code published to GitLab).
       const maxFrontendAttempts = envInt('SDLC_DEVELOPER_FRONTEND_RETRY_ATTEMPTS', 1) + 1;
       let attempt = 1;
       while (!developerCompleted && attempt <= maxFrontendAttempts) {

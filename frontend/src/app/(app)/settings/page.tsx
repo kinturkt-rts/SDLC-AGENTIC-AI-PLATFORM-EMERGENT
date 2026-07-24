@@ -104,7 +104,7 @@ function PlatformSettingsCards({ settings }: { settings: PlatformSettings }) {
         <dl className="mt-4">
           <SettingRow
             label="Agents available"
-            value={`${pipeline.deployedAgentCount} of ${pipeline.totalMvpAgents} deployed`}
+            value={`${pipeline.deployedAgentCount} of ${pipeline.totalAgents} deployed`}
           />
           <SettingRow
             label="Default flow"
@@ -117,7 +117,7 @@ function PlatformSettingsCards({ settings }: { settings: PlatformSettings }) {
 }
 
 export default function SettingsPage() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const { data: settings, isLoading, isError } = usePlatformSettings();
 
@@ -155,7 +155,7 @@ export default function SettingsPage() {
         <div className="mt-4 flex items-center justify-between">
           <p className="text-sm font-medium text-foreground">Dark mode</p>
           <Switch
-            checked={mounted ? theme === 'dark' : true}
+            checked={mounted ? resolvedTheme !== 'light' : true}
             onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
           />
         </div>
@@ -165,8 +165,8 @@ export default function SettingsPage() {
         <div className="flex items-center gap-2">
           <Lock className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold text-foreground">Authentication</h3>
-          <span className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Coming soon
+          <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-400">
+            Wired
           </span>
         </div>
         <div className="mt-3 flex items-start gap-3">
@@ -176,14 +176,12 @@ export default function SettingsPage() {
           <div className="min-w-0 space-y-1">
             <p className="text-sm font-medium text-foreground">Amazon Cognito</p>
             <p className="text-sm text-muted-foreground">
-              Sign-in with a Cognito user pool - SSO-friendly for enterprise teams. Role-based access
-              to runs, artifacts, and pipeline controls will be enforced here.
+              Control-plane UI sign-in uses a Cognito User Pool (email + password, forgot-password).
+              Users and password hashes live in Cognito — not in agents, S3 runs, or the pipeline.
+              Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID on the control-plane service.
             </p>
           </div>
         </div>
-        <Button className="mt-4" variant="outline" disabled>
-          Configure Cognito
-        </Button>
       </Card>
     </div>
   );

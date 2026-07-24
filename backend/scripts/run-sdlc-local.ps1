@@ -539,7 +539,7 @@ if (-not $SkipDb) {
         "agents/database-agent/database_agent.py",
         "--target-app", $Feature,
         "--context-file", $ContextFile,
-        "--task", "Implement data model from designDocPath §3/§6: numbered sql/ migrations, dev seed with __BCRYPT_PLACEHOLDER__ for password_hash columns, documented password in SQL comment, ### seedCredentials table in HANDOFF.md, stable UUIDs."
+        "--task", "Implement data model from designDocPath sections 3/6: numbered sql/ migrations, ### seedCredentials in HANDOFF.md, stable UUIDs. JWT apps only: __BCRYPT_PLACEHOLDER__ in hashed_password plus documented password comment. Opaque token/API-key apps: do NOT put __BCRYPT_PLACEHOLDER__ in token_hash/key_hash; use distinct sha256 placeholder strings per row (see database-agent api_keys rule)."
     )
     if ($applyPostgres) { $dbArgs += "--with-postgres" }
     if ((Invoke-PipelinePython -ArgumentList $dbArgs) -ne 0) { throw "database-agent failed" }
@@ -661,19 +661,17 @@ if ($runGitlab) {
     }
 }
 if ($runQa) { Write-Host "  QA:      agents/pipeline/$Feature.qa-handoff.json" }
+
+$deployUrl = $null
 if ($runDeploy) {
     $devopsHandoff = Join-Path $RepoRoot "agents\pipeline\$Feature.devops-handoff.json"
-    $deployUrl = $null
     if (Test-Path $devopsHandoff) {
-        try { $deployUrl = (Get-Content $devopsHandoff -Raw | ConvertFrom-Json).appUrl } catch {}
-    }
-    if ($deployUrl) {
         Write-Host "  Deploy:  agents/pipeline/$Feature.devops-handoff.json"
-        Write-Host "  Live UI: $deployUrl" -ForegroundColor Yellow
+        try { $deployUrl = (Get-Content $devopsHandoff -Raw | ConvertFrom-Json).appUrl } catch {}
     } elseif ($DeployPlanOnly) {
         Write-Host "  Deploy:  terraform plan only (no AWS changes)" -ForegroundColor DarkGray
     } else {
-        Write-Host "  Deploy:  no appUrl in handoff - deploy may have failed" -ForegroundColor Yellow
+        Write-Host "  Deploy:  no handoff file - deploy may have failed" -ForegroundColor Yellow
     }
 }
 
@@ -688,3 +686,16 @@ if ($pipelineAgentsRun.Count -gt 0) {
 }
 
 Write-RunInstructions -TargetFeature $Feature -UsesDb:(-not $SkipDb)
+
+# Live URL last — primary thing to open when testing devops deploy.
+if ($runDeploy) {
+    if ($deployUrl) {
+        Write-Host "`n=== Live app (devops) ===" -ForegroundColor Green
+        Write-Host "  $deployUrl" -ForegroundColor Yellow
+        Write-Host "  Open this URL to verify the deployed app." -ForegroundColor DarkGray
+    } elseif (-not $DeployPlanOnly) {
+        Write-Host "`n=== Live app (devops) ===" -ForegroundColor Yellow
+        Write-Host "  No appUrl in devops handoff - deploy may have failed." -ForegroundColor Yellow
+        Write-Host "  Check agents/pipeline/$Feature.devops-handoff.json" -ForegroundColor DarkGray
+    }
+}

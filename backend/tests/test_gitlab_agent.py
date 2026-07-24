@@ -21,7 +21,7 @@ def test_publish_branch_name_is_stable_per_app() -> None:
     assert publish_branch_name("training-compliance") == publish_branch_name("Training_Compliance")
 
 
-def test_branch_tree_url_encodes_slashes() -> None:
+def test_branch_tree_url_uses_unencoded_path_and_ref_type() -> None:
     sys.path.insert(0, str(_REPO / "agents"))
     from _shared.gitlab_mcp_actions import _branch_tree_url
 
@@ -29,7 +29,10 @@ def test_branch_tree_url_encodes_slashes() -> None:
         "https://code.junodev.net/group/project",
         "sdlc/training-compliance",
     )
-    assert url.endswith("/-/tree/sdlc%2Ftraining-compliance")
+    assert url == (
+        "https://code.junodev.net/group/project/-/tree/sdlc/training-compliance"
+        "?ref_type=heads"
+    )
 
 
 def test_commit_actions_normalize_empty_content() -> None:

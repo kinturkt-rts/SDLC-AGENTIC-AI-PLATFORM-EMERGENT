@@ -15,6 +15,7 @@ import {
   Database,
   Code2,
   GitBranch,
+  Rocket,
   Shield,
   Zap,
   ChevronRight,
@@ -41,6 +42,7 @@ import { StatusBadge } from '@/src/components/common/StatusBadge';
 import {
   useDashboardSummary,
   useRuns,
+  useLiveRunsById,
   useCheckpoints,
   useRecentActivity,
   useArtifacts,
@@ -101,7 +103,8 @@ const PIPELINE_STEPS: {
   { id: 'architecture', label: PHASE_DISPLAY_LABEL.architecture, agent: 'Architect Agent', agentId: 'architect-agent', icon: Building2, phase: 'architecture', accent: 'text-violet-400', iconBg: 'bg-violet-500/10 ring-violet-500/20' },
   { id: 'database', label: PHASE_DISPLAY_LABEL.data, agent: 'Database Agent', agentId: 'database-agent', icon: Database, phase: 'data', accent: 'text-emerald-400', iconBg: 'bg-emerald-500/10 ring-emerald-500/20' },
   { id: 'development', label: PHASE_DISPLAY_LABEL.implementation, agent: 'Developer Agent', agentId: 'developer-agent', icon: Code2, phase: 'implementation', accent: 'text-amber-400', iconBg: 'bg-amber-500/10 ring-amber-500/20' },
-  { id: 'gitlab', label: PHASE_DISPLAY_LABEL.deploy, agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'deploy', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
+  { id: 'gitlab', label: PHASE_DISPLAY_LABEL.publish, agent: 'GitLab Agent', agentId: 'gitlab-agent', icon: GitBranch, phase: 'publish', accent: 'text-orange-400', iconBg: 'bg-orange-500/10 ring-orange-500/20' },
+  { id: 'devops', label: PHASE_DISPLAY_LABEL.deploy, agent: 'DevOps Agent', agentId: 'devops-agent', icon: Rocket, phase: 'deploy', accent: 'text-sky-400', iconBg: 'bg-sky-500/10 ring-sky-500/20' },
 ];
 
 const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
@@ -111,6 +114,7 @@ const ACTIVITY_AGENT_ICON: Record<string, LucideIcon> = {
   'database-agent': Database,
   'developer-agent': Code2,
   'gitlab-agent': GitBranch,
+  'devops-agent': Rocket,
   'qa-agent': Shield,
 };
 
@@ -282,7 +286,8 @@ function pipelineStepVisualState(
   stepPhase: string,
   run: PipelineRun | undefined,
 ): 'completed' | 'active' | 'pending' {
-  if (!run || (run.status !== 'running' && run.status !== 'paused')) return 'pending';
+  if (!run) return 'pending';
+  if (!isRunActiveForDashboard(run) && run.status !== 'completed') return 'pending';
 
   const pipelineStep = run.steps?.find((s) => s.phase === stepPhase);
   if (pipelineStep?.status === 'completed') return 'completed';
@@ -299,57 +304,134 @@ function pipelineStepVisualState(
   const stepIdx = order.indexOf(stepPhase);
   if (currentIdx >= 0 && stepIdx >= 0 && stepIdx < currentIdx) return 'completed';
 
+  // Agents done / still deploying: prior phases are complete.
+  if (
+    (run.status === 'completed' || isDeployFollowOnRun(run)) &&
+    stepPhase !== 'deploy'
+  ) {
+    return 'completed';
+  }
+
   return 'pending';
+}
+
+function isRunActiveForDashboard(run: PipelineRun): boolean {
+  // Keep Deploy visible on the strip/cards until the live URL lands.
+  return (
+    run.status === 'running' ||
+    run.status === 'paused' ||
+    run.deployStatus === 'pending' ||
+    run.deployStatus === 'running'
+  );
+}
+
+/** Concurrency slots: agent-chain only (Deploy wait does not block new briefs). */
+function isAgentChainActive(run: PipelineRun): boolean {
+  if (run.status === 'paused') return true;
+  if (run.status !== 'running') return false;
+  if (run.deployStatus === 'pending' || run.deployStatus === 'running') return false;
+  if (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent') return false;
+  return true;
+}
+
+function isDeployFollowOnRun(run: PipelineRun): boolean {
+  return (
+    run.deployStatus === 'pending' ||
+    run.deployStatus === 'running' ||
+    (run.status === 'running' &&
+      (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent'))
+  );
+}
+
+/** Prefer the running step over currentAgent so cards match the pipeline strip. */
+function activeAgentDisplayName(run: PipelineRun): string {
+  if (isDeployFollowOnRun(run)) return 'DevOps';
+  const step = run.steps?.find(
+    (s) => s.status === 'running' || s.status === 'waiting_for_human',
+  );
+  const agent = step?.agent ?? run.currentAgent;
+  return agent ? titleCase(agent.replace(/-agent$/, '')) : '-';
 }
 
 function PipelineVisualization({ run }: { run: PipelineRun | undefined }) {
   return (
     <div className="relative overflow-x-auto">
-      <div className="flex items-center justify-between gap-2 min-w-[600px] px-2 py-4">
+      <div className="flex min-w-[640px] items-start gap-0 px-2 py-4">
         {PIPELINE_STEPS.map((step, idx) => {
           const visualState = pipelineStepVisualState(step.phase, run);
           const isActive = visualState === 'active';
           const isCompleted = visualState === 'completed';
 
           return (
-            <div key={step.id} className="flex flex-1 items-center">
-              <Link href={`/agents/${step.agentId}`} className={cn(
-                'group relative flex flex-1 flex-col items-center gap-2 rounded-xl border p-3 transition-all duration-300 cursor-pointer',
-                isActive
-                  ? 'border-teal-500/40 bg-teal-500/[0.06] glow-teal-sm'
-                  : isCompleted
-                    ? 'border-emerald-500/20 bg-emerald-500/[0.04]'
-                    : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12]',
-              )}>
-                <div className={cn(
-                  'flex h-10 w-10 items-center justify-center rounded-lg ring-1 ring-inset transition-all',
+            <React.Fragment key={step.id}>
+              <Link
+                href={`/agents/${step.agentId}`}
+                className={cn(
+                  'group relative flex min-w-0 flex-1 flex-col items-center rounded-xl border px-2 pb-3 pt-3 transition-all duration-300',
                   isActive
-                    ? 'bg-teal-500/15 ring-teal-500/30 animate-pulse-glow'
+                    ? 'border-teal-500/40 bg-teal-500/[0.06] glow-teal-sm'
                     : isCompleted
-                      ? 'bg-emerald-500/10 ring-emerald-500/20'
-                      : step.iconBg,
-                )}>
-                  <step.icon className={cn('h-5 w-5', isActive ? 'text-teal-400' : isCompleted ? 'text-emerald-400' : step.accent)} />
+                      ? 'border-emerald-500/20 bg-emerald-500/[0.04]'
+                      : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12]',
+                )}
+              >
+                <div
+                  className={cn(
+                    'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset transition-all',
+                    isActive
+                      ? 'bg-teal-500/15 ring-teal-500/30 animate-pulse-glow'
+                      : isCompleted
+                        ? 'bg-emerald-500/10 ring-emerald-500/20'
+                        : step.iconBg,
+                  )}
+                >
+                  <step.icon
+                    className={cn(
+                      'h-5 w-5',
+                      isActive ? 'text-teal-400' : isCompleted ? 'text-emerald-400' : step.accent,
+                    )}
+                  />
                 </div>
-                <div className="text-center">
-                  <p className={cn('text-xs font-semibold', isActive ? 'text-teal-300' : isCompleted ? 'text-emerald-300' : 'text-foreground')}>{step.label}</p>
-                  <p className="text-[10px] text-muted-foreground">{step.agent}</p>
+                <div className="mt-2 flex min-h-[2.75rem] w-full flex-col items-center justify-start text-center">
+                  <p
+                    className={cn(
+                      'line-clamp-2 text-xs font-semibold leading-tight',
+                      isActive ? 'text-teal-300' : isCompleted ? 'text-emerald-300' : 'text-foreground',
+                    )}
+                  >
+                    {step.label}
+                  </p>
+                  <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{step.agent}</p>
                 </div>
                 {isActive && (
-                  <span className="absolute -top-1.5 right-2 rounded-full bg-teal-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">Active</span>
+                  <span className="absolute -top-1.5 right-1.5 rounded-full bg-teal-500 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                    Active
+                  </span>
                 )}
                 {isCompleted && (
-                  <span className="absolute -top-1.5 right-2 rounded-full bg-emerald-500/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">Done</span>
+                  <span className="absolute -top-1.5 right-1.5 rounded-full bg-emerald-500/80 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                    Done
+                  </span>
                 )}
               </Link>
-              {idx < PIPELINE_STEPS.length - 1 && (
-                <div className="relative mx-1 flex h-[2px] w-8 shrink-0 items-center lg:w-12">
-                  <div className={cn('h-full w-full rounded-full', isCompleted ? 'bg-emerald-500/40' : 'bg-white/[0.08]')} />
-                  {isActive && <div className="pipeline-connector absolute inset-0" />}
-                  <ChevronRight className={cn('absolute -right-1 h-3 w-3', isCompleted ? 'text-emerald-500/60' : 'text-white/20')} />
+              {idx < PIPELINE_STEPS.length - 1 ? (
+                <div className="relative mx-0.5 mt-5 flex h-0 w-6 shrink-0 items-center sm:w-8 lg:w-10">
+                  <div
+                    className={cn(
+                      'h-[2px] w-full rounded-full',
+                      isCompleted ? 'bg-emerald-500/40' : 'bg-white/[0.08]',
+                    )}
+                  />
+                  {isActive ? <div className="pipeline-connector absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2" /> : null}
+                  <ChevronRight
+                    className={cn(
+                      'absolute -right-1.5 top-1/2 h-3 w-3 -translate-y-1/2',
+                      isCompleted ? 'text-emerald-500/60' : 'text-white/20',
+                    )}
+                  />
                 </div>
-              )}
-            </div>
+              ) : null}
+            </React.Fragment>
           );
         })}
       </div>
@@ -382,7 +464,11 @@ function InputRequirementsCard() {
   const featureValid = !feature || FEATURE_SLUG_RE.test(feature);
 
   const activeRuns = React.useMemo(
-    () => (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused'),
+    () => (runs ?? []).filter(isRunActiveForDashboard),
+    [runs],
+  );
+  const agentChainRuns = React.useMemo(
+    () => (runs ?? []).filter(isAgentChainActive),
     [runs],
   );
   const conflictingApp = React.useMemo(
@@ -393,7 +479,8 @@ function InputRequirementsCard() {
   const showDuplicateWarning = Boolean(
     conflictingApp && (!startedRunId || conflictingApp.id !== startedRunId),
   );
-  const atCapacity = activeRuns.length >= MAX_CONCURRENT_RUNS;
+  // Deploy wait does not consume a concurrency slot.
+  const atCapacity = agentChainRuns.length >= MAX_CONCURRENT_RUNS;
 
   const clearSavedRunState = React.useCallback(() => {
     setSavedPath(null);
@@ -515,7 +602,7 @@ function InputRequirementsCard() {
     }
     if (atCapacity) {
       toast.error('Maximum concurrent runs reached', {
-        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+        description: `${agentChainRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
       });
       return;
     }
@@ -590,7 +677,7 @@ function InputRequirementsCard() {
     }
     if (atCapacity) {
       toast.error('Maximum concurrent runs reached', {
-        description: `${activeRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
+        description: `${agentChainRuns.length} pipeline(s) active (limit ${MAX_CONCURRENT_RUNS}). Wait for one to complete or cancel a run.`,
       });
       return;
     }
@@ -826,8 +913,8 @@ function InputRequirementsCard() {
             </p>
           ) : atCapacity ? (
             <p className="rounded-lg border border-orange-500/50 bg-orange-100 px-3 py-2 text-xs text-orange-950 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-50">
-              <span className="font-semibold">At capacity:</span> {activeRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
-              concurrent pipelines active. Wait for one to finish or cancel a run.
+              <span className="font-semibold">At capacity:</span> {agentChainRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
+              concurrent agent pipelines active. Deploy-only waits do not count. Wait for one to finish or cancel a run.
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
@@ -886,10 +973,35 @@ export default function DashboardPage() {
   const { data: checkpoints } = useCheckpoints();
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
 
-  const activeRuns = (runs ?? []).filter((r) => r.status === 'running' || r.status === 'paused');
-  const hasActive = activeRuns.length > 0;
+  const listedActiveRuns = React.useMemo(
+    () => (runs ?? []).filter(isRunActiveForDashboard),
+    [runs],
+  );
+  const liveQueries = useLiveRunsById(listedActiveRuns.map((r) => r.id));
+  const liveById = React.useMemo(() => {
+    const map = new Map<string, PipelineRun>();
+    for (const q of liveQueries) {
+      if (q.data?.id) map.set(q.data.id, q.data);
+    }
+    return map;
+  }, [liveQueries]);
 
-  const runningRun = (runs ?? []).find((r) => r.status === 'running' || r.status === 'paused');
+  // Strip + cards share the same live-polled run objects (not stale listRuns rows).
+  const activeRuns = React.useMemo(
+    () => listedActiveRuns.map((r) => liveById.get(r.id) ?? r),
+    [listedActiveRuns, liveById],
+  );
+  const hasActive = activeRuns.length > 0;
+  const runningRun = activeRuns[0];
+
+  // Keep the runs list cache aligned so other dashboard widgets don't flash older agents.
+  React.useEffect(() => {
+    if (liveById.size === 0) return;
+    queryClient.setQueryData<PipelineRun[]>(queryKeys.runs, (old) => {
+      if (!old) return old;
+      return old.map((r) => liveById.get(r.id) ?? r);
+    });
+  }, [liveById, queryClient]);
 
   const pending = (checkpoints ?? []).filter((c) => c.status === 'pending');
 
@@ -964,6 +1076,11 @@ export default function DashboardPage() {
                 {' '}
                 · {runningRun.id.slice(0, 8)}…
               </span>
+              {isDeployFollowOnRun(runningRun) ? (
+                <span className="ml-2 text-sky-400">
+                  · Deploying - code is on GitLab; live URL appears when DevOps finishes
+                </span>
+              ) : null}
             </span>
             <Link href={`/runs/${runningRun.id}`} className="font-medium text-teal-400 hover:underline">
               Open run
@@ -984,25 +1101,32 @@ export default function DashboardPage() {
               activeRuns.map((run) => (
                 <div key={run.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
                   <Link href={`/runs/${run.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-                    <StatusBadge status={run.status} size="sm" />
+                    <StatusBadge
+                      status={isDeployFollowOnRun(run) ? 'running' : run.status}
+                      label={isDeployFollowOnRun(run) ? 'Deploying' : undefined}
+                      size="sm"
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">{run.projectName}</p>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">{run.id} · {run.pipeline}</p>
                     </div>
                     <div className="hidden text-right sm:block">
-                      <p className="text-[10px] text-muted-foreground">current</p>
-                      <p className="text-sm font-medium text-foreground">{run.currentAgent ? titleCase(run.currentAgent.replace('-agent', '')) : '-'}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {isDeployFollowOnRun(run) ? 'deploying' : 'current'}
+                      </p>
+                      <p className="text-sm font-medium text-foreground">{activeAgentDisplayName(run)}</p>
                     </div>
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Timer className="h-3.5 w-3.5" />
                       <LiveElapsed
                         startedAt={run.startedAt}
                         finishedAt={run.finishedAt}
-                        live={run.status === 'running' || run.status === 'paused'}
+                        live={isRunActiveForDashboard(run)}
                         fallbackSec={run.elapsedSec}
                       />
                     </div>
                   </Link>
+                  {isDeployFollowOnRun(run) ? null : (
                   <Button
                     type="button"
                     size="sm"
@@ -1018,6 +1142,7 @@ export default function DashboardPage() {
                     )}
                     Cancel
                   </Button>
+                  )}
                 </div>
               ))
             )}

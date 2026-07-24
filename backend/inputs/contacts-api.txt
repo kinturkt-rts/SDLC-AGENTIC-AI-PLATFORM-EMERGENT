@@ -1,82 +1,40 @@
-Contact Directory API (Postgres CRUD + API-key auth)
+Build a small internal Contact Directory for our teams.
 
-App idea (one paragraph):
-A small internal **Contact Directory** lets teams store and look up colleague contact cards
-(name, email, department, phone). Anyone can browse contacts via the REST API; only callers
-with a shared API key can create, update, or delete records. No login screens, no JWT, no LLM —
-just FastAPI + Postgres + pytest. Swagger at /docs is the UI for demos.
+Problem:
+- Colleague contact details live in spreadsheets and Slack threads and get out of date.
+- People need a simple place to look up name, email, department, phone, and job title.
+- Integrators should be able to add or update contacts safely; casual browsing should stay easy.
 
-Purpose:
-- Validate the SDLC chain on **Pattern B** (Postgres CRUD) without JWT, Bedrock, pgvector, or Streamlit.
-- Simpler than inventory-app; richer than test-medium-app (which is in-memory only).
-- End-to-end: product → architect → database-agent → developer-agent → qa-agent.
+Who uses it:
+- Anyone on the internal network can look up departments and contacts (read-only).
+- Integrators with a shared API key can create, update, or deactivate contacts and manage departments.
+- No employee login screens for v1 — just a shared key for write access. Health checks stay open for ops.
 
-Personas & auth:
-| Caller | Auth | Can do |
-|--------|------|--------|
-| anonymous | none | GET /health, GET /departments, GET /contacts (list + by id) |
-| integrator | `X-API-Key: <API_KEY>` header | All write routes (POST/PATCH/DELETE) |
-
-Auth implementation (MVP — API key only):
-- Load `API_KEY` from env via pydantic-settings (`.env.example` shows placeholder `dev-api-key-change-me`).
-- Protected routes use dependency `verify_api_key` — compare header `X-API-Key` to settings.
-- Missing or wrong key → 401 `{"detail":"Invalid or missing API key"}`.
-- **No JWT**, **no bcrypt users table**, **no OAuth**, **no sessions**.
-
-Data model (Postgres — database-agent owns DDL under target-apps/contacts-api/db/sql/):
-- departments: id uuid PK, name text NOT NULL (1–80 chars), code text UNIQUE NOT NULL (2–10 uppercase),
-  created_at timestamptz NOT NULL DEFAULT now()
-- contacts: id uuid PK, department_id uuid FK→departments ON DELETE RESTRICT,
-  full_name text NOT NULL (1–120), email text UNIQUE NOT NULL (valid email format),
-  phone text nullable (max 30), title text nullable (max 80),
-  is_active bool NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-
-Seed data (database-agent dev seed — stable UUIDs, ON CONFLICT DO NOTHING):
-- 3 departments: Engineering (ENG), Sales (SALES), HR (HR)
-- 6–8 contacts spread across departments (include at least one `is_active=false` for filter tests)
-
-API contracts:
-| Method | Path | Auth | Behavior |
-| GET | /health | none | `{"status":"ok","service":"contacts-api"}` |
-| POST | /departments | API key | create; 201; 409 on duplicate code |
-| GET | /departments | none | list all; sorted by name |
-| GET | /departments/{id} | none | 200 + contact_count or 404 |
-| PATCH | /departments/{id} | API key | update name and/or code; 409 code clash |
-| POST | /contacts | API key | create; 404 unknown department; 409 duplicate email |
-| GET | /contacts | none | paginated list; query `?department_id=` `?is_active=true|false` `?q=` (search name/email) `?limit=` `?offset=` |
-| GET | /contacts/{id} | none | 200 or 404 |
-| PATCH | /contacts/{id} | API key | update fields; bump updated_at |
-| DELETE | /contacts/{id} | API key | soft-delete: set is_active=false; 204 (do not hard-delete in MVP) |
+MVP features:
+- Maintain departments (name and short code).
+- Maintain contact cards: full name, email, department, optional phone and title, active/inactive.
+- Browse and search contacts (by name or email), filter by department or active status.
+- Soft-deactivate a contact instead of permanently deleting it in v1.
+- Seed a few sample departments and contacts so demos work out of the box.
 
 Business rules:
-- List endpoints return `{items, total, limit, offset}`.
-- `q` search is case-insensitive partial match on full_name or email.
-- Cannot create contact for unknown department_id → 404.
-- PATCH/DELETE without API key → 401.
-- Email must be unique among all contacts (active or inactive).
+- Email addresses must be unique.
+- Contacts must belong to a known department.
+- You cannot remove a department that still has contacts tied to it.
+- Writes without a valid API key should be rejected; reads stay open.
 
-Stack (developer-agent — Pattern B):
-- Python 3.12, FastAPI, Pydantic v2, pydantic-settings, uvicorn.
-- SQLAlchemy 2.x sync + psycopg[binary]; `postgresql+psycopg://` in `.env.example` with `?sslmode=require`.
-- POSTGRES_SCHEMA=contacts_api; dialect-guarded `database.py` (Postgres + SQLite for pytest).
-- Layout: `app/routers/health.py`, `departments.py`, `contacts.py`;
-  `app/models/`, `app/schemas/`, `app/dependencies.py` (verify_api_key), `app/config.py`.
-- `.env.example`: DATABASE_URL, POSTGRES_SCHEMA=contacts_api, API_KEY, PORT=8000
-- **No boto3, no Bedrock, no pgvector, no Streamlit, no JWT libraries.**
+Must have for v1:
+- Persisted data (not in-memory only).
+- A simple API suitable for demos (Swagger is fine).
+- No customer-facing web UI, chatbots, or SSO for this version.
 
-Tests (developer baseline):
-- pytest + TestClient; SQLite in-memory with schema ATTACH for unit tests.
-- Cover: health, list pagination shape, create department+contact with API key,
-  write without key → 401, duplicate email → 409, unknown department → 404,
-  soft-delete sets is_active=false, search `?q=` returns match.
-- README curl examples must show `X-API-Key` header on write routes.
+Nice to have (later):
+- Browser UI, personal logins, org chart, sync from HR systems.
 
-Out of scope:
-- JWT/login/users, Bedrock/LLM, pgvector/RAG, Streamlit/React UI, Redis, S3, Docker (devops-agent later).
+Constraints:
+- Internal use only.
+- Keep secrets out of source code.
 
 Success:
-- database-agent: numbered sql/ migrations + seed + HANDOFF.md
-- developer-agent: runnable FastAPI app; pytest green; README with Windows+bash setup
-- qa-agent: additional edge-case tests optional
-- Manual smoke: GET /health → GET /contacts → POST /contacts with X-API-Key → GET by id
+- Someone can list contacts, search by name, add a contact with the API key, and later deactivate them without losing the record.
+- Looking up a department shows how many contacts it has.

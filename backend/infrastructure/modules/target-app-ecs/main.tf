@@ -218,7 +218,7 @@ resource "aws_vpc_security_group_ingress_rule" "task_to_db" {
 
 # ── ALB wiring ─────────────────────────────────────────────────────────────────
 resource "aws_lb_target_group" "app" {
-  name        = trimsuffix(substr("${local.name}-tg", 0, 32), "-")
+  name_prefix = "sdlc-"
   port        = local.target_port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
@@ -233,6 +233,10 @@ resource "aws_lb_target_group" "app" {
     timeout             = 5
     healthy_threshold   = 2
     unhealthy_threshold = 3
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
