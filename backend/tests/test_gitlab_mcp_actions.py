@@ -107,7 +107,8 @@ def test_default_branch_name() -> None:
 
 
 def test_apps_branch_name() -> None:
-    assert apps_branch_name("notice-board-ui") == "notice-board-ui"
+    # Must match apps-repo CI workflow rules (^sdlc/).
+    assert apps_branch_name("notice-board-ui") == "sdlc/notice-board-ui"
 
 
 def test_dest_path_for_apps_repo() -> None:

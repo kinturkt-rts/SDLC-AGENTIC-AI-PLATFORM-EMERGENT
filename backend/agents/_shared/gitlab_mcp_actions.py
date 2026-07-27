@@ -404,8 +404,8 @@ def default_branch_name(feature: str) -> str:
 
 
 def apps_branch_name(feature: str) -> str:
-    """Branch name for sdlc-agentic-ai-platform-apps (one branch per app, no sdlc/ prefix)."""
-    return slugify_feature(feature)
+    """Branch name for sdlc-agentic-ai-platform-apps (matches CI ``^sdlc/`` rules)."""
+    return default_branch_name(feature)
 
 
 def pipeline_run_marker_repo_rel(feature: str) -> str:

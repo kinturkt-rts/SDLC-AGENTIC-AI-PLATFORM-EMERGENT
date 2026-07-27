@@ -32,7 +32,7 @@ function MetadataRow({ label, value }: { label: string; value: React.ReactNode }
 
 function handoffBadge(status: string): 'completed' | 'failed' | 'running' | 'queued' {
   const normalized = status.trim().toLowerCase();
-  if (normalized === 'completed' || normalized === 'published' || normalized === 'healthy' || normalized === 'deployed') {
+  if (normalized === 'completed' || normalized === 'published' || normalized === 'already-published' || normalized === 'healthy' || normalized === 'deployed') {
     return 'completed';
   }
   if (normalized === 'failed' || normalized === 'error') return 'failed';

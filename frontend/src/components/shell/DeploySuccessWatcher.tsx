@@ -80,6 +80,7 @@ export function DeploySuccessWatcher() {
       .filter(
         (r) =>
           r.status === 'completed' ||
+          r.status === 'awaiting_deploy' ||
           r.status === 'running' ||
           r.deployStatus === 'pending' ||
           r.deployStatus === 'running' ||

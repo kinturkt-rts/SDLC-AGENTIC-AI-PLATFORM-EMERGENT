@@ -35,6 +35,7 @@ export function isDeployFollowOn(run: {
   deployStatus?: string | null;
 }): boolean {
   if (run.deployStatus === 'pending' || run.deployStatus === 'running') return true;
+  if (run.status === 'awaiting_deploy') return true;
   return (
     run.status === 'running' &&
     (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent')
@@ -67,6 +68,7 @@ export async function findRunningTargetApp(targetApp: string) {
           r.projectId === slug &&
           (r.status === 'running' ||
             r.status === 'paused' ||
+            r.status === 'awaiting_deploy' ||
             r.deployStatus === 'pending' ||
             r.deployStatus === 'running'),
       ) ?? null

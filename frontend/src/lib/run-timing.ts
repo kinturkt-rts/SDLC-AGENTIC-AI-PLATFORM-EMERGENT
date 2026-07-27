@@ -26,7 +26,10 @@ export function resolveRunTimings(input: RunTimingInput): {
   if (!Number.isFinite(startedMs)) startedMs = Date.now();
 
   const isTerminal =
-    input.status === 'completed' || input.status === 'failed' || input.status === 'cancelled';
+    input.status === 'completed' ||
+    input.status === 'awaiting_deploy' ||
+    input.status === 'failed' ||
+    input.status === 'cancelled';
 
   if (
     input.s3EarliestMs > 0 &&

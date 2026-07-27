@@ -6,6 +6,7 @@ import {
   Database,
   FileText,
   GitBranch,
+  Server,
   Shield,
   type LucideIcon,
 } from 'lucide-react';
@@ -16,6 +17,8 @@ export const PIPELINE_MODELS = [
   { agentId: 'architect-agent', shortName: 'Architect', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
   { agentId: 'database-agent', shortName: 'Database', model: 'Claude Opus 4.6', family: 'opus' as const },
   { agentId: 'developer-agent', shortName: 'Developer', model: 'Claude Opus 4.6', family: 'opus' as const },
+  // CI usually skips LLM (template TF); when DEVOPS_FORCE_LLM or generation-only runs, same MODEL_ID as product.
+  { agentId: 'devops-agent', shortName: 'DevOps', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
 ] as const;
 
 export type PipelineAgentId = (typeof PIPELINE_MODELS)[number]['agentId'];
@@ -31,6 +34,7 @@ export const AGENT_CHART_COLOR: Record<string, string> = {
   'architect-agent': 'hsl(263 70% 65%)',
   'database-agent': 'hsl(160 60% 45%)',
   'developer-agent': 'hsl(38 92% 50%)',
+  'devops-agent': 'hsl(200 80% 45%)',
   'security-agent': 'hsl(350 80% 60%)',
   'qa-agent': 'hsl(189 80% 45%)',
   'web-crawler-agent': 'hsl(239 60% 65%)',
@@ -42,6 +46,7 @@ export const AGENT_TOKEN_ACCENT: Record<string, string> = {
   'architect-agent': 'bg-violet-400',
   'database-agent': 'bg-emerald-400',
   'developer-agent': 'bg-amber-400',
+  'devops-agent': 'bg-sky-400',
   'security-agent': 'bg-rose-400',
   'qa-agent': 'bg-cyan-400',
   'web-crawler-agent': 'bg-indigo-400',
@@ -55,6 +60,7 @@ export const AGENT_TOKEN_ICON: Record<string, LucideIcon> = {
   'database-agent': Database,
   'developer-agent': Code2,
   'gitlab-agent': GitBranch,
+  'devops-agent': Server,
   'qa-agent': Shield,
   'security-agent': Shield,
   'web-crawler-agent': Bot,

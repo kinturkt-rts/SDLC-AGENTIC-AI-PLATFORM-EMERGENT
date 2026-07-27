@@ -230,8 +230,9 @@ After product-agent, you may still add a short `productAgentOutput` string to th
 | gitlab-agent → publish `sdlc/<app>` branch | ✅ (default when GitLab env set) |
 | web-crawler-agent | ✅ optional branch |
 | qa-agent | ✅ opt-in (`-WithQa`) |
-| devops-agent, security-agent, auto orchestration | 📋 roadmap |
-| Human gates + AWS deploy | 📋 target model |
+| devops-agent | ✅ async via apps-repo GitLab CI after publish (`target-app:deploy` → `--deploy`); run status `awaiting_deploy` until `appUrl` |
+| security-agent, auto orchestration extras | 📋 roadmap |
+| Human gates | 📋 target model |
 
 **Current validation approach:** Run agents **one at a time** from the CLI with a FinOps or RAG brief; inspect PRD, `agents/pipeline/<app>.context.json`, design doc, diagram, and `db/sql/` before advancing.
 

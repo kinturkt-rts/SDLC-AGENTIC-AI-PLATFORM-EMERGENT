@@ -69,6 +69,7 @@ export const useRuns = () =>
           (r) =>
             r.status === 'running' ||
             r.status === 'paused' ||
+            r.status === 'awaiting_deploy' ||
             r.deployStatus === 'running' ||
             r.deployStatus === 'pending' ||
             // Recover when a later CI attempt writes appUrl after a premature/failed handoff.
@@ -90,7 +91,7 @@ export const useRun = (id: string) =>
     staleTime: 0,
     refetchInterval: (query) => {
       const run = query.state.data;
-      if (run?.status === 'running' || run?.status === 'paused') return 2_500;
+      if (run?.status === 'running' || run?.status === 'paused' || run?.status === 'awaiting_deploy') return 2_500;
       if (
         run?.deployStatus === 'running' ||
         run?.deployStatus === 'pending' ||
@@ -113,7 +114,7 @@ export const useLiveRunsById = (ids: string[]) => {
       staleTime: 0,
       refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
         const run = query.state.data;
-        if (run?.status === 'running' || run?.status === 'paused') return 2_500;
+        if (run?.status === 'running' || run?.status === 'paused' || run?.status === 'awaiting_deploy') return 2_500;
         if (
           run?.deployStatus === 'running' ||
           run?.deployStatus === 'pending' ||

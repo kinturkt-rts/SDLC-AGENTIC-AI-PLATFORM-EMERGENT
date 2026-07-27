@@ -306,7 +306,7 @@ function pipelineStepVisualState(
 
   // Agents done / still deploying: prior phases are complete.
   if (
-    (run.status === 'completed' || isDeployFollowOnRun(run)) &&
+    (run.status === 'completed' || run.status === 'awaiting_deploy' || isDeployFollowOnRun(run)) &&
     stepPhase !== 'deploy'
   ) {
     return 'completed';
@@ -320,6 +320,7 @@ function isRunActiveForDashboard(run: PipelineRun): boolean {
   return (
     run.status === 'running' ||
     run.status === 'paused' ||
+    run.status === 'awaiting_deploy' ||
     run.deployStatus === 'pending' ||
     run.deployStatus === 'running'
   );
@@ -328,6 +329,7 @@ function isRunActiveForDashboard(run: PipelineRun): boolean {
 /** Concurrency slots: agent-chain only (Deploy wait does not block new briefs). */
 function isAgentChainActive(run: PipelineRun): boolean {
   if (run.status === 'paused') return true;
+  if (run.status === 'awaiting_deploy') return false;
   if (run.status !== 'running') return false;
   if (run.deployStatus === 'pending' || run.deployStatus === 'running') return false;
   if (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent') return false;
@@ -336,6 +338,7 @@ function isAgentChainActive(run: PipelineRun): boolean {
 
 function isDeployFollowOnRun(run: PipelineRun): boolean {
   return (
+    run.status === 'awaiting_deploy' ||
     run.deployStatus === 'pending' ||
     run.deployStatus === 'running' ||
     (run.status === 'running' &&
@@ -1102,7 +1105,13 @@ export default function DashboardPage() {
                 <div key={run.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
                   <Link href={`/runs/${run.id}`} className="flex min-w-0 flex-1 items-center gap-3">
                     <StatusBadge
-                      status={isDeployFollowOnRun(run) ? 'running' : run.status}
+                      status={
+                        isDeployFollowOnRun(run)
+                          ? run.status === 'awaiting_deploy'
+                            ? 'awaiting_deploy'
+                            : 'running'
+                          : run.status
+                      }
                       label={isDeployFollowOnRun(run) ? 'Deploying' : undefined}
                       size="sm"
                     />

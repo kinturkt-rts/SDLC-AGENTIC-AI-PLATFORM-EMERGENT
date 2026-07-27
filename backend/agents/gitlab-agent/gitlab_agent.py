@@ -325,7 +325,9 @@ def execute_publish_message(message: Any) -> str:
 
     target_app, run_id, ctx = parsed
     summary, handoff = run_publish_for_agentcore(target_app, run_id, ctx)
-    if handoff.get("status") != "published":
+    # already-published is a successful dedupe (same runId already on the branch).
+    status = str(handoff.get("status") or "").strip().lower()
+    if status not in {"published", "already-published"}:
         return summary
     return summary
 
@@ -408,11 +410,15 @@ def main() -> None:
         help="GitLab project path or numeric id (default: GITLAB_PROJECT_PATH)",
     )
     parser.add_argument("--gitlab-base", default="", help="Branch to fork from (default: main)")
-    parser.add_argument("--branch", default="", help="Override publish branch (default: sdlc/<app> or <app> with --apps-repo)")
+    parser.add_argument(
+        "--branch",
+        default="",
+        help="Override publish branch (default: sdlc/<app> for monorepo and apps-repo)",
+    )
     parser.add_argument(
         "--apps-repo",
         action="store_true",
-        help="Publish to GITLAB_APPS_PROJECT_PATH with app files at branch root (branch default: <app>)",
+        help="Publish to GITLAB_APPS_PROJECT_PATH with app files at branch root (branch default: sdlc/<app>)",
     )
     parser.add_argument("--open-mr", action="store_true", help="Open merge request to --gitlab-base / main")
     parser.add_argument("--draft-mr", action="store_true", help="Open MR as draft (requires --open-mr)")

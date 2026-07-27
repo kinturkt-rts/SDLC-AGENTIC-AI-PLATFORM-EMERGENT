@@ -327,7 +327,7 @@ export async function gitlabPublishSucceededForRun(runId: string, slug: string):
   if (!gitlab) return false;
   const status = (gitlab.status ?? '').toLowerCase();
   if (status === 'failed' || status === 'error') return false;
-  return Boolean(gitlab.branchUrl || gitlab.repoUrl || gitlab.mergeRequestUrl || status === 'published');
+  return Boolean(gitlab.branchUrl || gitlab.repoUrl || gitlab.mergeRequestUrl || status === 'published' || status === 'already-published');
 }
 
 /** True when developer-agent wrote its completion handoff for this run. */

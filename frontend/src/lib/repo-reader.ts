@@ -576,7 +576,12 @@ async function listUuidRunIds(): Promise<string[]> {
 }
 
 function isTerminalLiveStatus(status: string | undefined | null): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
+  return (
+    status === 'completed' ||
+    status === 'awaiting_deploy' ||
+    status === 'failed' ||
+    status === 'cancelled'
+  );
 }
 
 async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
@@ -970,6 +975,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
 
   const isTerminalForDeploy =
     reconciled.status === 'completed' ||
+    reconciled.status === 'awaiting_deploy' ||
     reconciled.status === 'failed' ||
     reconciled.status === 'cancelled';
 
@@ -1094,9 +1100,13 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   const displayStatus: RunStatus =
     deployCiFailed
       ? 'failed'
-      : deployStepRunning && reconciled.status === 'completed'
-        ? 'running'
-        : reconciled.status;
+      : phaseDone.deploy
+        ? 'completed'
+        : reconciled.status === 'awaiting_deploy'
+          ? 'awaiting_deploy'
+          : deployStepRunning && reconciled.status === 'completed'
+            ? 'running'
+            : reconciled.status;
 
   // Prefer the step timeline as source of truth for "where are we" so currentAgent
   // cannot lag behind steps (e.g. strip shows Database while card still says Product).

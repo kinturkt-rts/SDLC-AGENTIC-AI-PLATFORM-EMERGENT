@@ -32,7 +32,9 @@ oidc:test:
       fi
 
 # Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
-# fires on branches gitlab-agent publishes here (sdlc/<app>).
+# fires on branches gitlab-agent publishes here (sdlc/<app>). After publish the
+# orchestrator marks the run awaiting_deploy; this job writes devops.json/appUrl
+# and then flips the run to completed (or failed).
 target-app:deploy:
   stage: deploy
   tags: [juno-labs-3]

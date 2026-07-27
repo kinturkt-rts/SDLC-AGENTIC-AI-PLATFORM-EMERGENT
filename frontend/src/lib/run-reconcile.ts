@@ -231,6 +231,10 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   if (verifiedComplete) {
+    // Authoring phases done; keep awaiting_deploy until async CI/devops finishes.
+    if (input.status === 'awaiting_deploy') {
+      return { status: 'awaiting_deploy', currentStep: 'devops-agent' };
+    }
     return { status: 'completed', currentStep: null };
   }
 
@@ -263,9 +267,19 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   const idleMs = Date.now() - lastRunActivityMs(input);
-  const isActiveStatus = input.status === 'running' || input.status === 'queued';
+  const isActiveStatus =
+    input.status === 'running' ||
+    input.status === 'queued' ||
+    input.status === 'awaiting_deploy';
   const anyProgress = hasAnyEvidence;
-  const idleThresholdMs = anyProgress ? RUN_LIVE_IDLE_MS : RUN_NO_PROGRESS_IDLE_MS;
+  // Deploy can sit in GitLab CI longer than authoring idle thresholds; use the
+  // longer window while awaiting_deploy so we don't mark healthy publishes failed.
+  const idleThresholdMs =
+    input.status === 'awaiting_deploy'
+      ? RUN_LIVE_IDLE_MS
+      : anyProgress
+        ? RUN_LIVE_IDLE_MS
+        : RUN_NO_PROGRESS_IDLE_MS;
 
   if (isActiveStatus && idleMs > idleThresholdMs) {
     return {
@@ -275,6 +289,10 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
         ? 'Pipeline stalled (no activity in the last hour)'
         : 'Pipeline abandoned (no activity since it started - never completed product-agent)',
     };
+  }
+
+  if (input.status === 'awaiting_deploy') {
+    return { status: 'awaiting_deploy', currentStep: 'devops-agent' };
   }
 
   if (isActiveStatus) {
