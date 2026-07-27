@@ -203,14 +203,30 @@ export async function startPipeline(options: {
   const inputRel = options.inputFile.trim() || runInputRelPath(feature);
   const repoRoot = getBackendRoot();
 
-  const duplicate = await findRunningTargetApp(feature);
-  if (duplicate && duplicate.id !== runId) {
+  // Single listRuns() — upload just invalidated the cache, so a second cold scan
+  // (findRunningTargetApp + getActiveRuns) can add 10–20s to /runs/start.
+  const allRuns = await listRuns();
+  const duplicate = allRuns.find(
+    (r) =>
+      r.projectId === feature &&
+      r.id !== runId &&
+      (r.status === 'running' ||
+        r.status === 'paused' ||
+        r.status === 'awaiting_deploy' ||
+        r.deployStatus === 'pending' ||
+        r.deployStatus === 'running'),
+  );
+  if (duplicate) {
     throw new Error(
       `"${feature}" already has an active pipeline run (${duplicate.id.slice(0, 8)}…). Wait for it to finish or cancel it.`,
     );
   }
-  const active = await getActiveRuns();
-  const others = active.filter((r) => r.id !== runId);
+  const others = allRuns.filter((r) => {
+    if (r.id === runId) return false;
+    if (r.status === 'paused') return true;
+    if (r.status !== 'running') return false;
+    return !isDeployFollowOn(r);
+  });
   if (others.length >= MAX_CONCURRENT_RUNS) {
     throw new Error(
       `Maximum concurrent runs reached (${others.length}/${MAX_CONCURRENT_RUNS}). Wait for a run to finish or cancel one.`,

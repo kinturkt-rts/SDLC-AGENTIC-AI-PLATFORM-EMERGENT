@@ -651,13 +651,20 @@ function InputRequirementsCard() {
       setSavedPath(String(data.inputFile ?? uploadData.inputFile ?? ''));
       setStartedRunId(data.runId ?? null);
       setLastSaved(new Date().toLocaleTimeString());
+      // Unlock the button immediately — do not wait on list/dashboard refetches
+      // (cold /api/v1/runs can take 10–20s and kept the UI on "Starting pipeline…").
+      submitLockRef.current = false;
+      setSubmitting(false);
+      setSubmitPhase('idle');
       toast.success('Pipeline submitted', {
         description: `${submitFeature} · ${(data.runId ?? uploadData.runId ?? '').slice(0, 8)}…`,
       });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.artifacts });
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.activity }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.artifacts }),
+      ]);
       window.setTimeout(() => {
         document.getElementById('dashboard-pipeline-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 400);
@@ -699,11 +706,14 @@ function InputRequirementsCard() {
       if (!startParsed.ok) throw new Error(startParsed.error);
       const data = startParsed.data;
       setStartedRunId(data.runId ?? null);
+      setStarting(false);
       toast.success('Pipeline started', {
         description: `${titleCase(feature)} · run ${(data.runId ?? savedRunId).slice(0, 8)}…`,
       });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+      ]);
     } catch (err) {
       toast.error('Start failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
