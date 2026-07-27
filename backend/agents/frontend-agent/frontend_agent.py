@@ -78,15 +78,12 @@ _JWT_AUTH_SCREEN_SECTION = """\
   Do the same re-check after handleLogout clears the token (set isAuthenticated back to false directly; do not re-derive it)."""
 
 _API_KEY_AUTH_SCREEN_SECTION = """\
-- Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, getCurrentUser, hasRole, isCurrentUser, isSessionValid, hasTwoRoles, saveCredential, and clearCredential. The api helpers read the backend URL from VITE_API_URL and automatically attach the stored credential under whichever header the chosen role maps to. Import and use those.
+- Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, getCurrentUser, hasRole, isCurrentUser, isSessionValid, hasTwoRoles, login, and clearCredential. The api helpers read the backend URL from VITE_API_URL and automatically attach the stored credential under whichever header the chosen role maps to. Import and use those.
 - For EACH endpoint, use the api helper that matches the HTTP method declared in the OpenAPI spec for that exact path: GET -> apiGet, POST -> apiPost, PUT -> apiPut, PATCH -> apiPatch, DELETE -> apiDelete. Do NOT substitute one method for another (e.g. never call apiPut on a PATCH endpoint) — a method mismatch causes a 405 error at runtime. Never use raw fetch() for API calls; always use the api helpers so auth and the base URL are handled.
 - Do NOT pass a token argument to any api helper. They read the credential from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
-- This app has NO username/password login flow and NO /auth/login endpoint — do not build a login form with email/password fields, and do not call any auth endpoint on "login". The login screen is a PASTE-KEY screen instead: one text field for the credential, a submit button, nothing else — PLUS a role choice when the backend has two header tiers (see below). On submit call saveCredential(pastedValue, role) — NEVER localStorage.setItem directly, saveCredential also stores which header the credential is sent under — then setIsAuthenticated(true) directly; there is no server round-trip to validate the credential at login time, a bad one is only discovered the first time it's used on a real API call.
-- Call hasTwoRoles() from api.ts to decide the Login screen's shape:
-  - hasTwoRoles() is false (single-tier app, e.g. one shared API key): one field, no role selector. On submit: saveCredential(pastedValue) (role defaults to "employee" — irrelevant here since there's only one header).
-  - hasTwoRoles() is true (two-tier app, e.g. a per-user token AND an admin/API key): one field for the credential PLUS a two-option role selector — a plain radio group or select, generic labels "Employee" and "Admin/Manager" (do not invent app-specific role names). On submit: saveCredential(pastedValue, selectedRole) where selectedRole is "employee" or "admin" per the selector.
-- getCurrentUser() returns a minimal placeholder ({ id: "api-key", roles }) when a credential is stored, or null when it isn't — roles is [chosenRole] for two-tier apps (empty for single-tier apps) — there are no JWT claims to decode in this mode. Do NOT build per-user "logged in as {name}" UI from it (there is no per-user identity, only a role). hasRole("admin") / hasRole("employee") IS meaningful for two-tier apps (gate admin-only screens/buttons with it) but always evaluates false for single-tier apps (no roles exist) — do not rely on it there. isCurrentUser() exists for call-site parity with JWT apps but always evaluates false in this mode (no per-user id) — do not rely on it.
+- This app has NO username/password login flow and NO /auth/login endpoint — do not build a login form with email/password fields, and do not call any auth endpoint on "login". The login screen is a PASTE-KEY screen for ALL api-key apps, single-tier or two-tier alike: one text field for the credential, a submit button, nothing else. Never render a role selector — the real role is resolved from the backend, not chosen by the user. On submit, call `await login(pastedValue)` from api.ts — it stores the credential, then calls GET /api/v1/users/me with it to resolve the real user id and role and stores those too — then `setIsAuthenticated(true)`. login() is async and throws if the key is rejected; wrap the call in try/catch and show an error on the paste-key screen instead of authenticating when it throws (do not call setIsAuthenticated(true) in that case).
+- getCurrentUser() now returns the caller's REAL id and role — { id, roles } — resolved by login() from the backend's GET /users/me, not a user-chosen role or a placeholder. hasRole("admin") / hasRole("employee") is meaningful for every api-key app, not just two-tier ones, and gates admin-only screens/buttons normally — do not special-case single-tier apps as "roles never work" here. isCurrentUser() also compares against the real backend user id now.
 - On mount, App.tsx MUST decide login-screen-vs-authenticated-shell by calling isSessionValid() from api.ts and gating on its return value — same requirement as JWT apps, simpler semantics: isSessionValid() is true exactly when a credential is stored (no expiry to check, so "present" and "valid" are the same thing here). Never write a mount check that reads localStorage directly instead of calling isSessionValid(). Required pattern (copy exactly, adapting names):
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -162,6 +159,11 @@ Available classes:
 - Helpers: "muted" (secondary text).
 
 Layout pattern for an authenticated app: render an "app-shell" with a "sidebar" (brand + nav-items + logout at bottom) and a "main" area. Each screen inside main starts with a "topbar" (h1 + primary action), then "card" sections.
+
+Component and screen wiring rules:
+- If a component renders a control (button/link/form) whose handler is a prop (e.g. onClick={onCreateItem}), that prop MUST NOT be optional, and the PARENT that renders the component MUST pass it, wired to the corresponding screen change or state update. A control bound to an unpassed prop is a defect — the button will silently do nothing.
+- Every screen in the navigation/screen enum must have: (a) a way to navigate to it, (b) a render case, and (c) all callbacks its child components need, wired to real handlers.
+- If the app has multiple roles (e.g. an admin role) and role-gated features are implied by the design (e.g. user management), generate the admin UI (nav item + screen) and gate it with hasRole('<role>'). Do not import hasRole without building the gated feature it implies.
 
 WORKED EXAMPLE of a correct list screen (copy this structure and class usage):
 
@@ -476,6 +478,245 @@ def _validate_session_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[
         )
     return True, "[session-gate] PASSED"
 
+def _validate_role_source_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[bool, str]:
+    """Deterministic backstop: api-key apps must resolve the caller's real role
+    from the backend, not from a user-chosen placeholder.
+
+    api-key apps use per-user opaque tokens; the backend maps each token to a
+    real role. The fixed api.ts login() must fetch GET /api/v1/users/me and
+    cache the returned role so getCurrentUser()/hasRole() reflect it. If the
+    shipped api.ts lacks that fetch, role-gated UI silently evaluates hasRole()
+    as false for everyone and admin-only screens never render, a bug a passing
+    tsc build cannot catch. JWT apps decode role from the token, so this gate
+    is api-key only.
+    """
+    if auth_mode != "api-key":
+        return True, "[role-source-gate] PASSED (jwt mode)"
+    api_ts = frontend_dir / "src" / "api.ts"
+    if not api_ts.is_file():
+        return False, "[role-source-gate] src/api.ts not found."
+    content = api_ts.read_text(encoding="utf-8")
+    if "/api/v1/users/me" not in content or "export async function login" not in content:
+        return False, (
+            "[role-source-gate] FAILED: src/api.ts does not resolve the caller's role "
+            "from the backend. api-key apps must have an async login() that fetches "
+            "GET /api/v1/users/me and caches the returned role, so getCurrentUser() and "
+            "hasRole() reflect the real per-user role. Without it, role-gated UI "
+            "(hasRole('admin')) always evaluates false and admin-only screens never render."
+        )
+    return True, "[role-source-gate] PASSED"
+
+
+_JSX_HANDLER_PROP_RE = re.compile(
+    r"\bon(?:Click|Submit|Change)\s*=\s*\{\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\}"
+)
+_NAME_DECL_RE = re.compile(r"\b(?:const|function)\s+([A-Z][A-Za-z0-9_$]*)\b")
+_DESTRUCTURED_PARAM_RE = re.compile(
+    r"\(\s*\{([^{}]*)\}\s*(?::\s*[A-Za-z_$][A-Za-z0-9_$]*)?\s*\)\s*(?:=>|\{)"
+)
+
+
+def _split_top_level(body: str, sep: str) -> list[str]:
+    """Split on `sep` at bracket depth 0 only, so a type like
+    `onSelect: (id: string) => void` doesn't get split on an internal comma
+    from a tuple/generic/function-arg list."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in body:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if ch == sep and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current))
+    return parts
+
+
+def _prop_names_from_destructure_body(body: str) -> set[str]:
+    props: set[str] = set()
+    for part in _split_top_level(body, ","):
+        part = part.split("=", 1)[0]  # drop default value, e.g. `loading = false`
+        part = part.split(":", 1)[0]  # drop rename/type, e.g. `onSave: handleSave`
+        part = part.strip()
+        if re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", part):
+            props.add(part)
+    return props
+
+
+def _components_and_declared_props(
+    tsx_files: dict[Path, str],
+) -> dict[str, tuple[Path, set[str]]]:
+    """component name -> (defining file, declared prop names).
+
+    Attributes each destructured parameter list to the NEAREST PRECEDING
+    `const NAME` / `function NAME` declaration in the same file, rather than
+    assuming one component per file. Generated App.tsx files routinely bundle
+    several inline screen components side by side in one file, e.g.:
+        function App() { ... }
+        const ProductForm: React.FC<{...}> = ({ onCancel, onSubmit }) => {...}
+    Naively unioning every destructured-param list found anywhere in the file
+    into "the file's one component" misattributes a sibling component's props
+    (ProductForm's onCancel) to App itself — confirmed as a real false
+    positive against several existing generated apps (inventory-app,
+    recipe-vault, it-asset-lifecycle all bundle screens into App.tsx this
+    way) before this per-declaration scoping was added.
+
+    If the same name is declared more than once in a file, the last
+    declaration's props win — a rare edge case not worth resolving further.
+    """
+    result: dict[str, tuple[Path, set[str]]] = {}
+    for path, text in tsx_files.items():
+        name_decls = [(m.start(), m.group(1)) for m in _NAME_DECL_RE.finditer(text)]
+        if not name_decls:
+            continue
+        for m in _DESTRUCTURED_PARAM_RE.finditer(text):
+            owner = None
+            for start, name in name_decls:
+                if start < m.start():
+                    owner = name
+                else:
+                    break
+            if owner is None:
+                continue
+            props = _prop_names_from_destructure_body(m.group(1))
+            if not props:
+                continue
+            if owner in result and result[owner][0] == path:
+                result[owner][1].update(props)
+            else:
+                result[owner] = (path, set(props))
+    return result
+
+
+def _extract_jsx_tag(text: str, start_idx: int) -> str | None:
+    """From the index of a tag's opening '<', return the full opening-tag
+    text (through its closing '>'), tracking {} depth so a '>' inside a JSX
+    expression attribute (e.g. onSelect={(x) => x.count > 5 ...}) doesn't end
+    the tag early. Returns None if the tag never closes (malformed/unsupported
+    — caller should skip rather than guess)."""
+    depth = 0
+    i = start_idx
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(0, depth - 1)
+        elif ch == ">" and depth == 0:
+            return text[start_idx : i + 1]
+        i += 1
+    return None
+
+
+def _render_sites(
+    component_name: str, tsx_files: dict[Path, str], own_file: Path
+) -> list[tuple[Path, str]]:
+    """(file, opening-tag-text) for every place component_name is rendered in
+    a .tsx file OTHER than the one that defines it."""
+    sites: list[tuple[Path, str]] = []
+    tag_open_re = re.compile(rf"<{re.escape(component_name)}(?=[\s/>])")
+    for path, text in tsx_files.items():
+        if path == own_file:
+            continue
+        for m in tag_open_re.finditer(text):
+            tag_text = _extract_jsx_tag(text, m.start())
+            if tag_text is not None:
+                sites.append((path, tag_text))
+    return sites
+
+
+def _validate_wired_callbacks_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[bool, str]:
+    """Deterministic backstop for "dead buttons": a control (button/link/form)
+    whose onClick/onSubmit/onChange is bound to a prop that the parent never
+    passes when it renders the component.
+
+    Real bug this catches: ItemList.tsx renders
+    <button onClick={onCreateItem}>Add Item</button> where onCreateItem is an
+    OPTIONAL prop, but App.tsx renders <ItemList /> with no props at all — the
+    button silently does nothing. A passing tsc build cannot catch this: an
+    optional handler prop type-checks fine whether or not the parent passes
+    it, and onClick={undefined} is a no-op at runtime, not a compile error.
+
+    Conservative by design (a missed edge case is fine, a false positive that
+    blocks a good build is not): only bare-identifier handlers bound directly
+    to onClick/onSubmit/onChange are considered (props only used in logic are
+    ignored); a file with an ambiguous (zero or multiple) exported component
+    is skipped entirely; a component never rendered anywhere else (e.g. the
+    app root) is skipped since there is no parent to check; a prop passed at
+    a given render site is not flagged for that occurrence. auth_mode is
+    accepted for signature parity with the other gates but doesn't change
+    this gate's logic — dead buttons are the same defect in either auth mode.
+    """
+    src_dir = frontend_dir / "src"
+    if not src_dir.is_dir():
+        return True, "[wired-callbacks-gate] PASSED (no src/)"
+
+    tsx_files: dict[Path, str] = {}
+    for path in src_dir.rglob("*.tsx"):
+        try:
+            tsx_files[path] = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+    if not tsx_files:
+        return True, "[wired-callbacks-gate] PASSED (no .tsx files)"
+
+    components = _components_and_declared_props(tsx_files)
+    # A bundle file (e.g. App.tsx with several inline screens) has more than
+    # one owner per path — its component name is ambiguous as a parent label,
+    # so only give an unambiguous (single-owner) file a component-name label;
+    # fall back to the relative path otherwise.
+    path_owner_counts: dict[Path, int] = {}
+    for _name, (path, _props) in components.items():
+        path_owner_counts[path] = path_owner_counts.get(path, 0) + 1
+    file_to_component = {
+        path: name
+        for name, (path, _props) in components.items()
+        if path_owner_counts[path] == 1
+    }
+
+    dead: set[tuple[str, str, str]] = set()  # (parent_label, component_name, prop_name)
+    for component_name, (own_file, declared_props) in components.items():
+        text = tsx_files[own_file]
+        handler_props = {
+            m.group(1)
+            for m in _JSX_HANDLER_PROP_RE.finditer(text)
+            if m.group(1) in declared_props
+        }
+        if not handler_props:
+            continue
+
+        sites = _render_sites(component_name, tsx_files, own_file)
+        if not sites:
+            continue  # never rendered elsewhere (e.g. the root) — no parent to check
+
+        for prop_name in handler_props:
+            attr_re = re.compile(rf"(?<![A-Za-z0-9_$]){re.escape(prop_name)}\s*=")
+            for parent_path, tag_text in sites:
+                if attr_re.search(tag_text):
+                    continue
+                parent_label = file_to_component.get(
+                    parent_path, parent_path.relative_to(frontend_dir).as_posix()
+                )
+                dead.add((parent_label, component_name, prop_name))
+
+    if not dead:
+        return True, "[wired-callbacks-gate] PASSED"
+
+    lines = [
+        f"[wired-callbacks-gate] FAILED: {parent_label} renders <{component_name} /> "
+        f"without prop '{prop_name}', but {component_name} binds it to a control "
+        "handler (onClick/onSubmit). The control will silently do nothing. Pass "
+        f"'{prop_name}' from the parent, wired to the real handler."
+        for parent_label, component_name, prop_name in sorted(dead)
+    ]
+    return False, "\n".join(lines)
+
 
 _TS_ERROR_LOCATION_RE = re.compile(
     r"^(?P<file>[\w./-]+)\((?P<line>\d+),(?P<col>\d+)\): error (?P<code>TS\d+):",
@@ -703,12 +944,21 @@ def run_task(target_app: str, context: dict, *, full_regen: bool = False) -> Non
         passed, report = _run_frontend_build(frontend_dir)
         if passed:
             gate_passed, gate_report = _validate_session_gate(frontend_dir, auth_mode)
-            if gate_passed:
+            role_passed, role_report = _validate_role_source_gate(frontend_dir, auth_mode)
+            wired_passed, wired_report = _validate_wired_callbacks_gate(frontend_dir, auth_mode)
+            if gate_passed and role_passed and wired_passed:
                 print(f"[frontend-agent] {report}")
                 print(f"[frontend-agent] {gate_report}")
-                print("[frontend-agent] BUILD PASSED — frontend generated successfully.")
+                print(f"[frontend-agent] {role_report}")
+                print(f"[frontend-agent] {wired_report}")
+                print("[frontend-agent] BUILD PASSED ΓÇö frontend generated successfully.")
                 return
-            passed, report = gate_passed, gate_report
+            if not gate_passed:
+                passed, report = gate_passed, gate_report
+            elif not role_passed:
+                passed, report = role_passed, role_report
+            else:
+                passed, report = wired_passed, wired_report
 
         print("[frontend-agent] BUILD FAILED:")
         print(report)

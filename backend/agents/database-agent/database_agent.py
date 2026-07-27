@@ -594,7 +594,11 @@ def _apply_sql_to_rds(target_app: str) -> int:
         return 1
 
     script = _REPO_ROOT / "scripts" / "apply_sql_to_rds.py"
-    cmd = [sys.executable, str(script), "--target-app", target_app]
+    # --reset-schema: a fresh pipeline run must drop+recreate the app schema so a
+    # seed INSERT never hits a stale table with mismatched columns (e.g. leftover
+    # columns from a previous run's schema). Safe on dev/seed RDS; the later
+    # explicit apply step in run-sdlc-local.ps1 already does this too.
+    cmd = [sys.executable, str(script), "--target-app", target_app, "--reset-schema"]
     if not _apply_sql_verbose():
         cmd.append("--quiet")
     print(f"[database-agent] Applying sql/ to RDS ({target_app})...", file=sys.stderr)

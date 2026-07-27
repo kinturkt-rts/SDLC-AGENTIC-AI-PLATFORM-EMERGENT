@@ -31,17 +31,32 @@ function getStoredRole(): AuthRole {
   return localStorage.getItem(ROLE_KEY) === "admin" ? "admin" : "employee";
 }
 
-// Login screen calls this on submit. role defaults to "employee" so a
-// single-tier app's Login (no role selector, hasTwoRoles() is false) can call
-// saveCredential(key) without ever referencing AuthRole.
-export function saveCredential(key: string, role: AuthRole = "employee"): void {
+// Login screen calls this on submit with the pasted credential. Persists the
+// key, then resolves the caller's real identity and role via GET
+// /api/v1/users/me (the backend looks up the token in the users table) so
+// getCurrentUser()/hasRole() reflect the actual per-user role instead of a
+// role the user picked themselves. Throws and clears the credential if the
+// key is rejected — callers must catch this and keep the user on the
+// paste-key screen.
+export async function login(key: string): Promise<void> {
   localStorage.setItem(TOKEN_KEY, key);
-  localStorage.setItem(ROLE_KEY, role);
+  const res = await fetch(`${API_BASE_URL}/api/v1/users/me`, {
+    headers: { [EMPLOYEE_HEADER]: key },
+  });
+  if (!res.ok) {
+    clearCredential();
+    throw new Error(`GET /api/v1/users/me failed: ${res.status}`);
+  }
+  const me = (await res.json()) as { id: string; role: string };
+  localStorage.setItem("userId", me.id);
+  localStorage.setItem("userRole", me.role);
 }
 
 export function clearCredential(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ROLE_KEY);
+  localStorage.removeItem("userId");
+  localStorage.removeItem("userRole");
 }
 
 function authHeaders(): Record<string, string> {
@@ -109,11 +124,10 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return handle<T>(res, "DELETE", path);
 }
 
-// ── Current user (api-key mode has no login flow, so no JWT claims exist) ──
-// The stored credential is a shared/opaque secret, not a decoded token — there
-// are no real claims. roles reflects the chosen login role (empty for
-// single-tier apps, where role selection never happens) so hasRole() is
-// meaningful for two-tier apps without needing per-app mode-specific code.
+// ── Current user (api-key mode resolves identity+role via GET /users/me) ──
+// login() fetches the real user id and role once, at login time, and caches
+// them here — getCurrentUser() only reads that cache, so it can stay
+// synchronous exactly like the JWT variant's decode-from-token read.
 export interface CurrentUser {
   id: string;
   roles: string[];
@@ -122,7 +136,8 @@ export interface CurrentUser {
 export function getCurrentUser(): CurrentUser | null {
   const key = localStorage.getItem(TOKEN_KEY);
   if (!key) return null;
-  return { id: "api-key", roles: hasTwoRoles() ? [getStoredRole()] : [] };
+  const role = localStorage.getItem("userRole");
+  return { id: localStorage.getItem("userId") ?? "api-key", roles: role ? [role] : [] };
 }
 
 export function hasRole(...allowed: string[]): boolean {
@@ -138,9 +153,8 @@ export function isSessionValid(): boolean {
   return getCurrentUser() !== null;
 }
 
-// CurrentUser.id is always "api-key" here (no per-user identity), so
-// ownership/actor comparisons never match — kept for call-site parity with
-// the JWT variant, not because per-user ownership checks apply in this mode.
+// CurrentUser.id is the real backend user id resolved by login() via
+// GET /users/me, so ownership/actor comparisons behave like the JWT variant.
 export function isCurrentUser(id: string | number): boolean {
   const user = getCurrentUser();
   if (!user) return false;

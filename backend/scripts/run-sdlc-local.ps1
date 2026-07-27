@@ -42,6 +42,7 @@ param(
     [switch] $SkipQa,
     [switch] $SkipVerify,
     [switch] $SkipGitlab,
+    [switch] $SkipFrontend,
     [switch] $WithJira,
     [string] $GitlabProject = "",
     [string] $GitlabBase = "",
@@ -145,6 +146,9 @@ $runQa = $false
 if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
 # GitLab publish runs after verify unless skipped (-SkipGitlab).
 $runGitlab = (-not $SkipGitlab) -and (-not $SkipDeveloper)
+# Frontend-agent runs by default after developer, before GitLab (matches sdlc_pipeline _step_frontend).
+# -SkipFrontend to disable. Not wired into the orchestrator; this is the local pipeline's own step.
+$runFrontend = (-not $SkipFrontend) -and (-not $SkipDeveloper)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
 
@@ -336,6 +340,10 @@ function Invoke-LocalVerify {
 
     $venvPython = Join-Path $targetDir ".venv\Scripts\python.exe"
     $python = if (Test-Path $venvPython) { $venvPython } else { "python" }
+    # verify_seed_bcrypt.py is a SHARED repo tool (needs bcrypt from the repo venv),
+    # never the app venv above - the app venv doesn't install repo-level deps.
+    $repoVenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    $repoPython = if (Test-Path $repoVenvPython) { $repoVenvPython } else { "python" }
 
     Push-Location $targetDir
     $prevDbUrl = $env:DATABASE_URL
@@ -362,11 +370,11 @@ function Invoke-LocalVerify {
         }
         $pytestLine = ($pytestOut | Select-Object -Last 1)
 
-        & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --quiet
+        & $repoPython (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --quiet
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Seed bcrypt verification failed - README login will fail on RDS even if pytest passes."
         }
-        & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds --quiet
+        & $repoPython (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds --quiet
         if ($LASTEXITCODE -ne 0) {
             throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
         }
@@ -581,6 +589,22 @@ Invoke-GenerateEnv -TargetFeature $Feature
 # 5) Local verify (before publish - do not push broken code)
 if (-not $SkipVerify) {
     Invoke-LocalVerify -TargetFeature $Feature
+}
+
+# 5b) Frontend-agent -> React frontend from OpenAPI contract (runs by default; -SkipFrontend to disable).
+# Mirrors sdlc_pipeline _step_frontend (local transport): passes --full-regen for a clean from-scratch build.
+if ($runFrontend) {
+    Write-Host "`n=== 5b/6 frontend-agent (React from OpenAPI contract) ===" -ForegroundColor Green
+    $frontendArgs = @(
+        "agents/frontend-agent/frontend_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile,
+        "--full-regen"
+    )
+    if ((Invoke-PipelinePython -ArgumentList $frontendArgs) -ne 0) {
+        Write-Warning "frontend-agent reported issues - review target-apps/$Feature/frontend before GitLab publish."
+    }
+    $pipelineAgentsRun += "frontend-agent"
 }
 
 # 6) GitLab-agent -> MCP push to sdlc/<app> branch (default publish; MR opt-in via gitlab-agent --open-mr)
