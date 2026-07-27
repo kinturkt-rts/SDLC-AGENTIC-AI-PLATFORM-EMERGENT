@@ -282,12 +282,26 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
         : RUN_NO_PROGRESS_IDLE_MS;
 
   if (isActiveStatus && idleMs > idleThresholdMs) {
+    // run.json reaching a later step is progress even when artifact evidence is
+    // unavailable, so never claim product-agent never ran in that case.
+    const reachedStep = input.reportedCurrentStep?.trim() || null;
+    const progressed =
+      anyProgress ||
+      input.status === 'awaiting_deploy' ||
+      (!!reachedStep && reachedStep !== 'product-agent');
+    if (progressed) {
+      return {
+        status: 'failed',
+        currentStep: null,
+        error: reachedStep
+          ? `Pipeline stalled (no activity in the last hour - last step ${reachedStep})`
+          : 'Pipeline stalled (no activity in the last hour)',
+      };
+    }
     return {
       status: 'failed',
       currentStep: null,
-      error: anyProgress
-        ? 'Pipeline stalled (no activity in the last hour)'
-        : 'Pipeline abandoned (no activity since it started - never completed product-agent)',
+      error: 'Pipeline abandoned (no activity since it started - never completed product-agent)',
     };
   }
 

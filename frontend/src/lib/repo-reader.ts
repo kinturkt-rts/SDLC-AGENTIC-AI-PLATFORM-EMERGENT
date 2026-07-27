@@ -107,7 +107,11 @@ function runNeedsHeavyProbe(live: LiveRunState, log: string | null): boolean {
     return false;
   }
   if (log && parseLogTerminalStatus(log)) return false;
-  return live.status === 'running' || live.status === 'queued';
+  // awaiting_deploy must load evidence too: the deploy result only exists in S3
+  // (devops handoff), so without it the run looks like it made zero progress.
+  return (
+    live.status === 'running' || live.status === 'queued' || live.status === 'awaiting_deploy'
+  );
 }
 
 export { invalidateRunsCache } from './runs-cache';

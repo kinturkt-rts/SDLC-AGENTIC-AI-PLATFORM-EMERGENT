@@ -14,6 +14,17 @@ const allDone: Record<SdlcPhase, boolean> = {
   deploy: false,
 };
 
+const emptyPhases: Record<SdlcPhase, boolean> = {
+  requirements: false,
+  architecture: false,
+  data: false,
+  implementation: false,
+  qa: false,
+  security: false,
+  publish: false,
+  deploy: false,
+};
+
 describe('reconcileRunStatus', () => {
   it('keeps cancelled even when every pipeline phase has artifacts', () => {
     const result = reconcileRunStatus({
@@ -99,5 +110,38 @@ describe('reconcileRunStatus', () => {
     });
 
     assert.equal(result.status, 'completed');
+  });
+
+  it('awaiting_deploy with evidence stays awaiting_deploy after the idle window', () => {
+    const startedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const result = reconcileRunStatus({
+      status: 'awaiting_deploy',
+      startedAt,
+      logMtimeMs: 0,
+      s3MtimeMs: Date.parse(startedAt) + 20 * 60 * 1000,
+      logText: null,
+      phaseDone: allDone,
+      reportedCurrentStep: 'gitlab-agent',
+    });
+
+    assert.equal(result.status, 'awaiting_deploy');
+    assert.equal(result.currentStep, 'devops-agent');
+  });
+
+  it('never reports "never completed product-agent" for a run that reached a later step', () => {
+    const startedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const result = reconcileRunStatus({
+      status: 'awaiting_deploy',
+      startedAt,
+      logMtimeMs: 0,
+      s3MtimeMs: 0,
+      logText: null,
+      phaseDone: emptyPhases,
+      reportedCurrentStep: 'gitlab-agent',
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.error ?? '', /gitlab-agent/);
+    assert.doesNotMatch(result.error ?? '', /never completed product-agent/);
   });
 });
