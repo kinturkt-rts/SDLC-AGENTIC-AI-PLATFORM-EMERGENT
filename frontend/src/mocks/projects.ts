@@ -91,7 +91,7 @@ export const mockPipelines: PipelineDefinition[] = [
     id: 'standard-sdlc',
     name: 'Standard SDLC',
     description:
-      'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy.',
+      'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy puts a live URL in front of users.',
     phases: [
       { phase: 'requirements', agent: 'product-agent', hitl: false },
       { phase: 'architecture', agent: 'architect-agent', hitl: false },

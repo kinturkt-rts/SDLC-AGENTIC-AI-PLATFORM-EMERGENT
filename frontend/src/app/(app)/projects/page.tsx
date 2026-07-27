@@ -86,7 +86,7 @@ export default function ProjectsPage() {
       <PageHeader
         eyebrow="Design"
         title="Projects"
-        description="Target applications produced by the SDLC pipeline - PRDs, diagram, designs, SQL, and Python code. Status refreshes from the latest pipeline run."
+        description="Target applications produced by the SDLC pipeline - PRDs, diagrams, designs, SQL, Python code, and live AWS deploys. Status refreshes from the latest pipeline run."
         actions={
           <Link
             href="/dashboard"

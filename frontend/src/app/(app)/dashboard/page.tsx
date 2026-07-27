@@ -1056,7 +1056,7 @@ export default function DashboardPage() {
             SDLC Agentic AI Platform
           </h1>
           <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-            Submit a requirements brief and run the full SDLC pipeline on AgentCore - PRD, architecture, SQL, application code, and GitLab publish.
+            Submit a requirements brief and run the full SDLC pipeline on AgentCore - PRD, architecture, SQL, application code, GitLab publish, and AWS deploy.
           </p>
 
           <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">

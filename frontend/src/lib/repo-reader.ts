@@ -2137,7 +2137,7 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
       id: 'standard-sdlc',
       name: 'Standard SDLC',
       description:
-        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy is the demo-2 phase that puts a live URL in front of users.',
+        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy puts a live URL in front of users.',
       phases: TIMELINE_PHASES.map((phase) => ({
         phase,
         agent: PHASE_AGENT[phase],

@@ -32,8 +32,8 @@ export default function AboutPage() {
             </h2>
             <p className="text-sm leading-relaxed text-muted-foreground">
               Turn a short product brief into working applications. Specialist AI agents handle
-              requirements, architecture, database design, application code, and GitLab publish -
-              so teams move from idea to a ready repository faster.
+              requirements, architecture, database design, application code, GitLab publish, and AWS
+              deploy - so teams move from idea to a live app faster.
             </p>
           </div>
         </div>
@@ -95,7 +95,7 @@ export default function AboutPage() {
           <h3 className="text-sm font-semibold text-foreground">How a run works</h3>
         </div>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Product → Architect → Database → Developer → GitLab
+          Product → Architect → Database → Developer → GitLab → Deploy
         </p>
         <p className="mt-3 text-sm text-muted-foreground">
           Prefer dark mode or other preferences? Adjust them in{' '}
