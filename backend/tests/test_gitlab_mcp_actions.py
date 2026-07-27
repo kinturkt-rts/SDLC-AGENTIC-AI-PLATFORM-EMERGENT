@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import sys
@@ -333,6 +334,201 @@ def test_write_pipeline_run_marker_cloud_workspace(tmp_path: Path) -> None:
 
     dests = {dest for _, dest in collect_feature_artifact_entries(feature, root=tmp_path)}
     assert rel in dests
+
+
+# ---------------------------------------------------------------------------
+# Idempotent-publish guard (duplicate GitLab pipeline prevention)
+# ---------------------------------------------------------------------------
+
+
+def _apps_repo_files_with_marker(tmp_path: Path, feature: str, run_id: str) -> list[dict]:
+    (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
+    (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# main", encoding="utf-8")
+    write_pipeline_run_marker(feature, run_id, root=tmp_path)
+    return _collect_apps_repo_publish_files(feature, root=tmp_path)
+
+
+def test_local_marker_run_id_reads_the_publish_payload(tmp_path: Path) -> None:
+    from _shared.gitlab_mcp_actions import _local_marker_run_id
+
+    files = _apps_repo_files_with_marker(tmp_path, "demo-app", "run-xyz-1")
+    assert _local_marker_run_id(files) == "run-xyz-1"
+
+
+def test_local_marker_run_id_none_when_marker_absent(tmp_path: Path) -> None:
+    from _shared.gitlab_mcp_actions import _local_marker_run_id
+
+    (tmp_path / "target-apps" / "demo-app" / "app").mkdir(parents=True)
+    (tmp_path / "target-apps" / "demo-app" / "app" / "main.py").write_text("# main", encoding="utf-8")
+    files = _collect_apps_repo_publish_files("demo-app", root=tmp_path)
+    assert _local_marker_run_id(files) is None
+
+
+def test_fetch_remote_marker_run_id_parses_success_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from _shared import gitlab_mcp_actions as mod
+
+    class _FakeResponse:
+        status_code = 200
+        text = json.dumps({"runId": "run-xyz-1"})
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *exc) -> None:
+            return None
+
+        async def get(self, *args, **kwargs) -> _FakeResponse:
+            return _FakeResponse()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "glpat-test")
+
+    result = asyncio.run(
+        mod._fetch_remote_marker_run_id("123", "sdlc/demo-app", ".sdlc/pipeline-run.json")
+    )
+    assert result == "run-xyz-1"
+
+
+def test_fetch_remote_marker_run_id_fails_open_on_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    from _shared import gitlab_mcp_actions as mod
+
+    class _FakeResponse:
+        status_code = 404
+        text = ""
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *exc) -> None:
+            return None
+
+        async def get(self, *args, **kwargs) -> _FakeResponse:
+            return _FakeResponse()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "glpat-test")
+
+    result = asyncio.run(
+        mod._fetch_remote_marker_run_id("123", "sdlc/demo-app", ".sdlc/pipeline-run.json")
+    )
+    assert result is None
+
+
+def test_fetch_remote_marker_run_id_fails_open_on_network_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _shared import gitlab_mcp_actions as mod
+
+    class _RaisingAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self) -> "_RaisingAsyncClient":
+            return self
+
+        async def __aexit__(self, *exc) -> None:
+            return None
+
+        async def get(self, *args, **kwargs):
+            raise ConnectionError("no route to host")
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _RaisingAsyncClient)
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "glpat-test")
+
+    result = asyncio.run(
+        mod._fetch_remote_marker_run_id("123", "sdlc/demo-app", ".sdlc/pipeline-run.json")
+    )
+    assert result is None
+
+
+def test_publish_already_landed_true_when_marker_matches_and_all_paths_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Duplicate-trigger case: a retry (a2a fallback / SDLC_GITLAB_PUBLISH_RETRIES /
+    manual re-run) must be recognized as already-published so no new commits or CI
+    pipeline get created."""
+    from _shared import gitlab_mcp_actions as mod
+
+    files = _apps_repo_files_with_marker(tmp_path, "demo-app", "run-xyz-1")
+    existing_paths = {f["path"] for f in files}
+
+    async def _fake_fetch(project_id: str, branch: str, marker_path: str) -> str:
+        assert marker_path == ".sdlc/pipeline-run.json"
+        return "run-xyz-1"
+
+    monkeypatch.setattr(mod, "_fetch_remote_marker_run_id", _fake_fetch)
+
+    already = asyncio.run(
+        mod._publish_already_landed(
+            project_id="123",
+            branch="demo-app",
+            files=files,
+            existing_paths=existing_paths,
+        )
+    )
+    assert already is True
+
+
+def test_publish_already_landed_false_when_a_file_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partially-completed publish (e.g. crashed mid-way) must still proceed —
+    only a fully-matched publish is treated as a safe no-op."""
+    from _shared import gitlab_mcp_actions as mod
+
+    files = _apps_repo_files_with_marker(tmp_path, "demo-app", "run-xyz-1")
+    existing_paths = {f["path"] for f in files}
+    existing_paths.discard("app/main.py")  # simulate an incomplete prior publish
+
+    async def _fake_fetch(project_id: str, branch: str, marker_path: str) -> str:
+        return "run-xyz-1"
+
+    monkeypatch.setattr(mod, "_fetch_remote_marker_run_id", _fake_fetch)
+
+    already = asyncio.run(
+        mod._publish_already_landed(
+            project_id="123",
+            branch="demo-app",
+            files=files,
+            existing_paths=existing_paths,
+        )
+    )
+    assert already is False
+
+
+def test_publish_already_landed_false_when_remote_run_id_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely different publish (different runId) must never be skipped."""
+    from _shared import gitlab_mcp_actions as mod
+
+    files = _apps_repo_files_with_marker(tmp_path, "demo-app", "run-xyz-NEW")
+    existing_paths = {f["path"] for f in files}
+
+    async def _fake_fetch(project_id: str, branch: str, marker_path: str) -> str:
+        return "run-xyz-OLD"
+
+    monkeypatch.setattr(mod, "_fetch_remote_marker_run_id", _fake_fetch)
+
+    already = asyncio.run(
+        mod._publish_already_landed(
+            project_id="123",
+            branch="demo-app",
+            files=files,
+            existing_paths=existing_paths,
+        )
+    )
+    assert already is False
 
 
 def test_write_pipeline_run_marker_skips_without_run_id(tmp_path: Path) -> None:

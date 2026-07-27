@@ -359,10 +359,19 @@ def update_pipeline_run(
     *,
     status: str | None = None,
     last_agent: str | None = None,
-) -> None:
-    """Orchestrator-only: update DynamoDB run index after a pipeline step."""
+    pipeline_id: int | None = None,
+) -> bool:
+    """Orchestrator-only: update DynamoDB run index after a pipeline step.
+
+    ``pipeline_id`` (GitLab's monotonically increasing ``$CI_PIPELINE_ID``) is an
+    optional ordering key: when given, the write only applies if no prior write
+    recorded a *newer* pipeline_id, so a stale/superseded deploy pipeline finishing
+    late can never overwrite a more recent one's status. Returns False when the
+    write was rejected as stale (logged, non-fatal); True otherwise (including when
+    dynamodb is disabled, a no-op).
+    """
     if not is_s3_store() or not dynamodb_enabled():
-        return
+        return True
     now = datetime.now(UTC).isoformat()
     expr_names: dict[str, str] = {"#u": "updatedAt"}
     expr_values: dict[str, Any] = {":u": now}
@@ -375,12 +384,39 @@ def update_pipeline_run(
         expr_names["#a"] = "lastAgent"
         expr_values[":a"] = last_agent
         set_parts.append("#a = :a")
-    _dynamodb_table().update_item(
+    condition_expression = None
+    if pipeline_id is not None:
+        expr_names["#p"] = "gitlabPipelineId"
+        expr_values[":p"] = pipeline_id
+        set_parts.append("#p = :p")
+        condition_expression = "attribute_not_exists(#p) OR #p <= :p"
+    kwargs: dict[str, Any] = dict(
         Key={"runId": run_id, "artifactKey": "META"},
         UpdateExpression="SET " + ", ".join(set_parts),
         ExpressionAttributeNames=expr_names,
         ExpressionAttributeValues=expr_values,
     )
+    if condition_expression:
+        kwargs["ConditionExpression"] = condition_expression
+    try:
+        _dynamodb_table().update_item(**kwargs)
+    except Exception as exc:  # noqa: BLE001 — only swallow the conditional-check case
+        from botocore.exceptions import ClientError
+
+        if (
+            isinstance(exc, ClientError)
+            and exc.response.get("Error", {}).get("Code")
+            == "ConditionalCheckFailedException"
+        ):
+            print(
+                f"[artifact-store] stale status write ignored for run {run_id}: "
+                f"incoming pipeline_id={pipeline_id} is not newer than the stored one "
+                f"(status={status!r}, last_agent={last_agent!r})",
+                flush=True,
+            )
+            return False
+        raise
+    return True
 
 
 def sync_repo_paths_to_run(run_id: str, rel_paths: list[str]) -> list[str]:

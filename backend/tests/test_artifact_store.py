@@ -152,6 +152,84 @@ def test_put_dynamodb_pointer_skipped_when_disabled(monkeypatch: pytest.MonkeyPa
         mock_table.assert_not_called()
 
 
+def test_update_pipeline_run_no_op_when_dynamodb_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_DYNAMODB_ENABLED", "false")
+    from _shared.artifact_store import update_pipeline_run
+
+    with patch("_shared.artifact_store._dynamodb_table") as mock_table:
+        applied = update_pipeline_run("run-1", status="failed", pipeline_id=5)
+        mock_table.assert_not_called()
+        assert applied is True
+
+
+def test_update_pipeline_run_includes_condition_expression_with_pipeline_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_DYNAMODB_ENABLED", "true")
+    from _shared.artifact_store import update_pipeline_run
+
+    with patch("_shared.artifact_store._dynamodb_table") as mock_table:
+        applied = update_pipeline_run(
+            "run-1", status="completed", last_agent="devops-agent", pipeline_id=42
+        )
+        assert applied is True
+        _, kwargs = mock_table.return_value.update_item.call_args
+        assert kwargs["ConditionExpression"] == "attribute_not_exists(#p) OR #p <= :p"
+        assert kwargs["ExpressionAttributeValues"][":p"] == 42
+
+
+def test_update_pipeline_run_omits_condition_expression_without_pipeline_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_DYNAMODB_ENABLED", "true")
+    from _shared.artifact_store import update_pipeline_run
+
+    with patch("_shared.artifact_store._dynamodb_table") as mock_table:
+        applied = update_pipeline_run("run-1", status="completed")
+        assert applied is True
+        _, kwargs = mock_table.return_value.update_item.call_args
+        assert "ConditionExpression" not in kwargs
+
+
+def test_update_pipeline_run_rejects_stale_pipeline_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pipeline that finishes late for a superseded commit must not clobber a
+    status already recorded by a newer pipeline (the run-582cf1e8 stale-write bug)."""
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_DYNAMODB_ENABLED", "true")
+    from botocore.exceptions import ClientError
+
+    from _shared.artifact_store import update_pipeline_run
+
+    with patch("_shared.artifact_store._dynamodb_table") as mock_table:
+        mock_table.return_value.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException", "Message": "stale"}},
+            "UpdateItem",
+        )
+        applied = update_pipeline_run("run-1", status="failed", pipeline_id=3)
+        assert applied is False
+
+
+def test_update_pipeline_run_reraises_unrelated_client_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_DYNAMODB_ENABLED", "true")
+    from botocore.exceptions import ClientError
+
+    from _shared.artifact_store import update_pipeline_run
+
+    with patch("_shared.artifact_store._dynamodb_table") as mock_table:
+        mock_table.return_value.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": "x"}},
+            "UpdateItem",
+        )
+        with pytest.raises(ClientError):
+            update_pipeline_run("run-1", status="failed", pipeline_id=3)
+
+
 def test_materialize_run_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     from _shared.artifact_store import materialize_run, put_artifact

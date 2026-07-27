@@ -22,7 +22,13 @@ _INFRA_DIR = _REPO_ROOT / "infrastructure"
 _PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
-from _shared.artifact_store import is_s3_store, put_handoff, resolve_run_id, update_pipeline_run
+from _shared.artifact_store import (
+    get_handoff,
+    is_s3_store,
+    put_handoff,
+    resolve_run_id,
+    update_pipeline_run,
+)
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.deploy_manifest import (
     build_deploy_manifest,
@@ -392,6 +398,28 @@ def render_tf_root(manifest: dict[str, Any]) -> str:
     )
 
 
+def _is_status_write_superseded(
+    this_pipeline_id: int | None, remote_handoff: dict[str, Any] | None
+) -> bool:
+    """True when a same-or-newer pipeline already recorded a live handoff.
+
+    Guards the run's terminal status: a pipeline that finishes late for a commit
+    that was already superseded (multi-commit publish race, or a stale sibling
+    pipeline) must not overwrite a genuine success another pipeline already wrote.
+    A run with no ``gitlabPipelineId`` (local/non-CI runs) has no ordering
+    information available and is never treated as superseded.
+    """
+    if this_pipeline_id is None:
+        return False
+    remote_pipeline_id = remote_handoff.get("gitlabPipelineId") if remote_handoff else None
+    remote_has_live_url = bool(remote_handoff and remote_handoff.get("appUrl"))
+    return (
+        remote_pipeline_id is not None
+        and remote_pipeline_id >= this_pipeline_id
+        and remote_has_live_url
+    )
+
+
 def _merge_handoff(app: str, updates: dict[str, Any]) -> Path:
     _PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
     path = _PIPELINE_DIR / f"{app}.devops-handoff.json"
@@ -616,6 +644,12 @@ def main() -> None:
             if handoff.is_file()
             else None
         )
+        # Set by deploy-target-app.ps1 from GitLab's own $CI_PIPELINE_ID/$CI_COMMIT_SHA
+        # (empty outside CI). Monotonic ordering key so this job's write can be
+        # compared against whatever a differently-timed sibling pipeline already wrote.
+        this_pipeline_id = data.get("gitlabPipelineId") if data else None
+        this_commit_sha = data.get("gitlabCommitSha") if data else None
+        new_status = "completed" if rc == 0 else "failed"
 
         # Record handoff + run status even on failure — this stage may run
         # standalone (e.g. GitLab CI), outside the orchestrator that normally
@@ -625,13 +659,42 @@ def main() -> None:
         run_id = resolve_run_id(ctx)
         if is_s3_store():
             if run_id:
-                if data:
-                    put_handoff(run_id, "devops", data)
-                update_pipeline_run(
-                    run_id,
-                    status="completed" if rc == 0 else "failed",
-                    last_agent=AGENT_NAME,
-                )
+                remote = get_handoff(run_id, "devops") if this_pipeline_id is not None else None
+                superseded = _is_status_write_superseded(this_pipeline_id, remote)
+
+                if superseded:
+                    print(
+                        f"[{AGENT_NAME}] status transition SKIPPED (stale): run={run_id} "
+                        f"pipeline={this_pipeline_id} commit={this_commit_sha} rc={rc} "
+                        f"new_status={new_status} — a same-or-newer pipeline "
+                        f"({remote.get('gitlabPipelineId') if remote else None}) already "
+                        "recorded a live handoff; not overwriting it.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"[{AGENT_NAME}] status transition: run={run_id} "
+                        f"pipeline={this_pipeline_id} commit={this_commit_sha} "
+                        f"-> status={new_status} "
+                        f"(appUrl={'yes' if data and data.get('appUrl') else 'no'})",
+                        flush=True,
+                    )
+                    if data:
+                        put_handoff(run_id, "devops", data)
+                    applied = update_pipeline_run(
+                        run_id,
+                        status=new_status,
+                        last_agent=AGENT_NAME,
+                        pipeline_id=this_pipeline_id,
+                    )
+                    if not applied:
+                        print(
+                            f"[{AGENT_NAME}] DynamoDB rejected this status write as stale "
+                            f"(run={run_id}, pipeline={this_pipeline_id}); the S3 handoff "
+                            "above may still have been written — investigate ordering if "
+                            "this recurs.",
+                            file=sys.stderr,
+                        )
             else:
                 print(
                     f"[{AGENT_NAME}] WARN: ARTIFACT_STORE=s3 but no PIPELINE_RUN_ID "

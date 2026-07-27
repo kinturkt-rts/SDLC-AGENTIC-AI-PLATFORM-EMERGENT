@@ -12,7 +12,7 @@ Staff can browse pets and appointments.
 Reception staff with a valid API key can create, update, cancel, or complete appointments.
 Health checks stay open for ops.
 
-MVP features:
+Features:
 
 Maintain pet records: name, species, breed, age, owner name, owner email, active/inactive.
 Create appointments: pet, appointment date, appointment time, reason, veterinarian, status.
