@@ -3,12 +3,15 @@
 ADAPT checklist:
   - Replace SERVICE_NAME, PAGE_TITLE, PAGE_ICON with app-specific values.
   - Replace the example tabs/forms with your actual UI per the PRD/design.
-  - Keep all httpx helper functions and _ensure_api_reachable() unchanged.
+  - Keep all httpx helper functions, `_api_url()`, and `_ensure_api_reachable()` unchanged.
   - Every design §4 collection GET: call _get() from at least one role view (table or selectbox).
   - Catalog GETs (users, services, environments): fetch once per view/tab, never inside per-row loops.
   - POST-on-collection APIs need matching GET list; forms use st.selectbox, not st.text_input for IDs.
   - After successful POST/PATCH, call st.rerun() so lists refresh.
   - Every httpx call uses follow_redirects=True (FastAPI 307 redirect fix).
+  - API paths MUST use single slashes matching FastAPI routes exactly.
+    Wrong: "/api/v1/admin//status" or "/api/v1//query" (FastAPI 404 {"detail":"Not Found"}).
+    Right: "/api/v1/admin/status" or "/api/v1/query". `_api_url()` also collapses accidental `//`.
   - Never use deprecated `use_container_width` and never `width=0` (raises StreamlitInvalidWidthError).
     Use `width="stretch"` (full width) or `width="content"` (fit content) on st.dataframe,
     st.button, st.form_submit_button, etc.
@@ -35,9 +38,22 @@ st.set_page_config(page_title="SERVICE_NAME", page_icon="🔧", layout="wide")
 
 
 # ── HTTP helpers (DO NOT MODIFY) ─────────────────────────────────────────────
+def _api_url(path: str) -> str:
+    """Join API_BASE_URL + path; collapse accidental `//` inside the path.
+
+    FastAPI treats `/api/v1/admin//status` as Not Found — models often introduce
+    double slashes when concatenating prefix + segment. Never remove this helper.
+    """
+    base = API_BASE_URL.rstrip("/")
+    cleaned = "/" + str(path or "").lstrip("/")
+    while "//" in cleaned:
+        cleaned = cleaned.replace("//", "/")
+    return f"{base}{cleaned}"
+
+
 def _get(path: str, params: dict | None = None) -> httpx.Response:
     return httpx.get(
-        f"{API_BASE_URL}{path}",
+        _api_url(path),
         params=params,
         headers=HEADERS,
         timeout=30.0,
@@ -47,7 +63,7 @@ def _get(path: str, params: dict | None = None) -> httpx.Response:
 
 def _post(path: str, json_body: dict) -> httpx.Response:
     return httpx.post(
-        f"{API_BASE_URL}{path}",
+        _api_url(path),
         json=json_body,
         headers=HEADERS,
         timeout=60.0,
@@ -57,7 +73,7 @@ def _post(path: str, json_body: dict) -> httpx.Response:
 
 def _patch(path: str, json_body: dict) -> httpx.Response:
     return httpx.patch(
-        f"{API_BASE_URL}{path}",
+        _api_url(path),
         json=json_body,
         headers=HEADERS,
         timeout=30.0,
@@ -67,7 +83,7 @@ def _patch(path: str, json_body: dict) -> httpx.Response:
 
 def _delete(path: str) -> httpx.Response:
     return httpx.delete(
-        f"{API_BASE_URL}{path}",
+        _api_url(path),
         headers=HEADERS,
         timeout=30.0,
         follow_redirects=True,
@@ -119,13 +135,13 @@ st.title("SERVICE_NAME")
 #         field = st.text_input("Field name")
 #         submitted = st.form_submit_button("Submit")
 #         if submitted:
-#             resp = _post("/your-endpoint/", {"field": field})
+#             resp = _post("/api/v1/items", {"field": field})
 #             if resp.status_code in (200, 201):
 #                 st.success("Created!")
 #                 st.json(resp.json())
 #             else:
 #                 st.error(f"Error {resp.status_code}: {resp.text}")
 # with tab2:
-#     resp = _get("/your-endpoint/")
+#     resp = _get("/api/v1/items")
 #     if resp.status_code == 200:
 #         st.dataframe(resp.json(), width="stretch")

@@ -1,12 +1,14 @@
-"""Tests for the Streamlit width-API guard (StreamlitInvalidWidthError prevention)."""
+"""Tests for Streamlit UI_PARITY guards (width API + double-slash paths)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from _shared.validate_ui_parity import (
+    autofix_streamlit_api_path_slashes,
     autofix_streamlit_width_api,
     check_streamlit_no_deprecated_width_api,
+    check_streamlit_no_double_slash_paths,
 )
 
 
@@ -90,3 +92,49 @@ def test_autofix_noop_when_no_ui_dir(tmp_path: Path) -> None:
     app_dir = tmp_path / "demo-app-no-ui"
     app_dir.mkdir()
     assert autofix_streamlit_width_api(app_dir) == []
+
+
+def test_check_flags_double_slash_api_paths(tmp_path: Path) -> None:
+    app_dir = tmp_path / "kb-support-tickets"
+    _write_ui(
+        app_dir,
+        'resp = _get("/api/v1/admin//status")\n'
+        'resp2 = _get("/api/v1/admin//audit-log")\n',
+    )
+    errors = check_streamlit_no_double_slash_paths(app_dir)
+    assert any("double-slash" in e for e in errors)
+
+
+def test_check_accepts_single_slash_api_paths(tmp_path: Path) -> None:
+    app_dir = tmp_path / "kb-support-tickets"
+    _write_ui(
+        app_dir,
+        'resp = _get("/api/v1/admin/status")\n'
+        'resp2 = _post("/api/v1/query", {"query": "x"})\n',
+    )
+    assert check_streamlit_no_double_slash_paths(app_dir) == []
+
+
+def test_autofix_collapses_double_slash_api_paths(tmp_path: Path) -> None:
+    app_dir = tmp_path / "kb-support-tickets"
+    _write_ui(
+        app_dir,
+        'resp = _get("/api/v1/admin//status")\n'
+        'hist = _get("/api/v1//query")\n'
+        'login = _post("/api/v1/auth/token", {"email": "a"})\n',
+    )
+    fixes = autofix_streamlit_api_path_slashes(app_dir)
+    assert fixes
+    fixed = (app_dir / "ui" / "streamlit_app.py").read_text(encoding="utf-8")
+    assert "/api/v1/admin/status" in fixed
+    assert "/api/v1/query" in fixed
+    assert "//" not in fixed.replace("http://", "")
+    assert check_streamlit_no_double_slash_paths(app_dir) == []
+
+
+def test_autofix_path_slashes_noop_on_clean_file(tmp_path: Path) -> None:
+    app_dir = tmp_path / "demo-app"
+    body = 'resp = _get("/api/v1/admin/status")\n'
+    _write_ui(app_dir, body)
+    assert autofix_streamlit_api_path_slashes(app_dir) == []
+    assert (app_dir / "ui" / "streamlit_app.py").read_text(encoding="utf-8") == body
