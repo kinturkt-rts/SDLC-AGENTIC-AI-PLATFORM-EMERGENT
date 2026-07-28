@@ -10,9 +10,9 @@ export function PipelineModelsBanner() {
 
   return (
     <Card className="border-white/[0.06] bg-card/80 p-4">
-      <h2 className="text-sm font-semibold text-foreground">Pipeline models</h2>
+      <h2 className="text-sm font-semibold text-foreground">Pipeline LLM models</h2>
       <p className="mt-0.5 text-[11px] text-muted-foreground">
-        Bedrock models used by the default Product → Architect → Database → Developer → GitLab → Deploy flow
+        Bedrock models for Product → Architect → Database → Developer
       </p>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:gap-4">
         <div className="flex flex-1 flex-wrap items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/[0.04] px-3 py-2">

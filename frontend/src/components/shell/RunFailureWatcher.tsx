@@ -1,10 +1,21 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useRuns } from '@/src/lib/queries';
 
 const NOTIFIED_KEY = 'sdlc:notified-failed-runs';
+const TOAST_DESCRIPTION_MAX_CHARS = 160;
+
+/** Toasts are for a brief notification, not a wall of raw subprocess output —
+ * show only the first line (up to a length cap); the run detail page has the
+ * full text. */
+export function summarizeRunError(error: string): string {
+  const firstLine = error.split('\n')[0]?.trim() || error.trim();
+  if (firstLine.length <= TOAST_DESCRIPTION_MAX_CHARS) return firstLine;
+  return `${firstLine.slice(0, TOAST_DESCRIPTION_MAX_CHARS - 1).trimEnd()}…`;
+}
 
 function loadNotified(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -27,6 +38,7 @@ function saveNotified(ids: Set<string>) {
 
 export function RunFailureWatcher() {
   const { data: runs } = useRuns();
+  const router = useRouter();
   const notifiedRef = React.useRef<Set<string> | null>(null);
   const baselinedRef = React.useRef(false);
   if (notifiedRef.current === null) {
@@ -58,7 +70,13 @@ export function RunFailureWatcher() {
         notified.add(run.id);
         changed = true;
         toast.error(`Run failed: ${run.projectName || run.id}`, {
-          description: run.error || 'Open the run detail page to see the failure reason.',
+          description: run.error
+            ? summarizeRunError(run.error)
+            : 'Open the run detail page to see the failure reason.',
+          action: {
+            label: 'View details',
+            onClick: () => router.push(`/runs/${run.id}`),
+          },
         });
       }
     }

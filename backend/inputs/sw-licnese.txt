@@ -1,0 +1,47 @@
+Hi Team,
+
+We need an internal application to manage software licences used across the company. At the moment, licence information is maintained in spreadsheets by different teams, which makes it difficult to know which subscriptions are active, who they are assigned to, how much they cost, and when they are due for renewal.
+
+The application should provide a Streamlit-based interface for IT, procurement, department managers, and employees. Streamlit should use a FastAPI backend for all data access and business logic.
+
+IT and procurement should be able to register software products, maintain vendor details, add purchased licence plans, and assign licences to employees or departments. Managers should be able to view licences used by their teams, while employees should be able to see the software assigned to them.
+
+The system should also highlight upcoming renewals, expired licences, unused seats, and subscriptions that are close to their seat limit.
+
+Features
+Software catalogue with product name, vendor, category, description, and support URL
+Vendor management
+Licence plan management, including plan type, billing cycle, total seats, start date, renewal date, and cost
+Assign licences to employees or departments
+Revoke and reassign licences
+Track available, assigned, expired, suspended, and cancelled licences
+Dashboard showing total subscriptions, assigned seats, available seats, monthly cost, and upcoming renewals
+Renewal calendar and renewal alerts
+Search and filtering by software, vendor, department, employee, status, and renewal period
+Licence assignment history
+Cost tracking by department and software product
+Identify unused or unassigned licences
+CSV export for licence, assignment, renewal, and cost reports
+Role-based views for administrator, procurement, manager, and employee
+Audit history for important changes
+Important business rules
+The number of active assignments cannot exceed the total purchased seats.
+An expired, cancelled, or suspended licence plan cannot receive new assignments.
+The same employee should not receive duplicate assignments for the same licence plan.
+Revoked assignments must remain in history.
+Renewal dates must be later than subscription start dates.
+Only authorised administrators or procurement users can create licence plans or change financial information.
+Managers can view only their department’s licence usage.
+Employees can view only their own assigned software.
+Technical expectations
+FastAPI backend with complete CRUD APIs
+Streamlit frontend that communicates only through FastAPI
+Persisted relational database
+Multiple related entities such as software, vendors, licence plans, employees, departments, assignments, renewals, and audit records
+Validation and clear API error responses
+Seed data for demonstration
+Open health-check endpoint
+Secrets and configuration must not be hard-coded
+Success
+
+The application should allow an administrator to create a software product and vendor, add a subscription with a fixed number of seats, assign seats to employees, prevent over-allocation, revoke and reassign licences, review upcoming renewals, analyse cost and seat usage in Streamlit, and export reports.

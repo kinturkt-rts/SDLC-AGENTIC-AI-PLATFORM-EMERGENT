@@ -550,6 +550,22 @@ def apply_sql_files(
         with psycopg.connect(conn_url, autocommit=True, connect_timeout=connect_timeout) as conn:
             with conn.cursor() as cur:
                 if app_schema and reset_schema:
+                    reset_ddl_files = [f for f in files if not _is_seed_file(f)]
+                    if not reset_ddl_files:
+                        print(
+                            f"FAILED: --reset-schema requested for {app_schema!r} but "
+                            f"{sql_dir} has only seed file(s) "
+                            f"({', '.join(f.name for f in files)}) and no DDL (CREATE "
+                            "TABLE) files. Refusing to drop the schema without a full "
+                            "DDL set to recreate it — that would destroy any existing "
+                            "tables and leave the seed INSERTs failing against an empty "
+                            "schema. If this app already has a live schema and this run "
+                            "was only meant to add/update data, retry without "
+                            "--reset-schema; if this is a fresh app, database-agent must "
+                            "(re)generate the full DDL set alongside the seed file.",
+                            file=sys.stderr,
+                        )
+                        return 1
                     from psycopg import sql as psql
                     if verbose:
                         print(f"Resetting schema {app_schema!r} (DROP CASCADE + CREATE) ...", file=sys.stderr)

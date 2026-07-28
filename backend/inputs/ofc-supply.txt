@@ -1,0 +1,36 @@
+Hi Team,
+
+We need a simple internal application where employees can request common office supplies such as notebooks, pens, keyboards, cables, and printer paper.
+
+Right now, employees send requests through email or chat, and the administration team has no clear way to track pending requests or available stock.
+
+The application should use Streamlit for the user interface and FastAPI for the backend.
+
+Features
+Maintain a catalogue of office supplies
+Show item name, category, available quantity, and active status
+Employees can submit a supply request with item, quantity, and reason
+Employees can view their request history
+Administrators can approve or reject requests
+Approved requests reduce available stock
+Request statuses: Pending, Approved, Rejected, and Fulfilled
+Search and filter requests by employee, item, date, and status
+Simple dashboard showing pending requests and low-stock items
+Seed sample supplies and requests
+Important business rules
+Requested quantity must be greater than zero.
+Employees cannot request more than the available stock.
+Only pending requests can be approved or rejected.
+Stock should be reduced only when a request is approved.
+Rejected requests must remain in history.
+Inactive supplies cannot be requested.
+Technical expectations
+FastAPI backend with CRUD APIs
+Streamlit frontend using FastAPI only
+Persisted database
+Basic validation and error handling
+Open health-check endpoint
+No complex authentication required for the first version
+Success
+
+An employee can browse available supplies, submit a request, and view its status. An administrator can approve the request, and the available stock is updated correctly.

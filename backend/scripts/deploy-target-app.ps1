@@ -193,18 +193,32 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "docker login to ECR failed." }
 
         $apiImage = "${Registry}/sdlc/$Feature/api:$ImageTag"
-        Invoke-Native "docker" @("build", "-f", (Join-Path $AppDir "deploy\Dockerfile.api"), "-t", $apiImage, $AppDir) "docker build api"
-        Invoke-Native "docker" @("push", $apiImage) "docker push api"
-
         $uiDockerfile = Join-Path $AppDir "deploy\Dockerfile.ui"
         $streamlitApp = Join-Path (Join-Path $AppDir "ui") "streamlit_app.py"
-        if ((Test-Path $uiDockerfile) -and (Test-Path $streamlitApp)) {
-            $uiImage = "${Registry}/sdlc/$Feature/ui:$ImageTag"
-            Invoke-Native "docker" @("build", "-f", $uiDockerfile, "-t", $uiImage, $AppDir) "docker build ui"
-            Invoke-Native "docker" @("push", $uiImage) "docker push ui"
+        $buildUi = (Test-Path $uiDockerfile) -and (Test-Path $streamlitApp)
+        $uiImage = if ($buildUi) { "${Registry}/sdlc/$Feature/ui:$ImageTag" } else { $null }
+
+        # api and ui have independent Dockerfiles/tags - build+push concurrently
+        # instead of sequentially (was the biggest easy win in the deploy-latency
+        # breakdown for two-image apps).
+        $buildAndPush = {
+            param($Dockerfile, $Image, $Context, $Label)
+            & docker build -f $Dockerfile -t $Image $Context
+            if ($LASTEXITCODE -ne 0) { throw "docker build $Label failed (exit $LASTEXITCODE)." }
+            & docker push $Image
+            if ($LASTEXITCODE -ne 0) { throw "docker push $Label failed (exit $LASTEXITCODE)." }
+        }
+
+        $jobs = @(Start-Job -ScriptBlock $buildAndPush -ArgumentList (Join-Path $AppDir "deploy\Dockerfile.api"), $apiImage, $AppDir, "api")
+        if ($buildUi) {
+            $jobs += Start-Job -ScriptBlock $buildAndPush -ArgumentList $uiDockerfile, $uiImage, $AppDir, "ui"
         } else {
             Write-Host "No UI Dockerfile/streamlit app - api-only deploy." -ForegroundColor DarkGray
         }
+        # $ErrorActionPreference = "Stop" (top of script) turns a job's thrown
+        # error into a terminating error here too, matching Invoke-Native's
+        # fail-fast behavior.
+        $jobs | Receive-Job -Wait -AutoRemoveJob | Write-Host
     }
 
     # -- 3) Full apply -----------------------------------------------------------

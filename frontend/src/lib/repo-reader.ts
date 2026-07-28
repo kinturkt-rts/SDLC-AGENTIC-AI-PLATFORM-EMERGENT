@@ -820,6 +820,45 @@ function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   return next;
 }
 
+/**
+ * Reconcile phaseDone against the backend's own last-recorded step before
+ * mergeStepProgressFromPhases() picks which phase to blame for a failure.
+ *
+ * mergeStepProgressFromPhases() walks phases in fixed order and marks the
+ * *first* one whose phaseDone is false as "failed" — a narrow artifact-
+ * presence check per phase, not the backend's actual failure point. A step
+ * that isn't one of the named pipeline steps (e.g. rds-apply, which runs
+ * between database-agent and developer-agent but never updates currentStep)
+ * leaves currentStep pinned to the last real step that did run. Without this
+ * override, an unrelated earlier phase whose own artifact check happens to
+ * read "not done" for this run gets blamed instead — e.g. rds-apply failing
+ * showing up as "Architecture Diagram: Failed" instead of "Database".
+ *
+ * currentPhase's own phaseDone is force-set to false on a failed run so the
+ * blame lands there rather than sliding past it to whatever phase comes next.
+ */
+export function applyCurrentStepPhaseOverride(
+  phaseDone: Record<SdlcPhase, boolean>,
+  currentStep: string | null | undefined,
+  status: RunStatus,
+): Record<SdlcPhase, boolean> {
+  if (!currentStep || (status !== 'running' && status !== 'failed')) return phaseDone;
+  const currentPhase = agentPhase[currentStep];
+  if (!currentPhase) return phaseDone;
+
+  const order = COMPLETION_PHASES;
+  const idx = order.indexOf(currentPhase);
+  let next = phaseDone;
+  if (idx > 0) {
+    next = { ...next };
+    for (let i = 0; i < idx; i++) next[order[i]] = true;
+  }
+  if (status === 'failed') {
+    next = { ...next, [currentPhase]: false };
+  }
+  return next;
+}
+
 function mergeStepProgressFromPhases(
   live: LiveRunState,
   completed: Record<SdlcPhase, boolean>,
@@ -932,18 +971,14 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   }
 
   // When run.json/log already advanced past a stale S3 artifact index, treat earlier
-  // phases as done so the timeline strip does not flash an older agent.
-  if (reconciled.currentStep && reconciled.status === 'running') {
-    const currentPhase = agentPhase[reconciled.currentStep];
-    if (currentPhase) {
-      const order = COMPLETION_PHASES;
-      const idx = order.indexOf(currentPhase);
-      if (idx > 0) {
-        phaseDone = { ...phaseDone };
-        for (let i = 0; i < idx; i++) phaseDone[order[i]] = true;
-      }
-    }
-  }
+  // phases as done so the timeline strip does not flash an older agent — and, on a
+  // failed run, pin the blame on the backend's actual last-recorded step (see
+  // applyCurrentStepPhaseOverride for why this matters).
+  phaseDone = applyCurrentStepPhaseOverride(
+    phaseDone,
+    reconciled.currentStep,
+    reconciled.status,
+  );
 
   enriched = {
     ...enriched,

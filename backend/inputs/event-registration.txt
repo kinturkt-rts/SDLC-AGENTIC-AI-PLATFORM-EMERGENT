@@ -1,0 +1,17 @@
+Hi Team,
+
+Our HR team regularly organises internal events like workshops, hackathons, wellness sessions, and celebrations. Right now registrations are handled through emails and Forms, which makes attendance tracking difficult.
+
+We'd like an internal application where employees can browse upcoming events and register themselves.
+
+Features
+Create and manage events.
+Employee registration.
+Event capacity management.
+Waitlist when an event becomes full.
+Event categories (Training, HR, Social, Technical).
+Dashboard showing upcoming events.
+View registered participants.
+Cancel registrations.
+Email confirmation after registration.
+Event attendance tracking.
