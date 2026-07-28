@@ -52,6 +52,7 @@ import { api } from '@/src/lib/api';
 import { formatRelative, titleCase } from '@/src/lib/format';
 import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
+import { validateProductBrief } from '@/src/lib/brief-quality';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
@@ -542,6 +543,11 @@ function InputRequirementsCard() {
       toast.error('Cannot save empty requirements');
       return;
     }
+    const briefError = validateProductBrief(content);
+    if (briefError) {
+      toast.error('Brief looks incomplete', { description: briefError });
+      return;
+    }
     if (!feature || !featureValid) {
       toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
       return;
@@ -591,6 +597,11 @@ function InputRequirementsCard() {
     if (submitLockRef.current || submitting || fileLoading) return;
     if (!content.trim()) {
       toast.error('Cannot submit empty requirements');
+      return;
+    }
+    const briefError = validateProductBrief(content);
+    if (briefError) {
+      toast.error('Brief looks incomplete', { description: briefError });
       return;
     }
     if (!feature || !featureValid) {

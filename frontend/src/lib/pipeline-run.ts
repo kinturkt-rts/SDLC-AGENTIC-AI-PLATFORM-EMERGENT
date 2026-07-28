@@ -8,6 +8,7 @@ import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
 import { finalizeRunJson, runOrchestratorCloud } from './orchestrator-cloud-run';
 import { listRuns } from './repo-reader';
+import { validateProductBrief } from './brief-quality';
 
 const RUNS_CACHE_KEYS = [
   'listRuns',
@@ -137,7 +138,8 @@ export async function uploadBrief(
 ): Promise<UploadBriefResult> {
   const slugError = validateTargetApp(targetApp);
   if (slugError) throw new Error(slugError);
-  if (!content.trim()) throw new Error('content is empty');
+  const briefError = validateProductBrief(content);
+  if (briefError) throw new Error(briefError);
 
   const slug = targetApp.trim().toLowerCase();
   const byteLen = Buffer.byteLength(content, 'utf-8');
