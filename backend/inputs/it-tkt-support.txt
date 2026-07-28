@@ -1,0 +1,43 @@
+Hi Team,
+
+We need an internal IT support application to replace support requests currently sent through email and chat. Employees should be able to raise issues, track progress, and communicate with the IT team from one place.
+
+The application should use Streamlit for employees and support staff, while FastAPI handles ticket management, validation, and data persistence.
+
+Features
+Employees can create support tickets with title, description, category, priority, and optional attachment reference
+Ticket categories such as Hardware, Software, Access, Network, and Other
+Ticket statuses: New, Assigned, In Progress, Waiting for User, Resolved, and Closed
+Assign tickets to IT support agents
+Add internal notes and employee-visible comments
+Maintain a complete ticket activity timeline
+Dashboard showing open tickets, overdue tickets, average resolution time, and workload by agent
+Search and filter by requester, category, priority, status, assigned agent, and date
+Employees can view their own tickets
+Agents can view tickets assigned to them
+Supervisors can reassign and prioritise tickets
+SLA due-date calculation based on ticket priority
+CSV export for ticket and performance reports
+Role-based views for employee, support agent, and supervisor
+Audit history for status, priority, and assignment changes
+Important business rules
+Every ticket must have a requester, category, title, and description.
+Closed tickets cannot be edited unless reopened by a supervisor.
+Only support agents or supervisors can change ticket status.
+Only supervisors can change priority after submission.
+SLA deadlines should be calculated when a ticket is created.
+Resolved tickets must include a resolution summary.
+Employees can access only their own tickets.
+Internal notes must not be visible to employees.
+Technical expectations
+FastAPI backend with complete CRUD and workflow APIs
+Streamlit frontend using FastAPI only
+Persisted relational database
+Entities such as users, tickets, categories, comments, assignments, status history, and SLA rules
+Validation and consistent error responses
+Seed users and sample tickets
+Open health-check endpoint
+Keep secrets in environment configuration
+Success
+
+An employee can submit a ticket, an agent can accept and work on it, both parties can add comments, the system tracks SLA and status history, and a supervisor can monitor support performance from the dashboard.

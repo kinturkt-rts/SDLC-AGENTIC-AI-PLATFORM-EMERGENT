@@ -1,0 +1,39 @@
+Hi Team,
+
+We'd like an internal application where employees can recognize coworkers for outstanding work, teamwork, innovation, or customer support. HR should be able to review recognitions, approve reward points, and generate monthly recognition reports.
+
+The application should have a Streamlit frontend and a FastAPI backend.
+
+Features
+Employee recognition submissions
+Recognition categories
+Reward points
+Manager approval
+Monthly leaderboard
+Employee recognition history
+Dashboard showing top performers
+Search and filtering
+Monthly recognition reports
+Badge management
+Department-wise analytics
+CSV export
+Role-based access (Employee, Manager, HR)
+Audit history
+Important business rules
+Employees cannot recognize themselves.
+Recognition must include a category and justification.
+Reward points can only be approved by managers or HR.
+Rejected recognitions remain in history.
+Monthly leaderboards should include only approved recognitions.
+HR can modify reward point values.
+Technical expectations
+FastAPI backend
+Streamlit frontend
+Persisted database
+CRUD APIs
+Multiple related entities
+Seed demo data
+Health endpoint
+Success
+
+Employees recognize colleagues, managers approve recognitions, HR manages rewards, and Streamlit dashboards display leaderboards, analytics, and recognition trends.

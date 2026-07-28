@@ -1,5 +1,0 @@
-We want a simple recipe box API for our office cooking club.
-
-Anyone should be able to add a recipe with a name, optional cuisine type, ingredients text, steps text, and an estimated cook time in minutes. People need to browse the full list, search by name or cuisine, update a recipe when they improve it, and remove ones that did not work out.
-
-First version is just a FastAPI + Postgres CRUD service — no fancy screens, no auth beyond a shared API key for writes. Swagger at /docs is fine. Goal is a clean place to store and look up recipes without shared docs falling out of date.

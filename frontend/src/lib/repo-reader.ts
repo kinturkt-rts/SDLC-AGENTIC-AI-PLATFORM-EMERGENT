@@ -1051,7 +1051,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     } else if (ci.status === 'failed' || ci.status === 'canceled') {
       deployCiFailed = true;
       deployCiFailedDetail = ci.webUrl
-        ? `GitLab deploy pipeline failed — ${ci.webUrl}`
+        ? `GitLab deploy pipeline failed - ${ci.webUrl}`
         : 'GitLab deploy pipeline failed.';
     }
   }

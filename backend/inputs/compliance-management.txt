@@ -1,0 +1,250 @@
+Hi Team,
+
+We need an internal application that gives employees, managers, compliance teams, and administrators one central place to access company policies, operational procedures, regulatory guidance, and internal standards.
+
+Today, these documents are stored across shared drives, email attachments, and different team folders. Employees often struggle to find the latest approved version, and compliance teams have limited visibility into which documents are being used, which policies are expiring, and whether employees have acknowledged important updates.
+
+The application should use a Streamlit frontend with a FastAPI backend. It should also include a RAG-based assistant using Claude models for answer generation and Amazon Titan Embeddings for semantic search.
+
+The goal is not only to store documents, but to make them searchable, traceable, version-controlled, and usable through a grounded AI assistant that always references the source material.
+
+Features
+Upload and manage internal documents such as policies, SOPs, standards, guidelines, training material, and compliance manuals
+Support PDF, DOCX, TXT, and Markdown documents
+Organise documents by department, category, business unit, region, document type, owner, and confidentiality level
+Maintain document versions with draft, under review, approved, published, archived, and expired statuses
+Track document effective date, review date, expiry date, owner, approver, and approval history
+Publish only approved versions to employees
+Keep previous versions available for audit and comparison
+Streamlit dashboard for document status, upcoming reviews, expired policies, recent uploads, and acknowledgement completion
+Search documents using metadata filters and full-text search
+Semantic search using Amazon Titan Embeddings
+RAG assistant powered by Claude models
+AI answers must be generated only from retrieved internal content
+Show source citations with document name, version, section, page number, and relevance
+Allow users to open the referenced source directly from an AI answer
+Allow follow-up questions within the same conversation
+Maintain conversation history by user and session
+Allow users to rate AI answers as helpful or not helpful
+Allow users to report an incorrect or unsupported answer
+Show a clear response when sufficient evidence is not found
+Compare two versions of a policy and summarise important changes
+Generate a document summary, key obligations, responsibilities, deadlines, and action items
+Extract frequently asked questions from approved documents
+Employee acknowledgement workflow for mandatory policies
+Track who acknowledged a policy and when
+Send or simulate reminders for overdue acknowledgements
+Managers can view acknowledgement status for their own teams
+Compliance users can view organisation-wide compliance dashboards
+Admin users can manage departments, categories, document types, roles, and RAG configuration
+Audit log for uploads, edits, approvals, publishing, acknowledgement, deletion attempts, and AI queries
+CSV export for document inventory, review schedules, acknowledgement status, and AI usage reports
+Seed demo users, departments, documents, versions, acknowledgements, and AI conversations
+User roles
+Employee
+Search and read published documents
+Ask questions through the AI assistant
+View citations
+Acknowledge assigned policies
+View personal acknowledgement history
+Manager
+All employee capabilities
+View acknowledgement status for employees in their department
+View team-specific compliance gaps
+Document Owner
+Create document records
+Upload new versions
+Submit documents for review
+View review comments and version history
+Reviewer or Approver
+Review submitted documents
+Add comments
+Approve or reject versions
+Publish approved versions when authorised
+Compliance User
+View all published and historical policies
+Monitor expiry and acknowledgement status
+Access organisation-wide reports
+Review reported AI answers
+Administrator
+Manage users, roles, metadata, permissions, and application settings
+Manage embedding and indexing jobs
+Reprocess failed documents
+View complete audit history
+RAG workflow
+An authorised user uploads a document through Streamlit
+Streamlit sends the document and metadata to FastAPI
+FastAPI validates the file and creates a document version record
+The document is stored in persistent object storage
+Text is extracted while preserving page and section information
+Extracted text is cleaned and divided into configurable chunks
+Amazon Titan Embeddings generates an embedding for every chunk
+Chunks, embeddings, document metadata, version information, and source locations are stored in a vector-capable data store
+Only approved and published document versions are available to normal employee searches
+When a user asks a question:
+The query is embedded
+Relevant chunks are retrieved
+Results are filtered based on the user’s permissions
+The best chunks are provided to a Claude model
+Claude generates a grounded answer with citations
+The query, retrieved sources, response, latency, model, token usage, and feedback are recorded
+Important business rules
+Only approved and published document versions can be used for employee-facing RAG responses.
+Draft, rejected, archived, or expired versions must not appear in normal employee search results.
+Compliance users may access historical versions when authorised.
+Users must never retrieve documents above their confidentiality level.
+Department-restricted documents must be visible only to authorised departments.
+Every AI answer must include at least one valid source citation.
+The assistant must not invent an answer when the retrieved evidence is insufficient.
+The assistant must clearly state when no reliable answer is available.
+Retrieved content must be permission-filtered before it is sent to the Claude model.
+A document cannot approve itself; the uploader and final approver must be different users.
+A published document cannot be modified directly. A new version must be created.
+Only one version of a document can be the currently published version.
+Archiving a document must preserve all versions, acknowledgements, comments, and audit history.
+Mandatory policy acknowledgements must be tied to a specific document version.
+Acknowledgement of an older version does not count for a newly published version.
+Duplicate document uploads should be detected using a file checksum.
+Failed ingestion or embedding jobs must be retryable without generating duplicate chunks.
+Reprocessing a document version must replace or update its existing vector records idempotently.
+AI conversation history must not expose restricted source content after a user’s permissions change.
+Soft deletion should be used for business records that require audit retention.
+Main entities
+
+The system will likely require related entities such as:
+
+Users
+Roles
+Departments
+Documents
+Document versions
+Document categories
+Approval workflows
+Review comments
+Files
+Text chunks
+Embedding records
+Ingestion jobs
+AI conversations
+AI messages
+Retrieved sources
+Answer feedback
+Policy assignments
+Employee acknowledgements
+Notifications
+Audit events
+Application settings
+
+The Product, Architecture, Database, and Developer Agents should determine the final schema and relationships.
+
+Streamlit expectations
+
+The Streamlit application should include:
+
+Login or demo user selection
+Role-aware navigation
+Home dashboard
+Document catalogue
+Document detail and version history
+Document upload form
+Review and approval queue
+AI assistant chat page
+Citation display with expandable source excerpts
+Policy acknowledgement page
+Manager compliance dashboard
+Compliance reporting page
+Admin configuration page
+Ingestion job monitoring page
+Audit log viewer
+
+The Streamlit frontend must communicate with FastAPI only and must not access the database, vector store, or object storage directly.
+
+FastAPI expectations
+
+The backend should provide APIs for:
+
+Users, roles, and departments
+Document metadata and versions
+File upload and retrieval
+Review and approval workflow
+Publishing and archiving
+Search and filtering
+RAG query and conversational follow-up
+Document summarisation and version comparison
+Acknowledgement assignment and completion
+AI answer feedback and reporting
+Ingestion job status and retry
+Dashboard metrics
+Audit log retrieval
+Health and readiness checks
+
+Use clear validation, consistent response models, pagination, filtering, structured errors, and appropriate HTTP status codes.
+
+Technical expectations
+FastAPI backend
+Streamlit frontend
+Persisted relational database for application data
+Persistent object storage for uploaded documents
+Vector-capable storage for embeddings
+Claude model integration for summarisation, comparison, and grounded question answering
+Amazon Titan Embeddings for document and query embeddings
+Background processing for text extraction, chunking, and embedding generation
+Configurable chunk size, chunk overlap, retrieval count, and similarity threshold
+Idempotent ingestion jobs
+Retry handling for model, storage, extraction, and embedding failures
+Role-based access control
+Structured application logging
+Correlation IDs across upload, ingestion, retrieval, and generation
+Seed data and sample policy documents for demonstration
+Open health endpoint and dependency-aware readiness endpoint
+Secrets and model configuration stored outside the source code
+Reporting and dashboard requirements
+
+The application should show:
+
+Total documents by status
+Published, draft, expired, and archived document counts
+Documents due for review
+Failed or pending ingestion jobs
+Acknowledgement completion by department
+Overdue acknowledgements
+Most searched topics
+Most referenced documents
+AI queries with no sufficient answer
+Helpful versus unhelpful answer ratings
+Average RAG response time
+Document ingestion and embedding success rate
+Expected failure scenarios
+
+The application should handle:
+
+Unsupported or corrupted document uploads
+Duplicate files
+Empty documents
+Text extraction failures
+Embedding service errors
+Claude model failures or timeouts
+Vector-store connection failures
+No relevant search results
+Restricted documents appearing in retrieval candidates
+Failed approval transitions
+Duplicate acknowledgement submissions
+A published document being replaced while an AI conversation is active
+Background job retries
+User permissions changing during an active session
+
+Errors should be understandable in Streamlit and should not expose internal secrets or stack traces.
+
+Success
+
+The application is successful when:
+
+A document owner can upload a policy, submit it for review, and have another authorised user approve and publish it.
+The document is automatically extracted, chunked, embedded with Amazon Titan Embeddings, and indexed.
+An employee can ask a question in Streamlit and receive a grounded Claude-generated answer with accurate citations.
+Restricted or unpublished content is never exposed.
+A mandatory policy can be assigned to employees and acknowledgement completion can be tracked.
+Managers and compliance users can monitor overdue acknowledgements and expiring policies.
+A new document version can be published without losing historical records.
+Failed ingestion jobs can be retried safely without duplicate vector data.
+The complete workflow operates through Streamlit and FastAPI with persisted data, auditability, and reliable error handling.

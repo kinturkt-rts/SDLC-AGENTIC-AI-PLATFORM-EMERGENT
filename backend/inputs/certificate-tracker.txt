@@ -1,0 +1,40 @@
+Hi Team,
+
+We need an internal application to manage employee training, mandatory courses, and professional certifications. Currently, HR and department managers track completion dates in separate spreadsheets, so it is difficult to know who has completed required training and whose certification is about to expire.
+
+The application should use Streamlit for the interface and FastAPI for the backend. HR should manage courses and certification requirements, managers should monitor their teams, and employees should view their own assigned training.
+
+Features
+Maintain training courses and certification types
+Assign courses to employees or departments
+Track enrolment, completion status, score, and completion date
+Upload or record certificate details
+Track certification issue and expiry dates
+Dashboard showing overdue training, upcoming expiries, completion rates, and department progress
+Search and filter by employee, department, course, certification, status, and due date
+Managers can view training progress for their own teams
+Employees can view assigned and completed training
+Record training history
+Export completion and compliance reports to CSV
+Role-based views for HR, manager, and employee
+Audit history for assignment and completion changes
+Important business rules
+Completion dates cannot be earlier than assignment dates.
+Expiry dates must be later than issue dates.
+Completed training records must remain in history.
+Employees should not receive duplicate active assignments for the same course.
+Only HR users can create courses or modify certification requirements.
+Managers can view only employees in their departments.
+Expired certifications must be clearly marked as non-compliant.
+Technical expectations
+FastAPI backend with CRUD APIs
+Streamlit frontend using FastAPI only
+Persisted relational database
+Related entities such as employees, departments, courses, assignments, certifications, and completion records
+Validation and clear error handling
+Seed data for demonstration
+Open health-check endpoint
+No hard-coded secrets
+Success
+
+HR can create a mandatory course, assign it to a department, record employee completions, identify overdue users, monitor expiring certifications, and export a compliance report.
