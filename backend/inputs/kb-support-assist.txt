@@ -1,0 +1,90 @@
+Hi Team,
+
+We need an internal application that helps employees and IT support agents find reliable answers from approved troubleshooting guides, application manuals, onboarding documents, known-issue reports, and support procedures.
+
+Currently, employees raise repetitive tickets because information is spread across shared folders, old documents, and team messages. Support agents also spend time searching through multiple files before responding.
+
+The application should use a Streamlit frontend and a FastAPI backend. It should include a RAG-based assistant using Claude models for answer generation and Amazon Titan Embeddings for semantic retrieval.
+
+Features
+Upload PDF, DOCX, TXT, and Markdown knowledge documents
+Store document details such as title, category, department, product, owner, version, and status
+Document statuses: Draft, Approved, Published, Archived
+Search documents by keyword, category, product, department, or status
+Semantic search using Amazon Titan Embeddings
+Streamlit chat interface for asking support questions
+Claude-generated answers grounded only in retrieved documents
+Display citations with document title, page or section, and source excerpt
+Allow follow-up questions within the same conversation
+Show a clear response when supporting information cannot be found
+Allow users to rate answers as helpful or unhelpful
+Allow users to report incorrect answers
+Generate document summaries and frequently asked questions
+Dashboard showing document counts, popular questions, unanswered questions, and answer feedback
+View document ingestion and indexing status
+Retry failed document-processing jobs
+Maintain chat history and document activity history
+Export AI usage and feedback reports to CSV
+Role-based views for Employee, Support Agent, Knowledge Manager, and Administrator
+Seed sample users, support documents, conversations, and feedback
+Important business rules
+Only approved and published documents can be used in employee-facing RAG responses.
+Draft and archived documents must not appear in normal AI answers.
+Every generated answer must include at least one valid citation.
+The assistant must not invent an answer when retrieved evidence is insufficient.
+Users should only retrieve documents they are authorised to access.
+Published documents cannot be edited directly; a new version should be created.
+Duplicate file uploads should be detected.
+Failed ingestion jobs must be retryable without creating duplicate chunks or embeddings.
+Reprocessing a document should replace its existing indexed content.
+Deleted or archived documents must no longer appear in future retrieval results.
+Answer feedback and reported responses must remain available for audit.
+RAG flow
+A Knowledge Manager uploads a document through Streamlit.
+Streamlit sends the file and metadata to FastAPI.
+FastAPI stores the document and creates an ingestion job.
+Text is extracted and divided into chunks.
+Amazon Titan Embeddings generates embeddings for the chunks.
+Chunks, embeddings, metadata, and source locations are stored in a vector-capable database.
+A user asks a question through the Streamlit chat page.
+The query is embedded and relevant authorised chunks are retrieved.
+Retrieved content is sent to Claude.
+Claude generates a grounded answer with citations.
+The question, answer, sources, response time, and feedback are stored.
+Streamlit expectations
+
+The application should include:
+
+Home dashboard
+Document catalogue
+Document upload and editing page
+Ingestion job status page
+AI support chat page
+Citation and source preview
+Conversation history
+Feedback and reported-answer page
+Knowledge analytics dashboard
+Admin configuration page
+
+Streamlit must communicate only with FastAPI and must not directly access the database, vector store, or document storage.
+
+Technical expectations
+FastAPI backend with CRUD APIs
+Streamlit frontend
+Relational database for users, documents, conversations, feedback, and ingestion jobs
+Persistent file storage for uploaded documents
+Vector-capable storage for chunks and embeddings
+Claude model integration for grounded responses and summaries
+Amazon Titan Embeddings for document and query embeddings
+Background document extraction, chunking, and indexing
+Configurable chunk size, overlap, retrieval count, and similarity threshold
+Validation and consistent API error responses
+Structured logging and correlation IDs
+Health and readiness endpoints
+Seed data and sample knowledge documents
+Secrets and model configuration must remain outside the source code
+Success
+
+A Knowledge Manager can upload and publish a troubleshooting document, and the application successfully extracts, chunks, embeds, and indexes it. An employee can ask a related question through Streamlit and receive a grounded Claude-generated answer with accurate citations.
+
+Unpublished documents must not be exposed, unsupported questions must receive a clear fallback response, and failed indexing jobs must be safely retried without duplicate embeddings.

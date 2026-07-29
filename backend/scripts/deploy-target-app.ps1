@@ -158,9 +158,8 @@ try {
 
     if ($Destroy) {
         $wasAutoScaffolded = Test-TfRootAutoScaffolded
-        Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve") "terraform destroy"
+        Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve", "-parallelism=1") "terraform destroy"
         Write-Host "`n[$Feature] destroyed. (ECR repos had force_delete, images are gone too.)" -ForegroundColor Yellow
-        # Only after success — failed destroy must leave the local root for retry.
         $cleanupScaffoldedTfRoot = $wasAutoScaffolded
         return
     }
