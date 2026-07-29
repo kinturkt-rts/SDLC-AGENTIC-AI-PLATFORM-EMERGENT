@@ -1,4 +1,4 @@
-# This repo (sdlc-agentic-ai-platform-apps) holds generated app output only —
+# This repo (sdlc-agentic-ai-platform-apps) holds generated app output only -
 # devops-agent's own code (agents/, scripts/, infrastructure/) lives in the
 # main platform repo (sdlc-agentic-ai-platform) and is cloned in before_script.
 workflow:
@@ -6,7 +6,7 @@ workflow:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
-# Verify the OIDC role your AWS admin created
+# Verify the OIDC role
 oidc:test:
   stage: test
   tags: [devops-agent-runner]
