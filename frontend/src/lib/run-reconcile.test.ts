@@ -117,6 +117,23 @@ describe('reconcileRunStatus', () => {
     assert.equal(result.status, 'completed');
   });
 
+  it('operator-marked failed stays failed even when every authoring artifact exists', () => {
+    // Regression: verifiedComplete used to upgrade failed → completed, then deploy UX
+    // remapped that to running — restaurant/subscription stayed "Running" after mark-failed.
+    const result = reconcileRunStatus({
+      status: 'failed',
+      startedAt: new Date(Date.now() - 900_000).toISOString(),
+      logMtimeMs: Date.now(),
+      s3MtimeMs: Date.now(),
+      logText: 'SDLC pipeline failed\n',
+      phaseDone: allDone,
+      error: 'Marked failed by operator (deploy stuck / abandoned).',
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.error ?? '', /Marked failed by operator/);
+  });
+
   it('awaiting_deploy with evidence stays awaiting_deploy after the idle window', () => {
     const startedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const result = reconcileRunStatus({

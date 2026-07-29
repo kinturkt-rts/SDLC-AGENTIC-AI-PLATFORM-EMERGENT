@@ -604,12 +604,23 @@ async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   if (isS3Store()) {
     const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
 
-    if (local?.status === 'cancelled') {
-      return { ...local, runId: local.runId || runId };
-    }
-    if (doc?.status === 'cancelled') {
-      return { ...doc, runId: doc.runId || runId };
-    }
+    // Hard-terminal statuses win over ephemeral local awaiting_deploy/running copies.
+    // Without this, an operator-marked S3 failure is ignored while the ECS task still
+    // holds a stale local awaiting_deploy from startPipeline.
+    const pickHardTerminal = (a: LiveRunState | null, b: LiveRunState | null) => {
+      for (const candidate of [a, b]) {
+        if (candidate?.status === 'cancelled') return candidate;
+      }
+      for (const candidate of [a, b]) {
+        if (candidate?.status === 'failed') return candidate;
+      }
+      return null;
+    };
+    const hard = pickHardTerminal(
+      local ? { ...local, runId: local.runId || runId } : null,
+      doc ? { ...doc, runId: doc.runId || runId } : null,
+    );
+    if (hard) return hard;
 
     if (doc && isTerminalLiveStatus(doc.status)) {
       if (!local || !isTerminalLiveStatus(local.status)) {
@@ -1054,6 +1065,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
 
   if (!phaseDone.deploy) {
     const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
+    const runAlreadyFailed = reconciled.status === 'failed' || reconciled.status === 'cancelled';
     steps = steps.map((step) => {
       if (step.phase !== 'deploy') return step;
       if (deployCiFailed) {
@@ -1062,6 +1074,15 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
           status: 'failed' as StepStatus,
           agent: 'devops-agent',
           error: deployCiFailedDetail ?? step.error ?? null,
+        };
+      }
+      if (runAlreadyFailed) {
+        // Operator/log marked the run failed while deploy was still open — close it.
+        return {
+          ...step,
+          status: 'failed' as StepStatus,
+          agent: 'devops-agent',
+          error: step.error ?? reconciledError ?? 'Deploy abandoned when the run was marked failed.',
         };
       }
       if (deployIsStale) {

@@ -254,6 +254,17 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     };
   }
 
+  // Explicit failures win over "all authoring artifacts exist". Otherwise an
+  // operator-marked (or log-failed) run with a finished publish gets upgraded to
+  // completed, then the deploy UX remaps it back to running.
+  if (input.status === 'failed') {
+    return {
+      status: 'failed',
+      currentStep: null,
+      error: input.error ?? undefined,
+    };
+  }
+
   if (verifiedComplete) {
     // Authoring phases done; keep awaiting_deploy until async CI/devops finishes.
     if (input.status === 'awaiting_deploy') {
@@ -267,14 +278,6 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
       status: 'failed',
       currentStep: null,
       error: terminal.error ?? input.error ?? 'Pipeline failed',
-    };
-  }
-
-  if (input.status === 'failed') {
-    return {
-      status: input.status,
-      currentStep: null,
-      error: input.error ?? undefined,
     };
   }
 
