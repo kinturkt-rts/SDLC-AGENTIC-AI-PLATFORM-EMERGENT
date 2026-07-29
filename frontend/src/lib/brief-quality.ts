@@ -15,7 +15,7 @@ export function validateProductBrief(content: string): string | null {
   if (text.length < MIN_CHARS || words.length < MIN_WORDS) {
     return (
       'Brief looks too short or incomplete. Paste a real product brief ' +
-      '(who it is for, what it does, key features) — roughly 15+ words.'
+      '(who it is for, what it does, key features) - roughly 15+ words.'
     );
   }
 

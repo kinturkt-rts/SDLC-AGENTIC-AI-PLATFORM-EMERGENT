@@ -39,8 +39,12 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repo)) {
 }
 Write-Host "Using $repo" -ForegroundColor DarkGray
 
-aws ecr get-login-password --region $Region --profile $Profile |
-    docker login --username AWS --password-stdin $Registry
+if ($IsLinux -or $IsMacOS) {
+    aws ecr get-login-password --region $Region --profile $Profile |
+        docker login --username AWS --password-stdin $Registry
+} else {
+    cmd /c "aws ecr get-login-password --region $Region --profile $Profile | docker login --username AWS --password-stdin $Registry"
+}
 if ($LASTEXITCODE -ne 0) { throw "docker login to ECR failed" }
 
 if (-not $SkipBuild) {
