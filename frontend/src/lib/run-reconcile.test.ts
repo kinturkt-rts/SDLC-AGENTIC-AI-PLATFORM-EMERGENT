@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { reconcileRunStatus } from './run-reconcile';
+import {
+  DEPLOY_STALE_MS,
+  isDeployStale,
+  reconcileRunStatus,
+  resolveDisplayStatus,
+} from './run-reconcile';
 import type { SdlcPhase } from '@/src/types';
 
 const allDone: Record<SdlcPhase, boolean> = {
@@ -143,5 +148,104 @@ describe('reconcileRunStatus', () => {
     assert.equal(result.status, 'failed');
     assert.match(result.error ?? '', /gitlab-agent/);
     assert.doesNotMatch(result.error ?? '', /never completed product-agent/);
+  });
+});
+
+describe('isDeployStale', () => {
+  const now = Date.now();
+  const old = now - (DEPLOY_STALE_MS + 60_000);
+
+  it('is false once the deploy succeeded, however old the run is', () => {
+    assert.equal(
+      isDeployStale({ isTerminalForDeploy: true, deploySucceeded: true, s3MtimeMs: old, now }),
+      false,
+    );
+  });
+
+  it('is true when publish is terminal but no live URL ever appeared', () => {
+    assert.equal(
+      isDeployStale({ isTerminalForDeploy: true, deploySucceeded: false, s3MtimeMs: old, now }),
+      true,
+    );
+  });
+
+  it('is false inside the deploy window', () => {
+    assert.equal(
+      isDeployStale({
+        isTerminalForDeploy: true,
+        deploySucceeded: false,
+        s3MtimeMs: now - 60_000,
+        now,
+      }),
+      false,
+    );
+  });
+
+  it('is false when the run is still mid-pipeline', () => {
+    assert.equal(
+      isDeployStale({ isTerminalForDeploy: false, deploySucceeded: false, s3MtimeMs: old, now }),
+      false,
+    );
+  });
+
+  it('is false when no artifact timestamp is known', () => {
+    assert.equal(
+      isDeployStale({ isTerminalForDeploy: true, deploySucceeded: false, s3MtimeMs: 0, now }),
+      false,
+    );
+  });
+});
+
+describe('resolveDisplayStatus', () => {
+  const base = {
+    reconciledStatus: 'awaiting_deploy' as const,
+    deploySucceeded: false,
+    deployCiFailed: false,
+    deployIsStale: false,
+    deployStepFailed: false,
+    deployStepRunning: false,
+  };
+
+  it('regression: a live app stays completed even when stale/failed signals are set', () => {
+    // Every run older than 30 minutes used to be reported Failed on the Pipeline Runs
+    // page despite a healthy live URL, because stale was checked before success.
+    assert.equal(
+      resolveDisplayStatus({
+        ...base,
+        deploySucceeded: true,
+        deployIsStale: true,
+        deployStepFailed: true,
+        deployCiFailed: true,
+      }),
+      'completed',
+    );
+  });
+
+  it('reports failed when CI failed and no live URL exists', () => {
+    assert.equal(resolveDisplayStatus({ ...base, deployCiFailed: true }), 'failed');
+  });
+
+  it('reports failed when publish never produced a deploy', () => {
+    assert.equal(resolveDisplayStatus({ ...base, deployIsStale: true }), 'failed');
+  });
+
+  it('keeps awaiting_deploy while CI is still in flight', () => {
+    assert.equal(resolveDisplayStatus(base), 'awaiting_deploy');
+  });
+
+  it('keeps the run live on Deploy after AgentCore marks it completed', () => {
+    assert.equal(
+      resolveDisplayStatus({
+        ...base,
+        reconciledStatus: 'completed',
+        deployStepRunning: true,
+      }),
+      'running',
+    );
+  });
+
+  it('passes through terminal reconciled statuses', () => {
+    assert.equal(resolveDisplayStatus({ ...base, reconciledStatus: 'cancelled' }), 'cancelled');
+    assert.equal(resolveDisplayStatus({ ...base, reconciledStatus: 'failed' }), 'failed');
   });
 });

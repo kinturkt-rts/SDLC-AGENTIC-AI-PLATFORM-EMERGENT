@@ -316,8 +316,17 @@ function pipelineStepVisualState(
   return 'pending';
 }
 
+function isDeployFailedRun(run: PipelineRun): boolean {
+  return (
+    run.deployStatus === 'failed' ||
+    run.deployStatus === 'stale' ||
+    Boolean(run.steps?.some((s) => s.phase === 'deploy' && s.status === 'failed'))
+  );
+}
+
 function isRunActiveForDashboard(run: PipelineRun): boolean {
-  // Keep Deploy visible on the strip/cards until the live URL lands.
+  // Keep Deploy visible until live URL or a terminal deploy failure.
+  if (isDeployFailedRun(run)) return false;
   return (
     run.status === 'running' ||
     run.status === 'paused' ||
@@ -338,6 +347,7 @@ function isAgentChainActive(run: PipelineRun): boolean {
 }
 
 function isDeployFollowOnRun(run: PipelineRun): boolean {
+  if (isDeployFailedRun(run)) return false;
   return (
     run.status === 'awaiting_deploy' ||
     run.deployStatus === 'pending' ||
@@ -576,6 +586,14 @@ function InputRequirementsCard() {
     }
   };
 
+  /** Marks aborted requests so callers can tell a timeout apart from a real failure. */
+  class RequestTimeoutError extends Error {
+    constructor(timeoutMs: number) {
+      super(`No response after ${Math.round(timeoutMs / 1000)}s`);
+      this.name = 'RequestTimeoutError';
+    }
+  }
+
   const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -583,9 +601,7 @@ function InputRequirementsCard() {
       return await fetch(url, { ...init, signal: controller.signal });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error(
-          `Request timed out after ${timeoutMs / 1000}s - the dev server may be busy. Retry or restart \`npm run dev\`.`,
-        );
+        throw new RequestTimeoutError(timeoutMs);
       }
       throw err;
     } finally {
@@ -625,6 +641,7 @@ function InputRequirementsCard() {
     setSubmitPhase('upload');
     const submitContent = content;
     const submitFeature = feature;
+    let uploadedRunId: string | null = null;
     try {
       const uploadRes = await fetchWithTimeout(
         '/api/v1/inputs',
@@ -638,6 +655,7 @@ function InputRequirementsCard() {
       const uploadParsed = await readJsonResponse<BriefUploadResponse>(uploadRes);
       if (!uploadParsed.ok) throw new Error(uploadParsed.error);
       const uploadData = uploadParsed.data;
+      uploadedRunId = uploadData.runId ?? null;
 
       setSubmitPhase('start');
       const startRes = await fetchWithTimeout(
@@ -680,7 +698,20 @@ function InputRequirementsCard() {
         document.getElementById('dashboard-pipeline-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 400);
     } catch (err) {
-      toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
+      // A timed-out start usually still started the run server-side. Telling the user
+      // it failed made them resubmit and create a duplicate run for the same app.
+      if (err instanceof RequestTimeoutError) {
+        setStartedRunId(uploadedRunId);
+        toast.warning('Still starting - do not submit again', {
+          description: `${err.message}. The run may already be starting; check Active Runs below before retrying.`,
+        });
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        ]);
+      } else {
+        toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
+      }
     } finally {
       submitLockRef.current = false;
       setSubmitting(false);
@@ -1010,9 +1041,12 @@ export default function DashboardPage() {
     return map;
   }, [liveQueries]);
 
-  // Strip + cards share the same live-polled run objects (not stale listRuns rows).
+  // Strip + cards share live-polled runs; re-filter so failed deploys drop off Active.
   const activeRuns = React.useMemo(
-    () => listedActiveRuns.map((r) => liveById.get(r.id) ?? r),
+    () =>
+      listedActiveRuns
+        .map((r) => liveById.get(r.id) ?? r)
+        .filter(isRunActiveForDashboard),
     [listedActiveRuns, liveById],
   );
   const hasActive = activeRuns.length > 0;

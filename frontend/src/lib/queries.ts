@@ -71,12 +71,14 @@ export const useRuns = () =>
             r.status === 'paused' ||
             r.status === 'awaiting_deploy' ||
             r.deployStatus === 'running' ||
-            r.deployStatus === 'pending' ||
-            // Recover when a later CI attempt writes appUrl after a premature/failed handoff.
-            r.deployStatus === 'failed',
+            r.deployStatus === 'pending',
         )
       ) {
         return 2_500;
+      }
+      // Occasional poll so a late appUrl after a failed handoff can still recover.
+      if (runs?.some((r) => r.deployStatus === 'failed' || r.deployStatus === 'stale')) {
+        return 15_000;
       }
       return 20_000;
     },
@@ -114,13 +116,14 @@ export const useLiveRunsById = (ids: string[]) => {
       staleTime: 0,
       refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
         const run = query.state.data;
-        if (run?.status === 'running' || run?.status === 'paused' || run?.status === 'awaiting_deploy') return 2_500;
-        if (
-          run?.deployStatus === 'running' ||
-          run?.deployStatus === 'pending' ||
-          run?.deployStatus === 'failed'
-        ) {
+        if (run?.status === 'running' || run?.status === 'paused' || run?.status === 'awaiting_deploy') {
           return 2_500;
+        }
+        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') {
+          return 2_500;
+        }
+        if (run?.deployStatus === 'failed' || run?.deployStatus === 'stale') {
+          return 15_000;
         }
         return false;
       },

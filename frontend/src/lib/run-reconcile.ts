@@ -2,10 +2,35 @@ import { COMPLETION_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
-
 export const RUN_NO_PROGRESS_IDLE_MS = 12 * 60 * 1000;
+export const DEPLOY_STALE_MS = 30 * 60 * 1000;
 
-/** Pipeline agent order used to prefer the furthest live step when sources disagree. */
+export function isDeployStale(input: {
+  isTerminalForDeploy: boolean;
+  deploySucceeded: boolean;
+  s3MtimeMs: number;
+  now?: number;
+}): boolean {
+  if (!input.isTerminalForDeploy || input.deploySucceeded) return false;
+  if (!input.s3MtimeMs) return false;
+  return (input.now ?? Date.now()) - input.s3MtimeMs > DEPLOY_STALE_MS;
+}
+
+export function resolveDisplayStatus(input: {
+  reconciledStatus: RunStatus;
+  deploySucceeded: boolean;
+  deployCiFailed: boolean;
+  deployIsStale: boolean;
+  deployStepFailed: boolean;
+  deployStepRunning: boolean;
+}): RunStatus {
+  if (input.deploySucceeded) return 'completed';
+  if (input.deployCiFailed || input.deployIsStale || input.deployStepFailed) return 'failed';
+  if (input.reconciledStatus === 'awaiting_deploy') return 'awaiting_deploy';
+  if (input.deployStepRunning && input.reconciledStatus === 'completed') return 'running';
+  return input.reconciledStatus;
+}
+
 const AGENT_PROGRESS_ORDER = [
   'product-agent',
   'architect-agent',
@@ -25,7 +50,6 @@ export interface ReconcileRunInput {
   logText: string | null;
   phaseDone: Record<SdlcPhase, boolean>;
   error?: string | null;
-  /** From run.json / log markers — used when artifact index lags behind live progress. */
   reportedCurrentStep?: string | null;
 }
 
