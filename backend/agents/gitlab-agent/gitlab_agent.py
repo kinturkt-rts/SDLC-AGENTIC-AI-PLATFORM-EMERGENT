@@ -325,7 +325,6 @@ def execute_publish_message(message: Any) -> str:
 
     target_app, run_id, ctx = parsed
     summary, handoff = run_publish_for_agentcore(target_app, run_id, ctx)
-    # already-published is a successful dedupe (same runId already on the branch).
     status = str(handoff.get("status") or "").strip().lower()
     if status not in {"published", "already-published"}:
         return summary

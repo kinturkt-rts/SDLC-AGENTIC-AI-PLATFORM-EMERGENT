@@ -1,0 +1,16 @@
+We're looking to build a web application that helps users manage their personal movie collection. Users should be able to keep track of movies they've watched, maintain a watchlist, rate movies, and search their collection.
+
+The application should provide an easy way to organize movies and quickly find information about them.
+
+Features
+Add and manage movies
+Create a watchlist
+Mark movies as watched
+Rate and review movies
+Search by title, genre, or year
+Filter watched and unwatched movies
+View recently added movies
+Dashboard with basic movie statistics
+Success
+
+Users can maintain their movie collection, track what they've watched, and easily search or organize their movies.

@@ -5,14 +5,17 @@ import { getBackendRoot } from './repo-root';
 import { cachedAsync } from './request-cache';
 import { titleCase } from './format';
 import { isUserPipelineRun, listRuns } from './repo-reader';
+import { getRunHandoffs } from './pipeline-handoffs';
 import { expectedModelForAgent, isPipelineAgentId, AGENT_IDS } from './token-display';
 import {
   findLatestS3RunIdForApp,
   getRunArtifactJson,
+  getS3ObjectLastModifiedMs,
   isS3Store,
   listS3RunArtifacts,
   runS3Prefix,
 } from './artifact-store';
+import type { DevopsHandoffInfo } from '@/src/types';
 
 function projectTitle(slug: string): string {
   return titleCase(slug.replace(/-/g, ' '));
@@ -75,6 +78,9 @@ export interface PipelineTelemetrySummary {
   };
   source: 'local' | 's3';
   updatedAt: string | null;
+  /** Real wall-clock time from GitLab publish handoff to a confirmed live app URL. */
+  deploySec: number | null;
+  deployStatus: 'deploying' | 'live' | 'failed' | null;
 }
 
 function pipelineDir(): string {
@@ -362,12 +368,58 @@ export function aggregateTelemetrySnapshots(
     totals: { ...totals, cacheHitRatio },
     source,
     updatedAt: latestMtime ? new Date(latestMtime).toISOString() : null,
+    deploySec: null,
+    deployStatus: null,
   };
+}
+
+async function handoffMtimeMs(handoffPath: string, source: 's3' | 'local'): Promise<number | null> {
+  if (source === 's3') {
+    return getS3ObjectLastModifiedMs(handoffPath);
+  }
+  try {
+    const stat = await fs.stat(path.join(getBackendRoot(), ...handoffPath.split('/')));
+    return stat.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+export function computeDeployTiming(
+  startMs: number,
+  devops: Pick<DevopsHandoffInfo, 'appUrl' | 'deployedAt' | 'status' | 'healthy'>,
+  nowMs: number,
+): Pick<PipelineTelemetrySummary, 'deploySec' | 'deployStatus'> {
+  if (devops.appUrl && devops.deployedAt) {
+    const liveMs = Date.parse(devops.deployedAt);
+    if (Number.isFinite(liveMs)) {
+      return { deploySec: Math.max(0, Math.round((liveMs - startMs) / 1000)), deployStatus: 'live' };
+    }
+  }
+
+  const status = devops.status.toLowerCase();
+  if (devops.healthy === false || status === 'failed' || status === 'error') {
+    return { deploySec: Math.round((nowMs - startMs) / 1000), deployStatus: 'failed' };
+  }
+  return { deploySec: Math.round((nowMs - startMs) / 1000), deployStatus: 'deploying' };
+}
+
+async function loadDeployTiming(
+  targetApp: string,
+  runId: string | null,
+): Promise<Pick<PipelineTelemetrySummary, 'deploySec' | 'deployStatus'>> {
+  if (!runId) return { deploySec: null, deployStatus: null };
+  const { gitlab, devops } = await getRunHandoffs(runId, targetApp);
+  if (!gitlab || !devops) return { deploySec: null, deployStatus: null };
+
+  const startMs = await handoffMtimeMs(gitlab.path, gitlab.source);
+  if (!startMs) return { deploySec: null, deployStatus: null };
+
+  return computeDeployTiming(startMs, devops, Date.now());
 }
 
 async function loadPipelineTelemetryUncached(projectId: string): Promise<PipelineTelemetrySummary> {
   const runId = await resolveTelemetryRunId(projectId);
-  // Always load all MVP slots - S3 discovery may omit agents whose telemetry only exists locally.
   const loaded = await Promise.all(
     AGENT_IDS.map((name) => loadAgentTelemetry(projectId, name, runId)),
   );
@@ -422,7 +474,11 @@ export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
 const TELEMETRY_TTL_MS = 15_000;
 
 export async function getPipelineTelemetry(projectId: string): Promise<PipelineTelemetrySummary> {
-  return cachedAsync(`pipelineTelemetry:${projectId}`, TELEMETRY_TTL_MS, () =>
+  const summary = await cachedAsync(`pipelineTelemetry:${projectId}`, TELEMETRY_TTL_MS, () =>
     loadPipelineTelemetryUncached(projectId),
   );
+  const deploy = await cachedAsync(`deployTiming:${projectId}`, TELEMETRY_TTL_MS, () =>
+    loadDeployTiming(projectId, summary.runId),
+  );
+  return { ...summary, ...deploy };
 }

@@ -969,7 +969,7 @@ function InputRequirementsCard() {
           ) : atCapacity ? (
             <p className="rounded-lg border border-orange-500/50 bg-orange-100 px-3 py-2 text-xs text-orange-950 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-50">
               <span className="font-semibold">At capacity:</span> {agentChainRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
-              concurrent agent pipelines active. Deploy-only waits do not count. Wait for one to finish or cancel a run.
+              Concurrent SDLC Agentic AI pipelines active. Wait for one to finish or cancel a run.
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">

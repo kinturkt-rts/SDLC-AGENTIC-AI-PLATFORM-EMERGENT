@@ -28,6 +28,13 @@ _SKIP_COLUMN_PREFIXES = (
     "FOREIGN",
     "EXCLUDE",
 )
+# Match on a word boundary, not an exact whitespace-split token — a table-level
+# constraint written without a space before its parenthesis (e.g. "UNIQUE(a, b)")
+# otherwise produces a first token of "UNIQUE(a," which is not "UNIQUE" and slips
+# past the skip check, getting misparsed as a literal column name.
+_SKIP_COLUMN_PREFIX_RE = re.compile(
+    r"^(?:" + "|".join(_SKIP_COLUMN_PREFIXES) + r")\b", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -110,8 +117,7 @@ def _parse_create_table_columns(sql: str, *, source: str) -> list[ColumnSpec]:
             line = raw_line.strip().rstrip(",")
             if not line:
                 continue
-            first = line.split(None, 1)[0].upper()
-            if first in _SKIP_COLUMN_PREFIXES:
+            if _SKIP_COLUMN_PREFIX_RE.match(line):
                 continue
             parts = line.split()
             if len(parts) < 2:

@@ -760,7 +760,6 @@ function runLogTimeBounds(run: { startedAt: string; finishedAt?: string | null }
   return { startMs, endMs };
 }
 
-/** CloudWatch agent stdout for one pipeline run (time-window scoped). */
 export async function listRunLogs(runId: string): Promise<LogEntry[]> {
   const run = await getRun(runId);
   if (!run) return [];
@@ -840,23 +839,6 @@ function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
   return next;
 }
 
-/**
- * Reconcile phaseDone against the backend's own last-recorded step before
- * mergeStepProgressFromPhases() picks which phase to blame for a failure.
- *
- * mergeStepProgressFromPhases() walks phases in fixed order and marks the
- * *first* one whose phaseDone is false as "failed" — a narrow artifact-
- * presence check per phase, not the backend's actual failure point. A step
- * that isn't one of the named pipeline steps (e.g. rds-apply, which runs
- * between database-agent and developer-agent but never updates currentStep)
- * leaves currentStep pinned to the last real step that did run. Without this
- * override, an unrelated earlier phase whose own artifact check happens to
- * read "not done" for this run gets blamed instead — e.g. rds-apply failing
- * showing up as "Architecture Diagram: Failed" instead of "Database".
- *
- * currentPhase's own phaseDone is force-set to false on a failed run so the
- * blame lands there rather than sliding past it to whatever phase comes next.
- */
 export function applyCurrentStepPhaseOverride(
   phaseDone: Record<SdlcPhase, boolean>,
   currentStep: string | null | undefined,
@@ -1076,8 +1058,11 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
           error: deployCiFailedDetail ?? step.error ?? null,
         };
       }
-      if (runAlreadyFailed) {
+      if (runAlreadyFailed && phaseDone.publish) {
         // Operator/log marked the run failed while deploy was still open — close it.
+        // Gated on phaseDone.publish: a run that failed before gitlab-agent ever
+        // ran (e.g. database-agent) has nothing to do with deploy/devops-agent —
+        // leave this step alone so the real failing step stays the one shown.
         return {
           ...step,
           status: 'failed' as StepStatus,

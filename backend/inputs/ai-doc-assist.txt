@@ -1,0 +1,37 @@
+We're looking to build a web application that allows users to upload documents and ask questions about their contents using AI. The application should help users quickly find information, generate summaries, and answer questions based only on the uploaded documents.
+
+The application should have a Streamlit frontend with a backend API responsible for document processing and AI interactions.
+
+Features
+Upload PDF, DOCX, and TXT documents
+Organize documents into projects or folders
+View uploaded documents and processing status
+Search documents using natural language
+Chat with one or multiple uploaded documents
+Generate document summaries
+Answer questions with references to the source document
+Compare two documents and highlight key differences
+Save conversation history
+Export AI-generated summaries or responses
+Dashboard showing uploaded documents and recent activity
+Important Business Rules
+AI responses must be based only on uploaded documents.
+Every answer should include references to the source document.
+If the requested information cannot be found, the application should clearly indicate that.
+Deleted documents should no longer be searchable.
+Failed document processing should be retryable.
+Users should only access documents they own or have permission to view.
+Technical Expectations
+Streamlit frontend
+FastAPI backend
+REST APIs for document management and AI interactions
+Persistent storage for documents and chat history
+Background processing for document ingestion
+CRUD operations
+Input validation and structured error handling
+OpenAPI documentation
+Health endpoint
+Seed sample documents
+Success
+
+Users can upload documents, ask questions in natural language, receive accurate AI-generated answers with document references, generate summaries, compare documents, and manage their document library through an intuitive interface.

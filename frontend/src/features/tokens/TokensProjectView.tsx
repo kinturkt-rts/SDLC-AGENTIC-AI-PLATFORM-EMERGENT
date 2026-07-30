@@ -11,6 +11,7 @@ import {
   TrendingUp,
   ArrowRight,
   ChevronLeft,
+  Rocket,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -204,7 +205,7 @@ export function TokensProjectView({
         />
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <StatCard
               label="Billed tokens"
               value={formatTokenCount(totals?.totalTokens ?? 0)}
@@ -228,6 +229,20 @@ export function TokensProjectView({
               value={`${totals?.cacheHitRatio ?? 0}%`}
               sub={`${formatTokenCount(totals?.cacheReadInputTokens ?? 0)} cache-read tokens`}
               icon={Layers}
+            />
+            <StatCard
+              label="Deploy time"
+              value={data?.deploySec != null ? formatDuration(data.deploySec) : '—'}
+              sub={
+                data?.deployStatus === 'live'
+                  ? 'GitLab publish → live URL'
+                  : data?.deployStatus === 'deploying'
+                    ? 'Deploying now…'
+                    : data?.deployStatus === 'failed'
+                      ? 'Deploy failed'
+                      : 'No deploy data yet'
+              }
+              icon={Rocket}
             />
           </div>
 
