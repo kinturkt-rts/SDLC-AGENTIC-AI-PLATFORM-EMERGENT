@@ -1079,7 +1079,7 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
             step.error ??
             (hasDevopsHandoff
               ? 'Deploy did not become healthy (no live URL).'
-              : 'Deploy never completed — no DevOps handoff after publish.'),
+              : 'Deploy never completed - no DevOps handoff after publish.'),
         };
       }
       if (hasDevopsHandoff) {
