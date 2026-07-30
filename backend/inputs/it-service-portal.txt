@@ -1,0 +1,30 @@
+We're looking to build a web application that helps IT teams manage employee service requests, hardware assets, software requests, and support tickets from a single platform.
+
+The application should provide a Streamlit frontend with a FastAPI backend.
+
+Features
+
+Submit IT support requests
+Track ticket priority and status
+Assign tickets to support engineers
+Manage laptops, monitors, phones, and software licenses
+Allocate and return IT assets
+Schedule equipment replacements
+Maintain employee asset history
+Add troubleshooting notes and resolution summaries
+Search tickets and assets
+Dashboard showing open tickets, SLA status, engineer workload, available inventory, and asset utilization
+Generate operational reports and export ticket history
+
+Business Rules
+
+Assets cannot be assigned to multiple employees simultaneously.
+Critical tickets should receive the highest priority.
+Closed tickets cannot be modified unless reopened.
+Every asset assignment and return should be retained in history.
+Resolution notes are required before a ticket can be closed.
+Streamlit should communicate with the application through FastAPI APIs.
+
+Success
+
+IT teams can manage support requests, track assets, monitor workloads, and improve service response times through an interactive dashboard.

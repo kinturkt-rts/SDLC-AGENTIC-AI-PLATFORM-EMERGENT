@@ -1,0 +1,26 @@
+We're looking to build a backend application that helps warehouse teams manage inventory, inbound shipments, outbound orders, and stock movements across multiple warehouse locations. The goal is to improve inventory visibility and reduce manual tracking.
+
+Features
+
+Manage warehouses, storage locations, and inventory
+Register products with categories and suppliers
+Record inbound shipments and stock receipts
+Process customer orders and outbound shipments
+Transfer inventory between warehouse locations
+Track stock movements and inventory history
+Maintain reorder thresholds for products
+Search inventory by product, supplier, location, or status
+View inventory availability and reserved stock
+Dashboard APIs for inventory levels, low-stock items, inbound shipments, and order fulfillment
+
+Business Rules
+
+Stock cannot become negative.
+Orders cannot be fulfilled if sufficient inventory is unavailable.
+Inventory transfers must update both source and destination locations.
+Every inventory movement should be recorded for audit purposes.
+Cancelled shipments should restore reserved inventory.
+
+Success
+
+Warehouse teams can efficiently manage inventory, process shipments, monitor stock availability, and maintain complete inventory movement history through REST APIs.

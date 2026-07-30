@@ -1,0 +1,44 @@
+We’re looking to build a patient-friendly web application that helps users understand healthcare information, prepare for appointments, and find the right next step using trusted medical and clinic resources.
+
+The application should provide a Streamlit interface with a backend API for document management, search, and AI responses. Healthcare organizations should be able to upload approved FAQs, care instructions, service guides, preparation documents, and patient education materials.
+
+Scenario:
+Patients often receive information from multiple sources and may not know where to look when they have questions such as:
+
+    How should I prepare for an upcoming procedure?
+    What documents should I bring to my appointment?
+    Which department should I contact?
+    What should I expect after a routine treatment?
+    Where can I find billing, insurance, or visiting information?
+
+The assistant should help users find clear answers without requiring them to manually search through long documents or multiple web pages.
+
+Features:
+
+Ask healthcare and clinic-related questions in natural language
+Search approved patient FAQs and education materials
+Provide answers with links or references to the supporting source
+Browse common topics such as appointments, procedures, medications, billing, insurance, and recovery guidance
+Generate simple summaries of lengthy patient instructions
+Create a personalized appointment preparation checklist
+Help users identify the appropriate clinic, department, or support service
+Allow users to save useful answers and checklists
+Provide multilingual-friendly responses where supported
+Collect optional feedback on whether an answer was helpful
+Show popular questions and recently updated guidance
+Admin area for uploading, updating, categorizing, and retiring content
+Dashboard showing common patient questions, unanswered topics, and feedback trends
+
+Business Rules:
+
+Responses must be grounded in approved healthcare content.
+Every answer should reference the supporting document or FAQ.
+The assistant must not diagnose conditions or replace professional medical advice.
+Urgent or emergency-related questions should direct users to appropriate emergency services.
+When an answer cannot be confirmed, the assistant should clearly say so and recommend contacting the relevant healthcare provider.
+Retired or deleted content must not appear in future responses.
+Users should not be required to provide sensitive medical information to use the general FAQ experience.
+
+Success:
+
+A patient can open the application, ask a question in everyday language, receive a clear and trustworthy answer with supporting references, generate an appointment checklist, and quickly find the right department or next step.
