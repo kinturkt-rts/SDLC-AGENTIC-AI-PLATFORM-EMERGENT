@@ -978,7 +978,6 @@ def create_mr_note(**kwargs: Any) -> dict[str, Any]:
 
 # --- SDLC publish workflow ---
 
-
 def _publish_commit_message(slug: str, *, batch: int | None = None, total: int | None = None) -> str:
     if batch is not None and total is not None and total > 1:
         return f"feat({slug}): SDLC pipeline output (batch {batch}/{total})"
