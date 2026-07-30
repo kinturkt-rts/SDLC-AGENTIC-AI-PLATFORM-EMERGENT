@@ -41,6 +41,7 @@ from .pipeline_context import (
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
     qa_handoff_rel_for_app,
+    read_context_json,
     slugify,
     target_app_root_rel,
 )
@@ -484,7 +485,7 @@ class SdlcPipelineRunner:
 
     def _load_context(self) -> None:
         if self.ctx_path.is_file():
-            self.context = json.loads(self.ctx_path.read_text(encoding="utf-8-sig"))
+            self.context = read_context_json(self.ctx_path)
         self.context.setdefault("targetApp", self.feature)
         if self.run_id:
             self.context["runId"] = self.run_id
@@ -1399,7 +1400,7 @@ class SdlcPipelineRunner:
         # later _hydrate_run_context() (which merges S3 context and re-saves) does
         # not silently drop it before it reaches architect/developer over A2A.
         if self.ctx_path.is_file():
-            on_disk = json.loads(self.ctx_path.read_text(encoding="utf-8-sig"))
+            on_disk = read_context_json(self.ctx_path)
             if on_disk.get("deliveryProfile"):
                 self.context["deliveryProfile"] = on_disk["deliveryProfile"]
 
@@ -1425,7 +1426,7 @@ class SdlcPipelineRunner:
             step="auth-mode-sync",
         )
         if self.ctx_path.is_file():
-            on_disk = json.loads(self.ctx_path.read_text(encoding="utf-8-sig"))
+            on_disk = read_context_json(self.ctx_path)
             if on_disk.get("authMode"):
                 self.context["authMode"] = on_disk["authMode"]
         _safe_print(f"[pipeline] authMode: {self.context.get('authMode', 'jwt')}")

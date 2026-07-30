@@ -14,8 +14,11 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import botocore.config
+from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]  # .../backend
 _AGENT_DIR = Path(__file__).resolve().parent
@@ -36,6 +39,7 @@ from _shared.pipeline_context import (
     resolve_target_app,
     slugify,
 )
+from _shared.telemetry import RunTelemetry, usage_from_event
 
 load_repo_env()
 
@@ -96,6 +100,21 @@ _API_KEY_AUTH_SCREEN_SECTION = """\
   On logout, call clearCredential() (never remove the localStorage key directly — it also clears the stored role), then set isAuthenticated back to false directly (do not re-derive it). api.ts already calls clearCredential() internally when any API call returns 401 — catch errors from api calls in the calling component and re-check isSessionValid() (or just call setIsAuthenticated(false)) so a rejected credential sends the user back to the paste-key screen."""
 
 
+def _frontend_base_system_prompt() -> str:
+    """Generic, app-agnostic frontend-generation system prompt — no target-app
+    context of any kind (no OpenAPI spec, no PRD/design text, no target-app
+    name, no authMode). Defaults to the JWT auth screen/api.ts section, same
+    as _build_frontend_system_prompt(ctx) does when ctx has no authMode.
+
+    Used by build_frontend_agent() for the AgentCore bundle: that Agent is
+    constructed once and reused across every invocation, so its system prompt
+    can never bake in one specific app's authMode the way run_task()'s
+    per-invocation Agent does — only the CLI/pipeline path has a concrete ctx
+    to derive authMode from.
+    """
+    return _SYS_PROMPT_TEMPLATE.replace("{{AUTH_SCREEN_SECTION}}", _JWT_AUTH_SCREEN_SECTION)
+
+
 def _build_frontend_system_prompt(ctx: dict | None = None) -> str:
     """Render SYS_PROMPT with the auth-mode-specific screen/api.ts section.
 
@@ -104,8 +123,9 @@ def _build_frontend_system_prompt(ctx: dict | None = None) -> str:
     existed. Only authMode == "api-key" swaps in the paste-key-screen alternative.
     """
     auth_mode = str((ctx or {}).get("authMode") or "jwt").strip().lower()
-    section = _API_KEY_AUTH_SCREEN_SECTION if auth_mode == "api-key" else _JWT_AUTH_SCREEN_SECTION
-    return _SYS_PROMPT_TEMPLATE.replace("{{AUTH_SCREEN_SECTION}}", section)
+    if auth_mode != "api-key":
+        return _frontend_base_system_prompt()
+    return _SYS_PROMPT_TEMPLATE.replace("{{AUTH_SCREEN_SECTION}}", _API_KEY_AUTH_SCREEN_SECTION)
 
 
 _SYS_PROMPT_TEMPLATE = """You are a senior frontend engineer.
@@ -153,6 +173,15 @@ Available classes:
 - Tables: wrap in <div className="table-wrap">, use <table className="data">. Right-align numeric cells with className="num". Use className="mono" for codes/SKUs.
 - Buttons: "btn" (default), "btn btn-primary" (main action, teal), "btn btn-danger" (destructive). Never style buttons inline.
 - Forms: wrap each field in <div className="field"> with a <label> and an <input className="input"> (also use "input" on <select> and <textarea>).
+- Foreign-key inputs: never ask the user to type a raw id/UUID. When a create/edit form has a field that references another entity (e.g. an instructor, a doctor, a resource), fetch that entity's list from its API endpoint and render a <select className="input"> whose options show the human-readable name and whose value is the id. Submit the chosen id. If the list endpoint is unavailable, fall back to a plain input but this should be rare. Worked example (copy this pattern, adapting names):
+    const [users, setUsers] = useState<User[]>([]);
+    useEffect(() => { apiGet<User[]>('/api/v1/users').then(setUsers); }, []);
+    <select className="input" value={form.instructorUserId} onChange={(e) => setForm({ ...form, instructorUserId: e.target.value })}>
+      <option value="">Select an instructor…</option>
+      {users.map((u) => (
+        <option key={u.id} value={u.id}>{u.full_name ?? u.username}</option>
+      ))}
+    </select>
 - Status pills: "badge badge-success", "badge badge-warn", "badge badge-danger".
 - States: "loading" (loading text), "empty" (empty state), "alert alert-error" (error message).
 - Auth screens: "center-screen" wrapper, "auth-card", "auth-title", "auth-sub".
@@ -164,6 +193,14 @@ Component and screen wiring rules:
 - If a component renders a control (button/link/form) whose handler is a prop (e.g. onClick={onCreateItem}), that prop MUST NOT be optional, and the PARENT that renders the component MUST pass it, wired to the corresponding screen change or state update. A control bound to an unpassed prop is a defect — the button will silently do nothing.
 - Every screen in the navigation/screen enum must have: (a) a way to navigate to it, (b) a render case, and (c) all callbacks its child components need, wired to real handlers.
 - If the app has multiple roles (e.g. an admin role) and role-gated features are implied by the design (e.g. user management), generate the admin UI (nav item + screen) and gate it with hasRole('<role>'). Do not import hasRole without building the gated feature it implies.
+- Null-safety: never call a method (.toFixed, .toUpperCase, .map, .length, etc.) directly on a value that may be null or undefined. API responses may omit optional fields (e.g. a computed GPA, a nullable timestamp). Guard every such access: use `value != null ? value.toFixed(2) : '-'` for numbers, optional chaining (`obj?.field`) for nested access, and `(arr ?? [])` before mapping. A missing value must render as '-' or 'N/A', never crash the component.
+- Resolving reference names: the backend returns raw foreign-key ids (e.g. instructor_user_id) and may or may not also include a sibling name field (e.g. instructor_name) on the same response. If a sibling name field is present, display it, not the raw id. If it is NOT present, fetch the referenced entity's list once and build an id->name lookup map yourself — never leave a bare UUID visible when a name lookup is possible. Worked example (copy this pattern, adapting names):
+    const [users, setUsers] = useState<User[]>([]);
+    useEffect(() => { apiGet<User[]>('/api/v1/users').then(setUsers); }, []);
+    const nameById = Object.fromEntries(users.map((u) => [u.id, u.full_name ?? u.username]));
+    // in the table cell:
+    <td>{nameById[course.instructor_user_id] ?? course.instructor_user_id}</td>
+  If no list endpoint exists for that entity, fall back to showing the id.
 
 WORKED EXAMPLE of a correct list screen (copy this structure and class usage):
 
@@ -194,7 +231,7 @@ export const ItemList: React.FC = () => {
                 {items.map((it) => (
                   <tr key={it.id}>
                     <td>{it.name}</td>
-                    <td className="num">${it.price.toFixed(2)}</td>
+                    <td className="num">{it.price != null ? `$${it.price.toFixed(2)}` : '-'}</td>
                     <td><span className="badge badge-success">Active</span></td>
                   </tr>
                 ))}
@@ -238,6 +275,52 @@ def _model() -> BedrockModel:
             retries={"mode": "standard", "max_attempts": 2},
         ),
     )
+
+
+def build_frontend_agent() -> Agent:
+    """Reusable, app-agnostic frontend agent — for the AgentCore bundle.
+
+    Matches build_devops_agent()'s shape: a long-lived Agent built once and
+    reused across every invocation, with no tools (frontend-agent has none —
+    it returns a JSON file map as plain text, unlike devops/web-crawler's
+    @tool-backed agents) and no per-run state (no callback_handler/telemetry —
+    those are per-invocation, same as devops/web-crawler bake none in either).
+
+    Unlike run_task()'s per-invocation Agent (which bakes one target app's
+    authMode into the system prompt via _build_frontend_system_prompt(ctx)),
+    this factory's system prompt is _frontend_base_system_prompt() — the
+    generic rules only. Per-app data (OpenAPI spec, PRD, design doc, target
+    app name, authMode) is NOT available at construction time here; today only
+    run_task()'s CLI/pipeline path supplies it, via the user message it builds
+    separately (see run_task's PRODUCT BRIEF/DESIGN NOTES/OPENAPI SPEC message).
+    Delivering that same per-app data to an AgentCore-invoked instance of this
+    agent is not yet wired — see this task's report for that gap.
+    """
+    return Agent(
+        agent_id=AGENT_NAME,
+        name=AGENT_NAME,
+        description=(
+            "Generates a React + TypeScript frontend from a backend OpenAPI spec "
+            "and product/design context."
+        ),
+        model=_model(),
+        system_prompt=_frontend_base_system_prompt(),
+    )
+
+
+class _FrontendCallbackHandler:
+    """Feed Bedrock usage tokens to telemetry (no tools, no thinking stream to print)."""
+
+    def __init__(self, *, telemetry: "RunTelemetry | None" = None) -> None:
+        self.telemetry = telemetry
+
+    def __call__(self, **kwargs) -> None:
+        if self.telemetry is not None:
+            event = kwargs.get("event", {})
+            usage = usage_from_event(kwargs) or usage_from_event(event)
+            if usage:
+                self.telemetry.record_usage(usage)
+
 
 def _read(path: Path) -> str:
     try:
@@ -846,7 +929,13 @@ def _clear_frontend_generated(frontend_dir: Path) -> None:
         )
 
 
-def run_task(target_app: str, context: dict, *, full_regen: bool = False) -> None:
+def run_task(
+    target_app: str,
+    context: dict,
+    *,
+    full_regen: bool = False,
+    openapi_source_path: str | Path | None = None,
+) -> None:
     app = resolve_target_app(target_app, context)
     slug = slugify(app)
 
@@ -876,7 +965,14 @@ def run_task(target_app: str, context: dict, *, full_regen: bool = False) -> Non
     # 2. Gather inputs: brief, design, openapi spec
     prd_path = ctx.get("prdPath")
     design_path = ctx.get("designDocPath")
-    openapi_path = app_dir / "openapi.json"
+    if openapi_source_path is not None:
+        # Handoff-driven invoke (see handle_developer_handoff): consume the caller's
+        # pointer instead of rediscovering app_dir/openapi.json. Relative paths are
+        # resolved against the repo root, same convention as prdPath/designDocPath.
+        candidate = Path(openapi_source_path)
+        openapi_path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate)
+    else:
+        openapi_path = app_dir / "openapi.json"
 
     brief = _read(_REPO_ROOT / prd_path) if prd_path else ""
     design = _read(_REPO_ROOT / design_path) if design_path else ""
@@ -931,70 +1027,381 @@ def run_task(target_app: str, context: dict, *, full_regen: bool = False) -> Non
  
     # 4. Generate with a build-validation retry loop (mirrors developer agent).
     max_retries = int(os.getenv("FRONTEND_AGENT_VALIDATE_RETRIES", "2"))
-    agent = Agent(model=_model(), system_prompt=_build_frontend_system_prompt(ctx))
+    telemetry: RunTelemetry | None = None
+    agent_error: BaseException | None = None
+    try:
+        telemetry = RunTelemetry(
+            AGENT_NAME,
+            target_app=app,
+            model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+            run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
+        )
+        agent = Agent(
+            model=_model(),
+            system_prompt=_build_frontend_system_prompt(ctx),
+            callback_handler=_FrontendCallbackHandler(telemetry=telemetry),
+        )
 
-    current_message = user_message
-    previous_error_locations: set[tuple[str, str, str]] = set()
-    for attempt in range(max_retries + 1):
-        if attempt > 0:
-            print(f"[frontend-agent] build retry {attempt}/{max_retries}...")
+        current_message = user_message
+        previous_error_locations: set[tuple[str, str, str]] = set()
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                print(f"[frontend-agent] build retry {attempt}/{max_retries}...")
 
-        _generate_and_write(agent, current_message, frontend_dir)
+            _generate_and_write(agent, current_message, frontend_dir)
 
-        passed, report = _run_frontend_build(frontend_dir)
-        if passed:
-            gate_passed, gate_report = _validate_session_gate(frontend_dir, auth_mode)
-            role_passed, role_report = _validate_role_source_gate(frontend_dir, auth_mode)
-            wired_passed, wired_report = _validate_wired_callbacks_gate(frontend_dir, auth_mode)
-            if gate_passed and role_passed and wired_passed:
-                print(f"[frontend-agent] {report}")
-                print(f"[frontend-agent] {gate_report}")
-                print(f"[frontend-agent] {role_report}")
-                print(f"[frontend-agent] {wired_report}")
-                print("[frontend-agent] BUILD PASSED ΓÇö frontend generated successfully.")
-                return
-            if not gate_passed:
-                passed, report = gate_passed, gate_report
-            elif not role_passed:
-                passed, report = role_passed, role_report
+            passed, report = _run_frontend_build(frontend_dir)
+            if passed:
+                gate_passed, gate_report = _validate_session_gate(frontend_dir, auth_mode)
+                role_passed, role_report = _validate_role_source_gate(frontend_dir, auth_mode)
+                wired_passed, wired_report = _validate_wired_callbacks_gate(frontend_dir, auth_mode)
+                if gate_passed and role_passed and wired_passed:
+                    print(f"[frontend-agent] {report}")
+                    print(f"[frontend-agent] {gate_report}")
+                    print(f"[frontend-agent] {role_report}")
+                    print(f"[frontend-agent] {wired_report}")
+                    print("[frontend-agent] BUILD PASSED. Frontend generated successfully.")
+                    return
+                if not gate_passed:
+                    passed, report = gate_passed, gate_report
+                elif not role_passed:
+                    passed, report = role_passed, role_report
+                else:
+                    passed, report = wired_passed, wired_report
+
+            print("[frontend-agent] BUILD FAILED:")
+            print(report)
+
+            if attempt >= max_retries:
+                print(
+                    f"[frontend-agent] giving up after {max_retries + 1} attempt(s). "
+                    "Last generated files are on disk but the build does not pass."
+                )
+                raise SystemExit(1)
+
+            # Feed the errors back for the next attempt. Stateless retry: send the
+            # build errors and ask for corrected files. Do NOT resend the full spec.
+            # Escalate if the SAME error (file+line+code) survived from the previous
+            # attempt unfixed — the generic "fix all errors" prompt already failed to
+            # fix it once, so ask for a targeted fix at the exact lines instead.
+            current_error_locations = _error_locations(report)
+            repeated = current_error_locations & previous_error_locations
+            if repeated:
+                print(
+                    f"[frontend-agent] {len(repeated)} error(s) repeated from the previous "
+                    "attempt unfixed — escalating to a targeted retry message.",
+                )
+                current_message = _escalated_retry_message(report, repeated, frontend_dir)
             else:
-                passed, report = wired_passed, wired_report
+                current_message = (
+                    "The frontend you generated failed to build. Fix ALL errors below and "
+                    "return the corrected files as a JSON file map (same format as before). "
+                    "Return ONLY the files that need changing, plus any new files required.\n\n"
+                    f"BUILD ERRORS:\n{report}\n\n"
+                    "Return only the JSON file map. No markdown, no explanation."
+                )
+            previous_error_locations = current_error_locations
+    except BaseException as exc:
+        agent_error = exc
+    finally:
+        if telemetry is not None:
+            telemetry.extra = {"status": "failed" if agent_error else "completed"}
+            try:
+                telemetry.finalize(context=ctx)
+            except Exception:
+                pass
+    if agent_error is not None:
+        raise agent_error
 
-        print("[frontend-agent] BUILD FAILED:")
-        print(report)
 
-        if attempt >= max_retries:
-            print(
-                f"[frontend-agent] giving up after {max_retries + 1} attempt(s). "
-                "Last generated files are on disk but the build does not pass."
-            )
-            raise SystemExit(1)
+# ==============================================================================
+# AgentCore direct-invoke handler (standalone runtime, no orchestrator).
+#
+# Mirrors developer_agent.py's shape: _prompt_to_text() normalizes whatever the
+# Strands/A2A layer hands the agent into a plain string; a deterministic Python
+# function (not an LLM turn) parses it and calls the same run_task() the CLI
+# uses; the whole thing never raises — every failure path returns a structured
+# {"status": "error", ...} result instead, matching gitlab-agent's
+# run_publish_for_agentcore ("no LLM" pattern) and developer_agent.py's
+# _execute_developer_pipeline_message.
+#
+# Stage 2b: in s3 mode (ARTIFACT_STORE=s3), handle_developer_handoff fetches
+# openapi.json + context.json from S3 by app slug (same runs/<runId>/<slug>/...
+# convention developer_agent.py's dev_read_file uses) instead of reading the
+# handoff's local openapi_path — see _fetch_inputs_from_s3 below. Local mode
+# (ARTIFACT_STORE unset/local) is untouched: it still reads the handoff's
+# openapi_path straight off local disk, exactly as Stage 1 did.
+# ==============================================================================
 
-        # Feed the errors back for the next attempt. Stateless retry: send the
-        # build errors and ask for corrected files. Do NOT resend the full spec.
-        # Escalate if the SAME error (file+line+code) survived from the previous
-        # attempt unfixed — the generic "fix all errors" prompt already failed to
-        # fix it once, so ask for a targeted fix at the exact lines instead.
-        current_error_locations = _error_locations(report)
-        repeated = current_error_locations & previous_error_locations
-        if repeated:
-            print(
-                f"[frontend-agent] {len(repeated)} error(s) repeated from the previous "
-                "attempt unfixed — escalating to a targeted retry message.",
-            )
-            current_message = _escalated_retry_message(report, repeated, frontend_dir)
-        else:
-            current_message = (
-                "The frontend you generated failed to build. Fix ALL errors below and "
-                "return the corrected files as a JSON file map (same format as before). "
-                "Return ONLY the files that need changing, plus any new files required.\n\n"
-                f"BUILD ERRORS:\n{report}\n\n"
-                "Return only the JSON file map. No markdown, no explanation."
-            )
-        previous_error_locations = current_error_locations
+
+def _prompt_to_text(message: Any) -> str:
+    """Normalize an A2A message (str, list of {"text": ...} parts, or other) to plain text."""
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        parts: list[str] = []
+        for item in message:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return str(message)
+
+
+def parse_frontend_handoff(message: Any) -> dict[str, Any]:
+    """Parse a Developer->Frontend handoff object out of a raw invoke message.
+
+    The payload IS the handoff JSON object (unlike the "task text\\n\\nContext:\\n{json}"
+    hybrid other agents parse) — accepts a dict directly (already-parsed payload), a bare
+    JSON string, or the same "...\\n\\nContext:\\n{json}" hybrid for tolerance if the
+    invoke path ever wraps it that way. Returns {} for anything unparseable rather than
+    raising, so a malformed invoke degrades to handle_developer_handoff's own
+    "target_app is required" error path instead of crashing here.
+    """
+    if isinstance(message, dict):
+        return message
+    text = _prompt_to_text(message).strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    marker = "\n\nContext:\n"
+    if marker in text:
+        _, _, rest = text.partition(marker)
+        try:
+            parsed = json.loads(rest.strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def _fetch_inputs_from_s3(slug: str, run_id: str) -> tuple[dict[str, Any], Path]:
+    """S3-mode input resolution: fetch context.json + openapi.json by app slug under the
+    run's S3 prefix (runs/<runId>/<slug>/...) — the same key convention developer_agent.py's
+    dev_read_file uses for PRD/design/DB-handoff reads. The handoff's openapi_path is a
+    local filesystem path and is deliberately ignored here: it cannot resolve on a remote
+    runtime with no repo checkout, so this fetches by slug instead of by that path.
+
+    Lands the fetched spec at a local temp file so run_task's unchanged, local-file-only
+    read (via its openapi_source_path override) can consume it without any change to
+    run_task's own generation logic — the fetch happens entirely here, before run_task runs.
+    """
+    context = artifact_store.get_context(run_id, target_app=slug) or {"targetApp": slug}
+    context.setdefault("targetApp", slug)
+
+    openapi_bytes = artifact_store.get_artifact(run_id, f"{slug}/openapi.json")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f"frontend-agent-{slug}-"))
+    tmp_openapi = tmp_dir / "openapi.json"
+    tmp_openapi.write_bytes(openapi_bytes)
+    return context, tmp_openapi
+
+
+def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
+    """AgentCore direct-invoke entrypoint: consume the Developer->Frontend handoff,
+    run the same generation run_task() already does for the CLI, and return Kintur's
+    frontend OUTPUT contract.
+
+    Additive only — reuses run_task()'s exact scaffold + model + build-validation
+    retry loop via its openapi_source_path override; no generation logic is
+    duplicated or rewritten here. Never raises: every failure path (missing
+    target_app, missing/unreadable openapi input, an S3 fetch failure, a build that
+    never passes) returns {"status": "error", ...} instead of propagating an
+    exception, so a bad direct invoke surfaces as a clean structured result.
+
+    Dual-mode input resolution, mirroring the S3 output upload's own gating:
+    - local mode (ARTIFACT_STORE unset/local): reads the handoff's openapi_path and
+      the pipeline context straight off local disk, exactly as before — untouched.
+    - s3 mode (ARTIFACT_STORE=s3): fetches context.json + openapi.json from S3 by
+      app slug (see _fetch_inputs_from_s3) instead of trusting the handoff's local
+      path, which cannot exist on a remote runtime.
+    """
+    target_app = str(payload.get("target_app") or "").strip()
+    if not target_app:
+        return {
+            "status": "error",
+            "target_app": payload.get("target_app"),
+            "error": "target_app is required in the handoff payload",
+        }
+
+    if payload.get("frontend_required") is False:
+        return {
+            "status": "skipped",
+            "target_app": target_app,
+            "reason": "frontend_required=false",
+        }
+
+    slug = slugify(target_app)
+
+    if artifact_store.is_s3_store():
+        run_id = str(payload.get("run_id") or payload.get("runId") or "").strip()
+        if not run_id:
+            return {
+                "status": "error",
+                "target_app": target_app,
+                "error": (
+                    "could not fetch inputs from S3: runId is required in the handoff "
+                    "payload when ARTIFACT_STORE=s3"
+                ),
+            }
+        try:
+            context, openapi_source_path = _fetch_inputs_from_s3(slug, run_id)
+        except Exception as exc:  # noqa: BLE001 - never let a bad invoke crash the runtime
+            return {
+                "status": "error",
+                "target_app": target_app,
+                "error": f"could not fetch inputs from S3: {exc}",
+            }
+        resolved_app = slug
+    else:
+        # Same context resolution the CLI's main() uses (resolve_cli_context with
+        # no explicit --context-file) so prdPath/designDocPath/authMode resolve
+        # identically to a local pipeline run — auto-loads
+        # agents/pipeline/<slug>.context.json when present. Byte-for-byte the
+        # same as Stage 1: no S3 awareness in this branch at all.
+        context, resolved_app = resolve_cli_context(target_app, None, no_auto_context=False)
+        openapi_source_path = payload.get("openapi_path")
+
+    try:
+        run_task(
+            resolved_app,
+            context,
+            full_regen=True,
+            openapi_source_path=openapi_source_path,
+        )
+    except SystemExit as exc:
+        return {"status": "error", "target_app": target_app, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - never let a bad invoke crash the runtime
+        return {"status": "error", "target_app": target_app, "error": f"{type(exc).__name__}: {exc}"}
+
+    frontend_dir = _REPO_ROOT / "target-apps" / slug / "frontend"
+    artifact_files = sorted(
+        p
+        for p in frontend_dir.rglob("*")
+        if p.is_file() and "node_modules" not in p.parts and p.name != ".env"
+    )
+    artifacts = [p.relative_to(_REPO_ROOT).as_posix() for p in artifact_files]
+
+    if artifact_store.is_s3_store():
+        # run_id was already validated non-empty above (same gate that drove the
+        # input fetch) — reused here, not recomputed, so the output lands under
+        # the identical runs/<runId>/<slug>/ folder the input fetch just read
+        # from. Never raises: a failed output upload becomes a clean error
+        # result, matching this handler's own established contract, rather than
+        # crashing the runtime after a successful generation.
+        try:
+            _upload_frontend_output_if_s3(slug, run_id, frontend_dir, artifact_files)
+        except Exception as exc:  # noqa: BLE001 - never let a bad invoke crash the runtime
+            return {
+                "status": "error",
+                "target_app": target_app,
+                "error": f"could not upload frontend output to S3: {exc}",
+            }
+
+    return {
+        "status": "success",
+        "target_app": target_app,
+        "frontend_path": f"target-apps/{slug}/frontend",
+        "build_command": "npm install && npm run build",
+        "start_command": "npm run dev",
+        # No API-integration smoke check runs as part of this handler today —
+        # report honestly rather than claim a validation that never happened.
+        "backend_integration": "not_run",
+        "artifacts": artifacts,
+    }
+
+
+def _upload_frontend_output_if_s3(
+    slug: str, run_id: str, frontend_dir: Path, artifact_files: list[Path]
+) -> list[str]:
+    """Upload generated frontend files to S3 as siblings of context.json/openapi.json —
+    runs/<runId>/<slug>/frontend/... — so gitlab-agent (or anything else) can publish
+    from the same run folder Kintur's contract requires.
+
+    Deliberately does NOT reuse sync_repo_paths_to_run/artifact_paths_for_agent (the
+    orchestrator-only sync path): that helper computes its rel path relative to
+    repo_root(), which for this directory is target-apps/<slug>/frontend/... — a
+    different prefix than context.json/openapi.json use (<slug>/...). Computing the
+    rel path relative to frontend_dir itself, as done here, keeps the same <slug>/...
+    convention every other artifact in this run already uses.
+    """
+    uploaded: list[str] = []
+    for path in artifact_files:
+        rel_under_frontend = path.relative_to(frontend_dir).as_posix()
+        rel = f"{slug}/frontend/{rel_under_frontend}"
+        artifact_store.put_artifact(run_id, rel, path.read_bytes())
+        uploaded.append(rel)
+    return uploaded
+
+
+def _execute_frontend_invoke_message(message: Any) -> str:
+    """Text-in/text-out wrapper for AgentCore's A2A transport (parse -> handle -> JSON text).
+
+    Kept separate from handle_developer_handoff() so tests/local proofs can call the
+    dict-in/dict-out function directly without going through message-text parsing.
+    """
+    payload = parse_frontend_handoff(message)
+    result = handle_developer_handoff(payload)
+    return json.dumps(result, indent=2)
+
+
+def _agent_result_from_text(text: str) -> Any:
+    from strands.agent.agent_result import AgentResult
+    from strands.telemetry.metrics import EventLoopMetrics
+
+    return AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": text}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+
+def build_frontend_pipeline_agent() -> Agent:
+    """AgentCore mode: handle_developer_handoff on each A2A message (mirrors
+    developer_agent.py's build_developer_pipeline_agent — same monkeypatch shape).
+
+    build_frontend_agent() (above) is the bare, tool-less, generic Agent — correct
+    for local dev/inspection, but on its own an AgentCore invoke would just reach
+    the LLM directly with no tools, never calling run_task(). This factory takes
+    that same base Agent and replaces its __call__/stream_async with the
+    deterministic handler built in this session's earlier stages
+    (parse_frontend_handoff -> handle_developer_handoff -> run_task), so a real
+    AgentCore invoke actually generates, fetches/uploads via S3 in s3 mode, and
+    returns Kintur's structured output contract instead of a chat reply.
+    """
+    agent = build_frontend_agent()
+
+    def frontend_invoke(message: Any, **kwargs: Any) -> str:
+        del kwargs
+        return _execute_frontend_invoke_message(message)
+
+    async def frontend_stream_async(
+        prompt: Any = None,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        from strands.types._events import AgentResultEvent
+
+        del invocation_state, kwargs
+        summary = _execute_frontend_invoke_message(prompt)
+        yield AgentResultEvent(result=_agent_result_from_text(summary)).as_dict()
+
+    agent.__call__ = frontend_invoke  # type: ignore[method-assign]
+    agent.stream_async = frontend_stream_async  # type: ignore[method-assign]
+    return agent
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Frontend agent")
     parser.add_argument("--target-app", required=True)
     parser.add_argument("--context-file")

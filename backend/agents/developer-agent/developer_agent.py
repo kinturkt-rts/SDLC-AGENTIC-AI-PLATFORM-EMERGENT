@@ -24,6 +24,7 @@ from scaffold import format_scaffold_report, scaffold_service
 from _shared.artifact_store import (
     is_s3_store,
     list_run_artifact_keys,
+    put_artifact,
     put_context,
     read_repo_artifact,
     resolve_run_id,
@@ -47,6 +48,7 @@ from _shared.pipeline_context import (
     target_app_root_rel,
 )
 from _shared.telemetry import RunTelemetry, usage_from_event
+from _shared.pg_test_schema import setup_temp_pg_test_schema, teardown_temp_pg_schema
 
 load_repo_env()
 os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
@@ -207,6 +209,36 @@ Rules — apply to every FR regardless of domain:
 3a. Implement every route from the Step 0 manifest:
     - Correct HTTP method, path, path/query params.
     - Pydantic v2 request/response models — field names identical snake_case to ORM columns.
+    - Foreign-key display names: when a list or detail response exposes a foreign-key id column
+      (e.g. instructor_user_id, assignee_user_id) AND the referenced row has a human-readable field
+      (name, title, username, label), ALSO include a sibling read-only field with that value, named
+      <relation>_name (or <relation>_title where 'title' is the natural label). Populate it by joining
+      or looking up the related row when building the response. Keep the original id field too.
+      Example: a course response returns both instructor_user_id and instructor_name. This mirrors
+      the shipped recipe-vault pattern (ingredient_id + ingredient_name). Skip this only when the
+      design explicitly returns bare ids or the relation has no human-readable field.
+
+      Worked example (FK display name):
+      ```python
+      # schema: expose BOTH the id and a human-readable name
+      class CourseResponse(BaseModel):
+          model_config = ConfigDict(from_attributes=True)
+          id: str
+          code: str
+          title: str
+          instructor_user_id: str       # keep the raw FK id
+          instructor_name: str | None   # sibling display name from the related row
+
+      # router: populate the name by joining the related row
+      rows = db.execute(
+          select(Course, User.full_name)
+          .join(User, Course.instructor_user_id == User.id)
+      ).all()
+      return CourseListResponse(courses=[
+          CourseResponse(**course.__dict__, instructor_name=name)
+          for course, name in rows
+      ])
+      ```
     - status_code= on DECORATOR (not in comments): POST→201, DELETE→204 with response_model=None.
     - Postgres: sync SQLAlchemy SessionLocal + Depends(get_db) in EVERY DB-backed handler.
     - Auth per design **Rules** only — do NOT add JWT if Rules specify API-key only:
@@ -2154,6 +2186,132 @@ def validate_main_registers_auth(service_dir: Path, auth_mode: str = "jwt") -> l
     return errors
 
 
+_ME_IMPORT_RE = re.compile(
+    r"^\s*from\s+app\.routers\s+import\s+.*\bme\b|^\s*import\s+app\.routers\.me\b",
+    re.MULTILINE,
+)
+_ME_INCLUDE_RE = re.compile(r"include_router\(\s*me\.router\b")
+
+# Matches the single combined `from app.routers import a, b, c` line every
+# scaffolded main.py uses (see _JWT_MAIN_PY_SECTION / _API_KEY_MAIN_PY_SECTION
+# examples above) — captures the name list so `me` can be appended to it.
+_ROUTERS_IMPORT_LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)from\s+app\.routers\s+import\s+(?P<names>[^\n#]+?)[ \t]*(?P<comment>#.*)?$",
+    re.MULTILINE,
+)
+# Anchor for where to inject the me.router registration, and for which FastAPI
+# app variable name (`app` vs `application`, etc.) this file actually uses —
+# health is always present (force-refreshed by the scaffolder), so it's a safe,
+# always-present anchor line.
+_HEALTH_INCLUDE_LINE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<var>\w+)\.include_router\(\s*health\.router\b[^\n]*\)[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def autofix_main_registers_me(service_dir: Path, auth_mode: str) -> list[str]:
+    """Deterministically register app/routers/me.py's GET /api/v1/users/me route in
+    app/main.py for api-key apps.
+
+    me.py is never scaffolded for JWT apps and this is a no-op there. For
+    api-key apps it's now force-refreshed onto disk (scaffold-manifest.json's
+    B-api-key copy_verbatim), but app/main.py is LLM-written per app, not
+    template-copied (see validate_main_registers_auth's docstring — same drift
+    risk observed for the auth router), and the frontend's verbatim api.ts
+    hardcodes a login call to this exact route regardless of what the model
+    wrote. me.py declares the FULL path (@router.get("/api/v1/users/me")), so
+    it must be registered with NO prefix — adding one would double the path to
+    /api/v1/users/api/v1/users/me.
+
+    Only rewrites main.py when its shape is unambiguous (exactly one combined
+    `from app.routers import ...` line and exactly one health include_router
+    call to anchor on and to read the app variable name from). Returns a
+    one-item list describing the injection when applied (for a non-blocking
+    _warn), or [] when there's nothing to do — JWT mode, me.py not scaffolded,
+    already registered (idempotent), or the shape isn't safe to touch. In the
+    last case the file is left untouched and validate_main_registers_me (the
+    paired blocking check) reports it instead of risking a corrupt inject.
+    """
+    if auth_mode != "api-key":
+        return []
+    me_path = service_dir / "app" / "routers" / "me.py"
+    if not me_path.is_file():
+        return []
+    main_path = service_dir / "app" / "main.py"
+    if not main_path.is_file():
+        return []
+    text = main_path.read_text(encoding="utf-8", errors="ignore")
+    if _ME_IMPORT_RE.search(text) and _ME_INCLUDE_RE.search(text):
+        return []
+
+    import_matches = list(_ROUTERS_IMPORT_LINE_RE.finditer(text))
+    health_matches = list(_HEALTH_INCLUDE_LINE_RE.finditer(text))
+    if len(import_matches) != 1 or len(health_matches) != 1:
+        return []
+
+    im = import_matches[0]
+    names = im.group("names").rstrip()
+    if not re.search(r"\bme\b", names):
+        new_import_line = f"{im.group('indent')}from app.routers import {names}, me"
+        if im.group("comment"):
+            new_import_line += f"  {im.group('comment')}"
+        text = text[: im.start()] + new_import_line + text[im.end() :]
+        # Re-anchor: the import edit shifted every later offset, including the
+        # health include line further down the file.
+        health_matches = list(_HEALTH_INCLUDE_LINE_RE.finditer(text))
+        if len(health_matches) != 1:
+            return []
+
+    if not _ME_INCLUDE_RE.search(text):
+        hm = health_matches[0]
+        injected_line = f'\n{hm.group("indent")}{hm.group("var")}.include_router(me.router, tags=["users"])'
+        text = text[: hm.end()] + injected_line + text[hm.end() :]
+
+    main_path.write_text(text, encoding="utf-8")
+    return [
+        "app/main.py did not register app/routers/me.py's GET /api/v1/users/me "
+        "(the frontend's login flow calls it) — injected `me` into the routers "
+        'import and added include_router(me.router, tags=["users"]) with no prefix'
+    ]
+
+
+def validate_main_registers_me(service_dir: Path, auth_mode: str = "jwt") -> list[str]:
+    """Ensure app/main.py registers app/routers/me.py's GET /api/v1/users/me route.
+
+    Paired with autofix_main_registers_me, which runs first and injects the
+    registration when main.py's shape is safe to edit. This is the
+    deterministic backstop for the case autofix declined to touch (unexpected
+    main.py shape) — same "prefer safe-block over corrupt-inject" policy as the
+    ui_parity stray-file auto-remove. api-key apps only: JWT apps have no
+    me.py and their api.ts never calls /users/me.
+    """
+    if auth_mode != "api-key":
+        return []
+    me_path = service_dir / "app" / "routers" / "me.py"
+    if not me_path.is_file():
+        return []
+    main_path = service_dir / "app" / "main.py"
+    if not main_path.is_file():
+        return ["MAIN.PY MISSING: app/main.py not found — cannot register app/routers/me.py."]
+    text = main_path.read_text(encoding="utf-8", errors="ignore")
+    errors: list[str] = []
+    if not _ME_IMPORT_RE.search(text):
+        errors.append(
+            "ME ROUTER NOT IMPORTED: app/main.py does not import me from app.routers — "
+            "the frontend's login flow calls GET /api/v1/users/me and will 404. Add "
+            "`me` to the `from app.routers import ...` line "
+            "(see target-apps/_template/app/routers/me.py)."
+        )
+    if not _ME_INCLUDE_RE.search(text):
+        errors.append(
+            "ME ROUTER NOT REGISTERED: app/main.py does not call "
+            "include_router(me.router, ...) — GET /api/v1/users/me will 404. "
+            "Register it with NO prefix — me.py's route is already the full path "
+            "/api/v1/users/me, so adding a prefix would double it."
+        )
+    return errors
+
+
 _CORS_IMPORT_RE = re.compile(r"from\s+fastapi\.middleware\.cors\s+import\s+CORSMiddleware")
 _CORS_ADD_MIDDLEWARE_RE = re.compile(r"add_middleware\s*\(\s*CORSMiddleware\b")
 _CORS_ORIGINS_FIELD_RE = re.compile(r"\bcors_origins\s*:")
@@ -2450,7 +2608,7 @@ _DB_COLUMN_CATEGORY_MAP: dict[str, str] = {
     "character": "string",
     "text": "string",
     "citext": "string",
-    "USER-DEFINED": "string",  # native Postgres ENUM types (pg_enum in the ORM)
+    "USER-DEFINED": "enum",  # native Postgres ENUM types (pg_enum in the ORM)
     "integer": "integer",
     "bigint": "integer",
     "smallint": "integer",
@@ -2475,9 +2633,9 @@ _ORM_TYPE_CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("pg_uuid_column", "string"),  # folded into string — see _DB_COLUMN_CATEGORY_MAP note
     ("PG_UUID", "string"),
     ("UUID", "string"),
-    ("pg_enum", "string"),
-    ("SAEnum", "string"),
-    ("Enum", "string"),
+    ("pg_enum", "enum"),
+    ("SAEnum", "enum"),
+    ("Enum", "enum"),
     ("String", "string"),
     ("Unicode", "string"),
     ("Text", "string"),
@@ -2702,9 +2860,19 @@ def validate_schema_parity(service_dir: Path) -> list[str]:
                 category = _db_column_category(data_type, udt_name)
                 nullable = is_nullable == "YES"
                 db_map.setdefault(table_name, {})[column_name] = (category, nullable)
-    except Exception as exc:  # never crash validation on a connectivity/env problem
-        print(f"[schema_parity] WARN: could not introspect applied DB, skipping check (non-fatal): {exc!r}")
-        return []
+    except psycopg.OperationalError as exc:
+        return [
+            f"schema_parity: could NOT CONNECT to the applied Postgres schema ({exc!r}) — "
+            f"this usually means the AWS SSO session expired or RDS is unreachable, NOT a code "
+            f"bug. Run `aws sso login --profile aryan-sdlc` and retry. The check is blocking "
+            f"because it cannot verify ORM/DB parity without a live connection."
+        ]
+    except Exception as exc:
+        return [
+            f"schema_parity: failed to introspect the applied DB schema ({exc!r}) — the DB may "
+            f"not have been applied, or the schema is malformed. This check must run against the "
+            f"real Postgres schema and cannot be skipped."
+        ]
 
     orm_map = _parse_orm_models(service_dir / "app" / "models")
 
@@ -2760,14 +2928,32 @@ def validate_schema_parity(service_dir: Path) -> list[str]:
     return errors
 
 
-def _validation_env(service_dir: Path) -> dict[str, str]:
-    """Test env: SQLite for smoke tests; schema/keys from .env.example when present."""
+def _validation_env(
+    service_dir: Path,
+    *,
+    database_url: str = "",
+    postgres_schema: str | None = None,
+) -> dict[str, str]:
+    """Test env: real Postgres against a throwaway schema when db/sql/ exists (see
+    _shared.pg_test_schema.setup_temp_pg_test_schema — this is what makes ORM/DDL
+    drift like enum-vs-String visible to pytest); schema/keys from .env.example
+    when present.
+
+    database_url/postgres_schema come from setup_temp_pg_test_schema's return value.
+    When empty (no db/sql/ — DB-less or non-Postgres app pattern), fall back to the
+    harmless in-memory SQLite default these apps never actually read from DATABASE_URL.
+    """
     env = {**os.environ}
     example_vars = _parse_dotenv_file(service_dir / ".env.example")
     env.update(example_vars)
     env["APP_ENV"] = "test"
     env["SKIP_STARTUP_CHECKS"] = "1"
-    env["DATABASE_URL"] = "sqlite:///:memory:"
+    if database_url:
+        env["DATABASE_URL"] = database_url
+        if postgres_schema:
+            env["POSTGRES_SCHEMA"] = postgres_schema
+    else:
+        env["DATABASE_URL"] = "sqlite:///:memory:"
     if not env.get("API_KEY"):
         env["API_KEY"] = "test-key"
     env.setdefault("JWT_SECRET_KEY", example_vars.get("JWT_SECRET_KEY") or "test-secret-not-for-prod")
@@ -2806,6 +2992,40 @@ def _scan_python_syntax(service_dir: Path) -> list[str]:
         except py_compile.PyCompileError as exc:
             errors.append(f"{rel}: {exc.msg}")
     return errors
+
+
+def _check_py_encodable(service_dir: Path) -> None:
+    """Reuse gitlab-agent's publish-time surrogate/syntax check (
+    _shared.gitlab_mcp_actions.assert_publish_python_syntax) at generation time,
+    so a .py file with unencodable content — e.g. a lone UTF-16 surrogate emoji
+    escape like page_icon="\\ud83c\\udfab" — fails the developer step here instead
+    of only surfacing at GitLab publish. py_compile accepts these as valid syntax
+    (they're legal Python string escapes), but the resulting str can never be
+    UTF-8 encoded; Streamlit hits exactly this in st.set_page_config(page_icon=...).
+
+    Imported lazily (not at module top) to match every other validation helper in
+    this file (validate_conftest, validate_rds_parity, validate_ui_parity, ...) —
+    none of them are top-level imports either, and this keeps the gitlab_mcp_client
+    -> mcp package dependency out of developer_agent.py's import graph for runs
+    that never exercise this specific check.
+
+    Raises ValueError on any bad or unreadable file — the same exception
+    assert_publish_python_syntax itself raises, so callers only need one except
+    clause."""
+    from _shared.gitlab_mcp_actions import assert_publish_python_syntax
+
+    files: list[dict[str, str]] = []
+    for path in service_dir.rglob("*.py"):
+        if any(part in _BLOCKED_PATH_PARTS for part in path.parts):
+            continue
+        rel = path.relative_to(service_dir).as_posix()
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ValueError(f"{rel}: could not read as UTF-8 text ({exc})") from exc
+        files.append({"path": rel, "content": content})
+
+    assert_publish_python_syntax(files)
 
 
 def _scan_router_antipatterns(service_dir: Path) -> list[str]:
@@ -2941,8 +3161,6 @@ def run_service_validation(
     parameter is the fix. Defaults to _current_auth_mode() (the global) so the
     dev_validate_app tool, which does run mid-conversation, is unaffected.
     """
-    import subprocess
-
     resolved_auth_mode = auth_mode if auth_mode is not None else _current_auth_mode()
 
     service_dir = _service_dir(service)
@@ -2954,7 +3172,47 @@ def run_service_validation(
         return False, f"Error: target-apps/{service}/requirements.txt not found"
 
     python_cmd = _python_for_service(service_dir)
-    env = _validation_env(service_dir)
+
+    temp_schema, pg_base_url, setup_errors = setup_temp_pg_test_schema(service_dir, service)
+    if setup_errors:
+        return False, _format_validation_failure(
+            "schema_test_setup", "\n".join(setup_errors), [], []
+        )
+    env = _validation_env(service_dir, database_url=pg_base_url, postgres_schema=temp_schema)
+
+    try:
+        return _run_validation_steps(
+            service,
+            service_dir,
+            python_cmd,
+            env,
+            run_pytest=run_pytest,
+            resolved_auth_mode=resolved_auth_mode,
+        )
+    finally:
+        # Guaranteed cleanup: this finally covers EVERY return path inside
+        # _run_validation_steps below (all the early `return _fail(...)` checks,
+        # plus the final success return) — not just the pytest step — so a crashed
+        # or short-circuited validation run never leaves an orphan schema on shared RDS.
+        if temp_schema:
+            teardown_temp_pg_schema(temp_schema)
+
+
+def _run_validation_steps(
+    service: str,
+    service_dir: Path,
+    python_cmd: str,
+    env: dict[str, str],
+    *,
+    run_pytest: bool,
+    resolved_auth_mode: str,
+) -> tuple[bool, str]:
+    """The actual validation checks, run against `env` (real Postgres + throwaway
+    schema when db/sql/ exists, built by setup_temp_pg_test_schema). Split out of
+    run_service_validation so that function's `finally` guarantees schema teardown
+    across every return path here, without wrapping each individual check."""
+    import subprocess
+
     verbose = _validation_verbose()
     checks: list[str] = []
     warnings: list[str] = []
@@ -3014,6 +3272,12 @@ def run_service_validation(
         ) + "\n".join(f"  - {e}" for e in syntax_errors)
         return _fail("syntax", detail)
     _ok("syntax")
+
+    try:
+        _check_py_encodable(service_dir)
+    except ValueError as exc:
+        return _fail("py_encodable", str(exc))
+    _ok("py_encodable")
 
     env_results = _validate_env_example(service_dir)
     if env_results[0].startswith("ENV_EXAMPLE FAILED"):
@@ -3166,6 +3430,14 @@ def run_service_validation(
         detail = "\n".join(f"  - {e}" for e in main_auth_errors)
         return _fail("main_registers_auth", detail)
     _ok("main_registers_auth")
+    me_fixes = autofix_main_registers_me(service_dir, auth_mode)
+    for fix in me_fixes:
+        _warn(f"main_registers_me: {fix}")
+    main_me_errors = validate_main_registers_me(service_dir, auth_mode)
+    if main_me_errors:
+        detail = "\n".join(f"  - {e}" for e in main_me_errors)
+        return _fail("main_registers_me", detail)
+    _ok("main_registers_me")
     cors_errors = validate_cors_configured(service_dir)
     if cors_errors:
         detail = "CORS_CONFIGURED FAILED (browser preflight OPTIONS requests will 405):\n" + "\n".join(
@@ -3926,8 +4198,36 @@ def run_task(
     if run_id:
         ctx.setdefault("runId", run_id)
         put_context(run_id, ctx)
+        _upload_openapi_artifact_if_s3(app, run_id)
 
     return summary, written, handoff_rel
+
+
+def _upload_openapi_artifact_if_s3(app: str, run_id: str) -> None:
+    """Mirror context.json's own S3 upload for the OpenAPI spec.
+
+    Health-smoke (run_service_validation, already completed by the time run_task's
+    tail reaches this call, via dev_validate_app or _append_required_validation)
+    writes openapi.json to local disk (~line 3678) via a bare open() with no S3
+    awareness at all. This lands it in S3 too, as a sibling of context.json
+    (<slug>/openapi.json), so the frontend agent's S3 fetch-by-slug finds it.
+
+    is_file() guard: skip silently if health-smoke never got this far (app failed
+    to start) — that's an existing failure surfaced elsewhere, not a new one to
+    invent here. No try/except once the file IS present: matches put_context's own
+    fatal-on-failure behavior at its call site immediately above.
+    """
+    if not is_s3_store():
+        return
+    openapi_local_path = _service_dir(app) / "openapi.json"
+    if not openapi_local_path.is_file():
+        return
+    put_artifact(
+        run_id,
+        f"{slugify(app)}/openapi.json",
+        openapi_local_path.read_bytes(),
+        content_type="application/json",
+    )
 
 
 def parse_task_and_context(message: str) -> tuple[str, dict[str, Any]]:

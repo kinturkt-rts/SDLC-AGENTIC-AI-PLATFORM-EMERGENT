@@ -26,10 +26,9 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import String, create_engine, event
+from sqlalchemy import String
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import TypeDecorator
 
 
@@ -41,7 +40,22 @@ def _ts(iso: str) -> datetime:
 # ── 1. Environment BEFORE any app import ─────────────────────────────────────
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("SKIP_STARTUP_CHECKS", "1")
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# Tests run against a REAL Postgres schema built from db/sql/*.sql (see
+# developer-agent's _setup_temp_pg_test_schema), never SQLite. SQLite silently
+# accepts any Python value in a "enum" column, which made ORM-vs-DDL drift (a
+# column the SQL declares as a native Postgres ENUM but the ORM types as a plain
+# String) invisible to pytest — the DB was always built FROM the same ORM model
+# under test, so it could never disagree with it. There is no SQLite fallback:
+# if DATABASE_URL isn't set, fail loud here rather than silently passing on a
+# database that structurally cannot catch this class of bug.
+if not os.environ.get("DATABASE_URL"):
+    raise RuntimeError(
+        "DATABASE_URL is not set. Tests require a real Postgres connection string "
+        "pointing at a schema built from this app's db/sql/*.sql (normally supplied "
+        "by the developer-agent validation gate's _setup_temp_pg_test_schema). "
+        "There is no SQLite fallback — set DATABASE_URL and POSTGRES_SCHEMA "
+        "yourself for a manual run."
+    )
 os.environ.setdefault("POSTGRES_SCHEMA", "SCHEMA_NAME")  # ADAPT: actual schema
 # api-key mode has no shared-secret env var — auth is per-user tokens seeded
 # into the users table; see the "API-key variant" fixtures below.
@@ -117,36 +131,27 @@ import app.models  # noqa: E402, F401
 # ── 5. Engine + session fixtures ────────────────────────────────────────────
 
 def _build_test_engine() -> Engine:
-    """In-memory SQLite with schema attach and FK support."""
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-
-    schema = os.environ.get("POSTGRES_SCHEMA", "public")
-
-    @event.listens_for(eng, "connect")
-    def _on_connect(dbapi_conn, _record):
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        if schema and schema != "public":
-            try:
-                cur.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
-            except Exception:
-                pass  # already attached
-        cur.close()
-
-    return eng
+    """Reuse the app's own production engine (app/database.py's _make_engine) —
+    it already handles Postgres schema binding and search_path correctly via
+    POSTGRES_SCHEMA, which was set above BEFORE app.database was imported.
+    Building a second, separate engine here would just duplicate that logic and
+    risk it silently drifting from what the real app actually does."""
+    return _db_module.engine
 
 
 @pytest.fixture(scope="session")
 def engine() -> Engine:
     eng = _build_test_engine()
     if eng.dialect.name == "sqlite":
+        # Defensive only — DATABASE_URL is required to be a real Postgres URL
+        # above, so this branch never runs in the developer-agent gate; kept in
+        # case someone points a manual run at SQLite anyway.
         _patch_uuid_columns_for_sqlite(Base.metadata)
-    Base.metadata.create_all(eng)
+    # Deliberately NOT Base.metadata.create_all(eng): the schema (including
+    # native Postgres enums) is already built from db/sql/*.sql before pytest
+    # runs. Creating tables from the ORM here would make ORM-vs-DDL drift (e.g.
+    # a SQL enum typed as plain String in the ORM) structurally undetectable —
+    # the DB would always match whatever the ORM under test says.
     return eng
 
 

@@ -7,7 +7,7 @@ import { EmptyState } from '@/src/components/common/EmptyState';
 import { useTelemetryOverview } from '@/src/lib/queries';
 import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
-import { formatTokenCount } from '@/src/lib/token-display';
+import { AGENT_IDS, formatTokenCount } from '@/src/lib/token-display';
 
 export function TokensOverview() {
   const { data: rows, isLoading } = useTelemetryOverview();
@@ -68,7 +68,7 @@ export function TokensOverview() {
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Agents</p>
                 <p className="text-foreground">
-                  {row.agentsWithTelemetry > 0 ? `${row.agentsWithTelemetry}/4` : '-'}
+                  {row.agentsWithTelemetry > 0 ? `${row.agentsWithTelemetry}/${AGENT_IDS.length}` : '-'}
                 </p>
               </div>
             </div>

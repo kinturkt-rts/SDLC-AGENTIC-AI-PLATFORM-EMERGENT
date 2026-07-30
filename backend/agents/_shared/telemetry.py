@@ -29,6 +29,7 @@ DEFAULT_PIPELINE_AGENTS: tuple[str, ...] = (
     "architect-agent",
     "database-agent",
     "developer-agent",
+    "frontend-agent",
 )
 
 

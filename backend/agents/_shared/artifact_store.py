@@ -432,6 +432,15 @@ def artifact_paths_for_agent(agent_name: str, feature: str, context: dict[str, A
         paths.append(f"{root}/db")
     elif agent_name == "developer-agent":
         paths.append(root)
+    elif agent_name == "frontend-agent":
+        # frontend_agent.py always writes to the literal target-apps/<slug>/frontend
+        # directory on local disk (same hardcoded pattern as database-agent's and
+        # developer-agent's _service_dir), regardless of ARTIFACT_STORE. Unlike
+        # `root` (target_app_root_rel, which drops the "target-apps/" prefix when
+        # ARTIFACT_STORE=s3), this path must match the real on-disk location or
+        # sync_repo_paths_to_run's local-disk read (`repo_root() / rel_path`) finds
+        # nothing to upload.
+        paths.append(f"target-apps/{slugify(slug)}/frontend")
     elif agent_name == "gitlab-agent":
         paths.append(gitlab_handoff_rel_for_app(slug))
     elif agent_name == "qa-agent":

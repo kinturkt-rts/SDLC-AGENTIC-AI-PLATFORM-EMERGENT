@@ -1,0 +1,57 @@
+Venue Booking Gateway — shared room and equipment booking for an office, preventing overlaps and enforcing per-resource capacity.
+
+Client story:
+An office shares meeting rooms and AV equipment and keeps double-booking them. They want a booking service where staff reserve a resource for a time window, the system refuses any overlapping reservation for the same resource, and each resource can only be booked up to its capacity for a given slot. They care most that overlaps are impossible and that capacity is never exceeded.
+
+MVP:
+- Manage bookable resources (name, kind, capacity). A room has capacity 1 (one booking per slot); shared equipment pools may have capacity > 1.
+- Staff create bookings for a resource over a start/end window with a purpose.
+- Reject any booking that would overlap an existing non-cancelled booking for the same resource beyond the resource's capacity.
+- Booking status lifecycle enum: reserved -> checked_out -> returned, or cancelled from reserved.
+- Staff view and cancel their own bookings; managers view all and cancel any.
+- Availability check: list a resource's bookings in a date range so clients can see free slots.
+
+Personas & auth:
+| Role | Can do |
+|------|--------|
+| staff | create own bookings; view/cancel own |
+| manager | view all bookings; cancel any; manage resources |
+
+Auth: staff sign in with a username and password to use the web app, and each request is authorized from that login session. Separately, other internal systems integrate with this service using an API key sent in a header. Identity and role are resolved for both paths from the users table.
+
+Data model (DDL under target-apps/venue-booking-gateway/db/sql/):
+- users: id uuid PK, username unique, password_hash, api_token unique nullable, role enum(staff, manager), full_name, created_at
+- resources: id uuid PK, name unique, kind (room, equipment), capacity int NOT NULL default 1, created_at
+- bookings: id uuid PK, resource_id FK, booked_by_user_id FK, start_time timestamptz, end_time timestamptz, purpose nullable, status enum(reserved, checked_out, returned, cancelled), created_at, updated_at
+- booking_events: id, booking_id FK, from_status nullable, to_status, actor_user_id FK, note nullable, created_at (immutable audit of every transition)
+
+Business rules (enforce in API, not UI only):
+- Overlap + capacity: reject (422) a new/updated booking if the count of non-cancelled bookings for the same resource whose [start,end) overlaps the requested window is >= resource.capacity.
+- end_time must be after start_time (422).
+- Status transitions: reserved->checked_out, checked_out->returned, reserved->cancelled. Any other transition -> 409.
+- Staff may only view/cancel their OWN bookings (403 otherwise); managers may act on any.
+- Every status change writes a booking_events row.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+|--------|------|------|----------|
+| GET | /health | none | DB ping |
+| POST | /api/v1/auth/login | none | authenticate a user and return their session credential + role |
+| GET | /api/v1/me | authed | current user profile |
+| GET | /api/v1/resources | authed | list resources with capacity |
+| POST | /api/v1/resources | authed (manager) | create resource |
+| POST | /api/v1/bookings | authed (staff) | create booking (overlap + capacity checked) |
+| GET | /api/v1/bookings | authed | staff: own; manager: all; filters resource, date range |
+| GET | /api/v1/bookings/{id} | authed | 403 if staff and not owner |
+| PATCH | /api/v1/bookings/{id}/status | authed | transition per rules; writes event |
+| GET | /api/v1/resources/{id}/bookings | authed | a resource's bookings in a date range (availability) |
+
+Stack:
+- FastAPI + Postgres + pytest
+- React/Vite under frontend/
+
+Seed: 7 users (1 manager, 6 staff) with a documented shared password, 5 resources (mix of rooms with capacity 1 and at least one equipment pool with capacity 2), bookings spanning reserved/checked_out/returned/cancelled including at least one pair that would overlap a capacity-1 room if a new booking were attempted, and one equipment resource booked up to but not over its capacity.
+Tests: overlapping booking on a capacity-1 room -> 422; second concurrent booking on a capacity-2 pool -> ok; third concurrent on the capacity-2 pool -> 422; end before start -> 422; illegal transition (returned->reserved) -> 409; staff viewing another's booking -> 403; manager cancelling any booking -> ok.
+Out of scope: recurring bookings, billing, calendar sync.
+Target app slug: venue-booking-gateway
+Output directory: target-apps/venue-booking-gateway/

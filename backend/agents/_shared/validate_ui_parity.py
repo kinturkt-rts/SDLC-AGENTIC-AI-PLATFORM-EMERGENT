@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+import sys
 from pathlib import Path
 
 from _shared.api_surface import (
@@ -207,9 +209,11 @@ def validate_ui_parity(app_dir: Path, repo_root: Path) -> list[str]:
         )
     errors.extend(check_streamlit_no_deprecated_width_api(app_dir))
     if not streamlit_required and (app_dir / "ui" / "streamlit_app.py").is_file():
-        errors.append(
-            f"UI_PARITY WARN: {app_slug} has ui/streamlit_app.py but "
-            "deliveryProfile.requiresStreamlit is false — API-only apps should omit ui/"
+        shutil.rmtree(app_dir / "ui")
+        print(
+            "[ui_parity] removed stray ui/ (API-only app, requiresStreamlit=false) — "
+            "file should not have been generated.",
+            file=sys.stderr,
         )
 
     return errors

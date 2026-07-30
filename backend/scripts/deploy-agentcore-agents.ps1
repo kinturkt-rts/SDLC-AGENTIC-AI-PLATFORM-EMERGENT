@@ -192,6 +192,13 @@ $OptionalAgents = @(
     # devops_agent: standalone runtime (not in the pipeline batch / no orchestrator peering).
     # node=$true only to trigger the per-agent Dockerfile copy (INSTALL_TERRAFORM=true).
     @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $true; extra = @() },
+    # frontend_agent: standalone runtime (not in the pipeline batch / no orchestrator
+    # peering yet — see bundles.py). node=$true triggers the per-agent Dockerfile copy
+    # with INSTALL_NODE=true (npm install / npm run build in _run_frontend_build()).
+    # No SDLC_TEMPLATE_VERSION extra: unlike developer_agent, frontend_agent's template
+    # is baked into the image (deploy/agentcore/Dockerfile COPY target-apps/_template),
+    # not fetched from S3 at runtime.
+    @{ awsName = "frontend_agent"; bundle = "frontend-agent"; node = $true; extra = @() },
     @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @(
         "AGENTCORE_WEBCRAWLER_WITH_POSTGRES=false",
         "FIRECRAWL_MCP_COMMAND=firecrawl-mcp",

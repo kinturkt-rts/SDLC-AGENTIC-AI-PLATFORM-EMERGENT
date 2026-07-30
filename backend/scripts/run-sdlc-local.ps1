@@ -241,7 +241,14 @@ function Update-Context {
     foreach ($k in $Fields.Keys) { $obj[$k] = $Fields[$k] }
     if (-not $obj["targetApp"]) { $obj["targetApp"] = $Feature }
     if (-not $obj["designDocPath"]) { $obj["designDocPath"] = "docs/design/$Feature.md" }
-    $obj | ConvertTo-Json -Depth 5 | Set-Content $ctxPath -Encoding utf8
+    # PS 5.1's Set-Content/Out-File -Encoding utf8 always emits a UTF-8 BOM (no
+    # plain-utf8-no-BOM option exists on that encoding parameter in 5.1). A BOM
+    # broke Python readers that parse this file with plain "utf-8" + json.loads
+    # (json.JSONDecodeError on the BOM). $ctxPath is already absolute (built
+    # from $RepoRoot via Join-Path at the top of this script), which
+    # [System.IO.File]::WriteAllText requires.
+    $json = $obj | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($ctxPath, $json, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "[pipeline] Context -> agents/pipeline/$Feature.context.json" -ForegroundColor Cyan
 }
 
@@ -363,12 +370,24 @@ function Invoke-LocalVerify {
             throw "app import failed - developer-agent must fix startup errors before pipeline continues."
         }
 
-        $pytestOut = & $python -m pytest tests/ -q --tb=line 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $pytestOut | Write-Host
+        # Pytest runs against a throwaway Postgres schema built from this app's
+        # db/sql/*.sql (agents/_shared/pg_test_schema.py) - NOT SQLite. The app's
+        # tests/conftest.py now requires a real Postgres DATABASE_URL and refuses
+        # to fall back to SQLite (see target-apps/_template/tests/conftest_reference.py),
+        # since SQLite silently accepted values a real Postgres native enum would
+        # reject, hiding ORM-vs-DDL drift. run_app_tests_pg.py runs on the REPO venv
+        # (it imports _shared/apply_sql_to_rds), unlike $python above; it guarantees
+        # the temp schema is dropped even if pytest fails or crashes.
+        # Absolute path required here: this try block runs inside a Push-Location
+        # $targetDir (see above), so the relative "scripts/..." path Invoke-RdsApply
+        # uses (called at $RepoRoot scope, before any Push-Location) would resolve
+        # against target-apps/<app>/ instead of backend/ and silently fail to find
+        # the script — same reason the verify_seed_bcrypt.py calls above use
+        # Join-Path $RepoRoot rather than a bare relative path.
+        $runTestsScript = Join-Path $RepoRoot "scripts\run_app_tests_pg.py"
+        if ((Invoke-PipelinePython -ArgumentList @($runTestsScript, "--target-app", $TargetFeature)) -ne 0) {
             throw "pytest failed - developer-agent must fix tests before pipeline continues."
         }
-        $pytestLine = ($pytestOut | Select-Object -Last 1)
 
         & $repoPython (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --quiet
         if ($LASTEXITCODE -ne 0) {
@@ -379,7 +398,7 @@ function Invoke-LocalVerify {
             throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
         }
 
-        Write-Host "  Local verify passed (import, pytest, seed bcrypt, delivery profile). $pytestLine" -ForegroundColor Green
+        Write-Host "  Local verify passed (import smoke, pytest vs. Postgres temp schema, seed bcrypt, delivery profile)." -ForegroundColor Green
     }
     finally {
         $ErrorActionPreference = $prevEap

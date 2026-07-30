@@ -460,7 +460,18 @@ def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
 
 
 def _input_brief_candidate_rels(slug: str, root: Path) -> list[str]:
-    """Repo-relative input brief paths to try (context inputFile, then slug default)."""
+    """Repo-relative input brief paths to try (context inputFile, then slug default).
+
+    Reads via read_context_json (utf-8-sig) so a BOM on an existing
+    context.json (PS 5.1's Update-Context always writes one) no longer looks
+    like a parse failure and silently sends this straight to the
+    filename-guess fallback below. A genuine OSError (file vanished, no
+    permission) still just moves on to the next candidate path; a genuine
+    json.JSONDecodeError (real corruption) is allowed to propagate instead of
+    being masked the same way.
+    """
+    from _shared.pipeline_context import read_context_json
+
     rels: list[str] = []
     for ctx_path in (
         root / slug / "context.json",
@@ -469,8 +480,8 @@ def _input_brief_candidate_rels(slug: str, root: Path) -> list[str]:
         if not ctx_path.is_file():
             continue
         try:
-            data = json.loads(ctx_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            data = read_context_json(ctx_path)
+        except OSError:
             continue
         for key in ("inputFile", "inputPath"):
             val = data.get(key)

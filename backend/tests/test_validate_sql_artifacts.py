@@ -9,6 +9,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.validate_sql_artifacts import (  # noqa: E402
+    _parse_create_table_columns,
     check_ddl_column_drift,
     check_seed_schema_nullability,
     check_uuid_literals,
@@ -318,3 +319,71 @@ def test_check_ddl_column_drift_skips_table_not_yet_created(tmp_path: Path) -> N
     # No pre-existing table at all -> CREATE TABLE created it fresh, nothing to flag.
     cur = _FakeCursor({})
     assert check_ddl_column_drift(cur, app_schema="contacts_api", sql_dir=sql_dir) == []
+
+
+def test_parse_create_table_columns_enrollments_ddl_real_fixture() -> None:
+    """Real DDL from the failing app: a tight UNIQUE(...) must not become a column."""
+    ddl = """
+    CREATE TABLE IF NOT EXISTS enrollments (
+        id SERIAL PRIMARY KEY,
+        course_id INTEGER NOT NULL REFERENCES courses(id),
+        student_user_id INTEGER NOT NULL REFERENCES users(id),
+        status VARCHAR(20) NOT NULL DEFAULT 'enrolled' CHECK (status IN ('enrolled', 'completed', 'dropped')),
+        grade_points DECIMAL(3,2) CHECK (grade_points BETWEEN 0.00 AND 4.00),
+        enrolled_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(course_id, student_user_id)
+    );
+    """
+    specs = _parse_create_table_columns(ddl, source="enrollments.sql")
+    names = {spec.name for spec in specs}
+    assert names == {
+        "id",
+        "course_id",
+        "student_user_id",
+        "status",
+        "grade_points",
+        "enrolled_at",
+        "updated_at",
+    }
+    # The column carrying an inline CHECK is the case most likely to regress if the
+    # table-level-constraint skip is made too aggressive.
+    assert "grade_points" in names
+    # No bogus pseudo-column from the tight UNIQUE(...) constraint line.
+    assert not any("(" in name for name in names)
+
+
+def test_parse_create_table_columns_skips_all_table_level_constraint_forms() -> None:
+    """Every standard table-level constraint form, tight and spaced against the paren."""
+    ddl = """
+    CREATE TABLE IF NOT EXISTS widgets (
+        id SERIAL,
+        a INTEGER NOT NULL,
+        b INTEGER NOT NULL,
+        parent_id INTEGER,
+        status VARCHAR(20) NOT NULL,
+        PRIMARY KEY (id),
+        FOREIGN KEY (parent_id) REFERENCES widgets(id),
+        UNIQUE(a, b),
+        UNIQUE (b, a),
+        CHECK(status IN ('x')),
+        CONSTRAINT widgets_status_valid CHECK (status IN ('x', 'y'))
+    );
+    """
+    specs = _parse_create_table_columns(ddl, source="widgets.sql")
+    names = {spec.name for spec in specs}
+    assert names == {"id", "a", "b", "parent_id", "status"}
+    assert not any("(" in name for name in names)
+
+
+def test_parse_create_table_columns_keeps_column_with_inline_check() -> None:
+    """A real column's own inline CHECK must not cause the column to be skipped."""
+    ddl = """
+    CREATE TABLE IF NOT EXISTS grades (
+        id SERIAL PRIMARY KEY,
+        grade_points DECIMAL(3,2) CHECK (grade_points BETWEEN 0.00 AND 4.00)
+    );
+    """
+    specs = _parse_create_table_columns(ddl, source="grades.sql")
+    names = {spec.name for spec in specs}
+    assert names == {"id", "grade_points"}

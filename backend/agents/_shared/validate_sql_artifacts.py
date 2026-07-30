@@ -20,13 +20,14 @@ _INSERT_INTO_RE = re.compile(
     r"INSERT\s+INTO\s+((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)\s*\(",
     re.IGNORECASE,
 )
-_SKIP_COLUMN_PREFIXES = (
-    "CONSTRAINT",
-    "PRIMARY",
-    "UNIQUE",
-    "CHECK",
-    "FOREIGN",
-    "EXCLUDE",
+# Table-level constraint keywords to skip when classifying a CREATE TABLE body line as
+# a column. Matched at line-start with \b (not a bare token-equality check) so a keyword
+# written tight against its parenthesis (e.g. "UNIQUE(course_id, student_user_id)") is
+# still recognized — \b sees the boundary between the keyword and "(" the same way it
+# sees the boundary between the keyword and whitespace.
+_SKIP_COLUMN_LINE_RE = re.compile(
+    r"^(?:CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN|EXCLUDE)\b",
+    re.IGNORECASE,
 )
 
 
@@ -110,8 +111,7 @@ def _parse_create_table_columns(sql: str, *, source: str) -> list[ColumnSpec]:
             line = raw_line.strip().rstrip(",")
             if not line:
                 continue
-            first = line.split(None, 1)[0].upper()
-            if first in _SKIP_COLUMN_PREFIXES:
+            if _SKIP_COLUMN_LINE_RE.match(line):
                 continue
             parts = line.split()
             if len(parts) < 2:

@@ -17,7 +17,8 @@ function Get-AgentCoreBundleFromFolder {
 }
 
 # Agents that need Node.js/npx at runtime (Atlassian mcp-remote, Firecrawl MCP, etc.)
-$NodeInstallAgents = @("product_agent", "web_crawler_agent")
+# frontend_agent needs it for `npm install` / `npm run build` in _run_frontend_build().
+$NodeInstallAgents = @("product_agent", "web_crawler_agent", "frontend_agent")
 # Agents that need the terraform CLI at runtime (devops_validate).
 $TerraformInstallAgents = @("devops_agent")
 

@@ -129,7 +129,9 @@ def _read_optional(repo_root: Path, rel_or_abs: str | None, *, run_id: str | Non
 
 
 def load_context(context_path: Path) -> dict[str, Any]:
-    return json.loads(context_path.read_text(encoding="utf-8-sig"))
+    from _shared.pipeline_context import read_context_json
+
+    return read_context_json(context_path)
 
 
 def sync_context_auth_mode(repo_root: Path, context_path: Path) -> str:

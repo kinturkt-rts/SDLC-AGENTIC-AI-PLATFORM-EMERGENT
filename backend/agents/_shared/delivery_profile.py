@@ -220,7 +220,9 @@ def verify_app_artifacts(repo_root: Path, target_app: str, context: dict[str, An
 
 def load_context(context_path: Path) -> dict[str, Any]:
     """Load pipeline context JSON."""
-    return json.loads(context_path.read_text(encoding="utf-8-sig"))
+    from _shared.pipeline_context import read_context_json
+
+    return read_context_json(context_path)
 
 
 def sync_context_delivery_profile(

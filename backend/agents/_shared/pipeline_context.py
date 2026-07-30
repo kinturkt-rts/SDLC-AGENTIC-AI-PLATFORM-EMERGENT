@@ -450,13 +450,39 @@ def pipeline_context_candidates(target_app: str) -> list[Path]:
     return unique
 
 
+def read_context_json(path: Path) -> dict[str, Any]:
+    """Read and parse a pipeline context.json file — the single BOM-safe reader.
+
+    Uses encoding="utf-8-sig", which strips a leading UTF-8 BOM if present and
+    behaves identically to plain "utf-8" if absent — never a behavior change
+    for a clean file, always correct for a BOM'd one.
+
+    Why this matters: run-sdlc-local.ps1's Update-Context writes context.json
+    via PowerShell 5.1's `Set-Content -Encoding utf8`, which always emits a
+    BOM (PS 5.1 has no plain-utf8-no-BOM option for Set-Content/Out-File).
+    Reading that file with plain "utf-8" + json.loads raises
+    JSONDecodeError on the BOM. Fixing the writer only prevents *future*
+    BOMs — every context.json already on disk keeps its BOM until the next
+    time that app's pipeline regenerates it — so every reader must tolerate
+    a BOM regardless of whether the writer is also fixed.
+
+    Raises json.JSONDecodeError / OSError on genuine corruption or a missing
+    file — callers must not silently swallow these and fall back to guessed
+    behavior (that masking is exactly the bug this helper replaces: a BOM
+    parse failure used to fall through to "does ui/streamlit_app.py exist"
+    in requires_streamlit, silently ignoring an explicit
+    deliveryProfile.requiresStreamlit: false).
+    """
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
 def load_pipeline_context(target_app: str) -> dict[str, Any] | None:
     for candidate in pipeline_context_candidates(target_app):
         path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate).resolve()
         if not path.is_file():
             continue
         try:
-            parsed = json.loads(path.read_text(encoding="utf-8-sig"))
+            parsed = read_context_json(path)
         except (json.JSONDecodeError, OSError):
             continue
         if isinstance(parsed, dict):

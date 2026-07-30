@@ -40,6 +40,7 @@
         "app/startup_checks.py",
         "app/routers/__init__.py",
         "app/routers/health.py",
+        "app/routers/me.py",
         "app/models/__init__.py",
         "app/models/pg_types.py",
         "schemas/__init__.py",

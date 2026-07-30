@@ -125,6 +125,18 @@
       "deployed": false,
       "runtimeArn": "",
       "invokeUrl": ""
+    },
+    "frontend-agent": {
+      "deployed": true,
+      "awsName": "frontend_agent",
+      "runtimeId": "frontend_agent-EC7lGr7C6W",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/frontend_agent-EC7lGr7C6W",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Ffrontend_agent-EC7lGr7C6W/invocations",
+      "env": {
+        "ARTIFACT_S3_BUCKET": "sdlc-agentic-ai-app-artifacts",
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      },
+      "notes": "STANDALONE runtime (deployed 2026-07-30) — deliberately NOT wired into the orchestrator MVP chain or AGENTCORE_A2A_PEER_URLS. Invoke handler consumes the Developer->Frontend handoff (target_app, runId, openapi_path); in s3 mode it fetches context.json/openapi.json from runs/<runId>/<slug>/ and uploads generated frontend output back to the same folder. target-apps/_template/ is baked into the image (Dockerfile COPY), not S3-fetched, so a fresh container can scaffold without depending on scripts/publish-template-to-s3.py having been run for this agent. openapi.json will only be found in S3 once developer-agent's own S3 upload (_upload_openapi_artifact_if_s3) has actually run for that app/run."
     }
   }
 }
