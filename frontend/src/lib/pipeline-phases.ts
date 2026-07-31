@@ -46,8 +46,8 @@ export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
 };
 
 /**
- * Phases required for "pipeline succeeded" while GitLab is the terminal publish step.
- * Deploy (devops) is shown on the timeline but optional until the orchestrator wires it.
+ * Phases required for "authoring succeeded" (GitLab publish is the last AgentCore step).
+ * Deploy is async via GitLab CI; run status stays awaiting_deploy until appUrl.
  */
 export const COMPLETION_PHASES: SdlcPhase[] = [
   'requirements',

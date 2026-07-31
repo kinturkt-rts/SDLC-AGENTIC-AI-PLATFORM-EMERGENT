@@ -32,7 +32,9 @@ oidc:test:
       fi
 
 # Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
-# fires on branches gitlab-agent publishes here (sdlc/<app>).
+# fires on branches gitlab-agent publishes here (sdlc/<app>). After publish the
+# orchestrator marks the run awaiting_deploy; this job writes devops.json/appUrl
+# and then flips the run to completed (or failed).
 target-app:deploy:
   stage: deploy
   tags: [juno-labs-3]
@@ -77,14 +79,23 @@ target-app:deploy:
   before_script:
     - export SLUG="${CI_COMMIT_BRANCH#sdlc/}"
     - 'echo "Target app slug: $SLUG"'
+    # gitlab-agent publishes multi-file apps as one commit per file (WAF
+    # batch-size fallback in gitlab_mcp_actions.py) - each push independently
+    # triggers a pipeline on this branch. Bail out here, before the expensive
+    # Terraform/AWS/docker setup below, if a newer commit already landed.
+    - apt-get update -qq && apt-get install -y -qq git
+    - |
+      LATEST_SHA="$(git ls-remote "$CI_REPOSITORY_URL" "refs/heads/$CI_COMMIT_BRANCH" | cut -f1)"
+      if [ -n "$LATEST_SHA" ] && [ "$LATEST_SHA" != "$CI_COMMIT_SHA" ]; then
+        echo "Newer commit ($LATEST_SHA) already landed on $CI_COMMIT_BRANCH since this pipeline started for $CI_COMMIT_SHA."
+        echo "Stale intermediate commit from a multi-commit publish - failing fast instead of racing the deploy for the branch's true final commit."
+        exit 1
+      fi
     # Same ambient-credential shadowing as oidc:test - strip before OIDC vars.
     - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
     - echo "$AWS_OIDC_TOKEN" > /tmp/oidc_token
     - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc_token
     - export AWS_DEFAULT_REGION="$AWS_REGION"
-    # GitLab's cache restore only creates this dir if a previous cache archive
-    # exists; on a first-ever run (or a cache miss) terraform needs it to
-    # already be there to use it as a plugin cache.
     - mkdir -p "$TF_PLUGIN_CACHE_DIR"
      # powershell:7.4-debian-12 is bare — install tools the ECR CI image had baked in.
     - apt-get update -qq && apt-get install -y -qq curl unzip python3 python3-pip docker.io git

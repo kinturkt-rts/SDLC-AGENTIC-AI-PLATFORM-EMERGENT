@@ -387,3 +387,31 @@ def test_parse_create_table_columns_keeps_column_with_inline_check() -> None:
     specs = _parse_create_table_columns(ddl, source="grades.sql")
     names = {spec.name for spec in specs}
     assert names == {"id", "grade_points"}
+
+
+def test_check_ddl_column_drift_ignores_table_level_unique_without_space(tmp_path: Path) -> None:
+    """Regression: compliance-management incident (run abfee325-...).
+
+    A table-level ``UNIQUE(document_id, version_number)`` constraint with no
+    space before the parenthesis used to slip past ``_SKIP_COLUMN_PREFIXES``
+    (whose exact-token check only matched a bare "UNIQUE"), getting misparsed
+    as a literal column named "UNIQUE(document_id," — a false-positive drift
+    that failed the whole database-agent step for a schema with no real drift.
+    """
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_document_versions.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS document_versions (
+            id uuid PRIMARY KEY,
+            document_id uuid NOT NULL,
+            version_number int NOT NULL,
+            UNIQUE(document_id, version_number)
+        );
+        """,
+        encoding="utf-8",
+    )
+    cur = _FakeCursor(
+        {("compliance_management", "document_versions"): ["id", "document_id", "version_number"]}
+    )
+    assert check_ddl_column_drift(cur, app_schema="compliance_management", sql_dir=sql_dir) == []

@@ -139,11 +139,17 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: run, isLoading } = useRun(params.id);
-  const isLive = run?.status === 'running' || run?.status === 'paused';
+  const isLive =
+    run?.status === 'running' ||
+    run?.status === 'paused' ||
+    run?.status === 'awaiting_deploy';
   // Phase A: keep polling handoffs while deploy is pending/running so the
   // live URL and "App is live" banner appear without a manual refresh.
   const deployActive =
-    run?.deployStatus === 'pending' || run?.deployStatus === 'running';
+    run?.status === 'awaiting_deploy' ||
+    run?.deployStatus === 'pending' ||
+    run?.deployStatus === 'running' ||
+    run?.deployStatus === 'failed';
   const { data: events } = useRunEvents(params.id, isLive);
   const { data: runLogs, isLoading: runLogsLoading } = useRunLogs(params.id, isLive);
   const { data: handoffs } = useRunHandoffs(params.id, isLive || deployActive);
@@ -188,7 +194,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
     .map((c) => ({ ...c, status: hitlOverride[c.id] ?? c.status }));
   const waitingStep = run?.steps.find((s) => s.status === 'waiting_for_human') ?? null;
   const runEvents = [...(events ?? [])].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
-  const displayLive = status === 'running';
+  const displayLive = status === 'running' || status === 'awaiting_deploy';
   const gitlabBranchUrl = handoffs?.gitlab?.branchUrl ?? null;
   const gitlabMrUrl = handoffs?.gitlab?.mergeRequestUrl ?? handoffs?.contextMergeRequestUrl ?? null;
   const developerStepStatus = run?.steps.find((step) => step.agent === 'developer-agent')?.status;
@@ -200,7 +206,8 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
       run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'failed'));
   const deployFollowOn =
     !appIsLive && !deployFailed &&
-    (deployActive ||
+    (status === 'awaiting_deploy' ||
+      deployActive ||
       run?.currentPhase === 'deploy' ||
       run?.currentAgent === 'devops-agent' ||
       run?.steps?.some((s) => s.phase === 'deploy' && s.status === 'running'));
@@ -225,7 +232,15 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
         </Button>
       ) : null}
       <StatusBadge
-        status={deployFailed ? 'failed' : deployFollowOn ? 'running' : status}
+        status={
+          deployFailed
+            ? 'failed'
+            : deployFollowOn
+              ? status === 'awaiting_deploy'
+                ? 'awaiting_deploy'
+                : 'running'
+              : status
+        }
         label={
           deployFailed
             ? 'Deploy failed'

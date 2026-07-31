@@ -1,0 +1,47 @@
+Build a small internal URL Monitor Dashboard using FastAPI and Streamlit.
+
+Problem:
+Teams manually check internal application URLs to verify whether services are online.
+There is no central place to monitor endpoint availability or response times.
+Operations needs a simple dashboard to quickly identify unavailable services and recent outages.
+Who uses it:
+Operations engineers use Streamlit to monitor application health.
+Administrators can add, update, or deactivate monitored URLs.
+Streamlit must call the FastAPI API and must not access the database directly.
+Health checks stay open for ops.
+MVP features:
+Maintain monitored URLs: application name, URL, environment (Dev/UAT/Prod), check interval, active/inactive.
+Run health checks and record:
+HTTP status code
+Response time
+Current status (Up/Down)
+Last checked timestamp
+View all monitored URLs in a dashboard.
+Filter URLs by environment, status, or application name.
+View basic uptime history for each URL.
+Seed a few sample application URLs for demos.
+Business rules:
+Each URL must be unique.
+Only active URLs are monitored.
+Invalid URLs cannot be added.
+Failed health checks must not remove historical records.
+Only administrators can add, update, or deactivate monitored URLs.
+Must have for v1:
+Persisted data (not in-memory only).
+FastAPI backend with Streamlit frontend.
+Streamlit uses FastAPI only.
+Automatic health checks at configurable intervals.
+Dashboard showing current status and response times.
+Open API health endpoint.
+Nice to have (later):
+Email or Slack alerts.
+Response-time charts.
+SSL certificate expiry monitoring.
+Ping and TCP port monitoring.
+Incident history and reports.
+Constraints:
+Internal use only.
+Keep secrets out of source code.
+Keep the Streamlit UI simple and responsive.
+Success:
+An administrator can add a new URL, the system begins monitoring it automatically, users can see whether it is Up or Down with the latest response time, historical check results remain available, and deactivated URLs stop being monitored while their history is retained.

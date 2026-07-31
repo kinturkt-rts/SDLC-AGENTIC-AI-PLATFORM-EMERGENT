@@ -19,7 +19,7 @@ inputs/*.txt
     → local verify         (import smoke + pytest)
     → gitlab-agent         (publish branch sdlc/<app> on GitLab)
     → qa-agent             (extended tests + coverage handoff)
-    → devops-agent         (CI/CD + infra — roadmap / manual)
+    → GitLab CI            (async) → devops-agent --deploy (ECS / Terraform)
     → security-agent       (SAST, deps, compliance — roadmap / manual)
 ```
 
@@ -34,7 +34,7 @@ inputs/*.txt
 | 5 | local verify | Default (skip with `-SkipVerify`) | pytest in app folder |
 | 6 | **gitlab-agent** | Default after verify when `GITLAB_*` in `.env` (skip with `-SkipGitlab`) | branch `sdlc/<app>`, `agents/pipeline/<app>.gitlab-handoff.json` |
 | 7 | **qa-agent** | Opt-in `-WithQa` (skip with `-SkipQa`) | `agents/pipeline/<app>.qa-handoff.json` |
-| 8 | **devops-agent** | Not chained yet — run manually | CI/CD, Terraform (planned) |
+| 8 | **devops-agent** | Not in AgentCore chain — runs via apps-repo GitLab CI (`target-app:deploy`) after publish | TF root + ECS deploy; S3 `handoffs/devops.json` (`appUrl`) |
 | 9 | **security-agent** | Not chained yet — run manually | security review handoff (planned) |
 
 **Run the automated chain (`backend/`):**
@@ -106,7 +106,7 @@ sdlc-agentic-ai-mvp/
 | **developer-agent** | FastAPI (+ Streamlit when required) under `target-apps/` | **4** |
 | **gitlab-agent** | Publishes app + PRD/design/pipeline artifacts to GitLab branch `sdlc/<app>` | **6** |
 | **qa-agent** | Extended pytest, coverage gaps, QA handoff | **7** (`-WithQa`) |
-| devops-agent | Terraform, CI/CD pipelines (GitLab MCP) | **8** (manual / roadmap) |
+| devops-agent | Terraform + ECS deploy via apps-repo GitLab CI (async after publish) | **8** (CI, not AgentCore) |
 | security-agent | SAST, dependency audit, compliance checks | **9** (manual / roadmap) |
 
 **Jira:** handled by **product-agent** (`--create-minimal-jira`, Atlassian MCP). A separate `jira-agent` is not implemented.

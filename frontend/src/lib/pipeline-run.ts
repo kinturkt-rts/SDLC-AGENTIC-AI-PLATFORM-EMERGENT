@@ -7,7 +7,9 @@ import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './art
 import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
 import { finalizeRunJson, runOrchestratorCloud } from './orchestrator-cloud-run';
-import { listRuns } from './repo-reader';
+import { listRunGuardCandidates, listRuns } from './repo-reader';
+import { RUN_LIVE_IDLE_MS } from './run-reconcile';
+import { validateProductBrief } from './brief-quality';
 
 const RUNS_CACHE_KEYS = [
   'listRuns',
@@ -26,6 +28,8 @@ const RUN_ID_RE = /^(?:[a-z][a-z0-9-]{0,62}[a-z0-9]|[0-9a-f-]{36})$/i;
 const MAX_BYTES = 256 * 1024;
 const S3_UPLOAD_TIMEOUT_MS = 45_000;
 const MAX_CONCURRENT_RUNS = Math.max(1, parseInt(process.env.SDLC_MAX_CONCURRENT_RUNS ?? '3', 10) || 3);
+/** run.json is never rewritten when a cloud run dies, so ignore long-idle "running" rows. */
+const RUN_STALL_MS = RUN_LIVE_IDLE_MS;
 
 /** True when only DevOps/CI deploy remains (agents already finished). */
 export function isDeployFollowOn(run: {
@@ -34,7 +38,9 @@ export function isDeployFollowOn(run: {
   currentAgent?: string | null;
   deployStatus?: string | null;
 }): boolean {
+  if (run.deployStatus === 'failed' || run.deployStatus === 'stale') return false;
   if (run.deployStatus === 'pending' || run.deployStatus === 'running') return true;
+  if (run.status === 'awaiting_deploy') return true;
   return (
     run.status === 'running' &&
     (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent')
@@ -67,6 +73,7 @@ export async function findRunningTargetApp(targetApp: string) {
           r.projectId === slug &&
           (r.status === 'running' ||
             r.status === 'paused' ||
+            r.status === 'awaiting_deploy' ||
             r.deployStatus === 'pending' ||
             r.deployStatus === 'running'),
       ) ?? null
@@ -135,7 +142,8 @@ export async function uploadBrief(
 ): Promise<UploadBriefResult> {
   const slugError = validateTargetApp(targetApp);
   if (slugError) throw new Error(slugError);
-  if (!content.trim()) throw new Error('content is empty');
+  const briefError = validateProductBrief(content);
+  if (briefError) throw new Error(briefError);
 
   const slug = targetApp.trim().toLowerCase();
   const byteLen = Buffer.byteLength(content, 'utf-8');
@@ -201,14 +209,26 @@ export async function startPipeline(options: {
   const inputRel = options.inputFile.trim() || runInputRelPath(feature);
   const repoRoot = getBackendRoot();
 
-  const duplicate = await findRunningTargetApp(feature);
-  if (duplicate && duplicate.id !== runId) {
+  // Guard on raw run.json only. Fully enriching every run (listRuns) grew past the
+  // client's start timeout, and an aborted request still started the pipeline —
+  // users then resubmitted and got duplicate runs for the same app.
+  const candidates = (await listRunGuardCandidates()).filter((c) => c.runId !== runId);
+  const stalled = (c: { lastActivityMs: number }) =>
+    c.lastActivityMs > 0 && Date.now() - c.lastActivityMs > RUN_STALL_MS;
+
+  const duplicate = candidates.find((c) => c.projectId === feature && !stalled(c));
+  if (duplicate) {
     throw new Error(
-      `"${feature}" already has an active pipeline run (${duplicate.id.slice(0, 8)}…). Wait for it to finish or cancel it.`,
+      `"${feature}" already has an active pipeline run (${duplicate.runId.slice(0, 8)}…). Wait for it to finish or cancel it.`,
     );
   }
-  const active = await getActiveRuns();
-  const others = active.filter((r) => r.id !== runId);
+  // awaiting_deploy waits on GitLab CI, so it never holds an agent-chain slot.
+  const others = candidates.filter(
+    (c) =>
+      !stalled(c) &&
+      c.rawStatus !== 'awaiting_deploy' &&
+      !isDeployFollowOn({ status: 'running', currentAgent: c.currentStep }),
+  );
   if (others.length >= MAX_CONCURRENT_RUNS) {
     throw new Error(
       `Maximum concurrent runs reached (${others.length}/${MAX_CONCURRENT_RUNS}). Wait for a run to finish or cancel one.`,

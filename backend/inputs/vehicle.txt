@@ -1,0 +1,37 @@
+Hi Team,
+
+We need an internal application to manage the company's fleet of vehicles used by employees for client visits, deliveries, and office travel. Right now, vehicle bookings, maintenance schedules, and service history are maintained across multiple spreadsheets, making it difficult to know vehicle availability and upcoming maintenance.
+
+The application should provide a Streamlit interface backed by a FastAPI API. Fleet administrators should manage vehicles and maintenance, while employees should be able to reserve available vehicles.
+
+Features
+Register company vehicles
+Vehicle categories (Car, SUV, Van, Truck)
+Vehicle booking and reservation
+Driver assignment
+Service and maintenance scheduling
+Fuel log management
+Insurance and registration expiry tracking
+Vehicle availability dashboard
+Maintenance history
+Search and filtering by vehicle, driver, status, and location
+CSV report export
+Role-based access (Admin, Fleet Manager, Employee)
+Audit history
+Important business rules
+A vehicle cannot have overlapping bookings.
+Vehicles under maintenance cannot be reserved.
+Maintenance history cannot be deleted.
+Insurance expiry must always be after the registration date.
+Only Fleet Managers can approve reservations and schedule maintenance.
+Technical expectations
+FastAPI backend
+Streamlit frontend
+Persisted database
+Multiple related entities
+CRUD operations
+Seed demo data
+Health endpoint
+Success
+
+Fleet managers can register vehicles, employees can reserve available vehicles, maintenance schedules prevent future bookings, and dashboards provide fleet utilisation and maintenance status

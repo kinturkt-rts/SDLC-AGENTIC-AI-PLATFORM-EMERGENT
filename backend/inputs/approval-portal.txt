@@ -1,0 +1,39 @@
+Hi Team,
+
+Our departments currently request equipment and office purchases through emails, making it difficult to track approvals, budgets, and purchase status. We'd like a centralized application where employees can submit procurement requests and managers can review and approve them.
+
+The application should use Streamlit for the user interface and FastAPI for business logic and persistence.
+
+Features
+Submit procurement requests
+Multiple request categories
+Estimated cost
+Vendor suggestions
+Approval workflow
+Multi-level approval (Manager → Procurement)
+Request status tracking
+Budget dashboard
+Department-wise spending summary
+Search and filtering
+Request history
+CSV export
+Role-based access
+Audit log
+Important business rules
+Estimated cost must be greater than zero.
+Requests above a configurable amount require Procurement approval.
+Approved requests cannot be edited.
+Rejected requests remain in history.
+Employees can view only their own requests.
+Managers approve only requests from their department.
+Technical expectations
+FastAPI backend
+Streamlit frontend
+Persisted relational database
+CRUD APIs
+Multiple related entities
+Seed data
+Health endpoint
+Success
+
+Employees submit requests, managers approve them, procurement processes large purchases, and dashboards provide visibility into departmental spending.

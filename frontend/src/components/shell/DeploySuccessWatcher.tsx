@@ -80,9 +80,12 @@ export function DeploySuccessWatcher() {
       .filter(
         (r) =>
           r.status === 'completed' ||
+          r.status === 'awaiting_deploy' ||
           r.status === 'running' ||
           r.deployStatus === 'pending' ||
-          r.deployStatus === 'running',
+          r.deployStatus === 'running' ||
+          // Keep watching after a failed handoff — a queued CI retry may still go live.
+          r.deployStatus === 'failed',
       )
       .slice(0, 12)
       .map((r) => ({ runId: r.id, projectId: r.projectId, projectName: r.projectName }));

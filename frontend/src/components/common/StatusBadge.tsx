@@ -7,6 +7,7 @@ const STATUS_MAP: Record<string, StatusConfig> = {
   queued: { label: 'Queued', dot: 'bg-slate-400', text: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800/60', ring: 'ring-slate-200 dark:ring-slate-700' },
   running: { label: 'Running', dot: 'bg-blue-500 animate-pulse', text: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-950/40', ring: 'ring-blue-200 dark:ring-blue-900' },
   paused: { label: 'Paused', dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-950/40', ring: 'ring-amber-200 dark:ring-amber-900' },
+  awaiting_deploy: { label: 'Awaiting deploy', dot: 'bg-sky-500 animate-pulse', text: 'text-sky-700 dark:text-sky-300', bg: 'bg-sky-50 dark:bg-sky-950/40', ring: 'ring-sky-200 dark:ring-sky-900' },
   completed: { label: 'Completed', dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950/40', ring: 'ring-emerald-200 dark:ring-emerald-900' },
   failed: { label: 'Failed', dot: 'bg-red-500', text: 'text-red-700 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-950/40', ring: 'ring-red-200 dark:ring-red-900' },
   cancelled: { label: 'Cancelled', dot: 'bg-slate-400', text: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800/60', ring: 'ring-slate-200 dark:ring-slate-700' },

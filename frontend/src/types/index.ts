@@ -16,6 +16,7 @@ export type RunStatus =
   | 'queued'
   | 'running'
   | 'paused'
+  | 'awaiting_deploy'
   | 'completed'
   | 'failed'
   | 'cancelled';

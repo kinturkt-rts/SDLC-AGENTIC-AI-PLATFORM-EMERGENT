@@ -1,0 +1,50 @@
+We need a backend application for tenants, property managers, and maintenance workers to manage repair and maintenance requests for residential or commercial properties.
+
+The application should be built with FastAPI and provide REST APIs for future web and mobile interfaces.
+
+Features
+Property and unit management
+Maintain property name, address, type, manager, and active status
+Tenant management
+Maintenance worker and contractor management
+Submit maintenance requests with title, description, category, priority, and preferred access time
+Categories such as Plumbing, Electrical, Heating, Appliance, Security, and General Repair
+Upload or store attachment references for photos and supporting documents
+Assign requests to workers or contractors
+Statuses such as Submitted, Assigned, In Progress, Waiting for Parts, Resolved, Closed, and Cancelled
+Add tenant-visible comments and internal maintenance notes
+Record appointments and site visits
+Track parts used, labour time, and repair cost
+Maintain complete request status history
+Search and filter by property, unit, tenant, category, priority, assignee, status, or date
+Dashboard APIs for open requests, overdue jobs, workload by worker, average resolution time, and maintenance cost
+Seed sample properties, units, tenants, workers, and requests
+Important business rules
+Tenants can submit requests only for units they currently occupy.
+Closed requests cannot be edited unless reopened by an authorised property manager.
+Only property managers can assign or reassign maintenance work.
+Resolved requests must include a resolution summary.
+Internal notes must not be visible to tenants.
+Emergency requests should receive the highest priority.
+Appointment end time must be later than the start time.
+Cancelled and closed requests must remain in history.
+A worker should not receive conflicting site appointments.
+Costs and labour time cannot be negative.
+Technical expectations
+FastAPI backend
+Persisted relational database
+CRUD and workflow APIs
+Related entities such as properties, units, tenants, occupancy records, workers, requests, assignments, comments, appointments, parts, costs, and status history
+Pydantic validation
+Role-aware access rules
+Pagination, filtering, and structured error handling
+OpenAPI documentation
+Database migrations
+Health and readiness endpoints
+Seed data
+Audit logging
+Unit and API integration tests
+No frontend required for the first version
+Success
+
+A tenant can submit a repair request for their unit. A property manager can assign it to a worker, schedule a visit, track progress and costs, record a resolution, and close the request while preserving the complete maintenance history.

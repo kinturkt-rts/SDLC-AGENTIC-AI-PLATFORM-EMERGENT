@@ -10,7 +10,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.validate_rds_parity import validate_rds_parity, validate_rds_parity_warnings  # noqa: E402
-from _shared.validate_ui_parity import validate_ui_parity, validate_ui_parity_blocking  # noqa: E402
+from _shared.validate_ui_parity import (  # noqa: E402
+    autofix_streamlit_api_path_slashes,
+    autofix_streamlit_width_api,
+    validate_ui_parity,
+    validate_ui_parity_blocking,
+)
 
 
 def main() -> int:
@@ -24,6 +29,11 @@ def main() -> int:
     if not app_dir.is_dir():
         print(f"FAILED: target-apps/{args.target_app}/ not found", file=sys.stderr)
         return 1
+
+    for fix in autofix_streamlit_width_api(app_dir):
+        print(f"WARN: auto-fixed Streamlit width API: {fix}", file=sys.stderr)
+    for fix in autofix_streamlit_api_path_slashes(app_dir):
+        print(f"WARN: auto-fixed Streamlit API path: {fix}", file=sys.stderr)
 
     errors = validate_rds_parity(app_dir)
     errors.extend(validate_ui_parity_blocking(app_dir, root))

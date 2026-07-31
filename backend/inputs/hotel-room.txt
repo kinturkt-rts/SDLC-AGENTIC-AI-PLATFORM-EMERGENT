@@ -1,0 +1,52 @@
+Build a small internal Hotel Room Management API for maintaining rooms and room availability.
+
+Problem:
+
+Room details and availability are currently tracked manually.
+Hotel staff need one place to manage room records and current room status.
+Internal tools should use a clean API — no browser app required for v1.
+
+Who uses it:
+
+Staff can browse room availability.
+Hotel administrators with a valid API key can create, update, or deactivate rooms.
+Health checks stay open for ops.
+
+MVP features:
+
+Create a room: room number, room type, floor, nightly rate, capacity, status, active/inactive.
+View one room or list all rooms.
+Update room details or status.
+Deactivate a room instead of permanently deleting it.
+Filter rooms by room type, floor, availability, or active status.
+Seed a few sample rooms for demos.
+
+Business rules:
+
+Room number must be unique.
+Room type, floor, capacity, and nightly rate are required.
+Capacity must be greater than zero.
+Nightly rate cannot be negative.
+Inactive rooms cannot be marked available.
+Deactivated rooms must remain in history.
+Writes without a valid API key should be rejected.
+
+Must have for v1:
+
+Persisted data.
+Basic CRUD using FastAPI.
+Swagger/OpenAPI is sufficient.
+No Streamlit, booking portal, SSO, or customer-facing UI.
+
+Nice to have later:
+
+Guest reservations, housekeeping status, payments, seasonal pricing.
+
+Constraints:
+
+Internal use only.
+Keep secrets out of source code.
+
+Success:
+
+Staff can add a room, update its availability, filter available rooms, deactivate it, and still retrieve the room record later.

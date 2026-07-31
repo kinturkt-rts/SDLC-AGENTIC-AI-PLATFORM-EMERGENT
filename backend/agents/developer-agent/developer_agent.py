@@ -401,18 +401,19 @@ After all files are written and the checklist above is done:
        (optional DDL columns → `Mapped[T | None]` + optional Pydantic fields), or seedCredentials /
        users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
      - UI_PARITY FAILED: missing design §4 routes, POST without GET list, Streamlit not calling
-       collection GETs, or raw UUID text_input when list APIs exist (see validate_ui_parity.py)
-     - DUPLICATE_ACTION_ROUTE FAILED: a bare `{id}` PATCH/PUT route takes the same request schema
-       as a dedicated `{id}/<action>` route — delete the bare-id clone (or give it its own distinct
-       general-update schema if the design truly needs both a general update and an action route)
-     - AUTH_MODE_FILES FAILED: dependencies.py, the JWT trio, or main.py don't match authMode —
-       call dev_scaffold(service, pattern="B", force=True) to re-copy the right variant, and remove
-       any auth router import/registration in main.py when authMode is api-key
-     - API_KEY_ROUTE_USAGE FAILED (api-key mode only): no route applies Depends(require_api_key) —
-       wire it onto every route design Rules require auth on
-     - AUTH_HEADER_NAMES FAILED (api-key mode only): design names a header (e.g. X-Admin-Key) that
-       nothing in app/auth.py or app/dependencies.py reads — add an APIKeyHeader-based dependency
-       for that exact header in app/auth.py; never substitute require_api_key's X-API-Key for it
+        collection GETs, raw UUID text_input when list APIs exist, or double-slash API paths
+        like `/api/v1/admin//status` (see validate_ui_parity.py — autofix collapses `/api/...` literals)
+      - DUPLICATE_ACTION_ROUTE FAILED: a bare `{id}` PATCH/PUT route takes the same request schema
+        as a dedicated `{id}/<action>` route — delete the bare-id clone (or give it its own distinct
+        general-update schema if the design truly needs both a general update and an action route)
+      - AUTH_MODE_FILES FAILED: dependencies.py, the JWT trio, or main.py don't match authMode —
+        call dev_scaffold(service, pattern="B", force=True) to re-copy the right variant, and remove
+        any auth router import/registration in main.py when authMode is api-key
+      - API_KEY_ROUTE_USAGE FAILED (api-key mode only): no route applies Depends(require_api_key) —
+        wire it onto every route design Rules require auth on
+      - AUTH_HEADER_NAMES FAILED (api-key mode only): design names a header (e.g. X-Admin-Key) that
+        nothing in app/auth.py or app/dependencies.py reads — add an APIKeyHeader-based dependency
+        for that exact header in app/auth.py; never substitute require_api_key's X-API-Key for it
 
 **Step 6 — handoff summary (LAST)**
 1. stack — language, framework, pattern, DB driver(s).
@@ -524,6 +525,13 @@ startup check. NEVER import from `app/` — Streamlit calls the API over HTTP on
 **UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
 list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
 inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
+**Streamlit API paths (CRITICAL — live ALB 404s):** Paths passed to `_get`/`_post`/`_patch`/`_delete`
+MUST be exact FastAPI routes with **single** slashes — never concatenate a trailing `/` on a prefix
+with a leading `/` on a segment. Wrong: `"/api/v1/admin//status"`, `"/api/v1//query"`.
+Right: `"/api/v1/admin/status"`, `"/api/v1/query"`. FastAPI returns `{"detail":"Not Found"}` for `//`
+paths while login/`/health` still work — looks like ALB breakage but is a UI path bug.
+Keep the scaffold `_api_url()` helper (collapses accidental `//` at runtime); do not remove it.
+`dev_validate_app` auto-fixes `/api/...` string literals with `//` and fails UI_PARITY if any remain.
 **Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Never
 `width=0` / `width=False` (StreamlitInvalidWidthError on Streamlit 1.41+). Use only
 `width="stretch"` for full-width dataframes/buttons, or `width="content"` to fit content.
@@ -829,6 +837,7 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
 | `import app.models` + bare `app` name | `from app.main import app` then `import app.models` rebinds `app` to the **package**; `app.dependency_overrides` raises `AttributeError` on every test using the `client` fixture | Always `from app.main import app as fastapi_app`; use `fastapi_app.dependency_overrides` and `TestClient(fastapi_app)`. The golden conftest_reference.py already includes `import app.models` — do not re-add it under a bare `app` name. |
 | Streamlit `use_container_width` / `width=0` | Deprecated/invalid; Streamlit 1.41+ raises `StreamlitInvalidWidthError` on live UI | Never `use_container_width=True/False` and never `width=0`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
+| Streamlit `_get("/api/v1/...//...")` double slash | FastAPI 404 `{"detail":"Not Found"}` on Status/Audit/Query while login/`/health` still work — looks like ALB failure | Paths must match routes exactly with single slashes (`/api/v1/admin/status`). Keep scaffold `_api_url()`; never invent `admin//status` or `v1//query`. `dev_validate_app` autofixes `/api/...` literals. |
 | API-key demo secret ≠ seed password | README invents `ADMIN_KEY_DEV` / random tokens while seed SQL bcrypt-hashes the seed-comment password into `api_keys` / `token_hash` — live UI 401s | When auth is `X-API-Key` and seed uses `__BCRYPT_PLACEHOLDER__`, README **Demo credentials** MUST tell the tester to paste the **same plaintext** as `-- Password for all seed users: "..."` (e.g. `ExpenseTest123!`). Do not invent a second key name unless that exact string is what was hashed. |
 | SHA-256 API key seed fakes | Seed inserts `sha256_foo_001` into `key_hash` while app does `sha256(raw).hexdigest()` lookup — every login 401s | Seed MUST use `__SHA256_PLACEHOLDER:<label>__` + `-- API key for <label>: "demo-…"`; README / `.env.example` MUST list those exact plaintext keys. Never invent fake `sha256_*` tokens or a different README key. |
 
@@ -3479,6 +3488,7 @@ def _run_validation_steps(
         _warn(f"rds_parity: {warn}")
 
     from _shared.validate_ui_parity import (
+        autofix_streamlit_api_path_slashes,
         autofix_streamlit_width_api,
         validate_ui_parity,
         validate_ui_parity_blocking,
@@ -3487,6 +3497,10 @@ def _run_validation_steps(
     width_fixes = autofix_streamlit_width_api(service_dir)
     for fix in width_fixes:
         _warn(f"ui_parity: auto-fixed deprecated Streamlit width API: {fix}")
+
+    slash_fixes = autofix_streamlit_api_path_slashes(service_dir)
+    for fix in slash_fixes:
+        _warn(f"ui_parity: auto-fixed double-slash Streamlit API path: {fix}")
 
     ui_errors = validate_ui_parity_blocking(service_dir, _REPO_ROOT)
     if ui_errors:

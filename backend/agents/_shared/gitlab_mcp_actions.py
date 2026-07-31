@@ -11,6 +11,9 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
+
+import httpx
 
 from .gitlab_mcp_client import (
     GitLabMcpError,
@@ -401,8 +404,8 @@ def default_branch_name(feature: str) -> str:
 
 
 def apps_branch_name(feature: str) -> str:
-    """Branch name for sdlc-agentic-ai-platform-apps (one branch per app, no sdlc/ prefix)."""
-    return slugify_feature(feature)
+    """Branch name for sdlc-agentic-ai-platform-apps (matches CI ``^sdlc/`` rules)."""
+    return default_branch_name(feature)
 
 
 def pipeline_run_marker_repo_rel(feature: str) -> str:
@@ -773,17 +776,21 @@ async def _publish_files_via_file_api(
     slug: str,
     files: list[dict[str, Any]],
     existing_paths: set[str],
+    skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
     """Upload one file per MCP call (required for HTTP MCP behind restrictive WAF)."""
     commit_ids: list[str] = []
     for item in files:
         path = item["path"].lstrip("/")
         tool = "gitlab_file_update" if path in existing_paths else "gitlab_file_create"
+        message = _publish_commit_message(slug)
+        if skip_ci_tracker is not None:
+            message = skip_ci_tracker.message(message)
         payload: dict[str, Any] = {
             "project_id": project_id,
             "file_path": path,
             "branch": branch,
-            "commit_message": _publish_commit_message(slug),
+            "commit_message": message,
             "content": item["content"],
         }
         if item.get("binary") or str(item.get("encoding") or "").lower() == "base64":
@@ -804,6 +811,7 @@ async def _publish_text_file_batches(
     slug: str,
     text_files: list[dict[str, Any]],
     existing_paths: set[str],
+    skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
     # CloudFront WAF limits POST bodies — one file per MCP call. Direct ALB uses batched commits.
     if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
@@ -814,12 +822,15 @@ async def _publish_text_file_batches(
             slug=slug,
             files=text_files,
             existing_paths=existing_paths,
+            skip_ci_tracker=skip_ci_tracker,
         )
 
     commit_ids: list[str] = []
     batches = _batch_files(text_files)
     for index, batch in enumerate(batches, start=1):
         message = _publish_commit_message(slug, batch=index, total=len(batches))
+        if skip_ci_tracker is not None:
+            message = skip_ci_tracker.message(message)
         commit_result = await call_gitlab_mcp_tool(
             session,
             "gitlab_commit_create",
@@ -978,11 +989,31 @@ def create_mr_note(**kwargs: Any) -> dict[str, Any]:
 
 # --- SDLC publish workflow ---
 
-
 def _publish_commit_message(slug: str, *, batch: int | None = None, total: int | None = None) -> str:
     if batch is not None and total is not None and total > 1:
         return f"feat({slug}): SDLC pipeline output (batch {batch}/{total})"
     return f"feat({slug}): SDLC pipeline output"
+
+
+class _SkipCiCommitTracker:
+    """Marks every publish commit except the last with ``[skip ci]``.
+
+    A publish behind CloudFront/WAF pushes one commit per file (see
+    ``_publish_batch_size``); each push otherwise triggers its own GitLab
+    pipeline on the ``sdlc/<slug>`` branch, racing and auto-cancelling on the
+    shared resource_group. Skipping CI for every commit but the true final one
+    means GitLab creates exactly one pipeline per publish, for the complete
+    file set.
+    """
+
+    def __init__(self, total_commits: int) -> None:
+        self._remaining = total_commits
+
+    def message(self, base: str) -> str:
+        self._remaining -= 1
+        if self._remaining > 0:
+            return f"{base} [skip ci]"
+        return base
 
 
 async def _publish_binary_files(
@@ -993,6 +1024,7 @@ async def _publish_binary_files(
     slug: str,
     binary_files: list[dict[str, Any]],
     existing_paths: set[str],
+    skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
     """jmrplens commit_create schema has no per-action encoding; use file_create/update."""
     return await _publish_files_via_file_api(
@@ -1002,6 +1034,7 @@ async def _publish_binary_files(
         slug=slug,
         files=binary_files,
         existing_paths=existing_paths,
+        skip_ci_tracker=skip_ci_tracker,
     )
 
 
@@ -1027,6 +1060,76 @@ async def _ensure_publish_branch(
             {"project_id": project_id, "branch_name": branch, "ref": base_branch},
         )
     return await list_existing_blob_paths(session, project_id=project_id, ref=branch)
+
+
+def _local_marker_run_id(files: list[dict[str, Any]]) -> str | None:
+    """Extract runId from the .sdlc/pipeline-run.json entry about to be published."""
+    for item in files:
+        if item["path"].endswith(".sdlc/pipeline-run.json") and not item.get("binary"):
+            try:
+                return str(json.loads(item["content"]).get("runId") or "").strip() or None
+            except (ValueError, TypeError):
+                return None
+    return None
+
+
+async def _fetch_remote_marker_run_id(
+    project_id: str, branch: str, marker_path: str
+) -> str | None:
+    """Best-effort read of an already-published run marker via the GitLab REST API.
+
+    Used only to detect a duplicate publish invocation for the same run. Any failure
+    (network, 404, auth) is treated as "no marker present" so a legitimate publish is
+    never blocked by this check — it fails open.
+    """
+    url = (
+        f"{gitlab_api_url()}/projects/{quote(project_id, safe='')}"
+        f"/repository/files/{quote(marker_path, safe='')}/raw"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                url,
+                params={"ref": branch},
+                headers={"PRIVATE-TOKEN": gitlab_personal_access_token()},
+            )
+        if resp.status_code != 200:
+            return None
+        return str(json.loads(resp.text).get("runId") or "").strip() or None
+    except Exception:  # noqa: BLE001 — fail open, this is a best-effort dedupe check
+        return None
+
+
+async def _publish_already_landed(
+    *,
+    project_id: str,
+    branch: str,
+    files: list[dict[str, Any]],
+    existing_paths: set[str],
+) -> bool:
+    """True when this exact run's files are already fully committed on the branch.
+
+    Guards against re-running a full publish (new commits, new CI pipeline) when a
+    retry — AgentCore ARN-invoke HTTP fallback (a2a_invoke.py), the frontend's
+    SDLC_GITLAB_PUBLISH_RETRIES, or a manual re-run — re-invokes gitlab-agent for a
+    publish that already succeeded. runId is a fresh UUID per orchestrator run, so a
+    matching runId marker plus a fully-present file set can only mean "this exact
+    publish already landed," never a legitimately different publish.
+    """
+    local_run_id = _local_marker_run_id(files)
+    if not local_run_id:
+        return False
+    marker_item = next(
+        (f for f in files if f["path"].endswith(".sdlc/pipeline-run.json")), None
+    )
+    if marker_item is None or marker_item["path"] not in existing_paths:
+        return False
+    if not all(f["path"] in existing_paths for f in files):
+        return False
+    remote_run_id = await _fetch_remote_marker_run_id(
+        project_id, branch, marker_item["path"]
+    )
+    return remote_run_id is not None and remote_run_id == local_run_id
 
 
 def _publish_error(
@@ -1120,9 +1223,10 @@ async def publish_feature_async(
     commits: list[str] = []
     project_web_url: str | None = None
     mr_result: dict[str, Any] = {}
+    already_published = False
 
     async def _run_publish(session: Any) -> None:
-        nonlocal project_web_url, mr_result
+        nonlocal project_web_url, mr_result, already_published
         project_info = await call_gitlab_mcp_tool(
             session,
             "gitlab_project_get",
@@ -1137,7 +1241,32 @@ async def publish_feature_async(
             base_branch=cfg["base"],
         )
 
+        if await _publish_already_landed(
+            project_id=project_id,
+            branch=publish_branch,
+            files=files,
+            existing_paths=existing_paths,
+        ):
+            already_published = True
+            print(
+                f"[gitlab-mcp] publish for '{slug}' already landed on {publish_branch} "
+                "(matching runId marker, all paths present) — skipping duplicate "
+                "publish invocation instead of pushing new commits.",
+                flush=True,
+            )
+            return
+
         text_files, binary_files = _split_publish_files(files)
+
+        if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
+            text_commit_count = len(text_files)
+        else:
+            text_commit_count = len(_batch_files(text_files)) if text_files else 0
+        total_commits = text_commit_count + len(binary_files)
+        # Only worth tracking when a publish produces more than one commit —
+        # that's the case that would otherwise trigger one GitLab pipeline per commit.
+        skip_ci_tracker = _SkipCiCommitTracker(total_commits) if total_commits > 1 else None
+
         commits.extend(
             await _publish_text_file_batches(
                 session,
@@ -1146,6 +1275,7 @@ async def publish_feature_async(
                 slug=slug,
                 text_files=text_files,
                 existing_paths=existing_paths,
+                skip_ci_tracker=skip_ci_tracker,
             )
         )
 
@@ -1157,6 +1287,7 @@ async def publish_feature_async(
                 slug=slug,
                 binary_files=binary_files,
                 existing_paths=existing_paths,
+                skip_ci_tracker=skip_ci_tracker,
             )
         )
 
@@ -1206,7 +1337,7 @@ async def publish_feature_async(
     elapsed_sec = round(time.monotonic() - publish_started, 2)
     return {
         "ok": True,
-        "status": "published",
+        "status": "already-published" if already_published else "published",
         "targetApp": slug,
         "branch": publish_branch,
         "gitlabProject": cfg["project"],
@@ -1223,6 +1354,7 @@ async def publish_feature_async(
         "mergeRequestIid": mr_result.get("iid"),
         "repoUrl": project_web_url,
         "branchUrl": branch_url,
+        "skippedDuplicatePublish": already_published,
     }
 
 

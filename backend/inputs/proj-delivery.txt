@@ -1,0 +1,29 @@
+We’re looking to build a web application that helps teams monitor projects, milestones, tasks, risks, and delivery progress from one central dashboard.
+
+The application should provide a Streamlit interface supported by a FastAPI backend.
+
+Features:
+
+Create and manage projects
+Define project milestones and tasks
+Assign tasks to team members
+Track task status, priority, deadlines, and completion percentage
+Record project risks, blockers, and mitigation plans
+View overdue tasks and delayed milestones
+Add project updates and comments
+Search and filter projects and tasks
+Dashboard showing project health, delivery progress, upcoming deadlines, and active risks
+Generate a project status summary for leadership
+Export project progress and risk reports
+
+Business Rules:
+
+Milestones cannot be marked complete while required tasks remain incomplete.
+Overdue tasks should be clearly highlighted.
+High-impact risks must include an owner and mitigation plan.
+Completed projects should remain available for historical reporting.
+Streamlit should communicate with the application through the FastAPI backend.
+
+Success:
+
+Project teams can manage delivery activities while leadership can quickly understand project health, delays, risks, and progress through an effective dashboard.

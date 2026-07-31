@@ -65,6 +65,14 @@ function Test-TfRootComplete {
     return [bool]($text -match 'module\s+"app"')
 }
 
+function Test-TfRootAutoScaffolded {
+    # Only roots written by ensure-target-app-tf-root.py. Never delete devops-agent
+    # / hand-authored roots (e.g. expense-tracker) or shared/control-plane trees.
+    if (-not (Test-Path $TfMain)) { return $false }
+    $head = Get-Content -Path $TfMain -TotalCount 8 -ErrorAction SilentlyContinue
+    return [bool]($head -match 'Auto-scaffolded by scripts/ensure-target-app-tf-root\.py')
+}
+
 function Ensure-TfRoot {
     if (Test-TfRootComplete) { return }
 
@@ -143,13 +151,16 @@ $Registry = "$Account.dkr.ecr.$Region.amazonaws.com"
 Write-Host "AWS account: $Account" -ForegroundColor DarkGray
 
 # -- Terraform init -------------------------------------------------------------
+$cleanupScaffoldedTfRoot = $false
 Push-Location $TfRoot
 try {
     Invoke-Native $Terraform @("init", "-input=false", "-upgrade=false") "terraform init"
 
     if ($Destroy) {
-        Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve") "terraform destroy"
+        $wasAutoScaffolded = Test-TfRootAutoScaffolded
+        Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve", "-parallelism=1") "terraform destroy"
         Write-Host "`n[$Feature] destroyed. (ECR repos had force_delete, images are gone too.)" -ForegroundColor Yellow
+        $cleanupScaffoldedTfRoot = $wasAutoScaffolded
         return
     }
 
@@ -264,6 +275,10 @@ try {
         $handoff["imageTag"] = $ImageTag
         $handoff["healthy"] = $healthy
         $handoff["deployedAt"] = (Get-Date).ToUniversalTime().ToString("o")
+# Standard GitLab CI predefined vars (empty outside CI) — an ordering key so a
+        # stale/superseded pipeline's write can't clobber a newer one's in S3/DynamoDB.
+        if ($env:CI_PIPELINE_ID) { $handoff["gitlabPipelineId"] = [int64]$env:CI_PIPELINE_ID }
+        if ($env:CI_COMMIT_SHA) { $handoff["gitlabCommitSha"] = $env:CI_COMMIT_SHA }
         # PS 5.1's Out-File -Encoding utf8 always emits a UTF-8 BOM. Existing
         # readers (devops_agent.py, deploy_manifest.py) already tolerate it via
         # utf-8-sig, but there's no reason to keep emitting the stray byte.
@@ -280,4 +295,21 @@ try {
 }
 finally {
     Pop-Location
+    # After successful destroy only: drop temporary ensure-*-scaffolded TF roots so
+    # infrastructure/environments/dev/ does not accumulate orphans. Hand-authored
+    # devops roots (no Auto-scaffolded marker) are left alone.
+    if ($cleanupScaffoldedTfRoot -and (Test-TfRootAutoScaffolded)) {
+        $devParent = Join-Path $RepoRoot "infrastructure\environments\dev"
+        $resolvedRoot = [System.IO.Path]::GetFullPath($TfRoot)
+        $resolvedParent = [System.IO.Path]::GetFullPath($devParent)
+        $expected = [System.IO.Path]::GetFullPath((Join-Path $devParent $Feature))
+        if (
+            $resolvedRoot -eq $expected -and
+            $resolvedRoot.StartsWith($resolvedParent, [System.StringComparison]::OrdinalIgnoreCase) -and
+            $Feature -notin @('_shared', 'control-plane-auth')
+        ) {
+            Remove-Item -LiteralPath $resolvedRoot -Recurse -Force -ErrorAction Stop
+            Write-Host "Removed auto-scaffolded TF root: infrastructure/environments/dev/$Feature" -ForegroundColor DarkGray
+        }
+    }
 }

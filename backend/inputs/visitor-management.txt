@@ -1,0 +1,16 @@
+Hi Team,
+
+We're currently maintaining visitor entries in a paper register at reception, which has become difficult to manage. We'd like a simple internal application that allows our reception team to register visitors before they arrive, check them in when they reach the office, and check them out when they leave.
+
+Employees should also be able to pre-register expected visitors so reception already has their details. We'd like to capture visitor information, host employee, purpose of visit, company name, arrival/departure time, and badge number.
+
+Features
+Employee can pre-register visitors.
+Reception can check visitors in and out.
+Dashboard showing visitors currently inside the building.
+Search visitor history.
+Visitor badge assignment and return.
+Email notification to the host when the visitor arrives.
+Visitor status (Expected, Checked In, Checked Out, Cancelled).
+Daily visitor report.
+Basic admin page to manage employees and badge numbers.

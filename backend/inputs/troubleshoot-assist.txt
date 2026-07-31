@@ -1,0 +1,31 @@
+We're looking to build an AI-powered application that helps engineering teams quickly troubleshoot production issues by searching technical documentation, architecture guides, deployment manuals, runbooks, and historical incident reports.
+
+The application should provide a Streamlit frontend with a backend API responsible for document management and AI interactions. Users should be able to upload technical documentation, ask questions in natural language, and receive grounded responses based on the available knowledge.
+
+Features:
+
+Upload technical documents, runbooks, deployment guides, architecture diagrams, and incident reports
+Organize documents by application, environment, or project
+Search documentation using natural language
+Ask questions across one or multiple documents
+Generate summaries of technical documents
+Explain complex deployment or troubleshooting procedures
+Identify similar incidents from historical documentation
+Compare multiple versions of operational documents
+Save investigation history and previous conversations
+Bookmark important troubleshooting guides
+Dashboard showing uploaded documents, recent investigations, and frequently accessed knowledge
+Export investigation summaries
+
+Business Rules:
+
+AI responses must be based only on the uploaded documentation.
+Every response should include references to the supporting document.
+If sufficient information is unavailable, the application should clearly indicate that.
+Updated documents should replace older versions while maintaining version history.
+Users should only access documentation they are authorized to view.
+Deleted documents should no longer appear in searches or AI responses.
+
+Success:
+
+Engineers can upload operational documentation, quickly locate relevant information, troubleshoot issues using AI-assisted search, and generate evidence-based investigation summaries without manually reviewing large volumes of technical documentation.

@@ -1,0 +1,32 @@
+We’re looking to build an AI-powered application that helps engineering teams investigate production incidents using technical documents, application logs, incident reports, and troubleshooting guides.
+
+Users should be able to upload operational content, describe a production issue, and receive a grounded investigation summary with relevant evidence and recommended next steps.
+
+Features:
+
+Upload logs, runbooks, architecture documents, and previous incident reports
+Organise content by application, environment, or service
+Ask questions about production issues using natural language
+Search across uploaded operational knowledge
+Generate an incident investigation summary
+Highlight likely causes and affected components
+Recommend relevant troubleshooting steps from available runbooks
+Identify similar historical incidents
+Extract important errors, timestamps, services, and dependencies
+Display references to the supporting documents or log entries
+Save investigation sessions and follow-up questions
+Generate a final incident report containing findings, evidence, and recommended actions
+Dashboard showing recent investigations, frequently affected services, and unresolved incidents
+
+Business Rules:
+
+AI findings must be based on the available uploaded content.
+Answers must reference the supporting source or log entry.
+The application must distinguish confirmed evidence from possible causes.
+When there is insufficient evidence, the application should clearly state that the cause could not be confirmed.
+Recommended actions must not be executed automatically.
+Deleted or restricted documents must not appear in future results.
+
+Success:
+
+An engineer can provide incident details and supporting operational data, receive an evidence-based analysis, identify likely causes, review related historical incidents, and generate a structured incident report without manually searching through multiple documents and logs.

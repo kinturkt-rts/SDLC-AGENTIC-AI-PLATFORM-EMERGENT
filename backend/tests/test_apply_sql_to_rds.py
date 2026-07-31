@@ -176,9 +176,6 @@ class _FakeInMemoryPostgres:
     def execute(self, query: object, params: tuple[str, str] | None = None) -> None:
         from _shared.validate_sql_artifacts import _parse_create_table_columns
 
-        # psycopg's sql.Composed has no __str__ rendering without a live connection —
-        # str() falls back to repr(), e.g. "Composed([SQL('DROP SCHEMA IF EXISTS '),
-        # Identifier('contacts_api'), SQL(' CASCADE')])". Pull the identifier out of that.
         stmt = str(query)
         upper = stmt.upper().strip()
         identifier_match = re.search(r"Identifier\('([^']+)'\)", stmt)
@@ -323,3 +320,65 @@ def test_apply_sql_files_fails_loudly_when_stale_file_still_present(
     rc = mod.apply_sql_files(sql_dir, target_app="contacts-api", skip_seed=True, quiet=True)
 
     assert rc == 1
+
+
+def test_apply_sql_files_refuses_reset_when_only_seed_files_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the employee-leave-manager incident: a re-run whose materialized
+    workspace has only a seed file (no DDL) must never be allowed to DROP CASCADE the
+    live schema — that destroys existing tables and leaves the seed INSERTs failing
+    against an empty schema. Must fail fast, and must not touch the schema at all."""
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "011_seed.sql").write_text(
+        "INSERT INTO departments (id, name) VALUES (1, 'Engineering');\n",
+        encoding="utf-8",
+    )
+
+    db = _FakeInMemoryPostgres()
+    db.schemas["employee_leave_manager"] = {"departments": {"id", "name"}}
+    _patch_apply_sql_plumbing(monkeypatch, mod, db)
+
+    rc = mod.apply_sql_files(
+        sql_dir, target_app="employee-leave-manager", reset_schema=True, quiet=True
+    )
+
+    assert rc == 1
+    # The schema must be untouched — no DROP SCHEMA was ever issued.
+    assert db.schemas["employee_leave_manager"] == {"departments": {"id", "name"}}
+
+
+def test_apply_sql_files_resets_normally_when_full_ddl_set_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard: the new reset guard must not disrupt the normal case — a
+    fresh app publish with a full DDL set alongside its seed file still resets and
+    applies exactly as before."""
+    mod = _load_module()
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_departments.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS departments (\n"
+        "    id uuid PRIMARY KEY,\n"
+        "    name text NOT NULL\n"
+        ");\n",
+        encoding="utf-8",
+    )
+    (sql_dir / "011_seed.sql").write_text(
+        "INSERT INTO departments (id, name) VALUES ('11111111-1111-1111-1111-111111111111', 'Engineering');\n",
+        encoding="utf-8",
+    )
+
+    db = _FakeInMemoryPostgres()
+    # Pre-existing, differently-shaped table — proves the reset actually ran.
+    db.schemas["employee_leave_manager"] = {"departments": {"id", "short_code"}}
+    _patch_apply_sql_plumbing(monkeypatch, mod, db)
+
+    rc = mod.apply_sql_files(
+        sql_dir, target_app="employee-leave-manager", reset_schema=True, quiet=True
+    )
+
+    assert rc == 0
+    assert db.schemas["employee_leave_manager"]["departments"] == {"id", "name"}

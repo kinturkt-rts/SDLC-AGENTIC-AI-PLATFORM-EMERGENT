@@ -1,4 +1,10 @@
-import { PutObjectCommand, S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  PutObjectCommand,
+  S3Client,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  HeadObjectCommand,
+} from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { loadBackendEnv } from './backend-env';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
@@ -31,7 +37,6 @@ export function runS3Prefix(runId: string): string {
   return `runs/${runId.trim()}/`;
 }
 
-/** Relative path under runs/<runId>/ for a feature brief (cloud: <slug>/inputs/<slug>.txt). */
 export function runInputRelPath(feature: string): string {
   if (isS3Store()) return `${feature}/inputs/${feature}.txt`;
   return `inputs/${feature}.txt`;
@@ -51,7 +56,6 @@ export function s3Client(): S3Client {
   const region = process.env.AWS_REGION?.trim() || 'us-east-2';
   const profile = process.env.AWS_PROFILE?.trim();
   if (profile) {
-    // Default AWS SDK chain reads AWS_PROFILE from the environment at request time.
     process.env.AWS_PROFILE = profile;
   }
   _s3Client = new S3Client({
@@ -137,7 +141,6 @@ export async function getS3RunContext(runId: string): Promise<Record<string, unk
   if (!isS3Store()) return null;
   const prefix = runS3Prefix(runId);
 
-  // List top-level folders to find <slug>/context.json (new cloud layout)
   const listing = await s3Client().send(
     new ListObjectsV2Command({
       Bucket: s3Bucket(),
@@ -153,7 +156,6 @@ export async function getS3RunContext(runId: string): Promise<Record<string, unk
     }
   }
 
-  // Fallback: root context.json (legacy layout)
   return _tryGetS3Json(`${prefix}context.json`);
 }
 
@@ -161,7 +163,6 @@ function slugifyApp(value: string): string {
   return value.trim().toLowerCase().replace(/_/g, '-');
 }
 
-/** Paths under a run prefix that are pipeline metadata, not user-facing artifacts. */
 export function isSkippableS3ArtifactRelPath(relPath: string): boolean {
   if (!relPath || relPath === 'run.json') return true;
   if (relPath === 'context.json' || relPath.endsWith('/context.json')) return true;
@@ -172,7 +173,6 @@ export function isSkippableS3ArtifactRelPath(relPath: string): boolean {
   return false;
 }
 
-/** Infer target app from context.json or submitted input paths in S3. */
 export async function inferTargetAppFromS3Run(runId: string): Promise<string | null> {
   const ctx = await getS3RunContext(runId);
   if (typeof ctx?.targetApp === 'string' && ctx.targetApp.trim()) {
@@ -203,7 +203,6 @@ export async function inferTargetAppFromS3Run(runId: string): Promise<string | n
   return null;
 }
 
-/** Stale/renamed app slugs to hide everywhere (projects, artifacts, runs). */
 const HIDDEN_APP_SLUGS = new Set([
   // Old brief name for guest-visit-log; run 368d5645 in S3 still uses it.
   'guest-visit',
@@ -292,7 +291,6 @@ async function s3RunLatestModifiedMs(runId: string): Promise<number> {
   return latestModifiedMs(files);
 }
 
-/** Build targetApp -> newest runId map with one pass over the cached S3 index. */
 export async function buildS3RunIdByApp(): Promise<Map<string, string>> {
   if (!isS3Store()) return new Map();
 
@@ -318,7 +316,6 @@ export interface S3RunAppEntry {
   latestModifiedMs: number;
 }
 
-/** Every S3 run folder with an inferred target app (not just the newest per app). */
 export async function listS3RunAppEntries(): Promise<S3RunAppEntry[]> {
   if (!isS3Store()) return [];
 
@@ -342,7 +339,6 @@ export async function listS3RunIdsForApp(targetApp: string): Promise<string[]> {
     .map((entry) => entry.runId);
 }
 
-/** Project slugs discovered from S3 runs only (newest run per app). */
 export async function listS3ProjectSlugs(): Promise<string[]> {
   const map = await buildS3RunIdByApp();
   return [...map.keys()].sort();
@@ -420,7 +416,16 @@ export async function getS3ArtifactPreview(key: string): Promise<string | undefi
   }
 }
 
-/** Read a JSON artifact under runs/<runId>/ (S3 or local run folder). */
+export async function getS3ObjectLastModifiedMs(key: string): Promise<number | null> {
+  if (!isS3Store()) return null;
+  try {
+    const response = await s3Client().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: key }));
+    return response.LastModified ? response.LastModified.getTime() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getRunArtifactJson(
   runId: string,
   relPath: string,
@@ -458,4 +463,3 @@ export async function getRunArtifactJson(
     return null;
   }
 }
-

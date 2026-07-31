@@ -17,6 +17,7 @@ import {
   getS3RunEarliestModifiedMs,
   getRunArtifactJson,
   getS3RunArtifactIndex,
+  listS3RunIds,
   isHiddenAppSlug,
 } from './artifact-store';
 import { TIMELINE_PHASES, PHASE_AGENT, COMPLETION_PHASES } from './pipeline-phases';
@@ -32,8 +33,14 @@ import {
   resolveProjectRepositoryLink,
   resolveRunFailureDetail,
 } from './pipeline-handoffs';
-import { getLatestGitlabPipelineDeployStatus } from './gitlab-ci-deploy-status';
-import { parseLogTerminalStatus, reconcileRunStatus, parseLogSkipFlags } from './run-reconcile';
+import { getGitlabBranchDeploySignal } from './gitlab-ci-deploy-status';
+import {
+  isDeployStale,
+  parseLogSkipFlags,
+  parseLogTerminalStatus,
+  reconcileRunStatus,
+  resolveDisplayStatus,
+} from './run-reconcile';
 import { cachedAsync } from './request-cache';
 import { LIST_RUNS_CACHE_KEY, invalidateRunsCache } from './runs-cache';
 import { loadRunTelemetryElapsedSec, resolveRunTimings } from './run-timing';
@@ -87,6 +94,8 @@ const DASHBOARD_CACHE_KEY = 'getDashboardSummary';
 const HEAVY_LIST_TTL_MS = 30_000;
 const ACTIVITY_LIVE_TTL_MS = 8_000;
 const UUID_RUN_BUILD_BATCH = 4;
+/** run.json-only reads are cheap, so scan the store far wider than the build batch. */
+const GUARD_SCAN_BATCH = 24;
 
 function emptyPhaseDone(): Record<SdlcPhase, boolean> {
   return {
@@ -107,7 +116,11 @@ function runNeedsHeavyProbe(live: LiveRunState, log: string | null): boolean {
     return false;
   }
   if (log && parseLogTerminalStatus(log)) return false;
-  return live.status === 'running' || live.status === 'queued';
+  // awaiting_deploy must load evidence too: the deploy result only exists in S3
+  // (devops handoff), so without it the run looks like it made zero progress.
+  return (
+    live.status === 'running' || live.status === 'queued' || live.status === 'awaiting_deploy'
+  );
 }
 
 export { invalidateRunsCache } from './runs-cache';
@@ -576,7 +589,12 @@ async function listUuidRunIds(): Promise<string[]> {
 }
 
 function isTerminalLiveStatus(status: string | undefined | null): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
+  return (
+    status === 'completed' ||
+    status === 'awaiting_deploy' ||
+    status === 'failed' ||
+    status === 'cancelled'
+  );
 }
 
 async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
@@ -586,12 +604,23 @@ async function readUuidRunState(runId: string): Promise<LiveRunState | null> {
   if (isS3Store()) {
     const doc = (await getRunArtifactJson(runId, 'run.json')) as LiveRunState | null;
 
-    if (local?.status === 'cancelled') {
-      return { ...local, runId: local.runId || runId };
-    }
-    if (doc?.status === 'cancelled') {
-      return { ...doc, runId: doc.runId || runId };
-    }
+    // Hard-terminal statuses win over ephemeral local awaiting_deploy/running copies.
+    // Without this, an operator-marked S3 failure is ignored while the ECS task still
+    // holds a stale local awaiting_deploy from startPipeline.
+    const pickHardTerminal = (a: LiveRunState | null, b: LiveRunState | null) => {
+      for (const candidate of [a, b]) {
+        if (candidate?.status === 'cancelled') return candidate;
+      }
+      for (const candidate of [a, b]) {
+        if (candidate?.status === 'failed') return candidate;
+      }
+      return null;
+    };
+    const hard = pickHardTerminal(
+      local ? { ...local, runId: local.runId || runId } : null,
+      doc ? { ...doc, runId: doc.runId || runId } : null,
+    );
+    if (hard) return hard;
 
     if (doc && isTerminalLiveStatus(doc.status)) {
       if (!local || !isTerminalLiveStatus(local.status)) {
@@ -731,7 +760,6 @@ function runLogTimeBounds(run: { startedAt: string; finishedAt?: string | null }
   return { startMs, endMs };
 }
 
-/** CloudWatch agent stdout for one pipeline run (time-window scoped). */
 export async function listRunLogs(runId: string): Promise<LogEntry[]> {
   const run = await getRun(runId);
   if (!run) return [];
@@ -808,6 +836,28 @@ function enrichLiveRunFromLog(live: LiveRunState, log: string): LiveRunState {
     }
   }
 
+  return next;
+}
+
+export function applyCurrentStepPhaseOverride(
+  phaseDone: Record<SdlcPhase, boolean>,
+  currentStep: string | null | undefined,
+  status: RunStatus,
+): Record<SdlcPhase, boolean> {
+  if (!currentStep || (status !== 'running' && status !== 'failed')) return phaseDone;
+  const currentPhase = agentPhase[currentStep];
+  if (!currentPhase) return phaseDone;
+
+  const order = COMPLETION_PHASES;
+  const idx = order.indexOf(currentPhase);
+  let next = phaseDone;
+  if (idx > 0) {
+    next = { ...next };
+    for (let i = 0; i < idx; i++) next[order[i]] = true;
+  }
+  if (status === 'failed') {
+    next = { ...next, [currentPhase]: false };
+  }
   return next;
 }
 
@@ -888,7 +938,6 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     }
   }
 
-  // Mark skipped phases as done so reconciler doesn't wait for them (e.g. skip_gitlab=true on old runs).
   const skipFlags = parseLogSkipFlags(log);
   for (const key of Object.keys(skipFlags) as SdlcPhase[]) {
     if (skipFlags[key] && !phaseDone[key]) {
@@ -922,19 +971,11 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     if (detail) reconciledError = detail;
   }
 
-  // When run.json/log already advanced past a stale S3 artifact index, treat earlier
-  // phases as done so the timeline strip does not flash an older agent.
-  if (reconciled.currentStep && reconciled.status === 'running') {
-    const currentPhase = agentPhase[reconciled.currentStep];
-    if (currentPhase) {
-      const order = COMPLETION_PHASES;
-      const idx = order.indexOf(currentPhase);
-      if (idx > 0) {
-        phaseDone = { ...phaseDone };
-        for (let i = 0; i < idx; i++) phaseDone[order[i]] = true;
-      }
-    }
-  }
+  phaseDone = applyCurrentStepPhaseOverride(
+    phaseDone,
+    reconciled.currentStep,
+    reconciled.status,
+  );
 
   enriched = {
     ...enriched,
@@ -970,46 +1011,43 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
 
   const isTerminalForDeploy =
     reconciled.status === 'completed' ||
+    reconciled.status === 'awaiting_deploy' ||
     reconciled.status === 'failed' ||
     reconciled.status === 'cancelled';
 
-  // A real GitLab CI deploy (oidc:test + target-app:deploy, terraform apply, ECS
-  // health check) has never taken more than a few minutes in practice. If publish
-  // finished and 30+ minutes have passed with still no devops handoff at all, the
-  // branch's CI was never wired up / never triggered a deploy - deploy step should
-  // not be shown as running forever with no handoff to ever resolve it.
-  const DEPLOY_STALE_MS = 30 * 60 * 1000;
-  const deployIsStale =
-    isTerminalForDeploy && s3MtimeMs > 0 && Date.now() - s3MtimeMs > DEPLOY_STALE_MS;
+  const deployIsStale = isDeployStale({
+    isTerminalForDeploy,
+    deploySucceeded: phaseDone.deploy,
+    s3MtimeMs,
+  });
 
-  // Sync Deploy UI with GitLab CI + devops handoff failures (not only success via appUrl).
   let deployCiFailed = false;
   let deployCiFailedDetail: string | null = null;
   if (isTerminalForDeploy && phaseDone.publish && !phaseDone.deploy) {
-    if (await devopsDeployFailedForRun(runId, slug)) {
+    const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
+    const branch = handoffs?.gitlab?.branch?.trim() || null;
+    const project = handoffs?.gitlab?.gitlabProject?.trim() || null;
+    const ci =
+      branch && project
+        ? await getGitlabBranchDeploySignal({ gitlabProject: project, branch })
+        : { status: 'unavailable' as const, webUrl: null, inFlight: false };
+
+    if (ci.inFlight || ci.status === 'running') {
+      deployCiFailed = false;
+    } else if (await devopsDeployFailedForRun(runId, slug)) {
       deployCiFailed = true;
       deployCiFailedDetail = 'Deploy health check failed (devops handoff).';
-    } else {
-      const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
-      const branch = handoffs?.gitlab?.branch?.trim() || null;
-      const project = handoffs?.gitlab?.gitlabProject?.trim() || null;
-      if (branch && project) {
-        const ci = await getLatestGitlabPipelineDeployStatus({
-          gitlabProject: project,
-          branch,
-        });
-        if (ci.status === 'failed') {
-          deployCiFailed = true;
-          deployCiFailedDetail = ci.webUrl
-            ? `GitLab deploy pipeline failed — ${ci.webUrl}`
-            : 'GitLab deploy pipeline failed.';
-        }
-      }
+    } else if (ci.status === 'failed' || ci.status === 'canceled') {
+      deployCiFailed = true;
+      deployCiFailedDetail = ci.webUrl
+        ? `GitLab deploy pipeline failed - ${ci.webUrl}`
+        : 'GitLab deploy pipeline failed.';
     }
   }
 
   if (!phaseDone.deploy) {
     const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);
+    const runAlreadyFailed = reconciled.status === 'failed' || reconciled.status === 'cancelled';
     steps = steps.map((step) => {
       if (step.phase !== 'deploy') return step;
       if (deployCiFailed) {
@@ -1020,18 +1058,38 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
           error: deployCiFailedDetail ?? step.error ?? null,
         };
       }
-      if (hasDevopsHandoff) {
-        // A handoff exists but phaseDone.deploy is false, so the attempt didn't
-        // produce a live appUrl. Keep showing "running" while it's recent (may
-        // still be mid-deploy), but past DEPLOY_STALE_MS treat it as the failed
-        // attempt it is instead of "running" forever.
+      if (runAlreadyFailed && phaseDone.publish) {
+        // Operator/log marked the run failed while deploy was still open — close it.
+        // Gated on phaseDone.publish: a run that failed before gitlab-agent ever
+        // ran (e.g. database-agent) has nothing to do with deploy/devops-agent —
+        // leave this step alone so the real failing step stays the one shown.
         return {
           ...step,
-          status: (deployIsStale ? 'failed' : 'running') as StepStatus,
+          status: 'failed' as StepStatus,
+          agent: 'devops-agent',
+          error: step.error ?? reconciledError ?? 'Deploy abandoned when the run was marked failed.',
+        };
+      }
+      if (deployIsStale) {
+        return {
+          ...step,
+          status: 'failed' as StepStatus,
+          agent: 'devops-agent',
+          error:
+            step.error ??
+            (hasDevopsHandoff
+              ? 'Deploy did not become healthy (no live URL).'
+              : 'Deploy never completed - no DevOps handoff after publish.'),
+        };
+      }
+      if (hasDevopsHandoff) {
+        return {
+          ...step,
+          status: 'running' as StepStatus,
           agent: 'devops-agent',
         };
       }
-      if (isTerminalForDeploy && phaseDone.publish && !deployIsStale) {
+      if (isTerminalForDeploy && phaseDone.publish) {
         return { ...step, status: 'running' as StepStatus, agent: 'devops-agent' };
       }
       return { ...step, agent: 'devops-agent' };
@@ -1088,12 +1146,17 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
     deployStatus = 'live';
   }
 
-  const displayStatus: RunStatus =
-    deployCiFailed
-      ? 'failed'
-      : deployStepRunning && reconciled.status === 'completed'
-        ? 'running'
-        : reconciled.status;
+  const deployStepFailed = deployStep?.status === 'failed';
+  const deployTerminalFailed = deployCiFailed || deployIsStale || deployStepFailed;
+
+  const displayStatus = resolveDisplayStatus({
+    reconciledStatus: reconciled.status,
+    deploySucceeded: phaseDone.deploy,
+    deployCiFailed,
+    deployIsStale,
+    deployStepFailed,
+    deployStepRunning,
+  });
 
   // Prefer the step timeline as source of truth for "where are we" so currentAgent
   // cannot lag behind steps (e.g. strip shows Database while card still says Product).
@@ -1117,9 +1180,9 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
         (currentAgentName ? (currentAgentName as AgentName) : null));
 
   // While Deploy is still in flight, keep finishedAt null so elapsed time continues.
-  // When deploy completes, extend end time to latest artifact activity (devops.json).
+  // When deploy completes or fails, extend end time to latest artifact activity.
   let liveFinishedAt: string | null = deployStepRunning ? null : (enriched.finishedAt ?? null);
-  if (!deployStepRunning && phaseDone.deploy && s3MtimeMs > 0) {
+  if (!deployStepRunning && (phaseDone.deploy || deployTerminalFailed) && s3MtimeMs > 0) {
     const liveMs = liveFinishedAt ? Date.parse(liveFinishedAt) : 0;
     if (s3MtimeMs > (Number.isFinite(liveMs) ? liveMs : 0)) {
       liveFinishedAt = new Date(s3MtimeMs).toISOString();
@@ -1163,6 +1226,61 @@ function lastRunActivityMsFromParts(
 ): number {
   const started = Date.parse(startedAt);
   return Math.max(Number.isFinite(started) ? started : 0, logMtimeMs || 0, s3MtimeMs || 0);
+}
+
+export interface RunGuardCandidate {
+  runId: string;
+  projectId: string;
+  rawStatus: string;
+  currentStep: string | null;
+  lastActivityMs: number;
+}
+
+/**
+ * Raw run.json scan for the /runs/start guard — no artifact probes, handoff reads
+ * or GitLab CI calls. listRuns() enriches every run, which grew past the client's
+ * start timeout once the store held 100+ runs.
+ */
+export async function listRunGuardCandidates(): Promise<RunGuardCandidate[]> {
+  const ids = new Set<string>(await listUuidRunIds());
+  if (isS3Store()) {
+    for (const id of await listS3RunIds()) {
+      if (UUID_RE.test(id)) ids.add(id);
+    }
+  }
+
+  const allIds = [...ids];
+  const candidates: RunGuardCandidate[] = [];
+
+  for (let i = 0; i < allIds.length; i += GUARD_SCAN_BATCH) {
+    const batch = allIds.slice(i, i + GUARD_SCAN_BATCH);
+    const states = await Promise.all(
+      batch.map(async (runId) => ({ runId, live: await readUuidRunState(runId) })),
+    );
+
+    for (const { runId, live } of states) {
+      if (!live) continue;
+      const rawStatus = String(live.status ?? '').trim().toLowerCase();
+      if (rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled') {
+        continue;
+      }
+      const slug = featureSlugFromLive(live);
+      if (!slug || isHiddenAppSlug(slug)) continue;
+
+      const startedMs = live.startedAt ? Date.parse(live.startedAt) : 0;
+      // Cached S3 index — no extra request per run.
+      const s3Ms = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
+      candidates.push({
+        runId: live.runId || runId,
+        projectId: slug,
+        rawStatus,
+        currentStep: live.currentStep ?? null,
+        lastActivityMs: Math.max(Number.isFinite(startedMs) ? startedMs : 0, s3Ms),
+      });
+    }
+  }
+
+  return candidates;
 }
 
 async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
@@ -2120,7 +2238,7 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
       id: 'standard-sdlc',
       name: 'Standard SDLC',
       description:
-        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy is the demo-2 phase that puts a live URL in front of users.',
+        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy puts a live URL in front of users.',
       phases: TIMELINE_PHASES.map((phase) => ({
         phase,
         agent: PHASE_AGENT[phase],

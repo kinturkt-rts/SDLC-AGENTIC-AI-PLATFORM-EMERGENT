@@ -300,16 +300,23 @@ class SdlcPipelineRunner:
             
             if _should_run_frontend(self.options):
                 self._step_frontend()
-            
+
+            gitlab_ran = False
             if _should_run_gitlab(self.options):
                 self._step_gitlab()
+                gitlab_ran = True
 
             if _should_run_qa(self.options):
                 self._step_qa()
 
+            # Publish succeeded → wait for async GitLab CI / devops before "completed".
+            # Skip-gitlab runs have no CI deploy, so they finish as completed.
+            final_status = "awaiting_deploy" if gitlab_ran else "completed"
             if self.run_id and is_s3_store():
-                update_pipeline_run(self.run_id, status="completed", last_agent="orchestrator-agent")
-            self._update_run_json(status="completed", finished=True)
+                update_pipeline_run(
+                    self.run_id, status=final_status, last_agent="orchestrator-agent"
+                )
+            self._update_run_json(status=final_status, finished=True)
             self._write_telemetry()
         except PipelineStepError as exc:
             self.errors.append(str(exc))
@@ -378,7 +385,7 @@ class SdlcPipelineRunner:
 
         This is the async-pipeline status channel: the frontend gets an
         immediate ack from the orchestrator and then reads this artifact until
-        status turns terminal (completed/failed).
+        status turns terminal (awaiting_deploy → completed after CI deploy, or failed).
         """
         if not self.run_id or not is_s3_store():
             return
@@ -1324,7 +1331,8 @@ class SdlcPipelineRunner:
                 args.extend(["--gitlab-base", self.options.gitlab_base])
             self._run_python(args, step="gitlab-agent")
         else:
-            branch_hint = self.feature if apps_repo else f"sdlc/{self.feature}"
+            # Apps-repo and monorepo both use sdlc/<app> so GitLab CI deploy rules match.
+            branch_hint = f"sdlc/{self.feature}"
             task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
             self._invoke_a2a("gitlab-agent", task, step="gitlab-agent")
 
@@ -1343,7 +1351,9 @@ class SdlcPipelineRunner:
                 if self.run_id and is_s3_store()
                 else gitlab_handoff_rel_for_app(self.feature)
             )
-        if not handoff or handoff.get("status") != "published":
+        # Deduped republish returns already-published (ok:true) — treat as success.
+        publish_status = str((handoff or {}).get("status") or "").strip().lower()
+        if not handoff or publish_status not in {"published", "already-published"}:
             detail = (handoff or {}).get("error") or "no gitlab handoff produced"
             raise PipelineStepError(f"gitlab-agent publish failed: {detail}")
 

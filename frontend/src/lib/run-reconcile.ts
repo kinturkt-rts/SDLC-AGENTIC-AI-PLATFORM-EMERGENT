@@ -2,10 +2,35 @@ import { COMPLETION_PHASES, PHASE_AGENT, PHASE_DISPLAY_LABEL } from './pipeline-
 import type { RunStatus, SdlcPhase } from '@/src/types';
 
 export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
-
 export const RUN_NO_PROGRESS_IDLE_MS = 12 * 60 * 1000;
+export const DEPLOY_STALE_MS = 30 * 60 * 1000;
 
-/** Pipeline agent order used to prefer the furthest live step when sources disagree. */
+export function isDeployStale(input: {
+  isTerminalForDeploy: boolean;
+  deploySucceeded: boolean;
+  s3MtimeMs: number;
+  now?: number;
+}): boolean {
+  if (!input.isTerminalForDeploy || input.deploySucceeded) return false;
+  if (!input.s3MtimeMs) return false;
+  return (input.now ?? Date.now()) - input.s3MtimeMs > DEPLOY_STALE_MS;
+}
+
+export function resolveDisplayStatus(input: {
+  reconciledStatus: RunStatus;
+  deploySucceeded: boolean;
+  deployCiFailed: boolean;
+  deployIsStale: boolean;
+  deployStepFailed: boolean;
+  deployStepRunning: boolean;
+}): RunStatus {
+  if (input.deploySucceeded) return 'completed';
+  if (input.deployCiFailed || input.deployIsStale || input.deployStepFailed) return 'failed';
+  if (input.reconciledStatus === 'awaiting_deploy') return 'awaiting_deploy';
+  if (input.deployStepRunning && input.reconciledStatus === 'completed') return 'running';
+  return input.reconciledStatus;
+}
+
 const AGENT_PROGRESS_ORDER = [
   'product-agent',
   'architect-agent',
@@ -25,7 +50,6 @@ export interface ReconcileRunInput {
   logText: string | null;
   phaseDone: Record<SdlcPhase, boolean>;
   error?: string | null;
-  /** From run.json / log markers — used when artifact index lags behind live progress. */
   reportedCurrentStep?: string | null;
 }
 
@@ -230,7 +254,22 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
     };
   }
 
+  // Explicit failures win over "all authoring artifacts exist". Otherwise an
+  // operator-marked (or log-failed) run with a finished publish gets upgraded to
+  // completed, then the deploy UX remaps it back to running.
+  if (input.status === 'failed') {
+    return {
+      status: 'failed',
+      currentStep: null,
+      error: input.error ?? undefined,
+    };
+  }
+
   if (verifiedComplete) {
+    // Authoring phases done; keep awaiting_deploy until async CI/devops finishes.
+    if (input.status === 'awaiting_deploy') {
+      return { status: 'awaiting_deploy', currentStep: 'devops-agent' };
+    }
     return { status: 'completed', currentStep: null };
   }
 
@@ -239,14 +278,6 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
       status: 'failed',
       currentStep: null,
       error: terminal.error ?? input.error ?? 'Pipeline failed',
-    };
-  }
-
-  if (input.status === 'failed') {
-    return {
-      status: input.status,
-      currentStep: null,
-      error: input.error ?? undefined,
     };
   }
 
@@ -263,18 +294,46 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   }
 
   const idleMs = Date.now() - lastRunActivityMs(input);
-  const isActiveStatus = input.status === 'running' || input.status === 'queued';
+  const isActiveStatus =
+    input.status === 'running' ||
+    input.status === 'queued' ||
+    input.status === 'awaiting_deploy';
   const anyProgress = hasAnyEvidence;
-  const idleThresholdMs = anyProgress ? RUN_LIVE_IDLE_MS : RUN_NO_PROGRESS_IDLE_MS;
+  // Deploy can sit in GitLab CI longer than authoring idle thresholds; use the
+  // longer window while awaiting_deploy so we don't mark healthy publishes failed.
+  const idleThresholdMs =
+    input.status === 'awaiting_deploy'
+      ? RUN_LIVE_IDLE_MS
+      : anyProgress
+        ? RUN_LIVE_IDLE_MS
+        : RUN_NO_PROGRESS_IDLE_MS;
 
   if (isActiveStatus && idleMs > idleThresholdMs) {
+    // run.json reaching a later step is progress even when artifact evidence is
+    // unavailable, so never claim product-agent never ran in that case.
+    const reachedStep = input.reportedCurrentStep?.trim() || null;
+    const progressed =
+      anyProgress ||
+      input.status === 'awaiting_deploy' ||
+      (!!reachedStep && reachedStep !== 'product-agent');
+    if (progressed) {
+      return {
+        status: 'failed',
+        currentStep: null,
+        error: reachedStep
+          ? `Pipeline stalled (no activity in the last hour - last step ${reachedStep})`
+          : 'Pipeline stalled (no activity in the last hour)',
+      };
+    }
     return {
       status: 'failed',
       currentStep: null,
-      error: anyProgress
-        ? 'Pipeline stalled (no activity in the last hour)'
-        : 'Pipeline abandoned (no activity since it started - never completed product-agent)',
+      error: 'Pipeline abandoned (no activity since it started - never completed product-agent)',
     };
+  }
+
+  if (input.status === 'awaiting_deploy') {
+    return { status: 'awaiting_deploy', currentStep: 'devops-agent' };
   }
 
   if (isActiveStatus) {

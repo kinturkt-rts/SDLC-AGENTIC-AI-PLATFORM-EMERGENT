@@ -22,7 +22,13 @@ _INFRA_DIR = _REPO_ROOT / "infrastructure"
 _PIPELINE_DIR = _REPO_ROOT / "agents" / "pipeline"
 
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
-from _shared.artifact_store import is_s3_store, put_handoff, resolve_run_id, update_pipeline_run
+from _shared.artifact_store import (
+    get_handoff,
+    is_s3_store,
+    put_handoff,
+    resolve_run_id,
+    update_pipeline_run,
+)
 from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.deploy_manifest import (
     build_deploy_manifest,
@@ -36,6 +42,7 @@ from _shared.pipeline_context import (
     resolve_cli_context,
     resolve_target_app,
 )
+from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
 load_repo_env()
 os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
@@ -244,7 +251,8 @@ app served at http://<alb>/<app>/).
 
 
 def _bedrock_model() -> BedrockModel:
-    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+    # Same MODEL_ID as product/architect (AgentCore typically sets Claude Sonnet 4.6).
+    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
     return BedrockModel(
         model_id=model_id,
         region_name=os.getenv("AWS_REGION", "us-east-2"),
@@ -256,6 +264,21 @@ def _bedrock_model() -> BedrockModel:
             retries={"mode": "standard", "max_attempts": 2},
         ),
     )
+
+
+def _model_id() -> str:
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
+
+
+def _tf_root_complete(app: str) -> bool:
+    main = _tf_root(app) / "main.tf"
+    if not main.is_file():
+        return False
+    try:
+        text = main.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return bool(re.search(r'module\s+"app"', text))
 
 
 def _terraform_exe() -> str:
@@ -392,6 +415,28 @@ def render_tf_root(manifest: dict[str, Any]) -> str:
     )
 
 
+def _is_status_write_superseded(
+    this_pipeline_id: int | None, remote_handoff: dict[str, Any] | None
+) -> bool:
+    """True when a same-or-newer pipeline already recorded a live handoff.
+
+    Guards the run's terminal status: a pipeline that finishes late for a commit
+    that was already superseded (multi-commit publish race, or a stale sibling
+    pipeline) must not overwrite a genuine success another pipeline already wrote.
+    A run with no ``gitlabPipelineId`` (local/non-CI runs) has no ordering
+    information available and is never treated as superseded.
+    """
+    if this_pipeline_id is None:
+        return False
+    remote_pipeline_id = remote_handoff.get("gitlabPipelineId") if remote_handoff else None
+    remote_has_live_url = bool(remote_handoff and remote_handoff.get("appUrl"))
+    return (
+        remote_pipeline_id is not None
+        and remote_pipeline_id >= this_pipeline_id
+        and remote_has_live_url
+    )
+
+
 def _merge_handoff(app: str, updates: dict[str, Any]) -> Path:
     _PIPELINE_DIR.mkdir(parents=True, exist_ok=True)
     path = _PIPELINE_DIR / f"{app}.devops-handoff.json"
@@ -420,6 +465,44 @@ def _terraform_mcp_client_safe():
         return None
 
 
+def ensure_tf_root_without_llm(
+    app: str, context: dict[str, Any] | None = None
+) -> str:
+    """Write the canonical TF root from the deploy manifest (no Bedrock call).
+
+    Used by GitLab CI ``--deploy`` when the root is missing. ``deploy-target-app.ps1``
+    still has ensure-target-app-tf-root.py as a destroy/missing-root fallback.
+    """
+    ctx = context if context is not None else {"targetApp": app}
+    ctx.setdefault("targetApp", app)
+    enrich_handoff_context(ctx, include_db_paths=False)
+    copied = ensure_deploy_dockerfiles(app)
+    manifest = build_deploy_manifest(app, ctx)
+    content = render_tf_root(manifest)
+    root = _tf_root(app)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "main.tf").write_text(content, encoding="utf-8", newline="\n")
+    write_result = (
+        f"WROTE infrastructure/environments/dev/{app}/main.tf ({len(content)} chars)"
+    )
+    _merge_handoff(
+        app,
+        {
+            "targetApp": app,
+            "tfRoot": f"infrastructure/environments/dev/{app}",
+            "manifest": manifest,
+            "extraEnv": manifest.get("extraEnv") or {},
+            "tfGeneratedAt": datetime.now(timezone.utc).isoformat(),
+            "tfRootPresent": True,
+            "tfGeneration": "template-no-llm",
+        },
+    )
+    note = f"Wrote TF root from template (no LLM). {write_result}"
+    if copied:
+        note += f" Dockerfiles copied: {copied}"
+    return note
+
+
 def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: str | None = None) -> str:
     app = resolve_target_app(target_app, context, env_var="DEVOPS_TARGET_APP")
     ctx = context if context is not None else {"targetApp": app}
@@ -440,6 +523,12 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
     if copied:
         message += f"\n\nNote: Dockerfiles were auto-copied from the template: {copied}"
 
+    telemetry = RunTelemetry(
+        AGENT_NAME,
+        target_app=app,
+        model_id=_model_id(),
+        run_id=resolve_run_id(ctx),
+    )
     mcp_client = _terraform_mcp_client_safe()
     tools: list[Any] = [devops_read_file, devops_write_tf, devops_validate]
     try:
@@ -456,6 +545,7 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
             model=_bedrock_model(),
             system_prompt=DEVOPS_SYS_PROMPT,
             tools=tools,
+            callback_handler=StrandsTelemetryCallback(AGENT_NAME, telemetry),
         )
         result = str(agent(message))
     finally:
@@ -464,6 +554,11 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
                 mcp_client.stop(None, None, None)
             except Exception:  # noqa: BLE001
                 pass
+        try:
+            telemetry.extra = {"tfRootPresent": (_tf_root(app) / "main.tf").is_file()}
+            telemetry.finalize(context=ctx)
+        except Exception:  # noqa: BLE001
+            print(f"[{AGENT_NAME}] failed to persist telemetry", file=sys.stderr)
 
     validated = (_tf_root(app) / "main.tf").is_file()
     _merge_handoff(
@@ -477,6 +572,7 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
             "extraEnv": manifest.get("extraEnv") or {},
             "tfGeneratedAt": datetime.now(timezone.utc).isoformat(),
             "tfRootPresent": validated,
+            "tfGeneration": "llm",
         },
     )
     return result
@@ -604,9 +700,29 @@ def main() -> None:
     if args.destroy:
         raise SystemExit(run_deploy(target, destroy=True))
 
-    summary = run_task(args.task, ctx, target_app=target)
-    print("\n" + "=" * 60)
-    print(summary)
+    # GitLab CI --deploy: skip Bedrock when possible. Existing roots are reused;
+    # missing roots are written from render_tf_root (same template the LLM gets).
+    # Set DEVOPS_FORCE_LLM=1 to keep the previous always-LLM behavior.
+    force_llm = os.getenv("DEVOPS_FORCE_LLM", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if (args.deploy or args.plan_only) and not force_llm:
+        if _tf_root_complete(target):
+            summary = (
+                f"TF root already present for '{target}' — skipping LLM generation "
+                "(set DEVOPS_FORCE_LLM=1 to force)."
+            )
+            print(f"[{AGENT_NAME}] {summary}")
+        else:
+            summary = ensure_tf_root_without_llm(target, ctx)
+            print(f"[{AGENT_NAME}] {summary}")
+    else:
+        summary = run_task(args.task, ctx, target_app=target)
+        print("\n" + "=" * 60)
+        print(summary)
 
     if args.deploy or args.plan_only:
         rc = run_deploy(target, plan_only=args.plan_only)
@@ -616,6 +732,12 @@ def main() -> None:
             if handoff.is_file()
             else None
         )
+        # Set by deploy-target-app.ps1 from GitLab's own $CI_PIPELINE_ID/$CI_COMMIT_SHA
+        # (empty outside CI). Monotonic ordering key so this job's write can be
+        # compared against whatever a differently-timed sibling pipeline already wrote.
+        this_pipeline_id = data.get("gitlabPipelineId") if data else None
+        this_commit_sha = data.get("gitlabCommitSha") if data else None
+        new_status = "completed" if rc == 0 else "failed"
 
         # Record handoff + run status even on failure — this stage may run
         # standalone (e.g. GitLab CI), outside the orchestrator that normally
@@ -625,13 +747,42 @@ def main() -> None:
         run_id = resolve_run_id(ctx)
         if is_s3_store():
             if run_id:
-                if data:
-                    put_handoff(run_id, "devops", data)
-                update_pipeline_run(
-                    run_id,
-                    status="completed" if rc == 0 else "failed",
-                    last_agent=AGENT_NAME,
-                )
+                remote = get_handoff(run_id, "devops") if this_pipeline_id is not None else None
+                superseded = _is_status_write_superseded(this_pipeline_id, remote)
+
+                if superseded:
+                    print(
+                        f"[{AGENT_NAME}] status transition SKIPPED (stale): run={run_id} "
+                        f"pipeline={this_pipeline_id} commit={this_commit_sha} rc={rc} "
+                        f"new_status={new_status} — a same-or-newer pipeline "
+                        f"({remote.get('gitlabPipelineId') if remote else None}) already "
+                        "recorded a live handoff; not overwriting it.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"[{AGENT_NAME}] status transition: run={run_id} "
+                        f"pipeline={this_pipeline_id} commit={this_commit_sha} "
+                        f"-> status={new_status} "
+                        f"(appUrl={'yes' if data and data.get('appUrl') else 'no'})",
+                        flush=True,
+                    )
+                    if data:
+                        put_handoff(run_id, "devops", data)
+                    applied = update_pipeline_run(
+                        run_id,
+                        status=new_status,
+                        last_agent=AGENT_NAME,
+                        pipeline_id=this_pipeline_id,
+                    )
+                    if not applied:
+                        print(
+                            f"[{AGENT_NAME}] DynamoDB rejected this status write as stale "
+                            f"(run={run_id}, pipeline={this_pipeline_id}); the S3 handoff "
+                            "above may still have been written — investigate ordering if "
+                            "this recurs.",
+                            file=sys.stderr,
+                        )
             else:
                 print(
                     f"[{AGENT_NAME}] WARN: ARTIFACT_STORE=s3 but no PIPELINE_RUN_ID "

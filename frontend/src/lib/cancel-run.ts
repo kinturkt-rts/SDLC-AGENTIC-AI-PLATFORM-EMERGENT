@@ -67,7 +67,7 @@ export async function cancelPipelineRun(runId: string): Promise<CancelRunResult>
   if (!doc) throw new Error(`Run not found: ${id}`);
 
   const status = String(doc.status ?? '').toLowerCase();
-  if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+  if (status === 'completed' || status === 'awaiting_deploy' || status === 'failed' || status === 'cancelled') {
     throw new Error(`Run is already ${status} and cannot be cancelled`);
   }
 

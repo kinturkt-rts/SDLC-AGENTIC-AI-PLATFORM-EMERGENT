@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { PageHeader } from '@/src/components/common/PageHeader';
 import { EmptyState } from '@/src/components/common/EmptyState';
+import { MarkdownPreview } from '@/src/components/common/MarkdownPreview';
 import { useArtifacts, useProjects } from '@/src/lib/queries';
 import { useUiStore } from '@/src/store/ui-store';
 import { formatRelative } from '@/src/lib/format';
@@ -215,6 +216,10 @@ export default function ArtifactsPage() {
             </div>
           ) : previewLoading ? (
             <p className="text-sm text-muted-foreground">Loading preview…</p>
+          ) : preview?.path.toLowerCase().endsWith('.md') ? (
+            <div className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4">
+              <MarkdownPreview content={previewText ?? preview?.preview ?? 'No preview available.'} />
+            </div>
           ) : (
             <pre className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
               {previewText ?? preview?.preview ?? 'No preview available.'}

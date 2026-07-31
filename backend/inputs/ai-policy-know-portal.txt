@@ -1,0 +1,43 @@
+We need an internal application where employees can search company policies, procedures, standards, and operational documents from one place.
+
+Currently, these documents are stored across shared drives and team folders, making it difficult for employees to find the latest approved information. We also want an AI assistant that can answer employee questions using only approved internal documents.
+
+The application should have a Streamlit frontend and a FastAPI backend. It should use Claude models for grounded answer generation and Amazon Titan Embeddings for semantic search.
+
+Features
+Upload and manage PDF, DOCX, TXT, and Markdown documents
+Organise documents by department, category, owner, and confidentiality level
+Maintain document versions and statuses such as Draft, Under Review, Published, Archived, and Expired
+Review and approve documents before publishing
+Search documents using keywords and metadata filters
+Semantic document search using Titan Embeddings
+RAG-based chat assistant using Claude
+Display citations with document name, page, section, and source excerpt
+Allow conversational follow-up questions
+Summarise documents and compare two document versions
+Track mandatory policy acknowledgements
+Dashboard for published documents, upcoming reviews, expired policies, and overdue acknowledgements
+Role-based views for employees, managers, document owners, reviewers, compliance users, and administrators
+Track document activity, approval history, AI queries, and user feedback
+Show failed ingestion jobs and allow authorised users to retry them
+Provide CSV exports for document and acknowledgement reports
+Important business rules
+Only approved and published documents should be available to regular employees and the RAG assistant.
+Users must not retrieve documents outside their department or confidentiality permissions.
+Every AI answer should include supporting citations.
+The AI assistant should clearly say when it cannot find sufficient supporting information.
+Published documents cannot be directly edited; a new version must be created.
+Only one version of a document can be published at a time.
+Mandatory acknowledgements must be tied to a specific document version.
+Failed document processing must be retryable without creating duplicate embeddings.
+Technical expectations
+Streamlit must communicate only with FastAPI.
+Persist application data in a relational database.
+Store uploaded documents in persistent storage.
+Store document chunks and Titan embeddings in a vector-capable database.
+Process extraction, chunking, and embeddings through background jobs.
+Include validation, error handling, seed data, logging, and health endpoints.
+Keep model credentials and secrets outside the source code.
+Success
+
+A document owner can upload a policy, send it for approval, publish it, and make it available for semantic search. An employee can ask a question in Streamlit and receive a Claude-generated answer with accurate citations. Restricted and unpublished content must not be exposed, and failed ingestion jobs should be safely retried.

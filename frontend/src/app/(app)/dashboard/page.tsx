@@ -52,6 +52,7 @@ import { api } from '@/src/lib/api';
 import { formatRelative, titleCase } from '@/src/lib/format';
 import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
+import { validateProductBrief } from '@/src/lib/brief-quality';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
@@ -306,7 +307,7 @@ function pipelineStepVisualState(
 
   // Agents done / still deploying: prior phases are complete.
   if (
-    (run.status === 'completed' || isDeployFollowOnRun(run)) &&
+    (run.status === 'completed' || run.status === 'awaiting_deploy' || isDeployFollowOnRun(run)) &&
     stepPhase !== 'deploy'
   ) {
     return 'completed';
@@ -315,11 +316,21 @@ function pipelineStepVisualState(
   return 'pending';
 }
 
+function isDeployFailedRun(run: PipelineRun): boolean {
+  return (
+    run.deployStatus === 'failed' ||
+    run.deployStatus === 'stale' ||
+    Boolean(run.steps?.some((s) => s.phase === 'deploy' && s.status === 'failed'))
+  );
+}
+
 function isRunActiveForDashboard(run: PipelineRun): boolean {
-  // Keep Deploy visible on the strip/cards until the live URL lands.
+  // Keep Deploy visible until live URL or a terminal deploy failure.
+  if (isDeployFailedRun(run)) return false;
   return (
     run.status === 'running' ||
     run.status === 'paused' ||
+    run.status === 'awaiting_deploy' ||
     run.deployStatus === 'pending' ||
     run.deployStatus === 'running'
   );
@@ -328,6 +339,7 @@ function isRunActiveForDashboard(run: PipelineRun): boolean {
 /** Concurrency slots: agent-chain only (Deploy wait does not block new briefs). */
 function isAgentChainActive(run: PipelineRun): boolean {
   if (run.status === 'paused') return true;
+  if (run.status === 'awaiting_deploy') return false;
   if (run.status !== 'running') return false;
   if (run.deployStatus === 'pending' || run.deployStatus === 'running') return false;
   if (run.currentPhase === 'deploy' || run.currentAgent === 'devops-agent') return false;
@@ -335,7 +347,9 @@ function isAgentChainActive(run: PipelineRun): boolean {
 }
 
 function isDeployFollowOnRun(run: PipelineRun): boolean {
+  if (isDeployFailedRun(run)) return false;
   return (
+    run.status === 'awaiting_deploy' ||
     run.deployStatus === 'pending' ||
     run.deployStatus === 'running' ||
     (run.status === 'running' &&
@@ -539,6 +553,11 @@ function InputRequirementsCard() {
       toast.error('Cannot save empty requirements');
       return;
     }
+    const briefError = validateProductBrief(content);
+    if (briefError) {
+      toast.error('Brief looks incomplete', { description: briefError });
+      return;
+    }
     if (!feature || !featureValid) {
       toast.error('Enter a feature slug (lowercase letters, digits, dashes; e.g. inventory-app)');
       return;
@@ -567,6 +586,14 @@ function InputRequirementsCard() {
     }
   };
 
+  /** Marks aborted requests so callers can tell a timeout apart from a real failure. */
+  class RequestTimeoutError extends Error {
+    constructor(timeoutMs: number) {
+      super(`No response after ${Math.round(timeoutMs / 1000)}s`);
+      this.name = 'RequestTimeoutError';
+    }
+  }
+
   const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -574,9 +601,7 @@ function InputRequirementsCard() {
       return await fetch(url, { ...init, signal: controller.signal });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error(
-          `Request timed out after ${timeoutMs / 1000}s - the dev server may be busy. Retry or restart \`npm run dev\`.`,
-        );
+        throw new RequestTimeoutError(timeoutMs);
       }
       throw err;
     } finally {
@@ -588,6 +613,11 @@ function InputRequirementsCard() {
     if (submitLockRef.current || submitting || fileLoading) return;
     if (!content.trim()) {
       toast.error('Cannot submit empty requirements');
+      return;
+    }
+    const briefError = validateProductBrief(content);
+    if (briefError) {
+      toast.error('Brief looks incomplete', { description: briefError });
       return;
     }
     if (!feature || !featureValid) {
@@ -611,6 +641,7 @@ function InputRequirementsCard() {
     setSubmitPhase('upload');
     const submitContent = content;
     const submitFeature = feature;
+    let uploadedRunId: string | null = null;
     try {
       const uploadRes = await fetchWithTimeout(
         '/api/v1/inputs',
@@ -624,6 +655,7 @@ function InputRequirementsCard() {
       const uploadParsed = await readJsonResponse<BriefUploadResponse>(uploadRes);
       if (!uploadParsed.ok) throw new Error(uploadParsed.error);
       const uploadData = uploadParsed.data;
+      uploadedRunId = uploadData.runId ?? null;
 
       setSubmitPhase('start');
       const startRes = await fetchWithTimeout(
@@ -648,18 +680,38 @@ function InputRequirementsCard() {
       setSavedPath(String(data.inputFile ?? uploadData.inputFile ?? ''));
       setStartedRunId(data.runId ?? null);
       setLastSaved(new Date().toLocaleTimeString());
+      // Unlock the button immediately — do not wait on list/dashboard refetches
+      // (cold /api/v1/runs can take 10–20s and kept the UI on "Starting pipeline…").
+      submitLockRef.current = false;
+      setSubmitting(false);
+      setSubmitPhase('idle');
       toast.success('Pipeline submitted', {
         description: `${submitFeature} · ${(data.runId ?? uploadData.runId ?? '').slice(0, 8)}…`,
       });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.activity });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.artifacts });
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.activity }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.artifacts }),
+      ]);
       window.setTimeout(() => {
         document.getElementById('dashboard-pipeline-activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 400);
     } catch (err) {
-      toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
+      // A timed-out start usually still started the run server-side. Telling the user
+      // it failed made them resubmit and create a duplicate run for the same app.
+      if (err instanceof RequestTimeoutError) {
+        setStartedRunId(uploadedRunId);
+        toast.warning('Still starting - do not submit again', {
+          description: `${err.message}. The run may already be starting; check Active Runs below before retrying.`,
+        });
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        ]);
+      } else {
+        toast.error('Submit failed', { description: err instanceof Error ? err.message : String(err) });
+      }
     } finally {
       submitLockRef.current = false;
       setSubmitting(false);
@@ -696,11 +748,14 @@ function InputRequirementsCard() {
       if (!startParsed.ok) throw new Error(startParsed.error);
       const data = startParsed.data;
       setStartedRunId(data.runId ?? null);
+      setStarting(false);
       toast.success('Pipeline started', {
         description: `${titleCase(feature)} · run ${(data.runId ?? savedRunId).slice(0, 8)}…`,
       });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+      ]);
     } catch (err) {
       toast.error('Start failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -914,7 +969,7 @@ function InputRequirementsCard() {
           ) : atCapacity ? (
             <p className="rounded-lg border border-orange-500/50 bg-orange-100 px-3 py-2 text-xs text-orange-950 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-50">
               <span className="font-semibold">At capacity:</span> {agentChainRuns.length}/{MAX_CONCURRENT_RUNS}{' '}
-              concurrent agent pipelines active. Deploy-only waits do not count. Wait for one to finish or cancel a run.
+              Concurrent SDLC Agentic AI pipelines active. Wait for one to finish or cancel a run.
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
@@ -986,9 +1041,12 @@ export default function DashboardPage() {
     return map;
   }, [liveQueries]);
 
-  // Strip + cards share the same live-polled run objects (not stale listRuns rows).
+  // Strip + cards share live-polled runs; re-filter so failed deploys drop off Active.
   const activeRuns = React.useMemo(
-    () => listedActiveRuns.map((r) => liveById.get(r.id) ?? r),
+    () =>
+      listedActiveRuns
+        .map((r) => liveById.get(r.id) ?? r)
+        .filter(isRunActiveForDashboard),
     [listedActiveRuns, liveById],
   );
   const hasActive = activeRuns.length > 0;
@@ -1043,7 +1101,7 @@ export default function DashboardPage() {
             SDLC Agentic AI Platform
           </h1>
           <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-            Submit a requirements brief and run the full SDLC pipeline on AgentCore - PRD, architecture, SQL, application code, and GitLab publish.
+            Submit a requirements brief and run the full SDLC pipeline on AgentCore - PRD, architecture, SQL, application code, GitLab publish, and AWS deploy.
           </p>
 
           <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -1102,7 +1160,13 @@ export default function DashboardPage() {
                 <div key={run.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
                   <Link href={`/runs/${run.id}`} className="flex min-w-0 flex-1 items-center gap-3">
                     <StatusBadge
-                      status={isDeployFollowOnRun(run) ? 'running' : run.status}
+                      status={
+                        isDeployFollowOnRun(run)
+                          ? run.status === 'awaiting_deploy'
+                            ? 'awaiting_deploy'
+                            : 'running'
+                          : run.status
+                      }
                       label={isDeployFollowOnRun(run) ? 'Deploying' : undefined}
                       size="sm"
                     />

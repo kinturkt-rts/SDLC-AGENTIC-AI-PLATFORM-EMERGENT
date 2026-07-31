@@ -1,4 +1,4 @@
-# Terraform working files — never commit state or providers
+# Terraform working files - never commit state or providers
 **/.terraform/
 *.tfstate
 *.tfstate.*

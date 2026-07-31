@@ -1,0 +1,22 @@
+We’re looking to build a backend application that helps organisations report, assign, track, and resolve operational incidents. The system should provide a structured workflow for managing incidents from initial reporting through resolution.
+
+Features:
+Create and manage incidents
+Assign incidents to teams or engineers
+Set severity, category, and priority
+Track statuses such as Open, Assigned, In Progress, Resolved, and Closed
+Add investigation notes and resolution details
+Maintain a complete incident activity history
+Search and filter incidents by status, severity, owner, category, or date
+Escalate incidents that remain unresolved beyond their target time
+Provide summary APIs for active incidents, critical incidents, and average resolution time
+
+Business Rules:
+Critical incidents must be assigned the highest priority.
+Resolved incidents must include a resolution summary.
+Closed incidents cannot be edited unless reopened.
+Every assignment and status change must be retained in the activity history.
+An incident cannot be closed before it is resolved.
+Success
+
+Teams can report incidents, assign ownership, track investigation progress, record resolutions, and retrieve operational metrics through REST APIs.
