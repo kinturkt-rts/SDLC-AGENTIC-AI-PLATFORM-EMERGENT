@@ -134,6 +134,39 @@ describe('reconcileRunStatus', () => {
     assert.match(result.error ?? '', /Marked failed by operator/);
   });
 
+  it('names the phase that never finished instead of a blanket message when the error is generic', () => {
+    // Regression: orchestrator crashed between database-agent and developer-agent
+    // (no exception ever caught, so run.json got no specific error) — the dashboard
+    // showed "SDLC pipeline failed" with no indication developer-agent never started.
+    const result = reconcileRunStatus({
+      status: 'failed',
+      startedAt: new Date(Date.now() - 300_000).toISOString(),
+      logMtimeMs: Date.now(),
+      s3MtimeMs: Date.now(),
+      logText: null,
+      phaseDone: { ...emptyPhases, requirements: true, architecture: true, data: true },
+      error: 'SDLC pipeline failed',
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.currentStep, 'developer-agent');
+    assert.match(result.error ?? '', /Developer-agent/);
+  });
+
+  it('keeps a specific error message as-is rather than overriding it with a phase guess', () => {
+    const result = reconcileRunStatus({
+      status: 'failed',
+      startedAt: new Date(Date.now() - 300_000).toISOString(),
+      logMtimeMs: Date.now(),
+      s3MtimeMs: Date.now(),
+      logText: null,
+      phaseDone: { ...emptyPhases, requirements: true, architecture: true, data: true },
+      error: 'Database migration 004_add_index.sql failed: relation already exists',
+    });
+
+    assert.match(result.error ?? '', /004_add_index\.sql/);
+  });
+
   it('awaiting_deploy with evidence stays awaiting_deploy after the idle window', () => {
     const startedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const result = reconcileRunStatus({

@@ -5,16 +5,20 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+import _shared.telemetry as tel_mod
+import _shared.artifact_store as artifact_store_mod
+import _shared.telemetry as tel_mod
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_REPO_ROOT / "agents"))
-
-from _shared.telemetry import (  # noqa: E402
+from _shared.telemetry import (
     RunTelemetry,
     aggregate_pipeline_telemetry,
     discover_agents_with_telemetry,
     short_model_label,
 )
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 
 def test_short_model_label_sonnet_and_opus() -> None:
@@ -60,7 +64,6 @@ def test_run_telemetry_print_compact() -> None:
 def test_aggregate_pipeline_telemetry(tmp_path: Path, monkeypatch) -> None:
     pipeline_dir = tmp_path / "pipeline"
     pipeline_dir.mkdir()
-    import _shared.telemetry as tel_mod
 
     monkeypatch.setattr(tel_mod, "_PIPELINE_DIR", pipeline_dir)
 
@@ -103,8 +106,6 @@ def test_aggregate_pipeline_telemetry(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_mirror_to_run_artifacts_injects_run_id(monkeypatch) -> None:
-    import _shared.artifact_store as artifact_store_mod
-    import _shared.telemetry as tel_mod
 
     captured: dict[str, object] = {}
 

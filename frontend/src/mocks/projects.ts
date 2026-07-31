@@ -85,7 +85,6 @@ export const mockProjects: Project[] = [
   },
 ];
 
-/** MVP delivery pipeline only — matches live AgentCore orchestration. */
 export const mockPipelines: PipelineDefinition[] = [
   {
     id: 'standard-sdlc',

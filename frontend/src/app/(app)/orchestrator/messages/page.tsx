@@ -73,7 +73,7 @@ function MessagesInner() {
       <PageHeader
         eyebrow="Design"
         title="Agent Messages"
-        description="Every message the orchestrator and a specialist agent exchange for one phase, generated live as runs progress (assign → in progress → done, or failed). Each row belongs to a thread - one phase within one run - so you can follow a single handoff from start to finish."
+        description="Every message the orchestrator and a specialist agent exchange for one phase (assign → in progress → done, or failed), polled every 3s while a run is active. The 'in progress' rows are the agent's real tool calls as they happen when live-activity data is available; otherwise a placeholder status line. Each row belongs to a thread - one phase within one run - so you can follow a single handoff from start to finish."
         actions={
           <Select value={correlationId} onValueChange={setCorrelationId}>
             <SelectTrigger className="h-9 w-[220px]"><SelectValue placeholder="Filter by thread" /></SelectTrigger>

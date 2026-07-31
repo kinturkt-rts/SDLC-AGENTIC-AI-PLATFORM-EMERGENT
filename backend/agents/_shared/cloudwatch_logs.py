@@ -34,8 +34,8 @@ _LOG_GROUPS_JSON = _REPO / "config" / "agentcore" / "log-groups.json"
 _LEVEL_RE = re.compile(r"^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL):")
 _RUN_ID_RE = re.compile(r"\brun[_-]?id[=: ]+([A-Za-z0-9-]+)", re.IGNORECASE)
 
-# MVP pipeline agents only — excludes optional runtimes like web-crawler from platform tail.
-MVP_PIPELINE_LOG_AGENTS = frozenset({
+# Pipeline agents only - excludes optional runtimes like web-crawler from platform tail.
+PIPELINE_LOG_AGENTS = frozenset({
     "orchestrator-agent",
     "product-agent",
     "architect-agent",
@@ -276,7 +276,7 @@ def list_cloudwatch_logs(
     mvp_only: bool = True,
     time_window_for_run: bool = False,
 ) -> list[dict[str, Any]]:
-    """Fetch CloudWatch log events for one or all MVP agents.
+    """Fetch CloudWatch log events for one or all agents.
 
     Returns entries sorted newest-first, each with:
       id, ts (ISO), level, agent, runId, message, stream, source
@@ -297,7 +297,7 @@ def list_cloudwatch_logs(
         }
 
     if mvp_only:
-        targets = {aid: lg for aid, lg in targets.items() if aid in MVP_PIPELINE_LOG_AGENTS}
+        targets = {aid: lg for aid, lg in targets.items() if aid in PIPELINE_LOG_AGENTS}
 
     if start_ms is None and minutes and minutes > 0:
         import time as _time

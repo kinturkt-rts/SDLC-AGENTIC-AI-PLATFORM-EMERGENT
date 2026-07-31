@@ -17,7 +17,7 @@ import { DataTable, type Column } from '@/src/components/common/DataTable';
 import { useProjects, useRuns } from '@/src/lib/queries';
 import { filterRunsByQuery } from '@/src/lib/log-filters';
 import { useUiStore } from '@/src/store/ui-store';
-import { formatRelative } from '@/src/lib/format';
+import { formatRelative, formatTriggeredBy } from '@/src/lib/format';
 import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import type { PipelineRun, RunStatus } from '@/src/types';
 
@@ -58,6 +58,15 @@ export default function RunsPage() {
     { key: 'pipeline', header: 'Pipeline', render: (r) => <span className="text-muted-foreground">{r.pipeline}</span> },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} size="sm" /> },
     { key: 'currentAgent', header: 'Current agent', render: (r) => <span className="text-muted-foreground">{r.currentAgent ?? '\u2014'}</span> },
+    {
+      key: 'triggeredBy',
+      header: 'Triggered by',
+      render: (r) => (
+        <span className="text-muted-foreground" title={r.triggeredBy}>
+          {formatTriggeredBy(r.triggeredBy)}
+        </span>
+      ),
+    },
     {
       key: 'elapsed',
       header: 'Elapsed',

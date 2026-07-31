@@ -1,17 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import {
-  FileBox,
-  FileText,
-  FileCode2,
-  Database,
-  ShieldCheck,
-  GitBranch,
-  Image as ImageIcon,
-  FlaskConical,
-  FileType,
-} from 'lucide-react';
+import { FileBox, FileText, Image as ImageIcon } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -30,16 +20,12 @@ import { formatRelative } from '@/src/lib/format';
 import { ARTIFACT_FILTER_KINDS, artifactKindLabel, artifactMatchesKind } from '@/src/lib/artifact-kinds';
 import type { Artifact, ArtifactKind } from '@/src/types';
 
-const KIND_ICON: Record<ArtifactKind, typeof FileBox> = {
+// Only the kinds still shown on this page get a dedicated icon - everything else (code,
+// SQL, tests, config) is filtered out before rendering and falls back to FileBox.
+const KIND_ICON: Partial<Record<ArtifactKind, typeof FileBox>> = {
   prd: FileText,
   architecture: FileText,
-  migration: Database,
-  code: FileCode2,
-  test: FlaskConical,
-  scan: ShieldCheck,
-  cicd: GitBranch,
   diagram: ImageIcon,
-  doc: FileType,
 };
 
 const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
@@ -131,7 +117,7 @@ export default function ArtifactsPage() {
       <PageHeader
         eyebrow="Assets"
         title="Artifacts"
-        description={`Deliverables across ${projectName} - PRDs, design docs, architecture diagrams, SQL, and application code`}
+        description={`Deliverables across ${projectName} - PRDs, design docs, and architecture diagrams. Generated code, SQL, and tests aren't shown here.`}
         actions={
           <div className="flex items-center gap-2">
             <label htmlFor="artifact-kind-filter" className="text-xs font-medium text-muted-foreground">

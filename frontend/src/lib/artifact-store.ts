@@ -426,10 +426,7 @@ export async function getS3ObjectLastModifiedMs(key: string): Promise<number | n
   }
 }
 
-export async function getRunArtifactJson(
-  runId: string,
-  relPath: string,
-): Promise<Record<string, unknown> | null> {
+async function readRunArtifactRaw(runId: string, relPath: string): Promise<string | null> {
   const rel = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
   if (isS3Store()) {
     try {
@@ -439,12 +436,10 @@ export async function getRunArtifactJson(
           Key: `${runS3Prefix(runId)}${rel}`,
         }),
       );
-      let raw = await response.Body?.transformToString('utf-8');
+      const raw = await response.Body?.transformToString('utf-8');
       if (!raw) return null;
       // PowerShell Set-Content -Encoding utf8 writes a BOM; JSON.parse rejects it.
-      if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-      const parsed = JSON.parse(raw) as unknown;
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+      return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
     } catch {
       return null;
     }
@@ -455,11 +450,39 @@ export async function getRunArtifactJson(
   const { getBackendRoot } = await import('./repo-root');
   const filePath = pathMod.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, rel);
   try {
-    let raw = await fs.readFile(filePath, 'utf-8');
-    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+    const raw = await fs.readFile(filePath, 'utf-8');
+    return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRunArtifactJson(
+  runId: string,
+  relPath: string,
+): Promise<Record<string, unknown> | null> {
+  const raw = await readRunArtifactRaw(runId, relPath);
+  if (!raw) return null;
+  try {
     const parsed = JSON.parse(raw) as unknown;
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
+  }
+}
+
+/** Reads a `<app>/events/<agent>.json` live-activity file (a JSON array of event
+ * objects, full-rewritten by the agent's telemetry callback) - [] when absent. */
+export async function getRunArtifactEvents(
+  runId: string,
+  relPath: string,
+): Promise<Array<Record<string, unknown>>> {
+  const raw = await readRunArtifactRaw(runId, relPath);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
+  } catch {
+    return [];
   }
 }

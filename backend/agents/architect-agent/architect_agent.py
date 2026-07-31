@@ -73,6 +73,13 @@ AWS architecture PNG using the AWS Diagram MCP tools.
 ## Keep diagrams simple (required)
 - Target **8–14 nodes** total across all clusters.
 - At most **3 clusters** (e.g. Users/API, Data, Integrations).
+- **One deployable = one node.** If the brief describes internal routers, service-layer
+  modules, or packages within a single FastAPI/app process (e.g. "procurement router",
+  "vendor service", "finance module"), draw **one** node for that process (e.g. one
+  `ECS("FastAPI Backend")`) — never a separate node per router/module. A separate node
+  implies a separate deployment/network hop; only draw multiple app nodes when the brief
+  describes genuinely separate deployables (separate ECS service, separate Lambda, a
+  background worker process, etc.).
 - **ASCII-only** labels: letters, numbers, spaces, hyphen. No em-dash, arrows, or Unicode.
 - Diagram title: short ASCII app name only (e.g. `FinOps Web App`). **Do not** append MVP, Phase 1, or other scope suffixes — the title is rendered on the PNG.
 - Prefer left-to-right (`direction="LR"`). Avoid fan-out edges to lists of nodes.
@@ -218,6 +225,104 @@ skip it. Every rule must be actionable enough for developer-agent to write the i
 2. Seed data: (minimal rows for local dev / tests)
 3. Athena or NoSQL: (only if used — else omit)
 """
+
+
+DATABASE_HANDOFF_SYS_PROMPT = """\
+You output **only** a single JSON object - no prose, no markdown fences, no explanation.
+This JSON is the authoritative database contract for database-agent; it must be
+consistent with the Data model (section 3) and DB delivery (section 6) of the solution
+design you were just given, not a new invention - do not add or drop tables versus §3.
+
+## Schema (informal — match these keys/shapes exactly)
+{
+  "targetApp": "<slug>",
+  "entities": [
+    {
+      "name": "<EntityName>",
+      "tableName": "<snake_case_table>",
+      "columns": [
+        {"name": "id", "type": "uuid", "primaryKey": true, "nullable": false}
+      ],
+      "indexes": [{"columns": ["status"], "unique": false}],
+      "softDelete": false,
+      "auditLogged": false
+    }
+  ],
+  "relationships": [
+    {"fromEntity": "Asset", "toEntity": "Category", "cardinality": "one-to-many", "via": "category_id"}
+  ],
+  "statusEnums": [
+    {"name": "asset_status", "values": ["available", "assigned"], "transitions": ["available->assigned"]}
+  ],
+  "transactionBoundaries": ["assign writes assets + assignments + audit_log in one transaction"],
+  "seedExpectations": "<one line: row counts / demo data per table>",
+  "assumptions": ["<one line each, mirror design doc TBDs>"]
+}
+
+## Rules
+- One entity per table in design section 3 - do not add or drop tables.
+- `columns[].type` uses Postgres types (uuid, varchar(n), text, timestamptz, integer, numeric, boolean, jsonb, enum names).
+- `foreignKey` format: "<table>.<column>" (e.g. "categories.id"), omit when not a FK.
+- Mirror design section 6's migration order and seed spec into `seedExpectations`.
+- If design doc leaves something TBD, put it in `assumptions` - don't invent a decision.
+- Output must be valid JSON parseable by a strict parser - no trailing commas, no comments.
+"""
+
+
+def _strip_json_fences(text: str) -> str:
+    body = text.strip()
+    if body.startswith("```"):
+        lines = body.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        body = "\n".join(lines).strip()
+    return body
+
+
+def _generate_database_handoff(
+    *,
+    design_md: str,
+    context: dict[str, Any],
+    telemetry: RunTelemetry | None = None,
+) -> Any:
+    """Structured DB contract for database-agent, derived from the just-written design doc.
+
+    Best-effort only: the caller must catch exceptions from this function. database-agent's
+    existing designDocPath §3/§6 read remains the fallback for every run, old or new, where
+    this either isn't called or fails - this function must never block the architect run.
+    """
+    from _shared.handoff_schemas import DatabaseHandoff
+
+    target = str(context.get("targetApp") or context.get("target_app") or "").strip()
+    if not target:
+        return None
+
+    callback = (
+        StrandsTelemetryCallback(f"{AGENT_NAME}-db-handoff", telemetry, log_tools=False)
+        if telemetry is not None
+        else None
+    )
+    handoff_agent = Agent(
+        agent_id=f"{AGENT_NAME}-db-handoff",
+        name=f"{AGENT_NAME}-db-handoff",
+        description="Emits the structured database contract for database-agent",
+        model=_bedrock_model(),
+        system_prompt=DATABASE_HANDOFF_SYS_PROMPT,
+        tools=[],
+        callback_handler=callback,
+    )
+    user_message = (
+        f"targetApp: {target}\n\n"
+        "## Solution design (sections 3 and 6 are the source of truth)\n"
+        "--- BEGIN DESIGN ---\n"
+        f"{design_md.strip()}\n"
+        "--- END DESIGN ---\n\n"
+        "Return only the JSON object."
+    )
+    raw = _strip_json_fences(str(handoff_agent(user_message)))
+    return DatabaseHandoff.model_validate_json(raw)
 
 
 def _design_output_path(*, design_rel: str | None = None) -> Path:
@@ -583,6 +688,21 @@ def run_task(
         design_rel = str(context["designDocPath"])
         design_path = _write_design_doc(design_md, design_rel=design_rel, context=context)
         context["architectSummary"] = _architect_summary_from_design(design_md)
+
+        # Best-effort structured DB contract for database-agent. Never blocks the run -
+        # database-agent's existing designDocPath §3/§6 read is the fallback on any failure.
+        try:
+            db_handoff = _generate_database_handoff(design_md=design_md, context=context, telemetry=telemetry)
+            if db_handoff is not None:
+                from _shared.handoff_schemas import write_handoff_artifact
+
+                target = str(context.get("targetApp") or context.get("target_app") or "").strip()
+                rel = write_handoff_artifact(
+                    db_handoff, target, "database-schema-handoff", context=context
+                )
+                context["dbSchemaHandoffPath"] = rel
+        except Exception as exc:  # noqa: BLE001 - best-effort; design.md remains authoritative
+            print(f"[{AGENT_NAME}] database-schema-handoff skipped: {exc}")
     telemetry.extra = {
         "diagramsSaved": len(saved),
         "designWritten": design_path is not None,

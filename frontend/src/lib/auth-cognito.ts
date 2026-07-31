@@ -81,6 +81,20 @@ export async function cognitoIsSignedIn(): Promise<boolean> {
   }
 }
 
+/** Signed-in user's email (the Cognito username, since the pool is email-as-username),
+ * or null when Cognito is disabled or no one is signed in. Used to attribute pipeline
+ * runs to the user who started them (`triggeredBy`). */
+export async function cognitoCurrentUserEmail(): Promise<string | null> {
+  const config = await ensureAmplifyConfigured();
+  if (!config.enabled) return null;
+  try {
+    const user = await getCurrentUser();
+    return user.signInDetails?.loginId ?? user.username ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function cognitoRequestPasswordReset(email: string): Promise<void> {
   await ensureAmplifyConfigured();
   await resetPassword({ username: email.trim().toLowerCase() });

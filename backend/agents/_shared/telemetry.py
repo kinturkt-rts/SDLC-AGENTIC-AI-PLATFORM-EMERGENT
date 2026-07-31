@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -78,12 +79,56 @@ class RunTelemetry:
         self.cache_write_input_tokens: int = 0
         self.started_at: float = time.monotonic()
         self.extra: dict[str, Any] = {}
+        self.events: list[dict[str, Any]] = []
+        self._last_event_flush_mono: float = 0.0
 
     # ── ingestion ────────────────────────────────────────────────────────────
 
     def record_tool(self, name: str) -> None:
         self.tool_count += 1
         self.tool_names.append(name)
+
+    def record_event(self, event_type: str, **fields: Any) -> None:
+        """Append a live activity event (e.g. a tool call) for the control-plane UI's
+        agent-messages feed. Best-effort mirrored to S3 on a short debounce — this is
+        a live-activity signal, not the source of truth (telemetry snapshot is)."""
+        self.events.append(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "agent": self.agent_name,
+                "type": event_type,
+                **fields,
+            }
+        )
+        self._maybe_flush_events()
+
+    def _maybe_flush_events(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_event_flush_mono < 1.5:
+            return
+        self._last_event_flush_mono = now
+        self._mirror_events_to_run_artifacts()
+
+    def _mirror_events_to_run_artifacts(self) -> None:
+        """Best-effort: overwrite `<app>/events/<agent>.json` in S3 with the full
+        events list so far. Full-rewrite (not append) — S3 has no native append, and
+        per-agent event counts are small enough (tool calls only) that this is cheap."""
+        if not self.target_app or not self.events:
+            return
+        try:
+            from .artifact_store import is_s3_store, put_artifact
+        except ImportError:
+            return
+        if not is_s3_store():
+            return
+        run_id = self._run_id()
+        if not run_id:
+            return
+        rel_path = f"{self.target_app}/events/{self.agent_name}.json"
+        try:
+            put_artifact(run_id, rel_path, json.dumps(self.events), content_type="application/json")
+        except Exception:
+            pass  # live-activity signal only; never break a real agent run over this
 
     def record_usage(self, usage: dict[str, Any] | None) -> None:
         """Add a Bedrock usage dict (one per converse turn). Strands emits one per turn."""
@@ -290,6 +335,7 @@ class RunTelemetry:
     ) -> None:
         """Persist snapshot; compact line by default; full block when PIPELINE_TELEMETRY_VERBOSE=1."""
         self.ensure_run_id(context)
+        self._maybe_flush_events(force=True)
         if _telemetry_verbose():
             self.print_summary(stream=stream)
         elif not _telemetry_silent():
@@ -340,6 +386,7 @@ class StrandsTelemetryCallback:
             name = tool_use.get("name", "<unknown>")
             if self.telemetry is not None:
                 self.telemetry.record_tool(name)
+                self.telemetry.record_event("tool_call", tool=name, seq=self.telemetry.tool_count)
                 if self._log_tools:
                     print(
                         f"\n[{self._agent_name}] Tool #{self.telemetry.tool_count}: {name}",

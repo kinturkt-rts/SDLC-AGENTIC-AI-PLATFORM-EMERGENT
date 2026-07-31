@@ -18,11 +18,6 @@ async function readLocalPipelineJson(rel: string): Promise<HandoffRecord | null>
   }
 }
 
-/**
- * Normalize GitLab branch browse links for the UI.
- * Older handoffs used ``/-/tree/sdlc%2Fapp``; GitLab prefers
- * ``/-/tree/sdlc/app?ref_type=heads``.
- */
 export function normalizeGitlabBranchUrl(url: string | null | undefined): string | null {
   const raw = typeof url === 'string' ? url.trim() : '';
   if (!raw) return null;
@@ -42,7 +37,6 @@ export function normalizeGitlabBranchUrl(url: string | null | undefined): string
       return parsed.toString();
     }
   } catch {
-    // Fall through for non-absolute / odd values.
   }
 
   return raw.replace(/%2F/gi, '/');
@@ -147,10 +141,7 @@ async function loadFirstGitlabHandoff(
       loader: () => getRunArtifactJson(runId, 'handoffs/gitlab.json'),
     },
   ];
-  // Legacy slug-keyed files (agents/pipeline/<slug>.gitlab-handoff.json) are only valid
-  // for local-CLI runs. In cloud/S3 mode they are stale repo leftovers from older runs
-  // of the same app slug: reading them here made brand-new runs show "published" with
-  // dead branch URLs and let the publish gate skip gitlab-agent entirely.
+
   if (!isS3Store()) {
     candidates.push(
       {
@@ -184,7 +175,7 @@ async function loadFirstDeveloperHandoff(
       loader: () => getRunArtifactJson(runId, `${slug}/handoffs/developer-handoff.json`),
     },
   ];
-  // Same stale-slug-file hazard as gitlab handoffs: only trust these in local mode.
+
   if (!isS3Store()) {
     candidates.push(
       {
@@ -245,7 +236,6 @@ async function loadFirstDevopsHandoff(
   return null;
 }
 
-/** GitLab branch/repo link for project overview when a publish handoff exists. */
 export async function resolveGitlabRepositoryLink(
   runId: string,
   slug: string,
@@ -260,7 +250,6 @@ export async function resolveGitlabRepositoryLink(
   };
 }
 
-/** Readable repository label + href for project cards (GitLab branch or latest run). */
 export async function resolveProjectRepositoryLink(
   slug: string,
   runId?: string | null,
@@ -302,7 +291,6 @@ export async function resolveProjectRepositoryLink(
   return localFallback;
 }
 
-/** True when this run has a GitLab publish handoff in S3 or local run storage. */
 export async function gitlabHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
   const normalized = slug.trim().toLowerCase();
   const candidates = [
@@ -360,10 +348,6 @@ export async function developerHandoffFailedForRun(
   return status === 'failed' || status === 'error' || developer.validationStatus === 'failed';
 }
 
-/**
- * Prefer concrete handoff / run errors over generic "check handoffs" copy.
- * Returns null when there is nothing more specific than the reconciler's default.
- */
 export async function resolveRunFailureDetail(
   runId: string,
   slug: string,
@@ -430,7 +414,6 @@ export async function devopsDeploySucceededForRun(runId: string, slug: string): 
   return Boolean(devops.appUrl);
 }
 
-/** True when a completed deploy attempt explicitly failed its health check. */
 export async function devopsDeployFailedForRun(runId: string, slug: string): Promise<boolean> {
   const devops = await loadFirstDevopsHandoff(runId, slug.trim().toLowerCase());
   if (!devops) return false;
@@ -443,12 +426,10 @@ export async function devopsDeployFailedForRun(runId: string, slug: string): Pro
   );
 }
 
-/** True when a devops handoff exists (even if still deploying / no URL yet). */
 export async function devopsHandoffExistsForRun(runId: string, slug: string): Promise<boolean> {
   return (await loadFirstDevopsHandoff(runId, slug.trim().toLowerCase())) !== null;
 }
 
-/** Load gitlab + developer + devops handoffs for a run (S3 run store and local slug files). */
 export async function getRunHandoffs(runId: string, projectSlug: string): Promise<RunHandoffs> {
   const slug = projectSlug.trim().toLowerCase();
   const [gitlab, developer, devops, ctx] = await Promise.all([

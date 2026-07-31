@@ -788,7 +788,13 @@ class SdlcPipelineRunner:
         if not diagram_paths:
             diagram_paths = [diagram_path_for_app(self.feature)]
         png_rel = diagram_paths[0]
-        self._update_context({"diagramPaths": diagram_paths, "designDocPath": design_rel})
+        update_fields = {"diagramPaths": diagram_paths, "designDocPath": design_rel}
+        db_schema_handoff_rel = self.context.get("dbSchemaHandoffPath")
+        if db_schema_handoff_rel:
+            # Best-effort structured DB contract (see architect_agent.py::_generate_database_handoff).
+            # Absent on any run where generation failed - database-agent falls back to §3/§6.
+            update_fields["dbSchemaHandoffPath"] = str(db_schema_handoff_rel)
+        self._update_context(update_fields)
         self._delivery_check("design")
         self.agents_run.append("architect-agent")
         self.artifacts["Design"] = design_rel

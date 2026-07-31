@@ -71,6 +71,61 @@ def _split_qualified_name(name: str) -> tuple[str | None, str]:
     return None, cleaned
 
 
+_DOLLAR_BLOCK = re.compile(r"\$\$.*?\$\$", re.DOTALL)
+
+
+def split_sql_statements(sql: str) -> list[str]:
+    """Split SQL on semicolons outside strings and DO $$ ... $$ blocks."""
+    lines: list[str] = []
+    for line in sql.splitlines():
+        if line.strip().startswith("--"):
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines)
+
+    protected = cleaned
+    placeholders: dict[str, str] = {}
+
+    for idx, match in enumerate(_DOLLAR_BLOCK.finditer(cleaned)):
+        key = f"__DOLLAR_BLOCK_{idx}__"
+        placeholders[key] = match.group(0)
+        protected = protected.replace(match.group(0), key, 1)
+
+    statements: list[str] = []
+    current: list[str] = []
+    in_single = False
+    i = 0
+    while i < len(protected):
+        ch = protected[i]
+        if ch == "'" and not in_single:
+            in_single = True
+            current.append(ch)
+        elif ch == "'" and in_single:
+            if i + 1 < len(protected) and protected[i + 1] == "'":
+                current.append("''")
+                i += 1
+            else:
+                in_single = False
+                current.append(ch)
+        elif ch == ";" and not in_single:
+            piece = "".join(current).strip()
+            if piece:
+                for key, value in placeholders.items():
+                    piece = piece.replace(key, value)
+                statements.append(piece)
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+
+    tail = "".join(current).strip()
+    if tail:
+        for key, value in placeholders.items():
+            tail = tail.replace(key, value)
+        statements.append(tail)
+    return statements
+
+
 def _find_matching_paren(text: str, open_index: int) -> int:
     depth = 0
     in_single = False
@@ -321,6 +376,60 @@ _BARE_SEARCH_PATH_RE = re.compile(
 )
 
 
+_CREATE_RULE_RE = re.compile(
+    r"CREATE\s+RULE\s+\S+\s+AS\s+ON\s+(?:INSERT|UPDATE|DELETE)\s+TO\s+"
+    r"((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)",
+    re.IGNORECASE,
+)
+_INSERT_TABLE_RE = re.compile(
+    r"^\s*INSERT\s+INTO\s+((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)",
+    re.IGNORECASE,
+)
+_ON_CONFLICT_RE = re.compile(r"\bON\s+CONFLICT\b", re.IGNORECASE)
+
+
+def check_seed_conflict_on_ruled_tables(sql_dir: Path) -> list[str]:
+    """PostgreSQL rejects INSERT ... ON CONFLICT on any table that has a rule
+    defined on it — regardless of the rule's own event type (UPDATE/DELETE
+    rules block it just as much as INSERT rules would). This is a hard engine
+    limitation, not a drift/staleness issue, and it fails on a completely
+    fresh schema — catch it at validation time instead of a raw Postgres
+    error deep into seed application.
+    """
+    ruled_tables: set[str] = set()
+    for path in sorted(sql_dir.glob("*.sql")):
+        if "seed" in path.name.lower():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in _CREATE_RULE_RE.finditer(text):
+            _, table = _split_qualified_name(match.group(1))
+            ruled_tables.add(table.lower())
+
+    if not ruled_tables:
+        return []
+
+    errors: list[str] = []
+    for path in sorted(sql_dir.glob("*.sql")):
+        if "seed" not in path.name.lower():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for stmt in split_sql_statements(_strip_sql_comments(text)):
+            match = _INSERT_TABLE_RE.match(stmt)
+            if not match:
+                continue
+            _, table = _split_qualified_name(match.group(1))
+            if table.lower() in ruled_tables and _ON_CONFLICT_RE.search(stmt):
+                errors.append(
+                    f"{path.name}: INSERT INTO {table} uses ON CONFLICT, but {table} has a "
+                    f"CREATE RULE defined on it in the DDL. PostgreSQL disallows ON CONFLICT "
+                    f"on any table with any rule, regardless of the rule's event type. "
+                    f"Fix: remove ON CONFLICT from this INSERT (a freshly-reset schema has "
+                    f"nothing to conflict with), or enforce append-only some other way "
+                    f"(e.g. REVOKE UPDATE/DELETE from the app role, or a trigger) instead of a rule."
+                )
+    return errors
+
+
 def check_bare_search_path(sql_dir: Path) -> list[str]:
     """Detect SET search_path = public (bare, no app schema) which breaks cross-file type lookups.
 
@@ -441,6 +550,7 @@ def validate_sql_dir(sql_dir: Path) -> list[str]:
     errors.extend(check_bare_search_path(sql_dir))
     errors.extend(check_vector_literal_format(sql_dir))
     errors.extend(validate_seed_sha256_api_keys(sql_dir))
+    errors.extend(check_seed_conflict_on_ruled_tables(sql_dir))
     return errors
 
 

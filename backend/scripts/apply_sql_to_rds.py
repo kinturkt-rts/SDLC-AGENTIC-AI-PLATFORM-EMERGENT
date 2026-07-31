@@ -27,10 +27,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.env import load_repo_env
+from _shared.validate_sql_artifacts import split_sql_statements
 
 load_repo_env()
-
-_DOLLAR_BLOCK = re.compile(r"\$\$.*?\$\$", re.DOTALL)
 
 # Matches bare pg_type typname checks that lack a schema (nspname) filter.
 # On a shared RDS instance with multiple app schemas the same type name can exist in several
@@ -280,58 +279,6 @@ def sorted_sql_files(sql_dir: Path, *, skip_seed: bool = False) -> list[Path]:
     if not files:
         raise FileNotFoundError(f"No .sql files in {sql_dir}")
     return files
-
-
-def split_sql_statements(sql: str) -> list[str]:
-    """Split SQL on semicolons outside strings and DO $$ ... $$ blocks."""
-    lines: list[str] = []
-    for line in sql.splitlines():
-        if line.strip().startswith("--"):
-            continue
-        lines.append(line)
-    cleaned = "\n".join(lines)
-
-    protected = cleaned
-    placeholders: dict[str, str] = {}
-
-    for idx, match in enumerate(_DOLLAR_BLOCK.finditer(cleaned)):
-        key = f"__DOLLAR_BLOCK_{idx}__"
-        placeholders[key] = match.group(0)
-        protected = protected.replace(match.group(0), key, 1)
-
-    statements: list[str] = []
-    current: list[str] = []
-    in_single = False
-    i = 0
-    while i < len(protected):
-        ch = protected[i]
-        if ch == "'" and not in_single:
-            in_single = True
-            current.append(ch)
-        elif ch == "'" and in_single:
-            if i + 1 < len(protected) and protected[i + 1] == "'":
-                current.append("''")
-                i += 1
-            else:
-                in_single = False
-                current.append(ch)
-        elif ch == ";" and not in_single:
-            piece = "".join(current).strip()
-            if piece:
-                for key, value in placeholders.items():
-                    piece = piece.replace(key, value)
-                statements.append(piece)
-            current = []
-        else:
-            current.append(ch)
-        i += 1
-
-    tail = "".join(current).strip()
-    if tail:
-        for key, value in placeholders.items():
-            tail = tail.replace(key, value)
-        statements.append(tail)
-    return statements
 
 
 def _ensure_schema_and_search_path(cur: object, schema: str) -> None:

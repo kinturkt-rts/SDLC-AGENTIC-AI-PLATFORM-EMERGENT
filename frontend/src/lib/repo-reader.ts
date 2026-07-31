@@ -895,7 +895,45 @@ function mergeStepProgressFromPhases(
   });
 }
 
-async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promise<PipelineRun> {
+/**
+ * Last-resort detail for a failed run when no handoff file names a concrete error
+ * (e.g. the orchestrator process died mid-run and never got to write one). Checks
+ * whether the agent responsible for the stalled phase logged anything at all for
+ * this run — that distinguishes "started, then crashed" from "never invoked",
+ * and surfaces the tail of whatever it did log.
+ */
+async function describeAgentActivityForFailure(
+  runId: string,
+  agent: string | null,
+  startedAtIso: string,
+): Promise<string | null> {
+  if (!agent) return null;
+  const displayName = AGENT_DISPLAY[agent]?.displayName ?? agent;
+  try {
+    const startMs = Date.parse(startedAtIso) - 2 * 60_000;
+    const logs = await listCloudWatchLogs({
+      runId,
+      agent,
+      startMs: Number.isFinite(startMs) ? startMs : undefined,
+      endMs: Date.now(),
+      limit: 5,
+    });
+    if (!logs.length) {
+      return `${displayName}-agent produced no logs for this run — it likely never started.`;
+    }
+    const lastLine = logs[logs.length - 1]?.message?.trim();
+    return lastLine ? `${displayName}-agent last logged: "${lastLine.slice(0, 240)}"` : null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildPipelineRunFromLive(
+  slug: string,
+  live: LiveRunState,
+  opts?: { includeFailureLogFallback?: boolean },
+): Promise<PipelineRun> {
+  const includeFailureLogFallback = opts?.includeFailureLogFallback ?? false;
   const runId = live.runId;
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
@@ -968,7 +1006,17 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   let reconciledError = reconciled.error ?? enriched.error ?? null;
   if (reconciled.status === 'failed') {
     const detail = await resolveRunFailureDetail(runId, slug);
-    if (detail) reconciledError = detail;
+    if (detail) {
+      reconciledError = detail;
+    } else if (includeFailureLogFallback) {
+      // Skipped for bulk list views (dashboard, /api/v1/runs) - a CloudWatch lookup per
+      // failed run there would repeat the exact per-row latency mistake already fixed
+      // once today. Only single-run lookups (getRun) opt in.
+      const activity = await describeAgentActivityForFailure(runId, reconciled.currentStep, startedAt);
+      if (activity) {
+        reconciledError = reconciledError ? `${reconciledError} ${activity}` : activity;
+      }
+    }
   }
 
   phaseDone = applyCurrentStepPhaseOverride(
@@ -1990,7 +2038,11 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
     const live = await readUuidRunState(id);
     if (live) {
       const slug = featureSlugFromLive(live);
-      if (slug) return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || id });
+      if (slug) {
+        return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || id }, {
+          includeFailureLogFallback: true,
+        });
+      }
     }
   }
 
@@ -2006,7 +2058,9 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
     if (slug) {
       const bySlug = runs.find((r) => r.projectId === slug);
       if (bySlug) return bySlug;
-      return buildPipelineRunFromLive(slug, { ...slugRunState, runId: slugRunState.runId || id });
+      return buildPipelineRunFromLive(slug, { ...slugRunState, runId: slugRunState.runId || id }, {
+        includeFailureLogFallback: true,
+      });
     }
   }
 
@@ -2129,12 +2183,69 @@ export async function listContextItems(projectSlug?: string): Promise<ContextIte
   return items;
 }
 
+/** Key names that must never render in the Context page's raw-JSON view. */
+const SECRET_KEY_RE = /token|secret|password|credential|api[_-]?key|access[_-]?key|private[_-]?key/i;
+
+function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = SECRET_KEY_RE.test(k) ? '[redacted]' : redactSecrets(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function latestRunTimestamp(run: PipelineRun): string | null {
+  const stamps = [run.finishedAt, ...run.steps.flatMap((s) => [s.finishedAt, s.startedAt]), run.startedAt].filter(
+    (v): v is string => !!v,
+  );
+  return stamps.length ? stamps.sort().at(-1)! : null;
+}
+
 export async function getPipelineContext(projectSlug: string): Promise<PipelineContext | null> {
   const ctx = await resolveContextForSlug(projectSlug);
   if (!ctx) return null;
   const slug = projectSlug;
   const appRoot = isS3Store() ? slug : `target-apps/${slug}`;
   const summaries = await buildContextSummaries(slug, ctx, ctx.runId);
+
+  let runStatus: RunStatus | null = null;
+  let activeAgent: AgentName | null = null;
+  let completedAgents: AgentName[] = [];
+  let lastUpdatedAt: string | null = null;
+  let gitlabBranchUrl: string | null = null;
+  let gitlabMergeRequestUrl: string | null = null;
+  let liveUrl: string | null = null;
+
+  if (ctx.runId) {
+    // Best-effort enrichment from already-existing run/handoff readers — a failure here
+    // must not break the page, since the base context fields above are already resolved.
+    try {
+      const run = await getRun(ctx.runId);
+      if (run) {
+        runStatus = run.status;
+        activeAgent = run.currentAgent;
+        completedAgents = Array.from(
+          new Set(run.steps.filter((s) => s.status === 'completed').map((s) => s.agent)),
+        );
+        lastUpdatedAt = latestRunTimestamp(run);
+      }
+    } catch {
+      /* enrichment only */
+    }
+    try {
+      const handoffs = await getRunHandoffs(ctx.runId, slug);
+      gitlabBranchUrl = handoffs.gitlab?.branchUrl ?? null;
+      gitlabMergeRequestUrl = handoffs.gitlab?.mergeRequestUrl ?? handoffs.contextMergeRequestUrl ?? null;
+      liveUrl = handoffs.devops?.appUrl ?? null;
+    } catch {
+      /* enrichment only */
+    }
+  }
+
   return {
     targetApp: ctx.targetApp ?? projectSlug,
     runId: ctx.runId,
@@ -2146,7 +2257,14 @@ export async function getPipelineContext(projectSlug: string): Promise<PipelineC
     architectSummary: summaries.architectSummary,
     dbOutputDir: asRepoPath(ctx.dbOutputDir) ?? `${appRoot}/db`,
     preferredSqlPath: asRepoPath(ctx.preferredSqlPath) ?? `${appRoot}/db/sql`,
-    raw: ctx as Record<string, unknown>,
+    runStatus,
+    activeAgent,
+    completedAgents,
+    lastUpdatedAt,
+    gitlabBranchUrl,
+    gitlabMergeRequestUrl,
+    liveUrl,
+    raw: redactSecrets(ctx) as Record<string, unknown>,
   };
 }
 

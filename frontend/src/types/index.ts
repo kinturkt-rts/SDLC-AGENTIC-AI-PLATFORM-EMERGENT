@@ -257,7 +257,17 @@ export interface PipelineContext {
   architectSummary: string;
   dbOutputDir: string;
   preferredSqlPath: string;
-  /** Full handoff JSON from S3/local context.json (for raw view). */
+  /** Current pipeline run state, when the run is still resolvable. */
+  runStatus?: RunStatus | null;
+  activeAgent?: AgentName | null;
+  completedAgents?: AgentName[];
+  lastUpdatedAt?: string | null;
+  /** GitLab publish reference, from the run's handoffs when available. */
+  gitlabBranchUrl?: string | null;
+  gitlabMergeRequestUrl?: string | null;
+  /** Live deployed app URL, from devops-agent's handoff. */
+  liveUrl?: string | null;
+  /** Full handoff JSON from S3/local context.json (for raw view) — secret-shaped keys redacted. */
   raw?: Record<string, unknown>;
 }
 

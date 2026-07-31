@@ -1,5 +1,16 @@
 /** User-facing labels for agent registry detail pages. */
 
+/**
+ * Why an agent runs on its own rather than inside the Orchestrated Pipeline group
+ * (see ORCHESTRATED_PIPELINE_AGENTS in pipeline-phases.ts for the wired chain).
+ */
+export const INDIVIDUAL_AGENT_NOTE: Record<string, string> = {
+  'qa-agent': 'Optional — runs only when a pipeline requests extended QA after publish.',
+  'devops-agent': 'Async — triggered by GitLab CI after publish, not called directly by the orchestrator.',
+  'security-agent': 'Not yet wired into the pipeline (roadmap).',
+  'web-crawler-agent': 'Optional side-branch — runs only when a pipeline opts in after architecture.',
+};
+
 export const SKILL_LABELS: Record<string, string> = {
   implement: 'Feature implementation',
   architecture: 'Architecture design',
