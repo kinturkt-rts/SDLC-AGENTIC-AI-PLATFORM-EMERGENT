@@ -41,6 +41,7 @@ from _shared.pipeline_context import (
     _is_cloud_store,
     developer_handoff_rel_for_app,
     merge_run_handoff_context,
+    openapi_rel_for_app,
     resolve_cli_context,
     resolve_design_doc_path,
     resolve_target_app,
@@ -3883,6 +3884,72 @@ def _persist_developer_handoff(
     return rel
 
 
+def _frontend_handoff_rel_for_app(app: str) -> str:
+    """Developer->Frontend handoff path (Pass 1) — a NEW artifact, sibling of
+    openapi.json, using openapi_rel_for_app's exact per-mode formula (S3 key
+    ``<slug>/frontend-handoff.json`` vs local ``target-apps/<slug>/frontend-handoff.json``).
+    Deliberately not developer_handoff_rel_for_app's path (agents/pipeline/... locally,
+    handoffs/... in S3) — that path is reserved for the existing developer-handoff.json
+    this artifact must never collide with or overwrite.
+    """
+    slug = slugify(app)
+    if _is_cloud_store():
+        return f"{slug}/frontend-handoff.json"
+    return f"{target_app_root_rel(slug)}/frontend-handoff.json"
+
+
+def _build_frontend_handoff_payload(
+    app: str,
+    ctx: dict[str, Any],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    """Build the Developer->Frontend handoff (Pass 1) — the exact snake_case contract
+    frontend_agent.py's handle_developer_handoff() already expects (target_app, run_id,
+    openapi_path, frontend_required, plus the new backend_path/frontend_folder/framework/
+    auth/ui_requirements fields). Every value here is read from ctx, never recomputed:
+    status/auth/ui_requirements are passed through as-is, and openapi_path/backend_path
+    reuse the same pointers openApiPath/targetAppDir already hold this run. The
+    ``or openapi_rel_for_app(slug)``/``or target_app_root_rel(slug)`` fallbacks are not
+    a second source of truth — they call the identical deterministic helper ctx's own
+    value was assigned from, so they only guard the case where this builder runs from
+    the isolated except-path before ctx["openApiPath"]/["targetAppDir"] were set;
+    the value produced is always the same either way.
+    """
+    slug = slugify(app)
+    delivery_profile = ctx.get("deliveryProfile") or {}
+    frontend_required = delivery_profile.get("requiresReact")
+    if frontend_required is None:
+        frontend_required = True
+    return {
+        "status": status,
+        "target_app": slug,
+        "openapi_path": ctx.get("openApiPath") or openapi_rel_for_app(slug),
+        "backend_path": ctx.get("targetAppDir") or target_app_root_rel(slug),
+        "frontend_folder": f"{target_app_root_rel(slug)}/frontend",
+        "framework": "fastapi",
+        "auth": str(ctx.get("authMode") or "jwt").strip().lower(),
+        "ui_requirements": delivery_profile,
+        "frontend_required": bool(frontend_required),
+    }
+
+
+def _write_frontend_handoff(
+    app: str,
+    handoff: dict[str, Any],
+    *,
+    context: dict[str, Any] | None = None,
+) -> str:
+    """Persist the Developer->Frontend handoff (Pass 1) — a NEW artifact written via
+    write_repo_artifact's existing local/S3 branching (same helper _enrich_developer_context
+    and others already use), so it lands next to openapi.json in both modes without any
+    new path logic. Never touches _write_developer_handoff's file or return value."""
+    rel = _frontend_handoff_rel_for_app(app)
+    payload = json.dumps(handoff, indent=2) + "\n"
+    write_repo_artifact(rel, payload, context=context)
+    return rel
+
+
 def _max_output_tokens() -> int:
     return int(os.getenv("DEVELOPER_AGENT_MAX_TOKENS", "32768"))
 
@@ -4161,6 +4228,10 @@ def run_task(
             )
             if handoff_rel:
                 ctx["developerHandoffPath"] = handoff_rel
+            # Pointer only, mirrors developerHandoffPath above: set the path once
+            # the file is confirmed on disk, never the spec content itself.
+            if (_service_dir(app) / "openapi.json").is_file():
+                ctx["openApiPath"] = openapi_rel_for_app(app)
         except Exception as exc:
             logger.exception("[developer-agent] failed to finalize developer handoff")
             if agent_error is None:
@@ -4175,6 +4246,22 @@ def run_task(
                 )
             except Exception:
                 logger.exception("[developer-agent] failed to persist failure handoff")
+        # Pass 1 of the strict developer->frontend handoff (additive-only): a NEW
+        # artifact, never touches developer-handoff.json or any existing context.json
+        # key. Isolated in its own try/except, deliberately outside the try/except
+        # above, so a bug in this brand-new code path can never flip an
+        # otherwise-successful run to "failed" (agent_error) or block the existing
+        # developer-handoff.json / telemetry finalization below it — that would be
+        # exactly the regression to existing behavior this addition must not cause.
+        try:
+            if (_service_dir(app) / "openapi.json").is_file():
+                frontend_handoff_status = "failed" if (agent_error or validation_failed) else "completed"
+                frontend_handoff = _build_frontend_handoff_payload(
+                    app, ctx, status=frontend_handoff_status
+                )
+                _write_frontend_handoff(app, frontend_handoff, context=ctx)
+        except Exception:
+            logger.exception("[developer-agent] failed to persist frontend handoff (non-fatal)")
         # Telemetry must persist even when the agent run fails — tokens were billed
         # either way, and the control-plane cost breakdown needs every agent reported.
         if telemetry is not None:

@@ -971,6 +971,13 @@ def run_task(
         # resolved against the repo root, same convention as prdPath/designDocPath.
         candidate = Path(openapi_source_path)
         openapi_path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate)
+    elif ctx.get("openApiPath"):
+        # context.json's own pointer (set by developer-agent), same resolution
+        # convention as prdPath/designDocPath just above. Falls back to the
+        # app_dir default below for older context.json files that predate this
+        # field, so existing apps keep working unchanged.
+        candidate = Path(str(ctx["openApiPath"]))
+        openapi_path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate)
     else:
         openapi_path = app_dir / "openapi.json"
 
@@ -1196,12 +1203,170 @@ def _fetch_inputs_from_s3(slug: str, run_id: str) -> tuple[dict[str, Any], Path]
     context = artifact_store.get_context(run_id, target_app=slug) or {"targetApp": slug}
     context.setdefault("targetApp", slug)
 
-    openapi_bytes = artifact_store.get_artifact(run_id, f"{slug}/openapi.json")
+    # Prefer context.json's own pointer (set by developer-agent); fall back to the
+    # slug-derived default for older context.json files written before this field
+    # existed. Both resolve to the identical S3 key today (<slug>/openapi.json).
+    openapi_key = str(context.get("openApiPath") or f"{slug}/openapi.json")
+    openapi_bytes = artifact_store.get_artifact(run_id, openapi_key)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"frontend-agent-{slug}-"))
     tmp_openapi = tmp_dir / "openapi.json"
     tmp_openapi.write_bytes(openapi_bytes)
     return context, tmp_openapi
+
+
+# ==============================================================================
+# backend_integration check (report-only, static-only): does the generated
+# frontend call any route that isn't declared in the app's openapi.json?
+# Never starts a server, never makes a real HTTP call — pure text/JSON scraping
+# and set comparison. A "mismatch" here must never raise or change control flow;
+# every call site below only feeds the returned dict's "backend_integration" field.
+# ==============================================================================
+
+_FRONTEND_API_CALL_RE = re.compile(
+    r"\bapi(Get|Post|Put|Patch|Delete)\s*(?:<[^>]*>)?\s*\(\s*"
+    r"(?:`([^`]*)`|'([^']*)'|\"([^\"]*)\")"
+)
+
+_METHOD_BY_CALL_SUFFIX = {
+    "Get": "GET",
+    "Post": "POST",
+    "Put": "PUT",
+    "Patch": "PATCH",
+    "Delete": "DELETE",
+}
+
+
+def _normalize_frontend_call_path(raw: str) -> str | None:
+    """Reduce a scraped template/string literal (e.g. ``/api/v1/books/${book.id}``,
+    ``/api/v1/books${query}``, ``/categories?limit=100``) to a comparable route
+    template, or None if nothing path-like survives.
+
+    Rules, derived from real generated call sites (see STEP 0 of this change):
+    - A literal ``?`` always starts a query string — everything from there is
+      dropped (query params are never part of a route match).
+    - A ``${...}`` interpolation immediately preceded by ``/`` is a path-param
+      segment (e.g. ``/products/${productId}`` -> ``/products/{*}``).
+    - Any other ``${...}`` (not preceded by ``/`` — e.g. ``/books${query}``
+      where ``query`` itself renders a leading ``?``) is treated as an unknown
+      suffix and dropped, same as a literal ``?`` — conservative by design: we
+      never guess what a bare interpolation expands to.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch == "?":
+            break
+        if ch == "$" and i + 1 < n and raw[i + 1] == "{":
+            end = raw.find("}", i)
+            if end == -1:
+                break
+            if out and out[-1] == "/":
+                out.append("{*}")
+                i = end + 1
+                continue
+            break
+        out.append(ch)
+        i += 1
+    path = "".join(out).strip()
+    if not path or not path.startswith("/"):
+        return None
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+    return path
+
+
+def _normalize_openapi_path(path: str) -> str:
+    """``/api/v1/books/{book_id}`` -> ``/api/v1/books/{*}`` — same placeholder
+    shape _normalize_frontend_call_path produces, so param names never matter."""
+    normalized = re.sub(r"\{[^}]+\}", "{*}", str(path).strip())
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized
+    if len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _scrape_frontend_api_calls(frontend_dir: Path) -> list[tuple[str, str]]:
+    """Scan generated .ts/.tsx source under frontend_dir/src for apiGet/apiPost/
+    apiPut/apiPatch/apiDelete call sites. Returns [(METHOD, raw_path), ...] —
+    raw_path is the un-normalized literal/template text, normalized by the caller.
+    Skips node_modules and api.ts/api_apikey.ts themselves (those DEFINE the
+    helpers with a bare `path: string` parameter, not a call with a real path)."""
+    calls: list[tuple[str, str]] = []
+    src_dir = frontend_dir / "src"
+    if not src_dir.is_dir():
+        return calls
+    for path in src_dir.rglob("*"):
+        if not path.is_file() or path.suffix not in (".ts", ".tsx"):
+            continue
+        if "node_modules" in path.parts:
+            continue
+        if path.name in ("api.ts", "api_apikey.ts"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in _FRONTEND_API_CALL_RE.finditer(text):
+            method = _METHOD_BY_CALL_SUFFIX[m.group(1)]
+            raw_path = next(g for g in m.groups()[1:] if g is not None)
+            calls.append((method, raw_path))
+    return calls
+
+
+def _check_backend_integration(frontend_dir: Path, openapi_path: Path) -> tuple[str, list[str]]:
+    """Static-only check: do the generated frontend's scraped API calls map to
+    routes declared in the app's openapi.json? Never starts a server, never
+    makes a real HTTP call. Returns (status, mismatches) where status is one of
+    "validated" / "mismatch" / "not_run". Conservative: any input we can't
+    confidently parse, or zero real calls scraped, yields "not_run" rather than
+    a claimed "validated" we didn't actually perform. Wrapped so a bug in this
+    brand-new, report-only check can never break the frontend step that calls it.
+    """
+    try:
+        if not openapi_path.is_file():
+            return "not_run", []
+        spec = json.loads(openapi_path.read_text(encoding="utf-8", errors="replace"))
+        paths_obj = spec.get("paths") if isinstance(spec, dict) else None
+        if not isinstance(paths_obj, dict) or not paths_obj:
+            return "not_run", []
+
+        spec_routes: set[tuple[str, str]] = set()
+        for raw_path, methods in paths_obj.items():
+            if not isinstance(methods, dict):
+                continue
+            normalized_path = _normalize_openapi_path(str(raw_path))
+            for method in methods:
+                method_upper = str(method).upper()
+                if method_upper in _METHOD_BY_CALL_SUFFIX.values():
+                    spec_routes.add((method_upper, normalized_path))
+        if not spec_routes:
+            return "not_run", []
+
+        raw_calls = _scrape_frontend_api_calls(frontend_dir)
+        if not raw_calls:
+            return "not_run", []
+
+        mismatches: list[str] = []
+        checked_any = False
+        for method, raw_call_path in raw_calls:
+            normalized_call = _normalize_frontend_call_path(raw_call_path)
+            if normalized_call is None:
+                continue
+            checked_any = True
+            if (method, normalized_call) not in spec_routes:
+                mismatches.append(f"{method} {raw_call_path}")
+
+        if not checked_any:
+            # Every scraped call normalized to None (e.g. all were bare query
+            # strings) — we didn't actually check anything real, so don't claim we did.
+            return "not_run", []
+        if mismatches:
+            return "mismatch", list(dict.fromkeys(mismatches))
+        return "validated", []
+    except Exception as exc:  # noqa: BLE001 - never let this new check break the frontend step
+        print(f"[frontend-agent] backend_integration check failed (non-fatal): {exc!r}", file=sys.stderr)
+        return "not_run", []
 
 
 def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1269,6 +1434,15 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
         context, resolved_app = resolve_cli_context(target_app, None, no_auto_context=False)
         openapi_source_path = payload.get("openapi_path")
 
+    # Pass 1 of the strict developer->frontend handoff (additive-only): when the
+    # caller's payload carries the new "auth" field (developer-agent's authMode
+    # pass-through), prefer it over whatever resolve_cli_context/_fetch_inputs_from_s3
+    # found on their own — same "prefer new field when present, fall back to current
+    # behaviour when absent" rule openapi_source_path already follows above. Absent,
+    # context's own authMode (or run_task's own "jwt" default) is untouched.
+    if payload.get("auth"):
+        context["authMode"] = str(payload["auth"]).strip().lower()
+
     try:
         run_task(
             resolved_app,
@@ -1305,17 +1479,44 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
                 "error": f"could not upload frontend output to S3: {exc}",
             }
 
-    return {
+    # Prefer the handoff's own frontend_folder pointer when present (same per-mode
+    # value target_app_root_rel(slug)+"/frontend" produces on the developer side);
+    # fall back to today's hardcoded string when absent. Reporting-only — frontend_dir
+    # above (the real local scratch dir every mode writes to before any S3 upload)
+    # is unchanged, so this cannot affect what was actually read, written, or uploaded.
+    reported_frontend_path = str(payload.get("frontend_folder") or f"target-apps/{slug}/frontend")
+
+    # Resolve the same openapi.json this run actually generated against, mirroring
+    # run_task's own openapi_source_path/ctx["openApiPath"]/app_dir-default priority
+    # order (run_task returns None, so it never hands that resolved path back —
+    # this duplicates only the *lookup*, not any generation behaviour). Report-only:
+    # _check_backend_integration always degrades to ("not_run", []) rather than raise.
+    if openapi_source_path is not None:
+        resolved_openapi_path = Path(openapi_source_path)
+        if not resolved_openapi_path.is_absolute():
+            resolved_openapi_path = _REPO_ROOT / resolved_openapi_path
+    elif context.get("openApiPath"):
+        candidate = Path(str(context["openApiPath"]))
+        resolved_openapi_path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate)
+    else:
+        resolved_openapi_path = frontend_dir.parent / "openapi.json"
+
+    backend_integration, backend_integration_mismatches = _check_backend_integration(
+        frontend_dir, resolved_openapi_path
+    )
+
+    result = {
         "status": "success",
         "target_app": target_app,
-        "frontend_path": f"target-apps/{slug}/frontend",
+        "frontend_path": reported_frontend_path,
         "build_command": "npm install && npm run build",
         "start_command": "npm run dev",
-        # No API-integration smoke check runs as part of this handler today —
-        # report honestly rather than claim a validation that never happened.
-        "backend_integration": "not_run",
+        "backend_integration": backend_integration,
         "artifacts": artifacts,
     }
+    if backend_integration == "mismatch":
+        result["backend_integration_mismatches"] = backend_integration_mismatches
+    return result
 
 
 def _upload_frontend_output_if_s3(
