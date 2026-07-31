@@ -7,7 +7,7 @@ import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './art
 import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
 import { finalizeRunJson, runOrchestratorCloud } from './orchestrator-cloud-run';
-import { listRunGuardCandidates, listRuns } from './repo-reader';
+import { findRunSummariesForSlug, listRunGuardCandidates, listRuns } from './repo-reader';
 import { RUN_LIVE_IDLE_MS } from './run-reconcile';
 import { validateProductBrief } from './brief-quality';
 
@@ -167,9 +167,12 @@ export function summarizeExistingProject(
   };
 }
 
-/** Null when this slug has never been used; otherwise a summary of its prior runs. */
+/** Null when this slug has never been used; otherwise a summary of its prior runs.
+ * Scoped to just this slug's own runs (not a full platform-wide run listing) so
+ * this check stays fast regardless of total run history size — it runs on every
+ * brief submission, not just page loads. */
 export async function findExistingProject(slug: string): Promise<ExistingProjectInfo | null> {
-  const runs = await listRuns();
+  const runs = await findRunSummariesForSlug(slug);
   return summarizeExistingProject(runs, slug);
 }
 

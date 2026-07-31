@@ -1916,24 +1916,27 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     try {
       await getS3RunArtifactIndex();
       const s3RunByApp = await buildS3RunIdByApp();
-      for (const [slug, runId] of s3RunByApp) {
-        if (coveredRunIds.has(runId)) continue;
-        const live = await readUuidRunState(runId);
-        if (live) {
-          runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
-        } else {
-          const live = await readUuidRunState(runId);
-          runs.push(
-            await buildPipelineRunFromLive(slug, live ?? {
-              runId,
-              feature: slug,
-              targetApp: slug,
-              status: 'completed',
-              triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
-            }),
-          );
-        }
-        coveredRunIds.add(runId);
+      const pending = [...s3RunByApp].filter(([, runId]) => !coveredRunIds.has(runId));
+
+      for (let i = 0; i < pending.length; i += UUID_RUN_BUILD_BATCH) {
+        const batch = pending.slice(i, i + UUID_RUN_BUILD_BATCH);
+        const batchRuns = await Promise.all(
+          batch.map(async ([slug, runId]) => {
+            const live = await readUuidRunState(runId);
+            return buildPipelineRunFromLive(
+              slug,
+              live ?? {
+                runId,
+                feature: slug,
+                targetApp: slug,
+                status: 'completed',
+                triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
+              },
+            );
+          }),
+        );
+        runs.push(...batchRuns);
+        for (const [, runId] of batch) coveredRunIds.add(runId);
       }
     } catch (err) {
       console.warn('[listRuns] S3 enrichment failed, using local run.json only:', err);
@@ -2033,6 +2036,23 @@ export async function listRuns(): Promise<PipelineRun[]> {
   return cachedAsync(LIST_RUNS_CACHE_KEY, LIST_RUNS_TTL_MS, listRunsUncached);
 }
 
+export async function findRunSummariesForSlug(
+  slug: string,
+): Promise<{ projectId: string; startedAt: string; status: string }[]> {
+  const candidateIds = isS3Store()
+    ? (await listS3RunAppEntries()).filter((e) => e.app === slug).map((e) => e.runId)
+    : await listUuidRunIds();
+
+  const states = await Promise.all(candidateIds.map((id) => readUuidRunState(id)));
+  const summaries: { projectId: string; startedAt: string; status: string }[] = [];
+  states.forEach((live) => {
+    if (!live || !live.startedAt) return;
+    if (featureSlugFromLive(live) !== slug) return;
+    summaries.push({ projectId: slug, startedAt: live.startedAt, status: live.status });
+  });
+  return summaries;
+}
+
 export async function getRun(id: string): Promise<PipelineRun | undefined> {
   if (UUID_RE.test(id)) {
     const live = await readUuidRunState(id);
@@ -2050,8 +2070,6 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
   const direct = runs.find((r) => r.id === id || r.projectId === id);
   if (direct) return direct;
 
-  // Slug-based runIds (e.g. "change-request-hub-003") are stored under runs/<id>/run.json
-  // but listRuns() only scans UUID dirs. Try reading it directly.
   const slugRunState = await readUuidRunState(id);
   if (slugRunState) {
     const slug = featureSlugFromLive(slugRunState);

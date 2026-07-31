@@ -1126,13 +1126,11 @@ function InputRequirementsCard() {
           <AlertDialogDescription>
             {existingProjectConflict ? (
               <>
-                This app name has {existingProjectConflict.info.runCount} previous run
-                {existingProjectConflict.info.runCount === 1 ? '' : 's'} — first seen{' '}
-                {formatRelative(existingProjectConflict.info.firstSeenAt)}, most recently{' '}
-                {formatRelative(existingProjectConflict.info.lastRunAt)} ({existingProjectConflict.info.lastRunStatus}
-                ). The platform has no per-user isolation yet — continuing publishes to the same GitLab
-                branch and redeploys the same live app as whoever created it. If this isn&apos;t your app,
-                choose a different name instead.
+                This name was already used {existingProjectConflict.info.runCount} time
+                {existingProjectConflict.info.runCount === 1 ? '' : 's'}, most recently{' '}
+                {formatRelative(existingProjectConflict.info.lastRunAt)} (
+                {existingProjectConflict.info.lastRunStatus}). Continuing will update that same app, not
+                create a new one. If this isn&apos;t your app, choose a different name instead.
               </>
             ) : null}
           </AlertDialogDescription>
