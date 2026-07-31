@@ -1,8 +1,7 @@
 'use client';
 
-import { useQuery, useQueries } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from './api';
-import type { PipelineRun } from '@/src/types';
 
 export const queryKeys = {
   agents: ['agents'] as const,
@@ -39,99 +38,32 @@ export const useAgents = () =>
   });
 export const useAgent = (id: string) =>
   useQuery({ queryKey: queryKeys.agent(id), queryFn: () => api.getAgent(id), enabled: !!id });
-export const useProjects = () =>
-  useQuery({
-    queryKey: queryKeys.projects,
-    queryFn: api.getProjects,
-    staleTime: 10_000,
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
-  });
+export const useProjects = () => useQuery({ queryKey: queryKeys.projects, queryFn: api.getProjects });
 export const useProject = (id: string) =>
-  useQuery({
-    queryKey: queryKeys.project(id),
-    queryFn: () => api.getProject(id),
-    enabled: !!id,
-    staleTime: 10_000,
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
-  });
+  useQuery({ queryKey: queryKeys.project(id), queryFn: () => api.getProject(id), enabled: !!id });
 export const usePipelines = () => useQuery({ queryKey: queryKeys.pipelines, queryFn: api.getPipelines });
 export const useRuns = () =>
   useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.getRuns,
-    staleTime: 0,
+    staleTime: 30_000,
     refetchInterval: (query) => {
       const runs = query.state.data;
-      if (
-        runs?.some(
-          (r) =>
-            r.status === 'running' ||
-            r.status === 'paused' ||
-            r.status === 'awaiting_deploy' ||
-            r.deployStatus === 'running' ||
-            r.deployStatus === 'pending',
-        )
-      ) {
-        return 2_500;
-      }
-      // Occasional poll so a late appUrl after a failed handoff can still recover.
-      if (runs?.some((r) => r.deployStatus === 'failed' || r.deployStatus === 'stale')) {
-        return 15_000;
-      }
-      return 20_000;
-    },
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-  });
-export const useRun = (id: string) =>
-  useQuery({
-    queryKey: queryKeys.run(id),
-    queryFn: () => api.getRun(id),
-    enabled: !!id,
-    staleTime: 0,
-    refetchInterval: (query) => {
-      const run = query.state.data;
-      if (run?.status === 'running' || run?.status === 'paused' || run?.status === 'awaiting_deploy') return 2_500;
-      if (
-        run?.deployStatus === 'running' ||
-        run?.deployStatus === 'pending' ||
-        run?.deployStatus === 'failed'
-      ) {
-        return 2_500;
-      }
+      if (runs?.some((r) => r.status === 'running' || r.status === 'paused')) return 15_000;
       return false;
     },
-    refetchOnWindowFocus: true,
   });
-
-/** Live-poll each active run (bypasses listRuns cache) so strip + cards stay in sync. */
-export const useLiveRunsById = (ids: string[]) => {
-  const uniqueIds = [...new Set(ids.filter(Boolean))];
-  return useQueries({
-    queries: uniqueIds.map((id) => ({
-      queryKey: queryKeys.run(id),
-      queryFn: () => api.getRun(id),
-      staleTime: 0,
-      refetchInterval: (query: { state: { data: PipelineRun | undefined } }) => {
-        const run = query.state.data;
-        if (run?.status === 'running' || run?.status === 'paused' || run?.status === 'awaiting_deploy') {
-          return 2_500;
-        }
-        if (run?.deployStatus === 'running' || run?.deployStatus === 'pending') {
-          return 2_500;
-        }
-        if (run?.deployStatus === 'failed' || run?.deployStatus === 'stale') {
-          return 15_000;
-        }
-        return false;
-      },
-      refetchOnWindowFocus: true,
-    })),
+export const useRun = (id: string, sseConnected = false) =>
+  useQuery({
+    queryKey: queryKeys.run(id),
+    queryFn: async () => (await api.getRun(id)) ?? null,
+    enabled: !!id,
+    refetchInterval: (query) => {
+      if (sseConnected) return false;
+      const status = query.state.data?.status;
+      return status === 'running' || status === 'paused' ? 4000 : false;
+    },
   });
-};
-
 export const useRunLogs = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runLogs(id),
@@ -149,32 +81,39 @@ export const useRunEvents = (id: string, live = false) =>
 export const useRunHandoffs = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runHandoffs(id),
-    queryFn: () => api.getRunHandoffs(id),
+    queryFn: async () => (await api.getRunHandoffs(id)) ?? null,
     enabled: !!id,
     refetchInterval: live ? 4000 : false,
   });
-export const useAgentMessages = (correlationId?: string, live = false) =>
+export const useRunComparison = (a: string, b: string) =>
   useQuery({
-    queryKey: queryKeys.messages(correlationId),
-    queryFn: () => api.getAgentMessages(correlationId),
-    staleTime: 3_000,
-    refetchInterval: live ? 3_000 : false,
+    queryKey: ['runs', 'compare', a, b],
+    queryFn: () => api.getRunComparison(a, b),
+    enabled: !!a && !!b,
   });
-export const useArtifacts = (
-  pollOrFilters: boolean | { projectId?: string | null; kind?: string; poll?: boolean } = false,
-) => {
-  const filters =
-    typeof pollOrFilters === 'boolean' ? { poll: pollOrFilters } : pollOrFilters;
-  const projectId = filters.projectId ?? null;
-  const kind = filters.kind ?? 'all';
-  const poll = filters.poll ?? false;
-  return useQuery({
-    queryKey: [...queryKeys.artifacts, projectId ?? 'all', kind],
-    queryFn: () => api.getArtifacts({ projectId, kind }),
-    staleTime: 30_000,
+export const useAgentMessages = (correlationId?: string) =>
+  useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
+export const useRunAgentMessages = (runId: string, live = false) =>
+  useQuery({
+    queryKey: ['runAgentMessages', runId],
+    queryFn: () => api.getRunAgentMessages(runId),
+    enabled: !!runId,
+    refetchInterval: live ? 5000 : false,
+  });
+export const useInputBrief = (slug?: string, runId?: string) =>
+  useQuery({
+    queryKey: ['inputBrief', slug ?? '', runId ?? ''],
+    queryFn: () => api.getInputBrief(slug!, runId),
+    enabled: !!slug,
+    staleTime: 300_000,
+  });
+export const useArtifacts = (poll = false) =>
+  useQuery({
+    queryKey: queryKeys.artifacts,
+    queryFn: api.getArtifacts,
+    staleTime: 120_000,
     refetchInterval: poll ? 30_000 : false,
   });
-};
 export const useCheckpoints = () =>
   useQuery({ queryKey: queryKeys.checkpoints, queryFn: api.getCheckpoints });
 export const useMcpServers = () => useQuery({ queryKey: queryKeys.mcp, queryFn: api.getMcpServers });
@@ -194,11 +133,7 @@ export const useLogs = (filters: LogsFilter, live = false) =>
   useQuery({
     queryKey: [...queryKeys.logs, filters],
     queryFn: () => api.getLogs(filters),
-    // Live views (All runs / running run): poll CloudWatch every 8s.
-    // Finished single-run views: still refresh occasionally so late-arriving lines appear.
-    staleTime: live ? 0 : 10_000,
-    refetchInterval: live ? 8_000 : 30_000,
-    refetchOnWindowFocus: true,
+    refetchInterval: live ? 8000 : 15_000,
   });
 export const useDashboardSummary = () =>
   useQuery({
@@ -211,8 +146,8 @@ export const useRecentActivity = (poll = true) =>
   useQuery({
     queryKey: queryKeys.activity,
     queryFn: () => api.getRecentActivity(),
-    staleTime: 8_000,
-    refetchInterval: poll ? 10_000 : false,
+    staleTime: 30_000,
+    refetchInterval: poll ? 15_000 : false,
   });
 
 export const usePlatformSettings = () =>

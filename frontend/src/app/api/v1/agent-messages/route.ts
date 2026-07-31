@@ -1,16 +1,23 @@
 import { NextResponse } from 'next/server';
-import { listAgentMessages } from '@/src/lib/repo-reader';
-import { apiRouteErrorResponse } from '@/src/lib/api-route-error';
+import { getRun } from '@/src/lib/repo-reader';
+import { getRunHandoffs } from '@/src/lib/pipeline-handoffs';
+import { buildRunAgentMessages } from '@/src/lib/agent-messages';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const correlationId = searchParams.get('correlationId') ?? undefined;
-    const messages = await listAgentMessages(correlationId || undefined);
-    return NextResponse.json({ messages });
-  } catch (err) {
-    return apiRouteErrorResponse(err);
+  const runId = new URL(request.url).searchParams.get('runId')?.trim();
+  if (!runId) {
+    return NextResponse.json({ error: 'runId query parameter is required' }, { status: 400 });
   }
+
+  const run = await getRun(runId);
+  if (!run) {
+    return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+  }
+
+  const handoffs = await getRunHandoffs(run.id, run.projectId).catch(() => null);
+  const messages = buildRunAgentMessages(run, handoffs);
+  return NextResponse.json({ messages });
 }

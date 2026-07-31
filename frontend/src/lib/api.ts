@@ -6,6 +6,7 @@
 //
 // The control plane NEVER executes agents. It only reads platform state.
 
+import { mockAgentMessages } from '@/src/mocks';
 import type { ActivityFeedItem } from '@/src/lib/run-events';
 import type { PlatformSettings } from '@/src/lib/platform-settings';
 import type { PipelineTelemetrySummary, TelemetryOverviewRow } from '@/src/lib/pipeline-telemetry';
@@ -30,6 +31,15 @@ import type {
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 export const USING_MOCKS = !API_BASE_URL;
+
+export interface RunComparisonEntry {
+  run: PipelineRun;
+  telemetry: PipelineTelemetrySummary | null;
+}
+export interface RunComparison {
+  a: RunComparisonEntry | null;
+  b: RunComparisonEntry | null;
+}
 /** Local mode reads the monorepo via /api/v1 (not inline Emergent fixtures). */
 export const USING_REPO_DATA = USING_MOCKS;
 
@@ -103,37 +113,6 @@ export const api = {
       return undefined;
     }
   },
-  async cancelRun(id: string): Promise<{
-    runId: string;
-    status: 'cancelled';
-    sessionStopped: boolean;
-    message: string;
-    stopError?: string;
-  }> {
-    const res = await fetch(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-    });
-    const data = (await res.json()) as {
-      runId?: string;
-      status?: 'cancelled';
-      sessionStopped?: boolean;
-      message?: string;
-      stopError?: string;
-      error?: string;
-    };
-    if (!res.ok) {
-      throw new Error(data.error || `Cancel failed (${res.status})`);
-    }
-    return {
-      runId: data.runId ?? id,
-      status: 'cancelled',
-      sessionStopped: Boolean(data.sessionStopped),
-      message: data.message ?? 'Run cancelled',
-      ...(data.stopError ? { stopError: data.stopError } : {}),
-    };
-  },
   async getRunLogs(runId: string): Promise<LogEntry[]> {
     const data = await httpGet<{ logs: LogEntry[] }>(
       `/api/v1/runs/${encodeURIComponent(runId)}/logs`,
@@ -153,26 +132,61 @@ export const api = {
       return undefined;
     }
   },
+  async getRunComparison(runA: string, runB: string): Promise<RunComparison> {
+    const params = new URLSearchParams();
+    if (runA) params.set('a', runA);
+    if (runB) params.set('b', runB);
+    return httpGet<RunComparison>(`/api/v1/runs/compare?${params.toString()}`);
+  },
   async getRecentActivity(): Promise<ActivityFeedItem[]> {
     const data = await httpGet<{ activity: ActivityFeedItem[] }>('/api/v1/activity');
     return data.activity;
   },
   async getAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
-    const qs = correlationId ? `?correlationId=${encodeURIComponent(correlationId)}` : '';
-    const data = await httpGet<{ messages: AgentMessage[] }>(`/api/v1/agent-messages${qs}`);
+    const all = mockAgentMessages;
+    return correlationId ? all.filter((m) => m.correlationId === correlationId) : all;
+  },
+  async getRunAgentMessages(runId: string): Promise<AgentMessage[]> {
+    const data = await httpGet<{ messages: AgentMessage[] }>(
+      `/api/v1/agent-messages?runId=${encodeURIComponent(runId)}`,
+    );
     return data.messages;
   },
-  async getArtifacts(filters?: { projectId?: string | null; kind?: string }): Promise<Artifact[]> {
-    const qs = new URLSearchParams();
-    if (filters?.projectId) qs.set('project', filters.projectId);
-    if (filters?.kind && filters.kind !== 'all') qs.set('kind', filters.kind);
-    const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    const data = await httpGet<{ artifacts: Artifact[] }>(`/api/v1/artifacts${suffix}`);
+  async getInputBrief(
+    slug: string,
+    runId?: string,
+  ): Promise<{ slug: string; path: string; content: string } | null> {
+    const qs = new URLSearchParams({ slug });
+    if (runId) qs.set('runId', runId);
+    try {
+      return await httpGet<{ slug: string; path: string; content: string }>(
+        `/api/v1/inputs?${qs.toString()}`,
+      );
+    } catch {
+      return null;
+    }
+  },
+  async getArtifacts(): Promise<Artifact[]> {
+    const data = await httpGet<{ artifacts: Artifact[] }>('/api/v1/artifacts');
     return data.artifacts;
   },
   async getCheckpoints(): Promise<HITLCheckpoint[]> {
     const data = await httpGet<{ checkpoints: HITLCheckpoint[] }>('/api/v1/checkpoints');
     return data.checkpoints;
+  },
+  async saveCheckpointDecision(
+    checkpoint: HITLCheckpoint,
+    status: 'approved' | 'rejected',
+    approver?: string,
+  ): Promise<HITLCheckpoint> {
+    const r = await fetch('/api/v1/checkpoints', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checkpoint, status, approver }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `Save failed (${r.status})`);
+    return data.checkpoint as HITLCheckpoint;
   },
   async getMcpServers(): Promise<McpServer[]> {
     const data = await httpGet<{ servers: McpServer[] }>('/api/v1/mcp-servers');
@@ -189,17 +203,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, config }),
     });
-    const text = await r.text();
-    let data: { mcpServers?: McpConfig['mcpServers']; error?: string; errors?: string[] } = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      throw new Error(
-        `Save failed (HTTP ${r.status}). Server returned a non-JSON response - check control-plane logs.`,
-      );
-    }
+    const data = await r.json();
     if (!r.ok) throw new Error(Array.isArray(data.errors) ? data.errors.join(' ') : data.error || 'Save failed');
-    return { mcpServers: data.mcpServers ?? {} };
+    return { mcpServers: data.mcpServers };
   },
   async deleteMcpServer(name: string): Promise<void> {
     const r = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
