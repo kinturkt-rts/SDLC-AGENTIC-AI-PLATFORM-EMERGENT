@@ -38,6 +38,7 @@ from .pipeline_context import (
     design_doc_rel_for_app,
     diagram_path_for_app,
     gitlab_handoff_rel_for_app,
+    openapi_rel_for_app,
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
     qa_handoff_rel_for_app,
@@ -1062,6 +1063,19 @@ class SdlcPipelineRunner:
 
         if self.transport == "a2a" and self.run_id:
             self._merge_run_context_from_s3()
+
+        # Local subprocess transport never writes ctx["openApiPath"] back into this
+        # orchestrator's context.json (developer_agent.py's own put_context() call
+        # only fires when it resolves a runId, i.e. the S3/A2A path) — so mirror
+        # prdPath/designDocPath's own pattern here: derive the pointer path and set
+        # it at the orchestrator level too. Skip if the A2A merge above already
+        # pulled a value from S3 (do not overwrite a value developer-agent set).
+        if not self.context.get("openApiPath"):
+            openapi_local_path = (
+                self.root / target_app_root_rel(self.feature).replace("/", os.sep) / "openapi.json"
+            )
+            if openapi_local_path.is_file():
+                self._update_context({"openApiPath": openapi_rel_for_app(self.feature)})
 
         self.agents_run.append("developer-agent")
         self.artifacts["App"] = f"{target_app_root_rel(self.feature)}/"

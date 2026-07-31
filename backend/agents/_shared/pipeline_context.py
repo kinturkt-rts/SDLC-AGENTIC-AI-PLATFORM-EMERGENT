@@ -331,6 +331,16 @@ def developer_handoff_rel_for_app(target_app: str) -> str:
     return f"agents/pipeline/{slug}.developer-handoff.json"
 
 
+def openapi_rel_for_app(target_app: str) -> str:
+    """OpenAPI spec path for a target app — sibling of context.json, matching the S3 key
+    developer_agent.py's _upload_openapi_artifact_if_s3 already uses (<slug>/openapi.json)
+    and the local path _service_dir() already writes to (target-apps/<slug>/openapi.json)."""
+    slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/openapi.json"
+    return f"{target_app_root_rel(slug)}/openapi.json"
+
+
 def devops_handoff_rel_for_app(target_app: str) -> str:
     slug = slugify(target_app)
     if _is_cloud_store():
