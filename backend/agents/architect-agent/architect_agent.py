@@ -13,6 +13,7 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
+
 from _shared.artifact_store import (
     is_s3_store,
     put_context,
@@ -46,6 +47,7 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
+
 
 AGENT_NAME = "architect-agent"
 A2A_PORT = 9102
@@ -399,7 +401,17 @@ def _generate_design_markdown(
         or context.get("product_agent_output")
         or ""
     )
-    paths_block = "\n".join(f"- {p.as_posix()}" for p in diagram_paths) or "(no diagram PNG)"
+    # diagram_paths here points at the ephemeral /tmp render workspace (see _diagram_work_dir) -
+    # the PNG is only copied to its permanent, repo-relative location by _persist_diagram_pngs,
+    # which runs after this function returns. Show that final path in the doc instead of the
+    # container-local scratch path, which is meaningless to anyone reading this later.
+    target_app_for_diagram = context.get("targetApp") or context.get("target_app")
+    if diagram_paths and target_app_for_diagram:
+        paths_block = diagram_path_for_app(str(target_app_for_diagram))
+    elif diagram_paths:
+        paths_block = diagram_paths[0].as_posix()
+    else:
+        paths_block = "(no diagram PNG)"
 
     design_callback = (
         StrandsTelemetryCallback(f"{AGENT_NAME}-design-writer", telemetry, log_tools=False)

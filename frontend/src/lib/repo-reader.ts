@@ -19,6 +19,7 @@ import {
   getS3RunArtifactIndex,
   listS3RunIds,
   isHiddenAppSlug,
+  listDynamoRunIndex,
 } from './artifact-store';
 import { TIMELINE_PHASES, PHASE_AGENT, COMPLETION_PHASES } from './pipeline-phases';
 import {
@@ -1914,9 +1915,31 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
 
   if (isS3Store()) {
     try {
-      await getS3RunArtifactIndex();
-      const s3RunByApp = await buildS3RunIdByApp();
-      const pending = [...s3RunByApp].filter(([, runId]) => !coveredRunIds.has(runId));
+      // The full-bucket S3 listing is expensive and grows with every artifact ever
+      // written, so it's cached for HEAVY_LIST_TTL_MS instead of the 4s live-progress
+      // TTL. The DynamoDB run-index (cheap: only META rows carry targetApp) is scanned
+      // fresh every call and overlaid on top, so brand-new runs still show up without
+      // waiting on the long cache.
+      const [dynamoEntries, historicalRunByApp] = await Promise.all([
+        listDynamoRunIndex().catch((err) => {
+          console.warn('[listRuns] DynamoDB run-index scan failed, using S3 only:', err);
+          return [] as Awaited<ReturnType<typeof listDynamoRunIndex>>;
+        }),
+        cachedAsync('s3RunIdByAppHistorical', HEAVY_LIST_TTL_MS, buildS3RunIdByApp),
+      ]);
+
+      const runByApp = new Map(historicalRunByApp);
+      const dynamoLatestByApp = new Map<string, { runId: string; ts: string }>();
+      for (const entry of dynamoEntries) {
+        const ts = entry.updatedAt || entry.createdAt || '';
+        const current = dynamoLatestByApp.get(entry.targetApp);
+        if (!current || ts > current.ts) {
+          dynamoLatestByApp.set(entry.targetApp, { runId: entry.runId, ts });
+        }
+      }
+      for (const [app, { runId }] of dynamoLatestByApp) runByApp.set(app, runId);
+
+      const pending = [...runByApp].filter(([, runId]) => !coveredRunIds.has(runId));
 
       for (let i = 0; i < pending.length; i += UUID_RUN_BUILD_BATCH) {
         const batch = pending.slice(i, i + UUID_RUN_BUILD_BATCH);

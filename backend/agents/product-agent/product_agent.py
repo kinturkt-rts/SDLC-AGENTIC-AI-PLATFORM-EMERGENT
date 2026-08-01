@@ -1,24 +1,34 @@
-"""Product agent — Strands + Bedrock; PRD authoring and optional Jira."""
+"""Product agent — Strands + Bedrock; PRD authoring and optional Jira.
+
+AgentCore (primary): ``deploy/agentcore`` loads ``build_prd_pipeline_agent()`` — PRD
+pipeline over A2A with S3 artifacts. Optional Jira backlog is gated by
+``AGENTCORE_PRODUCT_SKIP_JIRA`` (default skip on AgentCore).
+
+Local CLI (``--input-file``, ``--task``, ``--serve-a2a``) remains for offline/dev use.
+"""
 
 import argparse
 import base64
 import json
 import os
 import re
+import shutil
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+# Bootstrap before _shared imports so local ``python agents/product-agent/…`` works.
+# AgentCore also sets PYTHONPATH via deploy/agentcore bootstrap — this is belt-and-suspenders.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
+
 from _shared.env import load_repo_env
 from _shared.pipeline_context import (
     design_doc_rel_for_app,
     diagram_path_for_app,
     pipeline_context_rel_for_app,
     prd_rel_path_for_app,
-    repo_rel,
     slugify as pipeline_slugify,
 )
 from _shared.artifact_store import (
@@ -35,9 +45,6 @@ from _shared.delivery_profile import (
     scan_delivery_text,
 )
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
-
-load_repo_env()
-
 from a2a.types import AgentSkill
 from mcp import StdioServerParameters, stdio_client
 from strands import Agent
@@ -46,6 +53,9 @@ from strands.models import BedrockModel
 from strands.models.model import CacheConfig
 from strands.multiagent.a2a import A2AServer
 from strands.tools.mcp import MCPClient
+
+load_repo_env()
+
 
 AGENT_NAME = "product-agent"
 A2A_PORT = 9101
@@ -375,12 +385,33 @@ def _atlassian_mcp_url() -> str:
     return ATLASSIAN_MCP_OAUTH_URL
 
 
-def _atlassian_mcp_remote_args() -> list[str]:
-    args = ["-y", "mcp-remote@latest", _atlassian_mcp_url()]
+def _atlassian_mcp_stdio_params() -> StdioServerParameters:
+    """Launch mcp-remote → Atlassian MCP.
+
+    On Linux/AgentCore, put Basic auth in the child env and expand via bash so the
+    token is not visible in the process argv. Local Windows falls back to --header.
+    """
+    url = _atlassian_mcp_url()
     basic = _atlassian_mcp_basic_auth_value()
+    env = {**os.environ}
+    if basic and shutil.which("bash"):
+        env["ATLASSIAN_MCP_BASIC_AUTH_B64"] = basic
+        # Quote URL for the shell; auth value stays in env.
+        safe_url = url.replace("'", "'\"'\"'")
+        return StdioServerParameters(
+            command="bash",
+            args=[
+                "-lc",
+                "exec npx -y mcp-remote@latest "
+                f"'{safe_url}' "
+                '--header "Authorization: Basic $ATLASSIAN_MCP_BASIC_AUTH_B64"',
+            ],
+            env=env,
+        )
+    args = ["-y", "mcp-remote@latest", url]
     if basic:
         args.extend(["--header", f"Authorization: Basic {basic}"])
-    return args
+    return StdioServerParameters(command="npx", args=args, env=env)
 
 
 def _agentcore_jira_runtime_enabled() -> bool:
@@ -425,15 +456,10 @@ def _jira_backlog_requested(ctx: dict[str, Any], *, task: str = "") -> tuple[boo
 def _atlassian_mcp() -> MCPClient:
     """Cursor OAuth or headless Basic auth via mcp-remote → Atlassian hosted MCP."""
 
-    remote_args = _atlassian_mcp_remote_args()
+    params = _atlassian_mcp_stdio_params()
 
     def transport() -> object:
-        return stdio_client(
-            StdioServerParameters(
-                command="npx",
-                args=remote_args,
-            )
-        )
+        return stdio_client(params)
 
     return MCPClient(transport, prefix="atlassian", startup_timeout=120)
 
@@ -558,11 +584,16 @@ def _extract_brief_from_task(task: str) -> str | None:
 
 
 def _infer_target_app_from_text(text: str) -> str | None:
-    """Best-effort slug from orchestrator task text"""
+    """Best-effort slug from orchestrator/AgentCore task text.
+
+    Prefer explicit ``targetApp=`` / hyphenated app slugs. Avoid bare ``for <word>``
+    matches that invent wrong apps (e.g. ``for users``).
+    """
     patterns = (
-        r"targetApp[\"']?\s*[:=]\s*[\"']?([a-z0-9-]+)",
-        r"\bstaged input for\s+([a-z][a-z0-9-]{1,58})\b",
-        r"\bfor\s+([a-z][a-z0-9-]{1,58})\b",
+        r"targetApp[\"']?\s*[:=]\s*[\"']?([a-z0-9][a-z0-9-]{1,58})",
+        r"\bstaged input for\s+([a-z0-9]+(?:-[a-z0-9]+)+)\b",
+        r"\b(?:create\s+)?prd\s+for\s+([a-z0-9]+(?:-[a-z0-9]+)+)\b",
+        r"\bfor\s+([a-z0-9]+(?:-[a-z0-9]+)+)\b",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.I)
@@ -849,12 +880,18 @@ def run_prd_from_context(
                 project_key=project_key,
                 parent_telemetry=tel,
             )
+            outcome, issue_keys = _jira_backlog_outcome(jira_summary)
             lines.append(f"- jiraProjectKey: {project_key}")
-            lines.append(f"- jiraBacklog: created")
+            lines.append(f"- jiraBacklog: {outcome}")
+            if issue_keys:
+                lines.append(f"- jiraIssueKeys: {', '.join(issue_keys)}")
             lines.append("")
             lines.append(jira_summary)
             pipeline_ctx["jiraProjectKey"] = project_key
-            pipeline_ctx["jiraBacklogCreated"] = True
+            pipeline_ctx["jiraBacklogCreated"] = outcome == "created"
+            pipeline_ctx["jiraBacklogStatus"] = outcome
+            if issue_keys:
+                pipeline_ctx["jiraIssueKeys"] = issue_keys
             write_repo_artifact(
                 ctx_path_rel,
                 json.dumps(pipeline_ctx, indent=2) + "\n",
@@ -978,9 +1015,18 @@ def _prd_output_dir() -> Path:
 
 
 def _read_text_file(path: str) -> str:
+    """Read a local file; relative paths must resolve under the repo root."""
     p = Path(path)
     if not p.is_absolute():
         p = (_REPO_ROOT / p).resolve()
+    else:
+        p = p.resolve()
+    try:
+        p.relative_to(_REPO_ROOT.resolve())
+    except ValueError as exc:
+        raise ValueError(
+            f"Input path escapes repository root: {path} (resolved {p})"
+        ) from exc
     return p.read_text(encoding="utf-8")
 
 
@@ -1100,6 +1146,39 @@ def _run_jira_backlog_from_prd(
     return str(summary)
 
 
+def _jira_issue_keys_from_text(text: str) -> list[str]:
+    """Extract Jira keys (e.g. SAAP-12) in first-seen order."""
+    seen: set[str] = set()
+    keys: list[str] = []
+    for match in re.finditer(r"\b([A-Z][A-Z0-9]+-\d+)\b", text or ""):
+        key = match.group(1)
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def _jira_backlog_outcome(summary: str) -> tuple[str, list[str]]:
+    """Classify Jira agent output: created | partial | failed."""
+    keys = _jira_issue_keys_from_text(summary)
+    lower = (summary or "").lower()
+    failure_markers = (
+        "tool call budget exceeded",
+        "writes are disabled",
+        "jira backlog failed",
+        "could not create",
+        "failed to create",
+        "not created",
+        "no tickets created",
+    )
+    looks_failed = any(m in lower for m in failure_markers)
+    if keys and not looks_failed:
+        return "created", keys
+    if keys:
+        return "partial", keys
+    return "failed", keys
+
+
 def run_task(
     task: str,
     context: dict[str, Any] | None = None,
@@ -1114,7 +1193,16 @@ def run_task(
         agent = _build_agent(tools, telemetry=telemetry)
         return str(agent(_user_message(task, ctx)))
 
+
+def _a2a_write_tools_allowed() -> bool:
+    """Local ``--serve-a2a`` defaults to read-only; opt in with PRODUCT_A2A_ALLOW_WRITES=true."""
+    flag = os.getenv("PRODUCT_A2A_ALLOW_WRITES", "false").strip().lower()
+    return flag in ("1", "true", "yes", "on")
+
+
 def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
+    """Local Jira A2A server (dev). AgentCore uses ``build_prd_pipeline_agent`` instead."""
+    write_allowed = _a2a_write_tools_allowed()
     skills = [
         AgentSkill(
             id="backlog_creation",
@@ -1123,8 +1211,15 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
             tags=["jira", "product"],
         )
     ]
+    mode = "WRITE" if write_allowed else "READ-ONLY"
+    print(
+        f"[product-agent] serve-a2a mode={mode} "
+        "(set PRODUCT_A2A_ALLOW_WRITES=true to enable create/edit tools)",
+        file=sys.stderr,
+    )
     with _atlassian_mcp() as mcp:
-        agent = _build_agent(mcp.list_tools_sync())
+        tools = _filter_tools(mcp.list_tools_sync(), write_allowed=write_allowed)
+        agent = _build_agent(tools)
         A2AServer(agent, host=host, port=port, skills=skills).serve()
 
 def _write_pipeline_context(

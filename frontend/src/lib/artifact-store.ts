@@ -5,6 +5,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
+import { DynamoDBClient, ScanCommand, type AttributeValue } from '@aws-sdk/client-dynamodb';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { loadBackendEnv } from './backend-env';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
@@ -67,6 +68,81 @@ export function s3Client(): S3Client {
     }),
   });
   return _s3Client;
+}
+
+let _dynamoClient: DynamoDBClient | null = null;
+
+/** Mirrors backend's `dynamodb_enabled()` (`_shared/artifact_store.py`) - same env var. */
+export function dynamoIndexEnabled(): boolean {
+  loadBackendEnv();
+  return process.env.ARTIFACT_DYNAMODB_ENABLED?.trim().toLowerCase() === 'true';
+}
+
+function dynamoTable(): string {
+  loadBackendEnv();
+  return process.env.ARTIFACT_DYNAMODB_TABLE?.trim() || 'sdlc-pipeline-runs';
+}
+
+function dynamoClient(): DynamoDBClient {
+  if (_dynamoClient) return _dynamoClient;
+  loadBackendEnv();
+  const region = process.env.AWS_REGION?.trim() || 'us-east-2';
+  _dynamoClient = new DynamoDBClient({
+    region,
+    maxAttempts: 2,
+    requestHandler: new NodeHttpHandler({ connectionTimeout: 5000, requestTimeout: 20000 }),
+  });
+  return _dynamoClient;
+}
+
+export interface DynamoRunIndexEntry {
+  runId: string;
+  targetApp: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+const DYNAMO_INDEX_CACHE_KEY = 'dynamoRunIndex';
+const DYNAMO_INDEX_TTL_MS = 4_000;
+
+/**
+ * Fast run discovery via the `targetApp-index` GSI. Only the per-run META row carries
+ * `targetApp`, so this GSI scan never touches the (much larger) per-artifact pointer rows -
+ * unlike a full S3 bucket listing, it stays cheap as runs accumulate.
+ */
+export async function listDynamoRunIndex(): Promise<DynamoRunIndexEntry[]> {
+  if (!dynamoIndexEnabled()) return [];
+
+  return cachedAsync(DYNAMO_INDEX_CACHE_KEY, DYNAMO_INDEX_TTL_MS, async () => {
+    const entries: DynamoRunIndexEntry[] = [];
+    let ExclusiveStartKey: Record<string, AttributeValue> | undefined;
+
+    do {
+      const response = await dynamoClient().send(
+        new ScanCommand({
+          TableName: dynamoTable(),
+          IndexName: 'targetApp-index',
+          ExclusiveStartKey,
+        }),
+      );
+      for (const item of response.Items ?? []) {
+        const runId = item.runId?.S;
+        const targetApp = item.targetApp?.S;
+        if (!runId || !targetApp) continue;
+        entries.push({
+          runId,
+          targetApp,
+          status: item.status?.S,
+          createdAt: item.createdAt?.S,
+          updatedAt: item.updatedAt?.S,
+        });
+      }
+      ExclusiveStartKey = response.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+
+    return entries;
+  });
 }
 
 export async function putRunArtifact(
