@@ -90,7 +90,8 @@ FastAPI backend **and** any UI required by `deliveryProfile` / PRD section 11 / 
 Implement using all upstream handoff artifacts in Context.
 
 **Step 0 — route manifest (MANDATORY — do this before writing any file)**
-Extract every METHOD + path from the design **API surface** heading and write a numbered manifest:
+Extract EVERY METHOD + path from the design **API surface** heading — for EVERY entity the design
+describes, not just the first one or two — and write a numbered manifest:
   # Route manifest:
   # 1. POST   /items          status=201
   # 2. GET    /items          status=200  list[ItemOut]
@@ -100,6 +101,17 @@ Extract every METHOD + path from the design **API surface** heading and write a 
 Do NOT write a single file until every route has a planned: handler + router file + request
 schema + response schema. After writing all files, verify manifest is fully covered.
 Missing any route = the agent must catch it here, not during re-run.
+
+**Do not silently narrow an entity's operations.** If the design gives an entity full CRUD
+(GET-list, GET-by-id, POST, PATCH/PUT, DELETE), the manifest must include all of those operations
+for that entity — implementing only list+create for one entity while giving another entity full
+CRUD, with no stated reason, is a scope gap, not an acceptable simplification.
+
+**Safety valve (the only acceptable way to reduce scope):** if a specific route genuinely cannot be
+implemented (e.g. it depends on an external system this run has no credentials/access for), do NOT
+drop it from the manifest silently. Mark it `# NOT IMPLEMENTED: <method> <path> — <specific reason>`
+in the manifest AND repeat that exact line in the `### not_implemented` section of your final handoff
+summary (Step 5b). A route that is simply absent, with no NOT IMPLEMENTED line anywhere, is a bug.
 
 **Step 0b — UI manifest (Pattern C / requiresStreamlit ONLY — skip for API-only apps)**
 When `deliveryProfile.requiresStreamlit` is true, build a second manifest from design §4 + PRD roles:
@@ -130,8 +142,14 @@ implementation before writing any file. This is the FR equivalent of the route m
 
 Rules — apply to every FR regardless of domain:
 - Map EVERY FR/NFR to exactly one layer: API route, Depends() guard, Streamlit section/form,
-  service method, config setting, or "explicit out-of-scope (PRD assumption N)"
-- No FR may be left unmapped — an unmapped FR = implementation gap = must resolve before coding
+  service method, or config setting.
+- No FR may be left unmapped, and **"out of scope" is not a valid mapping by itself**. An FR/NFR
+  that genuinely cannot be implemented (e.g. it depends on an external system this run has no
+  access to) must be tagged `NOT IMPLEMENTED: <FR/NFR id> — <specific reason>` in this checklist,
+  AND that exact line must be repeated in the `### not_implemented` section of the final handoff
+  summary (Step 5b). Difficulty, time, or "keeping it simple" are never valid reasons — only a
+  genuine external blocker is. A checklist row with no implementation and no NOT IMPLEMENTED tag
+  is a bug, not an accepted scope reduction.
 - UI-scope FRs (anything describing what a user sees, cannot see, or can access):
   implementation goes in streamlit_app.py — an API 403 alone does NOT satisfy a UI visibility FR
 - Cross-cutting NFRs (auth, rate-limiting, audit, observability): name the file/layer that handles them
@@ -261,8 +279,19 @@ Rules — apply to every FR regardless of domain:
       dedicated `/{id}/<action>` sub-path. Do NOT also add a bare `PATCH/PUT /{id}` route that
       takes the same request schema as the dedicated action route — see "Never ship a bare-id
       update route that clones a dedicated action route" below; it's a hard-fail validation check.
-3b. Implement business logic from design **Rules** and PRD **acceptance criteria**.
+3b. Implement EVERY business rule stated in design **Rules** and PRD **acceptance criteria** — these
+    are mandatory, not optional polish, and are NOT satisfied by a plain CRUD handler with no guard.
+    This explicitly includes, whenever the design/PRD states them: status/state transitions and which
+    transitions are legal, capacity/quota limits, permission/role gating beyond basic auth, sequencing
+    or ordering rules (e.g. "X must happen before Y"), and validation tied to a specific acceptance
+    criterion. Do not implement a weaker version of a stated rule (e.g. a status column with no
+    transition guard when the design specifies which transitions are legal) and do not skip a rule
+    because it takes more code than a plain CRUD handler.
     Return error shapes consistent with the API surface error contract.
+    **Safety valve:** if a specific rule genuinely cannot be implemented (e.g. it depends on an
+    external system this run has no access to), do not implement a silent no-op or a weaker
+    substitute — add `NOT IMPLEMENTED: <rule as stated> — <specific reason>` to the `### not_implemented`
+    section of the handoff summary (Step 5b) instead.
 3c. MongoDB: motor async. Never SQLAlchemy for MongoDB collections.
 3d. Write **baseline smoke tests** (one happy-path per route; 404/422 where design specifies).
     conftest.py MUST set DATABASE_URL env var BEFORE importing from app — see test section.
@@ -385,7 +414,19 @@ Rules — apply to every FR regardless of domain:
 After all files are written and the checklist above is done:
   1. Call `dev_validate_app(service=targetApp, run_pytest=True)` — must end with
      `VALIDATION PASSED` in the tool output. Fix every failure and call again.
-  2. **Never** tell the user the app is "fully functional" if import or pytest failed.
+  2. **`### not_implemented` section — mandatory in every handoff summary, no exceptions.**
+     If the Step 0 route manifest, Step 0c FR checklist, and Step 3b business rules were all fully
+     covered, write exactly:
+       ### not_implemented
+       None.
+     If ANY route, FR/NFR, or business rule was genuinely not implementable, list every one here,
+     one line per item, reusing the exact tags from Step 0/0c/3b:
+       ### not_implemented
+       NOT IMPLEMENTED: DELETE /api/v1/widgets/{id} — design requires calling an external
+         inventory system this run has no credentials for.
+     **Do not** claim the app is "fully functional," "complete," or fully covers the design/PRD when
+     this section lists any items — state the gap explicitly instead of a general success claim.
+  3. **Never** tell the user the app is "fully functional" if import or pytest failed.
      SEED_BCRYPT: non-blocking when seed SQL uses `__BCRYPT_PLACEHOLDER__` with a documented
      password comment (pipeline materializes hashes via `apply_sql_to_rds.py`). Blocking when
      a real bcrypt hash in the seed SQL doesn't match the documented password. Either way, when
@@ -393,7 +434,7 @@ After all files are written and the checklist above is done:
      "⚠ Run `python scripts/apply_sql_to_rds.py --target-app <app>` (or
      `python agents/_shared/materialize_seed_passwords.py --target-app <app>`) before
      testing RDS login — seed passwords are not active until this runs."
-  3. Common fixes the validator catches:
+  4. Common fixes the validator catches:
      - `CurrentUser = Depends()` → use `current_user: CurrentUser` only (no `= Depends()`)
      - Parameter order: `CurrentUser` / `DbSession` before `Query(default=...)` params
      - SQLite Date columns: use `date(2024, 1, 1)` in test fixtures, not `"2024-01-01"` strings
@@ -2833,17 +2874,20 @@ def _parse_orm_models(models_dir: Path) -> dict[str, dict[str, tuple[str, bool]]
     return orm_map
 
 
-def validate_schema_parity(service_dir: Path) -> list[str]:
+def validate_schema_parity(service_dir: Path) -> tuple[list[str], list[str]]:
     """Compare the applied Postgres schema against the static ORM models.
 
     DB side: introspects information_schema.columns for the app's applied schema
     (same connection approach as _shared/derive_enums.py). ORM side: static text
     parse of app/models/*.py — models are never imported, so this can't crash on
-    app-specific import errors. Returns a list of error strings (empty = OK);
-    a non-empty list fails the developer step the same way validate_rds_parity
-    and validate_users_auth_columns do.
+    app-specific import errors. Returns (errors, warnings): a non-empty `errors` list
+    fails the developer step the same way validate_rds_parity and
+    validate_users_auth_columns do; `warnings` are surfaced in the report but never
+    block (PART 4a fix — an unmodeled table used to be a silent print(), now it's a
+    reported, non-blocking warning; see the `db_tables - orm_tables` loop below).
     """
     errors: list[str] = []
+    warnings: list[str] = []
     app = service_dir.name
 
     try:
@@ -2876,13 +2920,13 @@ def validate_schema_parity(service_dir: Path) -> list[str]:
             f"this usually means the AWS SSO session expired or RDS is unreachable, NOT a code "
             f"bug. Run `aws sso login --profile aryan-sdlc` and retry. The check is blocking "
             f"because it cannot verify ORM/DB parity without a live connection."
-        ]
+        ], []
     except Exception as exc:
         return [
             f"schema_parity: failed to introspect the applied DB schema ({exc!r}) — the DB may "
             f"not have been applied, or the schema is malformed. This check must run against the "
             f"real Postgres schema and cannot be skipped."
-        ]
+        ], []
 
     orm_map = _parse_orm_models(service_dir / "app" / "models")
 
@@ -2896,12 +2940,16 @@ def validate_schema_parity(service_dir: Path) -> list[str]:
         )
 
     for table in sorted(db_tables - orm_tables):
-        # Judgment call: a DB table with no ORM model may be intentional (e.g. an
-        # association/join table with no Python-side model) — note only, not a
-        # blocking error, so it never triggers _fail.
-        print(
-            f"[schema_parity] NOTE: DB table '{table}' (schema '{app_schema}') has no "
-            "matching ORM model — skipped comparison"
+        # PART 4a fix: a DB table with no ORM model may be intentional (e.g. an
+        # association/join table with no Python-side model) — still NOT a blocking
+        # error, so this never triggers _fail — but it must be visible, not a silent
+        # print() that only appears with -v. It's collected as a warning and surfaced
+        # in every validation report (see run_service_validation's `_warn` wiring).
+        warnings.append(
+            f"schema_parity: DB table '{table}' (schema '{app_schema}') has no matching "
+            "ORM model — comparison skipped for this table. If intentional (e.g. an "
+            "association/join table with no Python-side model), no action needed; "
+            "otherwise add app/models/<entity>.py for it."
         )
 
     for table in sorted(db_tables & orm_tables):
@@ -2935,7 +2983,7 @@ def validate_schema_parity(service_dir: Path) -> list[str]:
                     f"{'allows NULL' if orm_nullable else 'is NOT NULL'}"
                 )
 
-    return errors
+    return errors, warnings
 
 
 def _validation_env(
@@ -3477,13 +3525,15 @@ def _run_validation_steps(
             )
             return _fail("no_invented_auth_headers", detail)
         _ok("no_invented_auth_headers")
-    schema_parity_errors = validate_schema_parity(service_dir)
+    schema_parity_errors, schema_parity_warnings = validate_schema_parity(service_dir)
     if schema_parity_errors:
         detail = "SCHEMA_PARITY FAILED (applied DB vs ORM models):\n" + "\n".join(
             f"  - {e}" for e in schema_parity_errors
         )
         return _fail("schema_parity", detail)
     _ok("schema_parity")
+    for warn in schema_parity_warnings:
+        _warn(warn)
     for warn in validate_rds_parity_warnings(service_dir):
         _warn(f"rds_parity: {warn}")
 
@@ -3512,6 +3562,15 @@ def _run_validation_steps(
     for msg in validate_ui_parity(service_dir, _REPO_ROOT):
         if " WARN:" in msg:
             _warn(f"ui_parity: {msg}")
+
+    # PART 4b: additive, WARN-only completeness check (built app vs design doc).
+    # Never blocks — deliberately not gated behind `if completeness_errors: return _fail(...)`
+    # anywhere. See _shared/validate_completeness.py for why this exists alongside the
+    # (blocking) check_design_routes_implemented above.
+    from _shared.validate_completeness import check_completeness_against_design
+
+    for warn in check_completeness_against_design(service_dir, _REPO_ROOT):
+        _warn(warn)
 
     if (service_dir / "app" / "startup_checks.py").is_file():
         startup_env = {**os.environ, **_parse_dotenv_file(service_dir / ".env.example")}

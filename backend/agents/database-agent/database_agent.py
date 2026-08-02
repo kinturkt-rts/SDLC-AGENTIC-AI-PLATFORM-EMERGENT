@@ -67,7 +67,11 @@ _SEED_MAX_ROWS = os.getenv("SEED_MAX_ROWS", "10")
 DEFAULT_PIPELINE_TASK = """\
 Implement the database layer as a DB developer using Context handoff.
 1. db_read_file(designDocPath) — §3 (tables) and §6 (migration order + seed).
-2. If prdPath is in Context, db_read_file(prdPath) — validate every RDS table maps to PRD §7 or design §3; skip entities that live in Athena/S3/Jira only.
+2. If prdPath is in Context, db_read_file(prdPath) — build the FULL list of distinct entities/concepts
+   from design §3 UNION PRD §7 (the brief's own entity list, not just whatever design §3 already has).
+   Every entity in that union gets a table UNLESS it is genuinely external-system data that cannot be
+   persisted in Postgres/MongoDB (see "PRD / design scope" below) — and any such skip MUST be named
+   explicitly in the schema_summary reply, never omitted silently.
 3. db_list_tree dbOutputDir; db_write_file idempotent scripts under preferredSqlPath (and nosql/ only if design requires MongoDB).
 4. When `applyToRdsAfterWrite` is true in Context: write sql/ only — the host applies files to RDS after this run (do not call postgres_run_query).
    MongoDB MCP (if present): apply nosql/ scripts when design requires document storage.
@@ -132,16 +136,36 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 | `applyToRdsAfterWrite` | Context JSON | When true, write sql/ only; host runs apply script after agent completes |
 | `seedMinRows` / `seedMaxRows` | Context JSON | Dev seed row targets per RDS table (see Artifacts) |
 
-## PRD / design scope (required before any DDL)
-1. Create **only** tables listed in design **§3** (architect already trimmed to PRD).
-2. Cross-check `prdPath` §7: include a table only if the app must **persist** that entity in Postgres/MongoDB.
-3. **Do not** add RDS tables for:
+## PRD / design scope (required before any DDL) — NO SILENT DROPS
+
+**Rule: every distinct entity/concept described in the brief/PRD/design doc gets a table.**
+Build the entity list from the UNION of design **§3** and PRD **§7** (and the raw brief when no PRD
+is set) — design §3 is a starting point, not a ceiling. If the PRD/brief names an entity that design
+§3 omitted, add the table anyway; do not treat an incomplete design doc as license to under-build.
+Do not shrink scope to keep the schema "simple," "minimal," or to hit any particular table count —
+there is no target table count. A 15-entity brief should produce roughly 15 tables, not a
+convenient-sounding subset.
+
+1. Enumerate every entity/concept in design §3 UNION PRD §7 (or the raw brief) **before writing any
+   file**, as a numbered list in your `schema_summary` reply — this is the DB equivalent of a route
+   manifest. Every listed entity must then be traceable to either a table, or an explicit skip (rule 2).
+2. **The only acceptable reason to skip a table is that the entity is genuinely external-system data
+   that cannot be persisted in Postgres/MongoDB** — not "the app doesn't strictly need it" and not
+   "to keep the schema small." Known genuine-skip categories:
    - **Cost Record** / CUR line items → Athena + S3 (query at runtime, not migrated here)
    - **External Jira ticket body** → Jira API; app stores link rows only
    - **Executive summary files** → S3; `executive_summaries` holds keys/metadata only
+   Two related concepts may legitimately collapse into one table (e.g. a status-history concept
+   folded into an `audit_log` table) — that is fine, and is NOT a drop, as long as every source
+   entity is still represented by a column or a row type in the table you chose.
+3. **Every skip or merge MUST be stated explicitly** in `schema_summary` — one line per skipped/merged
+   entity, e.g. `SKIPPED: CostRecord — lives in Athena/S3, not RDS (per design §3 note)` or
+   `MERGED: StatusHistory -> audit_log.event_type column`. A skip that is not written out in the
+   reply is treated as a dropped entity, not an intentional decision — **silence is not a valid skip.**
 4. **`jira_tickets` (FR-6):** required when design §3 lists it — stores `recommendation_id`, `jira_key`, `jira_url`
    after approve. This is the app's foreign link to Jira, not a duplicate of Jira's database.
-5. Do not invent tables, columns, or migrations absent from design §3/§6.
+5. Do not invent tables, columns, or migrations for entities that are not described anywhere in the
+   brief/PRD/design doc — this rule is about not padding scope, not about permission to drop scope.
 
 ## Artifacts
 Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `target-apps/<service>/db/` locally):

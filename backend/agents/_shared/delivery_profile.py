@@ -60,6 +60,17 @@ _API_ONLY_DELIVERY = re.compile(
     re.IGNORECASE,
 )
 
+# PART 1 fix: explicit "no frontend at all" statements. Distinct from _API_ONLY_DELIVERY
+# (which needs "api-only" + app/delivery/service/backend/mode) because briefs commonly
+# phrase this more plainly ("no frontend needed", "backend-only", "no UI").
+_NO_FRONTEND_EXPLICIT = re.compile(
+    r"\bno\s+frontend\b|"
+    r"\bwithout\s+(?:a\s+)?frontend\b|"
+    r"\bbackend[- ]only\b|"
+    r"\bno\s+(?:ui|user\s+interface|client\s+ui|web\s+ui)\b",
+    re.IGNORECASE,
+)
+
 
 def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pattern[str]) -> bool:
     has_marker = any(marker in text_lower for marker in markers)
@@ -71,17 +82,33 @@ def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pat
 
 
 def scan_delivery_text(text: str) -> dict[str, Any]:
-    """Infer delivery profile flags from PRD, input brief, or design markdown."""
+    """Infer delivery profile flags from PRD, input brief, or design markdown.
+
+    Decision order (PART 1 fix — highest priority first):
+      1. Explicit "no frontend" / API-only / backend-only -> no UI at all, full stop.
+      2. Explicit Streamlit mention (and not negated) -> Streamlit.
+      3. Explicit React mention (and not negated), OR a UI is required (e.g. a generic
+         "web UI" phrase) but no specific frontend technology was named -> React.
+         React — not Streamlit — is the default frontend; Streamlit is opt-in only.
+    """
     lower = text.lower()
+    no_frontend_explicit = bool(
+        _NO_FRONTEND_EXPLICIT.search(lower) or _API_ONLY_DELIVERY.search(lower)
+    )
     requires_streamlit = _feature_required(lower, _STREAMLIT_MARKERS, _STREAMLIT_NEGATED)
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
-    api_only_delivery = bool(_API_ONLY_DELIVERY.search(lower)) and not requires_streamlit
     generic_ui_required = _feature_required(lower, _GENERIC_UI_MARKERS, _GENERIC_UI_NEGATED)
-    ui_required = (
-        requires_streamlit
-        or requires_react
-        or (not api_only_delivery and generic_ui_required)
-    )
+    ui_required = requires_streamlit or requires_react or generic_ui_required
+
+    if no_frontend_explicit:
+        # Explicit "no frontend" wins over any UI marker found in this same text.
+        ui_required = False
+        requires_streamlit = False
+        requires_react = False
+    elif ui_required and not requires_streamlit and not requires_react:
+        # UI needed, no specific tech named -> default to React (never Streamlit).
+        requires_react = True
+
     ui_pattern: str | None = None
     if requires_streamlit:
         ui_pattern = "streamlit"
@@ -93,18 +120,27 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
         "requiresStreamlit": requires_streamlit,
         "requiresReact": requires_react,
         "uiPattern": ui_pattern,
+        "noFrontendExplicit": no_frontend_explicit,
         "streamlitPath": "ui/streamlit_app.py",
         "streamlitRequirementsPath": "ui/requirements.txt",
     }
 
 
 def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
-    """Combine profiles from input brief and PRD (logical OR on requirement flags)."""
+    """Combine profiles from input brief and PRD.
+
+    Logical OR on requirement flags — EXCEPT (PART 1 fix) an explicit "no frontend" /
+    API-only / backend-only signal in ANY profile overrides all others. The brief is
+    the source of truth: a deliberate "no frontend needed" statement must win over a
+    stray UI-technology mention picked up elsewhere (e.g. leftover menu wording in a
+    generated PRD) — that mismatch was the exact bug this fix addresses.
+    """
     merged: dict[str, Any] = {
         "uiRequired": False,
         "requiresStreamlit": False,
         "requiresReact": False,
         "uiPattern": None,
+        "noFrontendExplicit": False,
         "streamlitPath": "ui/streamlit_app.py",
         "streamlitRequirementsPath": "ui/requirements.txt",
     }
@@ -116,8 +152,19 @@ def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
             merged["requiresStreamlit"] or profile.get("requiresStreamlit")
         )
         merged["requiresReact"] = bool(merged["requiresReact"] or profile.get("requiresReact"))
+        merged["noFrontendExplicit"] = bool(
+            merged["noFrontendExplicit"] or profile.get("noFrontendExplicit")
+        )
         if profile.get("uiPattern"):
             merged["uiPattern"] = profile["uiPattern"]
+
+    if merged["noFrontendExplicit"]:
+        merged["uiRequired"] = False
+        merged["requiresStreamlit"] = False
+        merged["requiresReact"] = False
+        merged["uiPattern"] = None
+        return merged
+
     if merged["requiresStreamlit"]:
         merged["uiPattern"] = "streamlit"
     elif merged["requiresReact"] and not merged["uiPattern"]:
@@ -125,6 +172,10 @@ def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
     merged["uiRequired"] = bool(
         merged["uiRequired"] or merged["requiresStreamlit"] or merged["requiresReact"]
     )
+    if merged["uiRequired"] and not merged["requiresStreamlit"] and not merged["requiresReact"]:
+        # UI needed, no specific tech named by any profile -> default to React.
+        merged["requiresReact"] = True
+        merged["uiPattern"] = "react"
     return merged
 
 
