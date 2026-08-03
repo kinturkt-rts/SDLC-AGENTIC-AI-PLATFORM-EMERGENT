@@ -183,7 +183,12 @@ export default function ArtifactsPage() {
       )}
 
       <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
-        <DialogContent className={cn('border-white/[0.08] bg-card', preview?.imageUrl ? 'max-w-4xl' : 'max-w-5xl')}>
+        <DialogContent
+          className={cn(
+            'max-h-[90vh] overflow-y-auto border-white/[0.08] bg-card',
+            preview?.imageUrl ? 'max-w-4xl' : 'max-w-5xl',
+          )}
+        >
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
             <DialogDescription className="truncate">
