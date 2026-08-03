@@ -45,10 +45,16 @@ _PLACEHOLDER_RE = re.compile(r"change-me", re.IGNORECASE)
 # these must match live infra state, not whatever the developer-agent LLM guessed.
 _DETERMINISTIC_OVERRIDES = {"DATABASE_URL", "POSTGRES_SCHEMA", "CORS_ORIGINS"}
 
-# The only local dev frontends this platform runs (Vite React :5173, generic :3000).
-# Never trust .env.example's CORS_ORIGINS — developer-agent has guessed
-# Streamlit-only ports here before, which CORS-blocks the React dev server.
-_LOCAL_CORS_ORIGINS = '["http://localhost:5173","http://localhost:3000"]'
+# Local Vite/React + common Next ports. Include a small 5173–5176 range because
+# Vite bumps the port when another app already holds 5173 (movie-vault + property-
+# manage side-by-side). Also allow 127.0.0.1 origins — browsers treat those as
+# distinct from localhost for CORS.
+_LOCAL_CORS_ORIGINS = (
+    '["http://localhost:5173","http://localhost:5174","http://localhost:5175",'
+    '"http://localhost:5176","http://localhost:3000",'
+    '"http://127.0.0.1:5173","http://127.0.0.1:5174",'
+    '"http://127.0.0.1:5175","http://127.0.0.1:5176"]'
+)
 
 
 def _app_dir(target_app: str, repo_root: Path) -> Path:

@@ -77,7 +77,7 @@ _JWT_AUTH_SCREEN_SECTION = """\
       setIsAuthenticated(isSessionValid());
       setLoading(false);
     }, []);
-    if (loading) return <div className="loading">Loading...</div>;
+    if (loading) return <div className="p-8 text-muted-foreground">Loading...</div>;
     if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
   Do the same re-check after handleLogout clears the token (set isAuthenticated back to false directly; do not re-derive it)."""
 
@@ -95,7 +95,7 @@ _API_KEY_AUTH_SCREEN_SECTION = """\
       setIsAuthenticated(isSessionValid());
       setLoading(false);
     }, []);
-    if (loading) return <div className="loading">Loading...</div>;
+    if (loading) return <div className="p-8 text-muted-foreground">Loading...</div>;
     if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
   On logout, call clearCredential() (never remove the localStorage key directly — it also clears the stored role), then set isAuthenticated back to false directly (do not re-derive it). api.ts already calls clearCredential() internally when any API call returns 401 — catch errors from api calls in the calling component and re-check isSessionValid() (or just call setIsAuthenticated(false)) so a rejected credential sends the user back to the paste-key screen."""
 
@@ -140,8 +140,21 @@ Your job: write the React screens for this app.
 Scope rules:
 - Use only the endpoints that exist in the OpenAPI spec. Never invent endpoints.
 - Keep the number of files small. Prefer editing src/App.tsx and adding a few
-  components under src/. Do not add routing libraries or UI kits.
-- Use plain React with TypeScript. Style with the CSS classes described below, not inline styles.
+  components under src/components/. The project already includes
+  react-router-dom and a shadcn/ui component library under src/components/ui/
+  — use both. Do NOT add a different routing library or component library, and
+  do NOT add routing or UI-kit dependencies to package.json.
+- Use plain React with TypeScript. Style with shadcn/ui components and Tailwind
+  utility classes (see STYLING RULES below), never hand-written CSS or inline styles.
+
+COVERAGE RULE — read this before you start:
+- Build UI for EVERY route the backend OpenAPI spec exposes. Do not skip any.
+  In particular: every GET /<entity>/{id} route MUST have a way to reach it in
+  the UI. When a list/table has rows, make each row open a detail view for that
+  item (a screen or a Dialog) that calls GET /<entity>/{id} and shows the full
+  record. A list screen alone does NOT cover the entity's detail route.
+- Before finishing, mentally walk the OpenAPI route list and confirm each route
+  is called from some screen or action. A route with no UI is a defect.
 
 API rules:
 {{AUTH_SCREEN_SECTION}}
@@ -163,35 +176,113 @@ TypeScript build rules. The code must pass a strict tsc build. Follow exactly:
     }
 - No unused imports, variables, or interfaces. Declare only what you use.
 - Always provide a type argument to apiGet, apiPost, apiPut, apiPatch, and apiDelete so the response is typed, e.g. apiGet<ProductListResponse>('/products') or apiPost<LoginResponse>('/auth/login', body). For apiDelete that returns no content, use apiDelete<void>(path). Never call them without a type argument, or the response is 'unknown' and the build fails when you access properties.
-STYLING RULES. A global stylesheet (src/index.css) provides a dark navy theme with a teal accent. It is already imported. You MUST style screens using its CSS classes. Do NOT write inline styles for colors, backgrounds, borders, padding, or layout. Do NOT set any color or backgroundColor. The theme handles all visual styling. If you write style={{ backgroundColor: ... }} or hardcode colors, you have done it wrong.
+STYLING RULES. This project uses Tailwind CSS and a shadcn/ui component library.
+src/index.css already wires up the full color/radius token set (dark navy
+surfaces, teal "primary" accent) via Tailwind's @theme — you never touch it.
+Every component under src/components/ui/ (button, input, label, select,
+table, card, badge, dialog, alert) is pre-built and already styled to that
+theme. You MUST style screens by importing and using these components plus
+Tailwind utility classes (e.g. className="flex items-center gap-2", or
+semantic color utilities like bg-primary, text-muted-foreground, border-border).
+Do NOT write inline styles for colors, backgrounds, or borders. Do NOT invent
+your own button/card/badge/table markup — use the matching component. Do NOT
+write or add any CSS file. If you write style={{ backgroundColor: ... }} or
+hardcode a hex color, you have done it wrong.
 
-Available classes:
-- Layout: "app-shell" (flex wrapper), "sidebar" + "sidebar-brand" + "nav" + "nav-item" (add "active" for current), "main" (content area).
-- Top of a screen: "topbar" containing an <h1> and optional action button.
-- Cards: "card" (raised panel), "card-header", "card-title". Use cards to group content.
-- Grid of tiles: "grid" containing "stat" tiles, each with "stat-value" and "stat-label".
-- Tables: wrap in <div className="table-wrap">, use <table className="data">. Right-align numeric cells with className="num". Use className="mono" for codes/SKUs.
-- Buttons: "btn" (default), "btn btn-primary" (main action, teal), "btn btn-danger" (destructive). Never style buttons inline.
-- Forms: wrap each field in <div className="field"> with a <label> and an <input className="input"> (also use "input" on <select> and <textarea>).
-- Foreign-key inputs: never ask the user to type a raw id/UUID. When a create/edit form has a field that references another entity (e.g. an instructor, a doctor, a resource), fetch that entity's list from its API endpoint and render a <select className="input"> whose options show the human-readable name and whose value is the id. Submit the chosen id. If the list endpoint is unavailable, fall back to a plain input but this should be rare. Worked example (copy this pattern, adapting names):
+HARD RULE — Tailwind @theme spacing names: NEVER add --spacing-xs, --spacing-sm,
+--spacing-md, --spacing-lg, --spacing-xl (or other named size keys) to @theme in
+src/index.css or anywhere else. In Tailwind v4, max-w-sm / w-sm prefer
+--spacing-* over --container-*, so a 12px --spacing-sm collapses every
+max-w-sm Card (login, dialogs) into a thin vertical strip. Use numeric utilities
+(p-4, gap-2, max-w-sm as shipped) only. src/index.css is fixed template infra.
+
+HARD RULE — fixed infra, never touch: NEVER create, edit, or regenerate any
+file under src/components/ui/, or src/Shell.tsx, or src/lib/utils.ts, or
+src/index.css. These are fixed template infrastructure; any write to one of
+them is silently discarded. You only write screens under src/components/ (a
+new file per screen/widget) and wire them into src/App.tsx.
+
+Old-class -> new-component lookup (this app has no hand-written CSS classes —
+if you find yourself wanting to write className="btn" or similar, use the
+matching component below instead):
+- Layout shell (was "app-shell"/"sidebar"/"nav-item"/"main"): already built at
+  src/Shell.tsx. You never write shell markup — you only pass it navItems,
+  onNavigate, onLogout, and children (see ROUTING RULES below).
+- Topbar (was "topbar"): a plain flex row, e.g. <div className="flex items-center justify-between mb-8"> wrapping an <h1> and an action <Button>.
+- Cards (was "card"/"card-header"/"card-title"): <Card>, <CardHeader>, <CardTitle>, <CardContent> from '@/components/ui/card'.
+- Stat tiles (was "grid"/"stat"/"stat-value"/"stat-label"): a <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]"> of <Card>/<CardContent> tiles.
+- Tables (was "table-wrap"/"data"/"num"/"mono"): <Table>, <TableHeader>, <TableRow>, <TableHead>, <TableBody>, <TableCell> from '@/components/ui/table'. Right-align numeric cells with className="text-right tabular-nums". Use className="font-mono tabular-nums" for codes/SKUs.
+- Buttons (was "btn"/"btn-primary"/"btn-danger"): <Button> from '@/components/ui/button'. Default variant is the main teal action (was "btn-primary"). variant="secondary" is a plain button (was bare "btn"). variant="destructive" is a destructive action (was "btn-danger"). Never style a <button> by hand.
+- Forms (was "field"/"input"): <Label> + <Input> from '@/components/ui/label' and '@/components/ui/input', each field wrapped in <div className="space-y-2">. Keep create/edit forms INLINE inside a <Card> on the screen itself (toggle a "showForm" state, same pattern as before) — do NOT put create/edit forms in a Dialog.
+- Delete/confirm prompts: <Dialog>/<DialogContent>/<DialogHeader>/<DialogTitle>/<DialogFooter> from '@/components/ui/dialog'. Dialog is for delete/confirm prompts ONLY — never for create/edit forms.
+- Foreign-key selects: <Select>/<SelectTrigger>/<SelectValue>/<SelectContent>/<SelectItem> from '@/components/ui/select' — see the worked example below.
+- Status pills (was "badge badge-success"/"badge-warn"/"badge-danger"): <Badge variant="success">, <Badge variant="warning">, <Badge variant="destructive"> from '@/components/ui/badge'.
+- States (was "loading"/"empty"/"alert alert-error"): "loading" and "empty" are plain text, e.g. <p className="text-center py-8 text-muted-foreground">Loading...</p>. Errors use <Alert variant="destructive"><AlertDescription>...</AlertDescription></Alert> from '@/components/ui/alert'.
+- Auth screens (was "center-screen"/"auth-card"/"auth-title"/"auth-sub"): <div className="min-h-screen flex items-center justify-center p-5"> wrapping a <Card className="w-full max-w-sm"> (<CardHeader><CardTitle>...</CardTitle></CardHeader>) plus a <p className="text-sm text-muted-foreground text-center"> subtitle. Use flex, NOT `grid place-items-center` — a `justify-items: center` grid item with no explicit column width does not stretch to accept a percentage width, so the Card's `w-full` has nothing to resolve against and collapses to a sliver. flex's centered items still resolve percentage widths against the flex container's own width correctly.
+- Helpers (was "muted"): className="text-muted-foreground" directly — no component needed.
+
+Foreign-key selects — never ask the user to type a raw id/UUID. When a
+create/edit form has a field that references another entity (e.g. an
+instructor, a doctor, a resource), fetch that entity's list from its API
+endpoint and render a shadcn <Select> whose items show the human-readable name
+and whose value is the id. Submit the chosen id. If the list endpoint is
+unavailable, fall back to a plain <Input> but this should be rare. Worked
+example (copy this pattern, adapting names):
     const [users, setUsers] = useState<User[]>([]);
     useEffect(() => { apiGet<User[]>('/api/v1/users').then(setUsers); }, []);
-    <select className="input" value={form.instructorUserId} onChange={(e) => setForm({ ...form, instructorUserId: e.target.value })}>
-      <option value="">Select an instructor…</option>
-      {users.map((u) => (
-        <option key={u.id} value={u.id}>{u.full_name ?? u.username}</option>
-      ))}
-    </select>
-- Status pills: "badge badge-success", "badge badge-warn", "badge badge-danger".
-- States: "loading" (loading text), "empty" (empty state), "alert alert-error" (error message).
-- Auth screens: "center-screen" wrapper, "auth-card", "auth-title", "auth-sub".
-- Helpers: "muted" (secondary text).
+    <Select value={form.instructorUserId} onValueChange={(v) => setForm({ ...form, instructorUserId: v })}>
+      <SelectTrigger><SelectValue placeholder="Select an instructor…" /></SelectTrigger>
+      <SelectContent>
+        {users.map((u) => (
+          <SelectItem key={u.id} value={u.id}>{u.full_name ?? u.username}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  Use the placeholder prop on <SelectValue> for the ordinary "choose one" empty
+  state. (An empty-string SelectItem value is not rejected by this installed
+  Select if you ever have a real reason to use one — you don't need to avoid
+  value="" the way some older React Select libraries require.)
 
-Layout pattern for an authenticated app: render an "app-shell" with a "sidebar" (brand + nav-items + logout at bottom) and a "main" area. Each screen inside main starts with a "topbar" (h1 + primary action), then "card" sections.
+ROUTING RULES. The app uses react-router-dom (already installed) and the fixed
+src/Shell.tsx layout. main.tsx (which you never edit) already wraps <App/> in
+<BrowserRouter>. App.tsx must NOT import or render <BrowserRouter>, <Router>,
+<HashRouter>, or <MemoryRouter> — the app is ALREADY wrapped in one. App.tsx
+uses ONLY Routes, Route, and useNavigate from react-router-dom. Rendering any
+<Router> here crashes the app at runtime with "You cannot render a <Router>
+inside another <Router>." Wire them together in App.tsx exactly like the
+placeholder App.tsx already shows:
+    import { Routes, Route, useNavigate } from "react-router-dom";
+    // no BrowserRouter here - it is already in main.tsx
+    import { Shell } from "./Shell";
+    // ... inside App(), after the auth check below ...
+    const navigate = useNavigate();
+    return (
+      <Shell
+        brandName="..."
+        navItems={[{ label: "Owners", to: "/owners" }, /* one entry per screen */]}
+        onNavigate={navigate}
+        onLogout={() => setIsAuthenticated(false)}
+      >
+        <Routes>
+          <Route path="/owners" element={<OwnerList />} />
+          {/* one <Route> per screen, matching navItems */}
+        </Routes>
+      </Shell>
+    );
+- One <Route> per screen inside <Routes>, one entry per screen in navItems —
+  keep the two lists in sync.
+- Nav clicks: Shell already calls its own onNavigate prop internally when a nav
+  row is clicked — you only ever supply navItems (label + to) and
+  onNavigate={navigate}. NEVER call <Link> or useNavigate() directly inside a
+  leaf screen/nav row to navigate; only App.tsx calls useNavigate(), solely to
+  build the onNavigate prop passed to Shell.
+- If the app has multiple roles and a role-gated screen is implied by the
+  design, still add a nav item + <Route> for it, and gate its content with
+  hasRole('<role>') inside the screen itself.
 
 Component and screen wiring rules:
 - If a component renders a control (button/link/form) whose handler is a prop (e.g. onClick={onCreateItem}), that prop MUST NOT be optional, and the PARENT that renders the component MUST pass it, wired to the corresponding screen change or state update. A control bound to an unpassed prop is a defect — the button will silently do nothing.
-- Every screen in the navigation/screen enum must have: (a) a way to navigate to it, (b) a render case, and (c) all callbacks its child components need, wired to real handlers.
+- Every screen in your navItems/<Routes> list must have: (a) a nav entry (unless intentionally hidden), (b) a matching <Route>, and (c) all callbacks its child components need, wired to real handlers.
 - If the app has multiple roles (e.g. an admin role) and role-gated features are implied by the design (e.g. user management), generate the admin UI (nav item + screen) and gate it with hasRole('<role>'). Do not import hasRole without building the gated feature it implies.
 - Null-safety: never call a method (.toFixed, .toUpperCase, .map, .length, etc.) directly on a value that may be null or undefined. API responses may omit optional fields (e.g. a computed GPA, a nullable timestamp). Guard every such access: use `value != null ? value.toFixed(2) : '-'` for numbers, optional chaining (`obj?.field`) for nested access, and `(arr ?? [])` before mapping. A missing value must render as '-' or 'N/A', never crash the component.
 - Resolving reference names: the backend returns raw foreign-key ids (e.g. instructor_user_id) and may or may not also include a sibling name field (e.g. instructor_name) on the same response. If a sibling name field is present, display it, not the raw id. If it is NOT present, fetch the referenced entity's list once and build an id->name lookup map yourself — never leave a bare UUID visible when a name lookup is possible. Worked example (copy this pattern, adapting names):
@@ -202,50 +293,126 @@ Component and screen wiring rules:
     <td>{nameById[course.instructor_user_id] ?? course.instructor_user_id}</td>
   If no list endpoint exists for that entity, fall back to showing the id.
 
-WORKED EXAMPLE of a correct list screen (copy this structure and class usage):
+WORKED EXAMPLE of a correct list screen with an inline create form (copy this
+structure and component usage):
+
+import { useState, useEffect } from 'react';
+import { apiGet, apiPost } from '../api';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export const ItemList: React.FC = () => {
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: '', price: 0 });
 
   // ... fetch logic using apiGet ...
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await apiPost<Item>('/api/v1/items', form);
+    setShowForm(false);
+    // ... reload the list ...
+  };
+
   return (
     <div>
-      <div className="topbar">
-        <h1>Items</h1>
-        <button className="btn btn-primary">Add Item</button>
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-2xl font-bold">Items</h1>
+        <Button onClick={() => setShowForm(true)}>Add Item</Button>
       </div>
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {showForm && (
+        <Card className="mb-5">
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Name</Label>
+                <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit">Save</Button>
+                <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>Cancel</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
       {loading ? (
-        <div className="loading">Loading...</div>
+        <p className="text-center py-8 text-muted-foreground">Loading...</p>
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr><th>Name</th><th className="num">Price</th><th>Status</th></tr>
-              </thead>
-              <tbody>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {items.map((it) => (
-                  <tr key={it.id}>
-                    <td>{it.name}</td>
-                    <td className="num">{it.price != null ? `$${it.price.toFixed(2)}` : '-'}</td>
-                    <td><span className="badge badge-success">Active</span></td>
-                  </tr>
+                  <TableRow key={it.id}>
+                    <TableCell>{it.name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{it.price != null ? `$${it.price.toFixed(2)}` : '-'}</TableCell>
+                    <TableCell><Badge variant="success">Active</Badge></TableCell>
+                  </TableRow>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={3} className="empty">No items found</td></tr>
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center py-8 text-muted-foreground">No items found</TableCell>
+                  </TableRow>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
 };
+
+DETAIL-VIEW EXAMPLE — every GET /<entity>/{id} route needs one of these (a
+screen or, as shown here, a Dialog opened from a row click — either is fine,
+but it MUST call the {id} route):
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Item | null>(null);
+
+  useEffect(() => {
+    if (selectedId == null) return;
+    apiGet<Item>(`/api/v1/items/${selectedId}`).then(setDetail);
+  }, [selectedId]);
+
+  // in the table body:
+  <TableRow key={it.id} onClick={() => setSelectedId(it.id)} className="cursor-pointer">
+    ...
+  </TableRow>
+
+  // detail Dialog:
+  <Dialog open={selectedId != null} onOpenChange={(open) => !open && setSelectedId(null)}>
+    <DialogContent>
+      <DialogHeader><DialogTitle>{detail?.name ?? 'Loading...'}</DialogTitle></DialogHeader>
+      {detail && (
+        <div className="space-y-2 text-sm">
+          <p><span className="text-muted-foreground">Price:</span> {detail.price != null ? `$${detail.price.toFixed(2)}` : '-'}</p>
+          {/* ...every other field on the detail record... */}
+        </div>
+      )}
+    </DialogContent>
+  </Dialog>
 
 The only acceptable inline style is layout spacing for one-off arrangement (e.g. style={{ display: 'flex', gap: 8 }}). Never inline colors, backgrounds, or borders.
 
@@ -561,6 +728,41 @@ def _validate_session_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[
         )
     return True, "[session-gate] PASSED"
 
+
+# Named size keys that collide with Tailwind v4 max-w-* / w-* container utilities
+# when declared as --spacing-<name> in @theme (spacing wins over --container-*).
+_TAILWIND_SPACING_NAME_COLLISION_RE = re.compile(
+    r"--spacing-(?:xs|sm|md|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl)\s*:",
+    re.IGNORECASE,
+)
+
+
+def _validate_tailwind_theme_gate(frontend_dir: Path) -> tuple[bool, str]:
+    """Fail if src/index.css declares named --spacing-sm/md/... @theme keys.
+
+    Tailwind v4 resolves max-w-sm to --spacing-sm when that key exists, instead
+    of --container-sm (24rem). A migration leftover like --spacing-sm: 12px
+    collapses every max-w-sm Card into a ~12px-wide vertical strip (login looks
+    blank). Template index.css must never ship those keys; this gate catches
+    regressions if the template or a write reintroduces them.
+    """
+    index_css = frontend_dir / "src" / "index.css"
+    if not index_css.is_file():
+        return False, "[tailwind-theme-gate] FAILED: src/index.css not found."
+    content = index_css.read_text(encoding="utf-8")
+    match = _TAILWIND_SPACING_NAME_COLLISION_RE.search(content)
+    if match:
+        return False, (
+            "[tailwind-theme-gate] FAILED: src/index.css declares "
+            f"{match.group(0).rstrip(':').strip()} inside the theme. In Tailwind v4, "
+            "max-w-sm prefers --spacing-sm over --container-sm, so a small named "
+            "spacing token collapses every max-w-sm Card into a thin vertical bar. "
+            "Remove --spacing-xs/sm/md/lg/xl (and other named size keys) from @theme; "
+            "keep numeric spacing utilities (p-4, gap-2) and --container-* for max-w-*."
+        )
+    return True, "[tailwind-theme-gate] PASSED"
+
+
 def _validate_role_source_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[bool, str]:
     """Deterministic backstop: api-key apps must resolve the caller's real role
     from the backend, not from a user-chosen placeholder.
@@ -859,31 +1061,63 @@ def _escalated_retry_message(
 # Add this function after _run_frontend_build and before run_task().
 # ==============================================================================
 
+# Exact-path entries: verbatim infra the LLM must never overwrite, each for a
+# reason specific to that one file — not a directory, because each is a single
+# fixed file the LLM has no legitimate reason to regenerate.
+_PROTECTED_PATHS = {
+    "src/api.ts",       # _validate_session_gate / _validate_role_source_gate read
+                         # this file's exact exports (isSessionValid, login, etc.);
+                         # the auth contract is fixed per auth mode, never per-app.
+    "src/Shell.tsx",     # fixed app-shell layout (frontend_agent's Shell design) —
+                         # the LLM only ever supplies data (navItems/onNavigate/
+                         # onLogout) as props, never the shell markup itself.
+    "src/lib/utils.ts",  # shadcn's cn() helper — identical every app, imported by
+                         # every component under src/components/ui/ below.
+    "src/index.css",     # Tailwind @theme tokens — must stay free of named
+                         # --spacing-sm/md/... keys that collapse max-w-sm to 12px.
+}
+# Directory-prefix entry: shadcn's own copied-in primitives (button/input/select/
+# table/card/badge/dialog/alert/...). Identical every app; any per-app variant
+# needs (e.g. badge.tsx's success/warning) are added once at template-authoring
+# time, not by the LLM. Deliberately src/components/ui/ ONLY, NOT src/components/
+# itself — the LLM's own generated screens (OwnerList.tsx etc.) live directly
+# under src/components/ and must stay fully LLM-writable.
+_PROTECTED_DIR_PREFIX = "src/components/ui/"
+
+
+def _is_protected_path(rel_path: str) -> bool:
+    """True if rel_path (as written by the model, possibly with backslashes)
+    is verbatim template infra the LLM must never overwrite — either an exact
+    match in _PROTECTED_PATHS or anything under _PROTECTED_DIR_PREFIX."""
+    norm = rel_path.replace("\\", "/")
+    if norm in _PROTECTED_PATHS:
+        return True
+    return norm.startswith(_PROTECTED_DIR_PREFIX)
+
+
 def _generate_and_write(agent, user_message: str, frontend_dir: Path) -> list[str]:
-    """Call the model, parse the JSON file map, write files (honoring PROTECTED).
-    Returns the list of files written.
+    """Call the model, parse the JSON file map, write files (honoring
+    _is_protected_path). Returns the list of files written.
     """
     response = agent(user_message)
     text = str(response).strip()
- 
+
     # Strip markdown fences if the model added them.
     if text.startswith("```"):
         text = text.split("```", 2)[1]
         if text.startswith("json"):
             text = text[4:]
     text = text.strip()
- 
+
     try:
         files = json.loads(text)
     except json.JSONDecodeError as e:
         raise SystemExit(f"[frontend-agent] model did not return valid JSON: {e}\n{text[:500]}")
- 
+
     written: list[str] = []
-    PROTECTED = {"src/api.ts"}
     skipped: list[str] = []
     for rel_path, content in files.items():
-        norm = rel_path.replace("\\", "/")
-        if norm in PROTECTED:
+        if _is_protected_path(rel_path):
             skipped.append(rel_path)
             continue
         dest = frontend_dir / rel_path
@@ -1058,23 +1292,43 @@ def run_task(
             _generate_and_write(agent, current_message, frontend_dir)
 
             passed, report = _run_frontend_build(frontend_dir)
+            coverage_gap_data: dict[str, Any] | None = None
             if passed:
                 gate_passed, gate_report = _validate_session_gate(frontend_dir, auth_mode)
                 role_passed, role_report = _validate_role_source_gate(frontend_dir, auth_mode)
                 wired_passed, wired_report = _validate_wired_callbacks_gate(frontend_dir, auth_mode)
-                if gate_passed and role_passed and wired_passed:
+                theme_passed, theme_report = _validate_tailwind_theme_gate(frontend_dir)
+                coverage_passed, coverage_report = _validate_route_coverage_gate(
+                    frontend_dir, openapi_path, auth_mode
+                )
+                # WARN-always: printed every attempt, pass or fail, on both the
+                # CLI path and the handoff path (both go through run_task()).
+                print(f"[frontend-agent] {coverage_report}")
+                if (
+                    gate_passed
+                    and role_passed
+                    and wired_passed
+                    and theme_passed
+                    and coverage_passed
+                ):
                     print(f"[frontend-agent] {report}")
                     print(f"[frontend-agent] {gate_report}")
                     print(f"[frontend-agent] {role_report}")
                     print(f"[frontend-agent] {wired_report}")
+                    print(f"[frontend-agent] {theme_report}")
                     print("[frontend-agent] BUILD PASSED. Frontend generated successfully.")
                     return
                 if not gate_passed:
                     passed, report = gate_passed, gate_report
                 elif not role_passed:
                     passed, report = role_passed, role_report
-                else:
+                elif not wired_passed:
                     passed, report = wired_passed, wired_report
+                elif not theme_passed:
+                    passed, report = theme_passed, theme_report
+                else:
+                    passed, report = coverage_passed, coverage_report
+                    coverage_gap_data = _route_coverage_report(frontend_dir, openapi_path, auth_mode)
 
             print("[frontend-agent] BUILD FAILED:")
             print(report)
@@ -1099,6 +1353,8 @@ def run_task(
                     "attempt unfixed — escalating to a targeted retry message.",
                 )
                 current_message = _escalated_retry_message(report, repeated, frontend_dir)
+            elif coverage_gap_data is not None:
+                current_message = _route_coverage_retry_message(report, coverage_gap_data)
             else:
                 current_message = (
                     "The frontend you generated failed to build. Fix ALL errors below and "
@@ -1314,6 +1570,38 @@ def _scrape_frontend_api_calls(frontend_dir: Path) -> list[tuple[str, str]]:
     return calls
 
 
+def _load_spec_routes(openapi_path: Path) -> set[tuple[str, str]] | None:
+    """Load openapi_path and return the set of (METHOD, normalized_path) routes
+    it declares, or None if the file is missing, unreadable as an object, or
+    declares no real-HTTP-method routes.
+
+    Extracted from _check_backend_integration's original inline logic (no
+    behavior change) so both that function and _validate_route_coverage_gate
+    share exactly one implementation of "openapi.json -> normalized route set".
+    Deliberately does NOT catch unexpected exceptions itself (e.g. malformed
+    JSON raises here) — callers that want the old catch-all-degrade-to-"not_run"
+    behavior wrap this call in their own try/except, exactly as the
+    pre-extraction inline code did inside _check_backend_integration's try block.
+    """
+    if not openapi_path.is_file():
+        return None
+    spec = json.loads(openapi_path.read_text(encoding="utf-8", errors="replace"))
+    paths_obj = spec.get("paths") if isinstance(spec, dict) else None
+    if not isinstance(paths_obj, dict) or not paths_obj:
+        return None
+
+    spec_routes: set[tuple[str, str]] = set()
+    for raw_path, methods in paths_obj.items():
+        if not isinstance(methods, dict):
+            continue
+        normalized_path = _normalize_openapi_path(str(raw_path))
+        for method in methods:
+            method_upper = str(method).upper()
+            if method_upper in _METHOD_BY_CALL_SUFFIX.values():
+                spec_routes.add((method_upper, normalized_path))
+    return spec_routes or None
+
+
 def _check_backend_integration(frontend_dir: Path, openapi_path: Path) -> tuple[str, list[str]]:
     """Static-only check: do the generated frontend's scraped API calls map to
     routes declared in the app's openapi.json? Never starts a server, never
@@ -1324,22 +1612,7 @@ def _check_backend_integration(frontend_dir: Path, openapi_path: Path) -> tuple[
     brand-new, report-only check can never break the frontend step that calls it.
     """
     try:
-        if not openapi_path.is_file():
-            return "not_run", []
-        spec = json.loads(openapi_path.read_text(encoding="utf-8", errors="replace"))
-        paths_obj = spec.get("paths") if isinstance(spec, dict) else None
-        if not isinstance(paths_obj, dict) or not paths_obj:
-            return "not_run", []
-
-        spec_routes: set[tuple[str, str]] = set()
-        for raw_path, methods in paths_obj.items():
-            if not isinstance(methods, dict):
-                continue
-            normalized_path = _normalize_openapi_path(str(raw_path))
-            for method in methods:
-                method_upper = str(method).upper()
-                if method_upper in _METHOD_BY_CALL_SUFFIX.values():
-                    spec_routes.add((method_upper, normalized_path))
+        spec_routes = _load_spec_routes(openapi_path)
         if not spec_routes:
             return "not_run", []
 
@@ -1367,6 +1640,233 @@ def _check_backend_integration(frontend_dir: Path, openapi_path: Path) -> tuple[
     except Exception as exc:  # noqa: BLE001 - never let this new check break the frontend step
         print(f"[frontend-agent] backend_integration check failed (non-fatal): {exc!r}", file=sys.stderr)
         return "not_run", []
+
+
+# ==============================================================================
+# Route coverage gate (forward direction): does every backend route have SOME
+# generated UI wiring? Complements _check_backend_integration (which checks the
+# reverse direction: does every frontend call map to a real backend route).
+# Reuses _load_spec_routes, _scrape_frontend_api_calls, and both normalizers
+# unchanged — see this task's design report for why those are safe to share.
+# ==============================================================================
+
+_INFRA_EXCLUDED_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("GET", "/"),
+    ("GET", "/health"),
+})
+
+# JWT apps decode identity client-side (api.ts's getCurrentUser() reads the
+# token) and never call this route from a component; api-key apps genuinely
+# call it from api.ts's login() to resolve the caller's real role, so it must
+# NOT be excluded there. Inferred from auth_mode, never a general allowlist.
+_JWT_DECODED_CLIENT_SIDE_ROUTE: tuple[str, str] = ("GET", "/api/v1/users/me")
+
+# Percentage-based blocking: ON. Backstop for a real gap the entity-level rule
+# can't see on its own — a whole CLASS of screens missing (e.g. every entity's
+# GET-by-id detail route skipped) spreads its misses across many entities, so
+# no single entity goes "fully uncovered" and blocking_entities stays empty.
+# 15% is chosen so a couple of scraper blind-spot false positives (the scraper
+# can only ever over-report gaps, never under-report — see module docstring)
+# don't trip it on an otherwise-healthy app: one stray missed route in a
+# ~20-30 route app is roughly 3-5%, comfortably under 15%. Five missed routes
+# of the same shape (property-manage's real case: every entity's detail route
+# skipped, 5/24 = 20.8% uncovered) is a systemic gap, not scraper noise, and
+# DOES trip it.
+_ROUTE_COVERAGE_PCT_BLOCK_ENABLED = True
+_ROUTE_COVERAGE_PCT_BLOCK_THRESHOLD = 15.0
+
+
+def _excluded_routes_for_coverage(auth_mode: str) -> frozenset[tuple[str, str]]:
+    # Same "anything not literally api-key defaults to jwt" convention already
+    # used throughout this file (_build_frontend_system_prompt, run_task).
+    if auth_mode != "api-key":
+        return _INFRA_EXCLUDED_ROUTES | {_JWT_DECODED_CLIENT_SIDE_ROUTE}
+    return _INFRA_EXCLUDED_ROUTES
+
+
+def _entity_for_route(path: str) -> str:
+    """First meaningful path segment, stripping a leading /api/v<N>/ prefix —
+    the convention every generated backend uses (see this file's own system
+    prompt examples: /api/v1/users, /api/v1/products, ...). Two routes sharing
+    an entity even when one is a sub-path action both group together, e.g.
+    '/api/v1/maintenance-requests' and '/api/v1/maintenance-requests/{*}/assign'
+    both group under 'maintenance-requests'.
+    """
+    stripped = re.sub(r"^/api/v\d+/", "/", path)
+    segments = [s for s in stripped.split("/") if s]
+    return segments[0] if segments else path
+
+
+def _is_entity_root_route(path: str) -> bool:
+    """True when `path` is exactly the entity's collection root — no further
+    sub-path segment beyond the entity name itself. '/api/v1/owners' is root;
+    '/api/v1/maintenance-requests/{*}/assign' and '/api/v1/users/me' are not
+    (each has a segment beyond the entity name)."""
+    stripped = re.sub(r"^/api/v\d+/", "/", path)
+    segments = [s for s in stripped.split("/") if s]
+    return len(segments) == 1
+
+
+def _route_coverage_report(
+    frontend_dir: Path, openapi_path: Path, auth_mode: str = "jwt"
+) -> dict[str, Any] | None:
+    """Forward-direction coverage: for every in-scope backend route, was it hit
+    by at least one scraped frontend call (same METHOD, same normalized path)?
+
+    Returns None when there's nothing confident to check (no openapi routes
+    left after exclusion) — callers must treat None as "pass, nothing to
+    report", never as a gap, mirroring _check_backend_integration's own
+    not_run conservatism. Does not itself scrape frontend calls when there are
+    zero in-scope routes, so a frontend-less/route-less app never fails here.
+
+    BLOCK RULE (final): an entity blocks (ends up in blocking_entities) when it
+    is fully uncovered (zero of its routes matched) AND either (a) it has more
+    than one route, so "fully uncovered" is a real signal distinct from "one
+    missed route" — the scraper's blind spots (see module docstring above) can
+    only produce a false NEGATIVE on a single call, never fabricate hits across
+    every route of a multi-route entity — OR (b) it has exactly one route and
+    that route is a plain GET/POST directly on the entity's collection root
+    (e.g. GET/POST /api/v1/leases). A single-route entity whose lone route is a
+    sub-path action (PUT .../{id}/assign, GET .../me) never blocks on its own:
+    for such an entity "fully uncovered" and "this one route the scraper missed"
+    are the exact same fact, so blocking on it would just be blocking on the
+    scraper's own blind spot, not a genuine missing-feature signal.
+    """
+    spec_routes = _load_spec_routes(openapi_path)
+    if not spec_routes:
+        return None
+    excluded = _excluded_routes_for_coverage(auth_mode)
+    in_scope = spec_routes - excluded
+    if not in_scope:
+        return None
+
+    raw_calls = _scrape_frontend_api_calls(frontend_dir)
+    matched: set[tuple[str, str]] = set()
+    for method, raw_path in raw_calls:
+        normalized = _normalize_frontend_call_path(raw_path)
+        if normalized is None:
+            continue
+        if (method, normalized) in in_scope:
+            matched.add((method, normalized))
+
+    entities: dict[str, dict[str, Any]] = {}
+    for method, path in in_scope:
+        entity = _entity_for_route(path)
+        bucket = entities.setdefault(entity, {"routes": []})
+        bucket["routes"].append((method, path, (method, path) in matched))
+
+    for bucket in entities.values():
+        routes = bucket["routes"]
+        bucket["total"] = len(routes)
+        bucket["covered"] = sum(1 for _, _, ok in routes if ok)
+        bucket["uncovered"] = [f"{m} {p}" for m, p, ok in routes if not ok]
+        bucket["fully_uncovered"] = bucket["covered"] == 0
+        if not bucket["fully_uncovered"]:
+            bucket["blocking"] = False
+        elif bucket["total"] > 1:
+            bucket["blocking"] = True
+        else:
+            lone_method, lone_path, _ = routes[0]
+            bucket["blocking"] = lone_method in ("GET", "POST") and _is_entity_root_route(lone_path)
+        del bucket["routes"]
+
+    total = len(in_scope)
+    covered = len(matched)
+    uncovered = total - covered
+    fully_uncovered_entities = sorted(e for e, b in entities.items() if b["fully_uncovered"])
+    blocking_entities = sorted(e for e, b in entities.items() if b["blocking"])
+
+    return {
+        "total": total,
+        "covered": covered,
+        "uncovered": uncovered,
+        "uncovered_pct": round((uncovered / total) * 100, 1) if total else 0.0,
+        "entities": entities,
+        "fully_uncovered_entities": fully_uncovered_entities,
+        "blocking_entities": blocking_entities,
+    }
+
+
+def _format_route_coverage_report(data: dict[str, Any]) -> str:
+    lines = [
+        f"[route-coverage-gate] {data['covered']}/{data['total']} routes covered "
+        f"({data['uncovered_pct']}% uncovered)"
+    ]
+    for entity in sorted(data["entities"]):
+        bucket = data["entities"][entity]
+        if bucket["blocking"]:
+            tag = " — FULLY UNCOVERED (BLOCKING: no UI wiring at all)"
+        elif bucket["fully_uncovered"]:
+            tag = " — fully uncovered but not blocking (lone route is a sub-path action)"
+        else:
+            tag = ""
+        lines.append(f"  {entity}: {bucket['covered']}/{bucket['total']} covered{tag}")
+        for gap in bucket["uncovered"]:
+            lines.append(f"    - {gap}")
+    return "\n".join(lines)
+
+
+def _validate_route_coverage_gate(
+    frontend_dir: Path, openapi_path: Path, auth_mode: str = "jwt"
+) -> tuple[bool, str]:
+    try:
+        data = _route_coverage_report(frontend_dir, openapi_path, auth_mode)
+    except Exception as exc:  # noqa: BLE001 - never let this gate break the frontend step
+        print(f"[frontend-agent] route-coverage-gate check failed (non-fatal): {exc!r}", file=sys.stderr)
+        return True, "[route-coverage-gate] PASSED (not_run — check failed non-fatally)"
+
+    if data is None:
+        return True, "[route-coverage-gate] PASSED (not_run — no in-scope routes or nothing to check)"
+
+    report = _format_route_coverage_report(data)
+
+    if data["blocking_entities"]:
+        names = ", ".join(data["blocking_entities"])
+        plural = "ies" if len(data["blocking_entities"]) > 1 else "y"
+        return False, (
+            f"{report}\n\n"
+            f"[route-coverage-gate] FAILED: entit{plural} with no UI at all: {names}. "
+            "The backend exposes these but nothing in the generated frontend ever calls them."
+        )
+
+    if _ROUTE_COVERAGE_PCT_BLOCK_ENABLED and data["uncovered_pct"] > _ROUTE_COVERAGE_PCT_BLOCK_THRESHOLD:
+        return False, (
+            f"{report}\n\n[route-coverage-gate] FAILED: {data['uncovered_pct']}% of routes "
+            f"uncovered, exceeds the {_ROUTE_COVERAGE_PCT_BLOCK_THRESHOLD}% threshold."
+        )
+
+    return True, report
+
+
+def _route_coverage_retry_message(report: str, data: dict[str, Any]) -> str:
+    """Retry prompt for a coverage-gate block. Two distinct trigger reasons feed
+    this same message: a fully-uncovered blocking entity (data["blocking_entities"]
+    non-empty), or the uncovered-percentage threshold (blocking_entities can be
+    EMPTY here — a systemic gap like "every entity's detail route missing"
+    spreads across many entities, so no single one goes fully uncovered). Fall
+    back to every entity with any uncovered route at all so the percentage-
+    triggered case still lists something concrete, not an empty gap list."""
+    entities_to_list = data["blocking_entities"] or sorted(
+        e for e, b in data["entities"].items() if b["uncovered"]
+    )
+    gaps = "\n".join(
+        f"- entity '{e}': {', '.join(data['entities'][e]['uncovered'])}"
+        for e in entities_to_list
+    )
+    return (
+        "ROUTE COVERAGE GAP: the backend OpenAPI spec exposes routes that have NO "
+        "corresponding screen or action anywhere in the frontend you generated:\n\n"
+        f"{gaps}\n\n"
+        "Add the missing screen(s) and/or action(s) so every route above is actually called "
+        "from the UI — a list/table for a GET route, a create form for a POST route, a DETAIL "
+        "VIEW for a GET-by-id route (e.g. GET /api/v1/items/{id} — make list rows open a detail "
+        "screen or Dialog that calls it and shows the full record), an action button for a "
+        "state-changing route (e.g. PUT .../assign) — wired into the nav/App.tsx routes like the "
+        "other screens. Return ALL files that need adding or changing as a JSON file map (same "
+        "format as before).\n\n"
+        f"FULL COVERAGE REPORT (for context):\n{report}\n\n"
+        "Return only the JSON file map. No markdown, no explanation."
+    )
 
 
 def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1505,6 +2005,34 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
         frontend_dir, resolved_openapi_path
     )
 
+    # Report-only here, same as backend_integration above — the route-coverage
+    # GATE (which can block/retry) only runs inside run_task()'s loop; this is
+    # just that gate's report data surfaced in the handoff result, matching the
+    # backend_integration metadata pattern. Wrapped so a bug here can never
+    # break this "never raises" handler.
+    auth_mode_for_coverage = str(context.get("authMode") or "jwt").strip().lower()
+    try:
+        route_coverage_data = _route_coverage_report(
+            frontend_dir, resolved_openapi_path, auth_mode_for_coverage
+        )
+    except Exception as exc:  # noqa: BLE001 - never let this report-only check crash the handoff result
+        print(f"[frontend-agent] route_coverage check failed (non-fatal): {exc!r}", file=sys.stderr)
+        route_coverage_data = None
+
+    if route_coverage_data is None:
+        route_coverage: dict[str, Any] = {"status": "not_run"}
+    else:
+        route_coverage = {
+            "status": "gap" if route_coverage_data["blocking_entities"] else "validated",
+            "total": route_coverage_data["total"],
+            "covered": route_coverage_data["covered"],
+            "uncovered": route_coverage_data["uncovered"],
+            "uncovered_pct": route_coverage_data["uncovered_pct"],
+            "entities": route_coverage_data["entities"],
+            "fully_uncovered_entities": route_coverage_data["fully_uncovered_entities"],
+            "blocking_entities": route_coverage_data["blocking_entities"],
+        }
+
     result = {
         "status": "success",
         "target_app": target_app,
@@ -1512,6 +2040,7 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
         "build_command": "npm install && npm run build",
         "start_command": "npm run dev",
         "backend_integration": backend_integration,
+        "route_coverage": route_coverage,
         "artifacts": artifacts,
     }
     if backend_integration == "mismatch":

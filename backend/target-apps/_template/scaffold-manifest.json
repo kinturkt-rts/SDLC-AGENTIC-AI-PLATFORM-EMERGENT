@@ -97,7 +97,19 @@
         "frontend/src/main.tsx",
         "frontend/src/api.ts",
         "frontend/src/App.tsx",
-        "frontend/src/index.css"
+        "frontend/src/index.css",
+        "frontend/components.json",
+        "frontend/src/lib/utils.ts",
+        "frontend/src/Shell.tsx",
+        "frontend/src/components/ui/button.tsx",
+        "frontend/src/components/ui/input.tsx",
+        "frontend/src/components/ui/label.tsx",
+        "frontend/src/components/ui/select.tsx",
+        "frontend/src/components/ui/table.tsx",
+        "frontend/src/components/ui/card.tsx",
+        "frontend/src/components/ui/badge.tsx",
+        "frontend/src/components/ui/dialog.tsx",
+        "frontend/src/components/ui/alert.tsx"
       ]
     },
     "F-api-key": {
@@ -112,7 +124,19 @@
         "frontend/.env",
         "frontend/src/main.tsx",
         "frontend/src/App.tsx",
-        "frontend/src/index.css"
+        "frontend/src/index.css",
+        "frontend/components.json",
+        "frontend/src/lib/utils.ts",
+        "frontend/src/Shell.tsx",
+        "frontend/src/components/ui/button.tsx",
+        "frontend/src/components/ui/input.tsx",
+        "frontend/src/components/ui/label.tsx",
+        "frontend/src/components/ui/select.tsx",
+        "frontend/src/components/ui/table.tsx",
+        "frontend/src/components/ui/card.tsx",
+        "frontend/src/components/ui/badge.tsx",
+        "frontend/src/components/ui/dialog.tsx",
+        "frontend/src/components/ui/alert.tsx"
       ],
       "copy_as": {
         "frontend/src/api_apikey.ts": "frontend/src/api.ts"

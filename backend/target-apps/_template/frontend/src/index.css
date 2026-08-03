@@ -1,321 +1,106 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/* Inter is loaded via <link> tags in index.html, not @import here — avoids
+   a CSS "@import must precede all rules" ordering warning that occurs when
+   a font @import follows the (internally rule-heavy) shadcn/tw-animate
+   imports above. */
+
+@custom-variant dark (&:is(.dark *));
+
 /* =====================================================================
-   App base theme — deep navy surfaces, teal accent, spacious layout.
-   Class-driven so generated screens style by using classes, not inline.
+   Design tokens — single dark navy theme, teal accent. No light/dark
+   toggle: every generated app is dark-only by design, so tokens are
+   declared once, directly in @theme, with no :root/.dark indirection.
+   Every value below is carried over EXACTLY from the pre-Tailwind
+   index.css — see the migration's token diff for the full audit.
    ===================================================================== */
+@theme {
+  /* Surfaces — contrast fix: background darkened a step and card/popover/
+     secondary/muted lightened a step so surfaces visibly lift off the page
+     (previous values were ~2-step-close, effectively indistinguishable). */
+  --color-background: #080d18;
+  --color-foreground: #e6edf7;
 
-   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  --color-card: #1a2540;
+  --color-card-foreground: #e6edf7;
 
-   :root {
-     /* Surfaces: three navy depths so cards sit above the base */
-     --bg: #0d1424;
-     --surface: #151d31;
-     --surface-2: #1d2740;
-     --surface-3: #26324f;
-   
-     /* Accent (teal) + status colors */
-     --accent: #2dd4bf;
-     --accent-hover: #14b8a6;
-     --accent-dim: rgba(45, 212, 191, 0.12);
-     --danger: #f4726a;
-     --danger-dim: rgba(244, 114, 106, 0.12);
-     --warn: #f0b429;
-     --warn-dim: rgba(240, 180, 41, 0.12);
-     --success: #34d399;
-   
-     /* Text */
-     --text: #e6edf7;
-     --muted: #8b98b0;
-     --faint: #5b6880;
-   
-     /* Borders + structure */
-     --border: rgba(255, 255, 255, 0.07);
-     --border-strong: rgba(255, 255, 255, 0.14);
-   
-     /* Spacing scale (spacious) */
-     --gap-xs: 6px;
-     --gap-sm: 12px;
-     --gap: 20px;
-     --gap-lg: 32px;
-   
-     --radius: 12px;
-     --radius-sm: 8px;
-     --radius-lg: 16px;
-   
-     --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
-     --glow: 0 0 0 3px var(--accent-dim);
-   
-     font-family: 'Inter', system-ui, sans-serif;
-     line-height: 1.55;
-     color: var(--text);
-     font-feature-settings: 'tnum' 1; /* tabular numerals for data */
-   }
-   
-   * { box-sizing: border-box; }
-   
-   body {
-     margin: 0;
-     background: var(--bg);
-     color: var(--text);
-     -webkit-font-smoothing: antialiased;
-   }
-   
-   /* ---------- Layout shell: sidebar + main ---------- */
-   .app-shell {
-     display: flex;
-     min-height: 100vh;
-   }
-   
-   .sidebar {
-     width: 240px;
-     flex-shrink: 0;
-     background: var(--surface);
-     border-right: 1px solid var(--border);
-     padding: var(--gap-lg) var(--gap);
-     display: flex;
-     flex-direction: column;
-     gap: var(--gap-lg);
-   }
-   
-   .sidebar-brand {
-     font-size: 20px;
-     font-weight: 700;
-     letter-spacing: -0.02em;
-     color: var(--text);
-     display: flex;
-     align-items: center;
-     gap: var(--gap-sm);
-   }
-   
-   .sidebar-brand .brand-mark {
-     width: 32px;
-     height: 32px;
-     border-radius: var(--radius-sm);
-     background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-     display: grid;
-     place-items: center;
-     color: #06231f;
-     font-weight: 700;
-   }
-   
-   .nav { display: flex; flex-direction: column; gap: 4px; }
-   
-   .nav-item {
-     display: flex;
-     align-items: center;
-     gap: var(--gap-sm);
-     padding: 10px 14px;
-     border-radius: var(--radius-sm);
-     color: var(--muted);
-     cursor: pointer;
-     font-weight: 500;
-     font-size: 14px;
-     border-left: 2px solid transparent;
-     transition: background 0.15s, color 0.15s;
-   }
-   .nav-item:hover { background: var(--surface-2); color: var(--text); }
-   .nav-item.active {
-     background: var(--accent-dim);
-     color: var(--accent);
-     border-left-color: var(--accent);
-   }
-   
-   .main {
-     flex: 1;
-     padding: var(--gap-lg);
-     min-width: 0;
-   }
-   
-   /* ---------- Top bar ---------- */
-   .topbar {
-     display: flex;
-     justify-content: space-between;
-     align-items: center;
-     margin-bottom: var(--gap-lg);
-   }
-   .topbar h1 {
-     font-size: 24px;
-     font-weight: 700;
-     letter-spacing: -0.02em;
-     margin: 0;
-   }
-   .topbar-actions { display: flex; align-items: center; gap: var(--gap); }
-   .user-chip {
-     display: flex; align-items: center; gap: var(--gap-sm);
-     color: var(--muted); font-size: 14px;
-   }
-   
-   /* ---------- Cards ---------- */
-   .card {
-     background: var(--surface);
-     border: 1px solid var(--border);
-     border-radius: var(--radius);
-     padding: var(--gap-lg);
-     box-shadow: var(--shadow);
-   }
-   .card + .card { margin-top: var(--gap); }
-   
-   .card-header {
-     display: flex;
-     justify-content: space-between;
-     align-items: center;
-     margin-bottom: var(--gap);
-   }
-   .card-title { font-size: 16px; font-weight: 600; margin: 0; }
-   
-   .grid {
-     display: grid;
-     gap: var(--gap);
-     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-   }
-   
-   /* Stat tiles */
-   .stat {
-     background: var(--surface);
-     border: 1px solid var(--border);
-     border-radius: var(--radius);
-     padding: var(--gap);
-   }
-   .stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
-   .stat-label { color: var(--muted); font-size: 13px; margin-top: 4px; }
-   
-   /* ---------- Tables ---------- */
-   .table-wrap { overflow-x: auto; }
-   table.data {
-     width: 100%;
-     border-collapse: collapse;
-     font-size: 14px;
-   }
-   table.data thead th {
-     text-align: left;
-     padding: 12px 16px;
-     color: var(--muted);
-     font-weight: 600;
-     font-size: 12px;
-     text-transform: uppercase;
-     letter-spacing: 0.04em;
-     border-bottom: 1px solid var(--border);
-   }
-   table.data tbody td {
-     padding: 14px 16px;
-     border-bottom: 1px solid var(--border);
-   }
-   table.data tbody tr:hover { background: var(--surface-2); }
-   table.data tbody tr:last-child td { border-bottom: none; }
-   .num { text-align: right; font-variant-numeric: tabular-nums; }
-   
-   /* ---------- Buttons ---------- */
-   .btn {
-     display: inline-flex;
-     align-items: center;
-     gap: var(--gap-xs);
-     padding: 10px 18px;
-     border-radius: var(--radius-sm);
-     border: 1px solid var(--border-strong);
-     background: var(--surface-2);
-     color: var(--text);
-     font: inherit;
-     font-weight: 600;
-     font-size: 14px;
-     cursor: pointer;
-     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-   }
-   .btn:hover { background: var(--surface-3); }
-   .btn:focus-visible { outline: none; box-shadow: var(--glow); }
-   
-   .btn-primary {
-     background: var(--accent);
-     border-color: var(--accent);
-     color: #06231f;
-   }
-   .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-   
-   .btn-danger {
-     background: transparent;
-     border-color: var(--danger);
-     color: var(--danger);
-   }
-   .btn-danger:hover { background: var(--danger-dim); }
-   
-   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-   
-   /* ---------- Forms ---------- */
-   .field { margin-bottom: var(--gap); }
-   .field label {
-     display: block;
-     margin-bottom: var(--gap-xs);
-     font-size: 13px;
-     font-weight: 500;
-     color: var(--muted);
-   }
-   .input, select.input, textarea.input {
-     width: 100%;
-     padding: 11px 14px;
-     border-radius: var(--radius-sm);
-     border: 1px solid var(--border-strong);
-     background: var(--surface-2);
-     color: var(--text);
-     font: inherit;
-     font-size: 14px;
-     transition: border-color 0.15s, box-shadow 0.15s;
-   }
-   .input:focus {
-     outline: none;
-     border-color: var(--accent);
-     box-shadow: var(--glow);
-   }
-   .input::placeholder { color: var(--faint); }
-   
-   /* ---------- Badges / status ---------- */
-   .badge {
-     display: inline-flex;
-     align-items: center;
-     padding: 4px 10px;
-     border-radius: 999px;
-     font-size: 12px;
-     font-weight: 600;
-   }
-   .badge-success { background: var(--accent-dim); color: var(--accent); }
-   .badge-warn { background: var(--warn-dim); color: var(--warn); }
-   .badge-danger { background: var(--danger-dim); color: var(--danger); }
-   
-   /* ---------- States ---------- */
-   .center-screen {
-     min-height: 100vh;
-     display: grid;
-     place-items: center;
-     padding: var(--gap);
-   }
-   .auth-card {
-     width: 100%;
-     max-width: 400px;
-     background: var(--surface);
-     border: 1px solid var(--border);
-     border-radius: var(--radius-lg);
-     padding: var(--gap-lg);
-     box-shadow: var(--shadow);
-   }
-   .auth-title { text-align: center; margin: 0 0 4px; font-size: 22px; font-weight: 700; }
-   .auth-sub { text-align: center; color: var(--muted); font-size: 13px; margin: 0 0 var(--gap-lg); }
-   
-   .alert {
-     padding: 12px 16px;
-     border-radius: var(--radius-sm);
-     font-size: 14px;
-     margin-bottom: var(--gap);
-   }
-   .alert-error { background: var(--danger-dim); color: var(--danger); border: 1px solid var(--danger); }
-   
-   .empty {
-     text-align: center;
-     padding: var(--gap-lg);
-     color: var(--muted);
-   }
-   .loading { text-align: center; padding: var(--gap-lg); color: var(--muted); }
-   
-   .muted { color: var(--muted); }
-   .mono { font-variant-numeric: tabular-nums; }
-   
-   /* Respect reduced motion */
-   @media (prefers-reduced-motion: reduce) {
-     * { transition: none !important; }
-   }
+  --color-popover: #212d4d;
+  --color-popover-foreground: #e6edf7;
+
+  --color-secondary: #212d4d;
+  --color-secondary-foreground: #e6edf7;
+
+  --color-muted: #212d4d;
+  --color-muted-foreground: #8b98b0;
+
+  /* shadcn's own hover/highlight slot — NOT the brand color (see --color-primary) */
+  --color-accent: #26324f;
+  --color-accent-foreground: #e6edf7;
+
+  /* Brand teal (old --accent) */
+  --color-primary: #2dd4bf;
+  --color-primary-hover: #14b8a6;
+  --color-primary-dim: rgba(45, 212, 191, 0.12);
+  --color-primary-foreground: #06231f;
+
+  /* Destructive (old --danger) */
+  --color-destructive: #f4726a;
+  --color-destructive-dim: rgba(244, 114, 106, 0.12);
+  --color-destructive-foreground: #e6edf7;
+
+  /* Warning (old --warn) */
+  --color-warning: #f0b429;
+  --color-warning-dim: rgba(240, 180, 41, 0.12);
+  --color-warning-foreground: #06231f;
+
+  /* Success — real green for the first time; old --success was defined but
+     never actually consumed (old .badge-success rendered teal). */
+  --color-success: #34d399;
+  --color-success-foreground: #06231f;
+
+  --color-faint: #5b6880;
+
+  /* Border bumped from 0.07 -> 0.12 so card edges are actually visible. */
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-input: rgba(255, 255, 255, 0.14);
+  --color-ring: #2dd4bf;
+
+  /* Radius (old --radius-sm / --radius / --radius-lg) */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* Shadow (old --shadow). Bare --shadow maps to the unsuffixed `shadow` utility. */
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  /* Focus glow (old --glow), custom key -> `shadow-glow` utility */
+  --shadow-glow: 0 0 0 3px var(--color-primary-dim);
+
+  /* Do NOT add --spacing-xs/sm/md/lg here. In Tailwind v4, max-w-sm / w-sm
+     prefer --spacing-* over --container-*, so a 12px --spacing-sm collapses
+     every max-w-sm card to a thin vertical strip. Use numeric spacing (p-4)
+     or non-theme CSS vars (--gap-sm) if named gaps are needed. */
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+    line-height: 1.55;
+    font-feature-settings: 'tnum' 1; /* tabular numerals for data, applied root-wide */
+  }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
