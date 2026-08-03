@@ -21,6 +21,9 @@ from strands.multiagent.a2a import A2AServer
 from strands.tools.decorator import tool
 from strands.types.exceptions import MCPClientInitializationError
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_REPO_ROOT / "agents"))
+
 from _shared.artifact_store import (
     delete_repo_artifact,
     get_artifact,
@@ -50,12 +53,8 @@ from _shared.pipeline_context import (
 )
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 _TARGET_APPS = _REPO_ROOT / "target-apps"
 _DEFAULT_DB_SUBDIR = "db"
-
-sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 
 load_repo_env()
