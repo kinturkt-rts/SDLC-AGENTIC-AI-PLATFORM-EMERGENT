@@ -1,0 +1,81 @@
+{
+  "description": "Demo AgentCore runtimes (no secrets). Synced by scripts/sync-runtimes-demo.py. Dev stays in runtimes.json.",
+  "environment": "demo",
+  "region": "us-east-2",
+  "accountId": "061836593297",
+  "mvpPipeline": [
+    "orchestrator-agent",
+    "product-agent",
+    "architect-agent",
+    "database-agent",
+    "developer-agent",
+    "gitlab-agent"
+  ],
+  "artifactStore": {
+    "ARTIFACT_STORE": "s3",
+    "ARTIFACT_S3_BUCKET": "sdlc-agentic-ai-app-artifacts-demo",
+    "ARTIFACT_DYNAMODB_ENABLED": "false",
+    "notes": "Demo artifact bucket \u2014 keep separate from sdlc-agentic-ai-app-artifacts."
+  },
+  "agents": {
+    "orchestrator-agent": {
+      "deployed": true,
+      "awsName": "orchestrator_agent_demo",
+      "runtimeId": "orchestrator_agent_demo-yeYB94Fipa",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent_demo-yeYB94Fipa",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Forchestrator_agent_demo-yeYB94Fipa/invocations",
+      "notes": "Demo runtime \u2014 isolated from dev *_agent names."
+    },
+    "product-agent": {
+      "deployed": true,
+      "awsName": "product_agent_demo",
+      "runtimeId": "product_agent_demo-h272txFCP5",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/product_agent_demo-h272txFCP5",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fproduct_agent_demo-h272txFCP5/invocations",
+      "notes": "Demo runtime \u2014 isolated from dev *_agent names."
+    },
+    "architect-agent": {
+      "deployed": true,
+      "awsName": "architect_agent_demo",
+      "runtimeId": "architect_agent_demo-u4uW83CFe7",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/architect_agent_demo-u4uW83CFe7",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Farchitect_agent_demo-u4uW83CFe7/invocations",
+      "notes": "Demo runtime \u2014 isolated from dev *_agent names."
+    },
+    "database-agent": {
+      "deployed": true,
+      "awsName": "database_agent_demo",
+      "runtimeId": "database_agent_demo-SkGGyQ2SIh",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/database_agent_demo-SkGGyQ2SIh",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fdatabase_agent_demo-SkGGyQ2SIh/invocations",
+      "notes": "Demo runtime \u2014 isolated from dev *_agent names."
+    },
+    "developer-agent": {
+      "deployed": true,
+      "awsName": "developer_agent_demo",
+      "runtimeId": "developer_agent_demo-MzpR8i84TB",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/developer_agent_demo-MzpR8i84TB",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fdeveloper_agent_demo-MzpR8i84TB/invocations",
+      "notes": "Demo runtime \u2014 isolated from dev *_agent names."
+    },
+    "gitlab-agent": {
+      "deployed": true,
+      "awsName": "gitlab_agent",
+      "runtimeId": "gitlab_agent-qgx3u2CWtC",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/gitlab_agent-qgx3u2CWtC",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fgitlab_agent-qgx3u2CWtC/invocations",
+      "env": {
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+        "GITLAB_MCP_URL": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
+        "GITLAB_MCP_HTTP_DIRECT_URL": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
+        "GITLAB_MCP_HTTP_BATCH_SIZE": "20"
+      },
+      "gitlabMcp": {
+        "configFile": "config/agentcore/gitlab-mcp-endpoints.json",
+        "canonicalUrl": "cloudFront.mcpUrl",
+        "fallbackUrl": "directMcpUrl"
+      },
+      "notes": "SHARED with dev \u2014 GitLab MCP unchanged; demo reuses this runtime ARN."
+    }
+  }
+}

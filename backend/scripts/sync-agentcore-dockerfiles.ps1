@@ -10,17 +10,25 @@ if (-not (Test-Path $Canonical)) {
 
 function Get-AgentCoreBundleFromFolder {
     param([string] $FolderName)
+    # Demo / VPC suffixes are AWS runtime names only — bundle code stays product-agent, etc.
     if ($FolderName -eq "orchestrator_agent_vpc") {
         return "orchestrator-agent"
     }
-    return ($FolderName -replace '_', '-')
+    $base = $FolderName -replace '_demo$', ''
+    return ($base -replace '_', '-')
 }
 
 # Agents that need Node.js/npx at runtime (Atlassian mcp-remote, Firecrawl MCP, etc.)
+# Match base aws names; *_demo folders inherit the same need.
 $NodeInstallAgents = @("product_agent", "web_crawler_agent")
 # Agents that need the terraform CLI at runtime (devops_validate).
 $TerraformInstallAgents = @("devops_agent")
 
+function Get-BaseAwsAgentName {
+    param([string] $FolderName)
+    if ($FolderName -eq "orchestrator_agent_vpc") { return "orchestrator_agent" }
+    return ($FolderName -replace '_demo$', '')
+}
 function Set-DockerfileAgentArg {
     param(
         [string] $DockerfilePath,
@@ -81,11 +89,12 @@ $agentcoreDir = Join-Path $BackendRoot ".bedrock_agentcore"
 if (Test-Path $agentcoreDir) {
     Get-ChildItem -Path $agentcoreDir -Directory | ForEach-Object {
         $folderName = $_.Name
+        $baseName = Get-BaseAwsAgentName $folderName
         $targets += @{
             Path = Join-Path $_.FullName "Dockerfile"
             Bundle = Get-AgentCoreBundleFromFolder $folderName
-            InstallNode = ($NodeInstallAgents -contains $folderName)
-            InstallTerraform = ($TerraformInstallAgents -contains $folderName)
+            InstallNode = ($NodeInstallAgents -contains $baseName)
+            InstallTerraform = ($TerraformInstallAgents -contains $baseName)
         }
     }
 }

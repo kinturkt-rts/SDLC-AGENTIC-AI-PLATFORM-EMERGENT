@@ -111,7 +111,18 @@ def test_apps_branch_name() -> None:
 
 
 def test_dest_path_for_apps_repo() -> None:
-    assert dest_path_for_apps_repo("target-apps/notice-board-ui/app/main.py", "notice-board-ui") == "app/main.py"
+    assert (
+        dest_path_for_apps_repo("target-apps/notice-board-ui/app/main.py", "notice-board-ui")
+        == "notice-board-ui/backend/app/main.py"
+    )
+    assert (
+        dest_path_for_apps_repo("target-apps/notice-board-ui/ui/streamlit_app.py", "notice-board-ui")
+        == "notice-board-ui/frontend/streamlit_app.py"
+    )
+    assert (
+        dest_path_for_apps_repo("target-apps/notice-board-ui/.sdlc/pipeline-run.json", "notice-board-ui")
+        == ".sdlc/pipeline-run.json"
+    )
     assert dest_path_for_apps_repo("docs/PRD/notice-board-ui.md", "notice-board-ui") is None
     assert dest_path_for_apps_repo("inputs/notice-board-ui.txt", "notice-board-ui") == "inputs/notice-board-ui.txt"
 
@@ -163,7 +174,7 @@ def test_apps_repo_publish_includes_local_input_brief(tmp_path: Path) -> None:
 
     files = _collect_apps_repo_publish_files(feature, root=tmp_path)
     paths = {item["path"] for item in files}
-    assert "app/main.py" in paths
+    assert f"{feature}/backend/app/main.py" in paths
     assert f"inputs/{feature}.txt" in paths
 
 
@@ -488,7 +499,7 @@ def test_publish_already_landed_false_when_a_file_is_missing(
 
     files = _apps_repo_files_with_marker(tmp_path, "demo-app", "run-xyz-1")
     existing_paths = {f["path"] for f in files}
-    existing_paths.discard("app/main.py")  # simulate an incomplete prior publish
+    existing_paths.discard("demo-app/backend/app/main.py")  # simulate an incomplete prior publish
 
     async def _fake_fetch(project_id: str, branch: str, marker_path: str) -> str:
         return "run-xyz-1"

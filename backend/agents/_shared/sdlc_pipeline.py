@@ -71,7 +71,7 @@ def _safe_print(text: str, *, file: Any = None) -> None:
 TransportMode = Literal["local", "a2a", "auto"]
 
 DEV_TASK_DB = """
-Implement API surface from designDocPath as FastAPI routes. dev_read_file db/HANDOFF.md and every db/sql/*.sql before models.
+Implement API surface from designDocPath as FastAPI routes. dev_read_file databaseHandoffPath and every db/sql/*.sql before models.
 Postgres parity (mandatory): psycopg[binary] + postgresql+psycopg:// in .env.example with ?sslmode=require; dialect-guarded database.py;
 ENUM columns use sqlalchemy.Enum(create_type=False, native_enum=True) with sqlite String variant;
 uuid columns use PG_UUID(as_uuid=False).with_variant(String(36), sqlite); Pydantic response schemas coerce UUID to str.
@@ -97,7 +97,7 @@ DB_AGENT_TASK = (
     "if designDocPath omitted it — a hash with no way to look up which row it belongs to means "
     "nobody can actually log in and test the app, even though the pipeline itself will still "
     "seed and hash it correctly. Document the password in a SQL comment, and write a "
-    "'### seedCredentials' table in HANDOFF.md listing every seeded user's login value, "
+    "'### seedCredentials' table in the database handoff doc listing every seeded user's login value,"
     "password, and hash column."
 )
 
@@ -399,8 +399,19 @@ class SdlcPipelineRunner:
             return
         try:
             data: dict[str, Any] = {}
+            if is_s3_store() and self.run_id:
+                # The AgentCore container running this step has its own empty local
+                # disk on first write - without this, fields the frontend seeded into
+                # the S3 run.json before invoking the orchestrator (e.g. triggeredBy)
+                # get silently dropped the moment this container's first update lands.
+                try:
+                    from .artifact_store import get_artifact_text
+
+                    data = json.loads(get_artifact_text(self.run_id, "run.json"))
+                except Exception:
+                    data = {}
             if rj.is_file():
-                data = json.loads(rj.read_text(encoding="utf-8-sig"))
+                data.update(json.loads(rj.read_text(encoding="utf-8-sig")))
             data.setdefault("runId", self.run_id)
             data.setdefault("feature", self.feature)
             data.setdefault("targetApp", self.feature)
@@ -963,7 +974,7 @@ class SdlcPipelineRunner:
         self._save_context()
         if self.run_id and is_s3_store():
             put_context(self.run_id, self.context)
-        logger.info("[rds-apply] HANDOFF.md -> %s", handoff_rel)
+        logger.info("[rds-apply] database handoff -> %s", handoff_rel)
 
     @staticmethod
     def _developer_retry_attempts() -> int:

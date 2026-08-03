@@ -1,4 +1,4 @@
-"""Write <app-root>/db/HANDOFF.md after database-agent runs."""
+"""Write agents/pipeline/<app>.database-handoff.md after database-agent runs."""
 
 from __future__ import annotations
 
@@ -118,7 +118,8 @@ def build_handoff_markdown(
         [
             "",
             f"Base dependencies: `{_TEMPLATE_REQUIREMENTS}` (FastAPI, uvicorn, pydantic).",
-            "Add `sqlalchemy`, `psycopg[binary]`, and `alembic` in the service `requirements.txt` when wiring RDS.",
+            "Add `sqlalchemy` and `psycopg[binary]` in the service `requirements.txt` when wiring RDS. "
+            "Migrations are the numbered `.sql` files below applied via `apply_sql_to_rds.py` — no Alembic.",
             "",
             "## RDS target",
             "",
@@ -186,15 +187,17 @@ def write_db_handoff(
     rds_applied: bool = False,
     repo_root: Path | None = None,
 ) -> str:
-    """Write HANDOFF.md under db/; return repo-relative path."""
+    """Write the database handoff Markdown; return repo-relative path.
+
+    Lives under ``agents/pipeline/`` (same convention as the developer/gitlab/qa/devops
+    handoffs) rather than the app's own ``db/`` tree, even though its content still
+    describes files under ``db/`` (SQL artifacts, seed rows).
+    """
     from _shared.artifact_store import resolve_run_id, write_repo_artifact
-    from _shared.pipeline_context import target_app_root_rel
+    from _shared.pipeline_context import db_handoff_rel_for_app
 
     root = repo_root or _REPO_ROOT
     slug = target_app.strip()
-    db_rel = ctx.get("dbOutputDir") or f"{target_app_root_rel(slug)}/db"
-    db_dir = (root / db_rel).resolve()
-    db_dir.mkdir(parents=True, exist_ok=True)
     content = build_handoff_markdown(
         target_app=slug,
         ctx=ctx,
@@ -202,11 +205,12 @@ def write_db_handoff(
         rds_applied=rds_applied,
         repo_root=root,
     )
-    handoff_rel = f"{db_rel.rstrip('/')}/HANDOFF.md"
+    handoff_rel = db_handoff_rel_for_app(slug)
     run_id = resolve_run_id(ctx)
     if run_id:
         write_repo_artifact(handoff_rel, content, context=ctx)
-    handoff_path = db_dir / "HANDOFF.md"
+    handoff_path = (root / handoff_rel).resolve()
+    handoff_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_path.write_text(content, encoding="utf-8", newline="\n")
     try:
         return handoff_path.relative_to(root).as_posix()

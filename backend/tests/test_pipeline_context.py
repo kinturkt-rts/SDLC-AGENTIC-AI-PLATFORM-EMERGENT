@@ -86,6 +86,21 @@ def test_consolidated_artifact_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_db_handoff_rel_for_app_follows_pipeline_convention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Database handoff moved from <app>/db/HANDOFF.md to the same agents/pipeline/
+    convention as the developer/gitlab/qa/devops handoffs."""
+    from _shared.pipeline_context import db_handoff_rel_for_app
+
+    monkeypatch.delenv("ARTIFACT_STORE", raising=False)
+    monkeypatch.setenv("PRODUCT_ARTIFACT_LAYOUT", "docs")
+    assert db_handoff_rel_for_app("inventory-app") == "agents/pipeline/inventory-app.database-handoff.md"
+
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    assert db_handoff_rel_for_app("inventory-app") == "inventory-app/handoffs/database-handoff.md"
+
+
 def test_artifact_layout_honors_product_prd_layout_legacy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

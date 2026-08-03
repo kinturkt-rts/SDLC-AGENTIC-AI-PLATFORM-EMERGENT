@@ -140,11 +140,15 @@ def verify_rds_seed_password(
     if not (app_dir / "db").is_dir():
         app_dir = root / "target-apps" / target_app
 
+    from _shared.pipeline_context import db_handoff_rel_for_app
     from _shared.rds_env import connection_url, load_target_app_env, schema_for_app
     from _shared.seed_credentials import collect_credentials
 
     load_target_app_env(target_app, root)
-    creds = collect_credentials(app_dir)
+    handoff_path = root / db_handoff_rel_for_app(target_app)
+    if not handoff_path.is_file():
+        handoff_path = app_dir / "db" / "HANDOFF.md"  # legacy location (pre-move)
+    creds = collect_credentials(app_dir, handoff_path=handoff_path)
     if not creds:
         return []
 

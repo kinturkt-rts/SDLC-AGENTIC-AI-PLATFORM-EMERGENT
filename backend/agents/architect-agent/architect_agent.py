@@ -181,6 +181,9 @@ When React/Next is required (Phase 2), note `frontend/` in Stack — developer i
 - Brief says "JWT" → use library JWT (PyJWT), do not list Cognito.
 - Brief says "API key in env" → header check, do not list Cognito or API Gateway authorizers.
 - Brief says "FastAPI + Postgres" → don't add Lambda, DynamoDB, ElastiCache, WAF.
+- Database migrations on this platform are **numbered raw SQL files** (`001_....sql`, `002_....sql`,
+  applied via `apply_sql_to_rds.py` — see §6). Never write "Alembic" in the Stack table or DB delivery
+  section; no target-app has an `alembic/` tree and database-agent does not generate one.
 - Brief says "RAG" / "embeddings" / "vector search" (no store named) → **pgvector on RDS** (platform
   default — already provisioned); Bedrock Titan embed (`amazon.titan-embed-text-v2:0`). Do NOT add
   ChromaDB, Pinecone, Weaviate, or any external vector store. Only use an alternative when the brief
@@ -457,7 +460,10 @@ def _generate_design_markdown(
             )
     target = context.get("targetApp") or context.get("target_app")
     if target:
-        user_message += f"## Target FastAPI service folder\n`target-apps/{target}/`\n\n"
+        user_message += (
+            f"## Target FastAPI service folder\n"
+            f"`{target}/backend/` (API + DB) and `{target}/frontend/` (UI, when present)\n\n"
+        )
     user_message += "Return only the Markdown starting with `# `."
     return _normalize_design_markdown(str(design_agent(user_message)))
 

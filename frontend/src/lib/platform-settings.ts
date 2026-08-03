@@ -27,7 +27,11 @@ interface RuntimesConfig {
 }
 
 async function readRuntimesConfig(): Promise<RuntimesConfig | null> {
-  const file = path.join(getBackendRoot(), 'config', 'agentcore', 'runtimes.json');
+  const override = process.env.AGENTCORE_RUNTIMES_CONFIG?.trim();
+  const relative = override || path.join('config', 'agentcore', 'runtimes.json');
+  const file = path.isAbsolute(relative)
+    ? relative
+    : path.join(getBackendRoot(), relative.replace(/^\//, ''));
   try {
     const text = await fs.readFile(file, 'utf-8');
     return JSON.parse(text) as RuntimesConfig;

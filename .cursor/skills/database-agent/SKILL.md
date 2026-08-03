@@ -23,7 +23,7 @@ Runs **after architect-agent**, **before developer-agent**. Acts as a **DB devel
 ## Outputs
 
 - `target-apps/<app>/db/sql/` — numbered migrations + dev seed
-- `target-apps/<app>/db/HANDOFF.md` — written by CLI after each run (for developer-agent)
+- `agents/pipeline/<app>.database-handoff.md` — written by CLI after each run (for developer-agent)
 - `target-apps/<app>/db/nosql/` — only if design requires MongoDB
 - Compact reply: `schema_summary`, `sql_artifacts`, `handoff_for_developer` (no `execution_commands` if RDS apply succeeded)
 

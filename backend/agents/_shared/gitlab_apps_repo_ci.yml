@@ -126,6 +126,19 @@ target-app:deploy:
     - cp -r "$CI_PROJECT_DIR"/. /tmp/platform/backend/
     - rm -rf /tmp/platform/backend/.git
     - |
+      # Split layout: <slug>/backend/ (API+DB) + <slug>/frontend/ (UI).
+      # Reconstruct target-apps/<slug>/ so devops-agent's existing path
+      # assumptions (target-apps/<slug>/{app,db,ui}) keep working unchanged.
+      if [ -d "$CI_PROJECT_DIR/${SLUG}/backend" ]; then
+        mkdir -p "/tmp/platform/backend/target-apps/${SLUG}"
+        cp -r "$CI_PROJECT_DIR/${SLUG}/backend/." "/tmp/platform/backend/target-apps/${SLUG}/"
+        rm -rf "/tmp/platform/backend/${SLUG}"
+        if [ -d "$CI_PROJECT_DIR/${SLUG}/frontend" ]; then
+          mkdir -p "/tmp/platform/backend/target-apps/${SLUG}/ui"
+          cp -r "$CI_PROJECT_DIR/${SLUG}/frontend/." "/tmp/platform/backend/target-apps/${SLUG}/ui/"
+        fi
+      fi
+    - |
       mkdir -p "/tmp/platform/backend/target-apps/${SLUG}/.sdlc"
       if [ -f "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" ]; then
         cp "$CI_PROJECT_DIR/.sdlc/pipeline-run.json" "/tmp/platform/backend/target-apps/${SLUG}/.sdlc/pipeline-run.json"

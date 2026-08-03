@@ -79,11 +79,7 @@ export default function ArtifactsPage() {
     fetch(`/api/v1/repo-asset?path=${encodeURIComponent(preview.path)}`)
       .then((res) => (res.ok ? res.text() : Promise.reject(new Error('preview failed'))))
       .then((text) => {
-        if (!cancelled) {
-          setPreviewText(
-            text.length > 20000 ? text.slice(0, 20000) + '\n\n... (truncated for preview)' : text,
-          );
-        }
+        if (!cancelled) setPreviewText(text);
       })
       .catch(() => {
         if (!cancelled) setPreviewText('Preview unavailable for this artifact.');
@@ -186,11 +182,23 @@ export default function ArtifactsPage() {
       )}
 
       <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
-        <DialogContent className="max-w-2xl border-white/[0.08] bg-card">
+        <DialogContent className="max-w-4xl border-white/[0.08] bg-card">
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
-            <DialogDescription>
-              {preview?.path} &middot; produced by {preview?.producedBy}
+            <DialogDescription className="flex items-center justify-between gap-3">
+              <span className="truncate">
+                {preview?.path} &middot; produced by {preview?.producedBy}
+              </span>
+              {preview && !preview.imageUrl ? (
+                <a
+                  href={`/api/v1/repo-asset?path=${encodeURIComponent(preview.path)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 font-medium text-teal-400 hover:underline"
+                >
+                  Open raw
+                </a>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           {preview?.imageUrl ? (
@@ -200,11 +208,11 @@ export default function ArtifactsPage() {
           ) : previewLoading ? (
             <p className="text-sm text-muted-foreground">Loading preview…</p>
           ) : preview?.path.toLowerCase().endsWith('.md') ? (
-            <div className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4">
+            <div className="max-h-[80vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4">
               <MarkdownPreview content={previewText ?? preview?.preview ?? 'No preview available.'} />
             </div>
           ) : (
-            <pre className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
+            <pre className="max-h-[80vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
               {previewText ?? preview?.preview ?? 'No preview available.'}
             </pre>
           )}

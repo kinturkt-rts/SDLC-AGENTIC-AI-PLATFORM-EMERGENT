@@ -416,3 +416,263 @@ agents:
     api_key_env_var_name: null
     api_key_credential_provider_name: null
     is_generated_by_agentcore_create: false
+  product_agent_demo:
+    name: product_agent_demo
+    entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Juno Projects\sdlc-agentic-ai-platform\backend
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-26568c33e5
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-product_agent_demo
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: product_agent_demo-h272txFCP5
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/product_agent_demo-h272txFCP5
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-product_agent_demo-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-26568c33e5
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  architect_agent_demo:
+    name: architect_agent_demo
+    entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Juno Projects\sdlc-agentic-ai-platform\backend
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-a31acbf97d
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-architect_agent_demo
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: architect_agent_demo-u4uW83CFe7
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/architect_agent_demo-u4uW83CFe7
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-architect_agent_demo-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-a31acbf97d
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  database_agent_demo:
+    name: database_agent_demo
+    entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Juno Projects\sdlc-agentic-ai-platform\backend
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-3f431b5d80
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-database_agent_demo
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: database_agent_demo-SkGGyQ2SIh
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/database_agent_demo-SkGGyQ2SIh
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-database_agent_demo-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-3f431b5d80
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  developer_agent_demo:
+    name: developer_agent_demo
+    entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Juno Projects\sdlc-agentic-ai-platform\backend
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-1f90e367f0
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-developer_agent_demo
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: developer_agent_demo-MzpR8i84TB
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/developer_agent_demo-MzpR8i84TB
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-developer_agent_demo-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-1f90e367f0
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
+  orchestrator_agent_demo:
+    name: orchestrator_agent_demo
+    entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: C:\Juno Projects\sdlc-agentic-ai-platform\backend
+    aws:
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-8e9b7a6dfa
+      execution_role_auto_create: false
+      account: 061836593297
+      region: us-east-2
+      ecr_repository: 061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-orchestrator_agent_demo
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: A2A
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: orchestrator_agent_demo-yeYB94Fipa
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent_demo-yeYB94Fipa
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-orchestrator_agent_demo-builder
+      execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-2-8e9b7a6dfa
+      source_bucket: bedrock-agentcore-codebuild-sources-061836593297-us-east-2
+    memory:
+      mode: NO_MEMORY
+      memory_id: null
+      memory_arn: null
+      memory_name: null
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false

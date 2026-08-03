@@ -388,6 +388,50 @@ def test_after_agent_step_merges_remote_context_before_put(
     assert loaded["preferredSqlPath"] == "target-apps/expense-tracker/db/sql"
 
 
+def test_update_run_json_preserves_triggered_by_seeded_in_s3(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The AgentCore container running a step has its own empty local disk on its
+    first run.json write - it must pull the S3 copy the frontend already seeded
+    (with triggeredBy) as the merge base, or that attribution is silently dropped
+    the moment this container's first status update lands (the 'every run shows
+    Frontend' bug)."""
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr("agents._shared.sdlc_pipeline.load_repo_env", lambda: None)
+    (tmp_path / "agents" / "pipeline").mkdir(parents=True)
+
+    run_id = "trig-by-run"
+    seeded = {
+        "runId": run_id,
+        "feature": "expense-tracker",
+        "targetApp": "expense-tracker",
+        "triggeredBy": "kintur.shah@resolvetech.com",
+        "startedAt": "2026-08-03T14:00:00+00:00",
+        "status": "running",
+        "steps": [{"name": "product-agent", "label": "1/6", "status": "queued"}],
+    }
+
+    def fake_get_artifact_text(rid: str, rel: str) -> str:
+        assert (rid, rel) == (run_id, "run.json")
+        return json.dumps(seeded)
+
+    captured = {}
+
+    def fake_put_artifact(rid, rel, body, **kwargs):
+        captured["data"] = json.loads(body)
+
+    monkeypatch.setattr("agents._shared.artifact_store.get_artifact_text", fake_get_artifact_text)
+    monkeypatch.setattr("agents._shared.sdlc_pipeline.put_artifact", fake_put_artifact)
+
+    options = PipelineOptions(target_app="expense-tracker", run_id=run_id, transport="a2a")
+    runner = SdlcPipelineRunner(options)
+    runner._update_run_json(status="running", current_step="product-agent")
+
+    assert captured["data"]["triggeredBy"] == "kintur.shah@resolvetech.com"
+
+
 def test_parse_pipeline_request_from_a2a_message() -> None:
     message = (
         "Run run_sdlc_pipeline with:\n\n"

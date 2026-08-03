@@ -2,7 +2,7 @@
 
 Reads from the `document_chunks` table created by database-agent. Adjust the
 table/column names, dataclass fields, and SQL below to match the REAL schema
-in db/HANDOFF.md (they are illustrative placeholders here, not a fixed
+in the database handoff doc (databaseHandoffPath) (they are illustrative placeholders here, not a fixed
 contract) — e.g. `doc_id` → `document_id`, `text` → `content`,
 `d.collection_id` → whatever join actually scopes access for this app.
 

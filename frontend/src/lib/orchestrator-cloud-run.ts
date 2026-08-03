@@ -12,7 +12,7 @@ import { getRunArtifactJson, isS3Store, putRunArtifact, s3RunHasAppCode } from '
 
 const DEV_TASK_DB = [
   'Implement API surface from designDocPath as FastAPI routes.',
-  'Read db/HANDOFF.md and every db/sql/*.sql before models. Include Postgres parity',
+  'Read databaseHandoffPath and every db/sql/*.sql before models. Include Postgres parity',
   '(psycopg + postgresql+psycopg://, dialect-guarded database.py, ENUM/UUID variants),',
   'Pydantic response schemas, baseline pytest, and README setup + uvicorn instructions.',
   'If deliveryProfile.requiresStreamlit is true, add ui/streamlit_app.py per Pattern C.',

@@ -41,7 +41,7 @@ Working FastAPI application under `target-apps/<service>/` with:
 
 ## When to run this agent
 
-Run after `database-agent` has written `db/sql/` and `db/HANDOFF.md`. Run again only if:
+Run after `database-agent` has written `db/sql/` and its `agents/pipeline/<app>.database-handoff.md`. Run again only if:
 - Design doc changes (new endpoint, changed schema)
 - Handoff produced incomplete routes (check pre-handoff checklist in DEVELOPER_SYS_PROMPT)
 

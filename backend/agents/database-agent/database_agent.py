@@ -76,7 +76,7 @@ Implement the database layer as a DB developer using Context handoff.
    MongoDB MCP (if present): apply nosql/ scripts when design requires document storage.
 5. Call `db_validate_sql(service=targetApp)` after writing sql/ — fix every SQL_VALIDATION FAILED before finishing.
 6. Reply once: schema_summary, sql_artifacts, handoff_for_developer. Omit execution_commands when applyToRdsAfterWrite is true.
-   The host writes `db/HANDOFF.md` after the run — do not db_write_file HANDOFF.md yourself.\
+   The host writes the database handoff doc (databaseHandoffPath) after the run — do not db_write_file it yourself.\
 """
 
 _READ_PREFIXES = (
@@ -119,7 +119,7 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 
 ## Artifacts
 Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `target-apps/<service>/db/` locally):
-- `HANDOFF.md` — **host-written only** after your run (do not `db_write_file` it). Put `### seedCredentials` in your reply so the host can copy it in. Developer-agent reads `databaseHandoffPath`.
+- Database handoff doc (`databaseHandoffPath`, under `agents/pipeline/`) — **host-written only** after your run (do not `db_write_file` it). Put `### seedCredentials` in your reply so the host can copy it in. Developer-agent reads `databaseHandoffPath`.
 - `sql/001_*.sql` … numbered, idempotent DDL (`IF NOT EXISTS` where possible)
 - **`SET search_path` rule — applies to every migration file:**
   `apply_sql_to_rds.py` already sets `search_path = <app_schema>, public` at the **connection level** before each file runs.
@@ -210,12 +210,12 @@ Return **once**, using `###` headings in this order:
 1. `### schema_summary` — table/collection count, enums, PRD FR mapping (≤12 bullets)
 2. `### sql_artifacts` — ordered paths only (table, no prose repeat)
 3. `### handoff_for_developer` — DSN pattern, SQLAlchemy/ORM notes, stable seed UUIDs if any (≤8 bullets)
-4. `### seedCredentials` — **required when JWT/password seed users exist** (markdown table; see Seeding credentials). Host copies this into `HANDOFF.md`.
+4. `### seedCredentials` — **required when JWT/password seed users exist** (markdown table; see Seeding credentials). Host copies this into the database handoff doc.
 5. `### execution_commands` — **omit** when `applyToRdsAfterWrite` is true; include **only** for files-only runs (short apply note)
 
 Do **not** repeat sections. Do **not** paste full SQL bodies in the reply.
 Do **not** add a `## Files written` section — the CLI logs written paths on stderr.
-Do **not** `db_write_file` `HANDOFF.md` — the host writes it after your reply.
+Do **not** `db_write_file` the database handoff doc — the host writes it after your reply.
 Use **one `db_write_file` call per sql file**; put full SQL only in the tool `content` argument, not in chat text.
 
 ## UUID literals in seed SQL — hex digits only
@@ -275,8 +275,8 @@ Format rules (regex: `(?:Password|passwords?)[^"\\n]*(?:"([^"]+)"|: *([^\\s!][^\
 - One comment covers all users when they share a password; add separate comments when roles have different passwords (first match wins)
 
 **Step 3 — Credential map in your reply under `### seedCredentials` (MANDATORY)**
-Put this section in your **chat reply** (Response format). The host copies it into `db/HANDOFF.md`.
-**Do not** `db_write_file` `HANDOFF.md` yourself — that file is host-owned.
+Put this section in your **chat reply** (Response format). The host copies it into the database handoff doc (`databaseHandoffPath`).
+**Do not** `db_write_file` it yourself — that file is host-owned.
 
 ```
 ### seedCredentials

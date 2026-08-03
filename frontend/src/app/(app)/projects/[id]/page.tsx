@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, GitBranch, FileBox, Clock, ChevronRight } from 'lucide-react';
+import { ArrowLeft, GitBranch, FileBox } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -17,18 +17,19 @@ import {
   useRuns,
   useArtifacts,
   useContextItems,
-  usePipelines,
+  usePipelineContext,
 } from '@/src/lib/queries';
-import { phaseDisplayLabel } from '@/src/lib/pipeline-phases';
 import { formatRelative, formatDuration } from '@/src/lib/format';
-import type { PipelineRun, Artifact, ContextItem } from '@/src/types';
+import type { PipelineRun, Artifact } from '@/src/types';
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
   const { data: project, isLoading } = useProject(params.id);
   const { data: runs } = useRuns();
   const { data: artifacts } = useArtifacts();
-  const { data: context } = useContextItems();
-  const { data: pipelines } = usePipelines();
+  // Scope both context queries to this project so the tab badge matches what
+  // ContextView renders instead of counting a slower all-projects fetch.
+  const { data: context, isLoading: contextLoading } = useContextItems(params.id);
+  const { data: pipelineContext, isLoading: pipelineContextLoading } = usePipelineContext(params.id);
 
   if (!isLoading && !project) {
     return (
@@ -45,6 +46,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     .sort((a, b) => (b.finishedAt ?? b.startedAt).localeCompare(a.finishedAt ?? a.startedAt));
   const projectArtifacts = (artifacts ?? []).filter((a) => a.projectId === params.id);
   const projectContext = (context ?? []).filter((c) => c.projectId === params.id);
+  const contextPending = contextLoading || pipelineContextLoading;
+  const contextCount = projectContext.length + (pipelineContext ? 1 : 0);
   const latestRun = projectRuns[0];
   const headerStatus = latestRun?.status ?? project?.pipelineStatus;
 
@@ -62,13 +65,6 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     { key: 'producedBy', header: 'Produced by', render: (a) => <span className="text-muted-foreground">{a.producedBy}</span> },
     { key: 'size', header: 'Size', render: (a) => <span className="text-muted-foreground">{a.sizeKb} KB</span> },
     { key: 'created', header: 'Created', render: (a) => <span className="text-muted-foreground">{formatRelative(a.createdAt)}</span> },
-  ];
-  const ctxCols: Column<ContextItem>[] = [
-    { key: 'key', header: 'Key', render: (c) => <span className="font-mono text-foreground">{c.key}</span> },
-    { key: 'scope', header: 'Scope', render: (c) => <span className="capitalize text-muted-foreground">{c.scope}</span> },
-    { key: 'type', header: 'Type', render: (c) => <span className="capitalize text-muted-foreground">{c.type}</span> },
-    { key: 'summary', header: 'Summary', render: (c) => <span className="line-clamp-1 text-muted-foreground">{c.summary}</span> },
-    { key: 'tokens', header: 'Tokens', align: 'right', render: (c) => <span className="text-muted-foreground">{c.tokens.toLocaleString()}</span> },
   ];
 
   return (
@@ -92,10 +88,9 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
       <Tabs defaultValue="overview">
         <TabsList className="border-white/[0.06] bg-muted/40">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
           <TabsTrigger value="runs">Runs ({projectRuns.length})</TabsTrigger>
           <TabsTrigger value="artifacts">Artifacts ({projectArtifacts.length})</TabsTrigger>
-          <TabsTrigger value="context">Context ({projectContext.length})</TabsTrigger>
+          <TabsTrigger value="context">Context{contextPending ? '' : ` (${contextCount})`}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -124,33 +119,6 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
               </div>
             ) : null}
           </Card>
-        </TabsContent>
-
-        <TabsContent value="pipelines" className="space-y-3">
-          {(pipelines ?? []).map((p) => (
-            <Card key={p.id} className="border-white/[0.06] bg-card/80 p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-foreground">{p.name}</p>
-                  <p className="text-sm text-muted-foreground">{p.description}</p>
-                </div>
-                <span className="text-xs text-muted-foreground">{p.phases.length} phases</span>
-              </div>
-              <div className="mt-4 flex flex-wrap items-stretch gap-2">
-                {p.phases.map((ph, i) => (
-                  <span key={i} className="inline-flex items-center gap-1.5">
-                    <span className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 text-xs text-foreground">
-                      {phaseDisplayLabel(ph.phase)}
-                      {ph.hitl ? <span className="ml-1 text-amber-400">HITL</span> : null}
-                    </span>
-                    {i < p.phases.length - 1 ? (
-                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" aria-hidden />
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-            </Card>
-          ))}
         </TabsContent>
 
         <TabsContent value="runs">
