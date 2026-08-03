@@ -21,7 +21,6 @@ export function Topbar() {
   const isRunsPage = pathname === '/runs' || pathname.startsWith('/runs/');
   const isLogsPage = pathname === '/logs' || pathname.startsWith('/logs/');
   const isArtifactsPage = pathname === '/artifacts' || pathname.startsWith('/artifacts/');
-  const isContextPage = pathname === '/context' || pathname.startsWith('/context/');
   const isCheckpointsPage = pathname === '/checkpoints' || pathname.startsWith('/checkpoints/');
   const showProjectFilter = shouldShowProjectFilter(pathname);
   const { data: projects } = useProjects();
@@ -34,8 +33,6 @@ export function Topbar() {
   const setLogsProjectId = useUiStore((s) => s.setLogsProjectId);
   const artifactsProjectId = useUiStore((s) => s.artifactsProjectId);
   const setArtifactsProjectId = useUiStore((s) => s.setArtifactsProjectId);
-  const contextProjectId = useUiStore((s) => s.contextProjectId);
-  const setContextProjectId = useUiStore((s) => s.setContextProjectId);
   const checkpointsProjectId = useUiStore((s) => s.checkpointsProjectId);
   const setCheckpointsProjectId = useUiStore((s) => s.setCheckpointsProjectId);
 
@@ -44,7 +41,7 @@ export function Topbar() {
   const activeRun = activeRunId ? (runs ?? []).find((r) => r.id === activeRunId) : undefined;
 
   const usesAllProjectsFilter =
-    isRunsPage || isLogsPage || isArtifactsPage || isContextPage || isCheckpointsPage;
+    isRunsPage || isLogsPage || isArtifactsPage || isCheckpointsPage;
 
   const projectOptions = usesAllProjectsFilter
     ? (projects ?? []).filter((p) => runProjectIds.has(p.id))
@@ -64,11 +61,9 @@ export function Topbar() {
       ? logsProjectId
       : isArtifactsPage
         ? artifactsProjectId
-        : isContextPage
-          ? contextProjectId
-          : isCheckpointsPage
-            ? checkpointsProjectId
-            : currentProjectId;
+        : isCheckpointsPage
+          ? checkpointsProjectId
+          : currentProjectId;
 
   const onProjectChange = (id: string) => {
     if (isLogsPage) {
@@ -78,11 +73,6 @@ export function Topbar() {
 
     if (isArtifactsPage) {
       setArtifactsProjectId(id === '__all__' ? null : id);
-      return;
-    }
-
-    if (isContextPage) {
-      setContextProjectId(id === '__all__' ? null : id);
       return;
     }
 

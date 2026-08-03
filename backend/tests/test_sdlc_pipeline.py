@@ -710,6 +710,82 @@ def test_step_developer_retries_with_fallback_model(
     assert "developer-agent" in runner.agents_run
 
 
+def _make_a2a_gitlab_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "demo-api"
+    runner.root = repo_root
+    runner.context = {"targetApp": "demo-api", "runId": run_id}
+    runner.options = PipelineOptions(target_app="demo-api", transport="a2a")
+    runner.agents_run = []
+    runner.artifacts = {}
+    return runner
+
+
+def test_step_gitlab_a2a_embeds_apps_layout_context(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2A publish task must carry a Context: block with gitlabPublishLayout=apps
+    (the default) - gitlab-agent's A2A handler (parse_publish_request) reads layout
+    from the task text itself, not from the orchestrator's own context.json/S3 state."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.delenv("GITLAB_APPS_REPO", raising=False)
+
+    runner = _make_a2a_gitlab_runner(repo_root, "run-gitlab-001")
+
+    with (
+        patch.object(runner, "_wait_for_developer_handoff"),
+        patch.object(runner, "_invoke_a2a") as invoke_mock,
+        patch.object(runner, "_read_gitlab_handoff", return_value={"status": "published"}),
+        patch.object(runner, "_update_context"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_gitlab()
+
+    invoke_mock.assert_called_once()
+    task = invoke_mock.call_args.args[1]
+    assert "Context:" in task
+    _, _, json_part = task.partition("Context:")
+    ctx = json.loads(json_part.strip())
+    assert ctx["gitlabPublishLayout"] == "apps"
+    assert ctx["targetApp"] == "demo-api"
+    assert ctx["runId"] == "run-gitlab-001"
+    assert "gitlab-agent" in runner.agents_run
+
+
+def test_step_gitlab_a2a_respects_monorepo_opt_out(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GITLAB_APPS_REPO=false must still be honored for the A2A publish path."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("GITLAB_APPS_REPO", "false")
+
+    runner = _make_a2a_gitlab_runner(repo_root, "run-gitlab-002")
+
+    with (
+        patch.object(runner, "_wait_for_developer_handoff"),
+        patch.object(runner, "_invoke_a2a") as invoke_mock,
+        patch.object(runner, "_read_gitlab_handoff", return_value={"status": "published"}),
+        patch.object(runner, "_update_context"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_gitlab()
+
+    task = invoke_mock.call_args.args[1]
+    _, _, json_part = task.partition("Context:")
+    ctx = json.loads(json_part.strip())
+    assert ctx["gitlabPublishLayout"] == "monorepo"
+
+
 def test_step_developer_fails_after_all_retry_attempts(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,

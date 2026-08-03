@@ -58,10 +58,6 @@ interface UiState {
   artifactsProjectId: string | null;
   setArtifactsProjectId: (id: string | null) => void;
 
-  /** Context page only - null = all projects (default). */
-  contextProjectId: string | null;
-  setContextProjectId: (id: string | null) => void;
-
   /** HITL checkpoints page - null = all projects (default). */
   checkpointsProjectId: string | null;
   setCheckpointsProjectId: (id: string | null) => void;
@@ -104,9 +100,6 @@ export const useUiStore = create<UiState>((set) => ({
 
   artifactsProjectId: null,
   setArtifactsProjectId: (id) => set({ artifactsProjectId: id }),
-
-  contextProjectId: null,
-  setContextProjectId: (id) => set({ contextProjectId: id }),
 
   checkpointsProjectId: null,
   setCheckpointsProjectId: (id) => set({ checkpointsProjectId: id }),

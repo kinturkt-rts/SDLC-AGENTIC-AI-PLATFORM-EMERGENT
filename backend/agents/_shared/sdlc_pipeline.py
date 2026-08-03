@@ -1250,7 +1250,11 @@ class SdlcPipelineRunner:
 
     def _step_gitlab(self) -> None:
         self._wait_for_developer_handoff()
-        apps_repo = os.getenv("GITLAB_APPS_REPO", "").strip().lower() in {"1", "true", "yes", "on"}
+        # apps-repo (backend/frontend split, target-apps/<slug> prefix stripped) is now
+        # the default publish layout; set GITLAB_APPS_REPO=false to opt back into the
+        # legacy flat monorepo-mirror layout.
+        apps_repo_env = os.getenv("GITLAB_APPS_REPO", "").strip().lower()
+        apps_repo = apps_repo_env not in {"0", "false", "no", "off"}
         if self.transport == "local":
             args = [
                 "agents/gitlab-agent/gitlab_agent.py",
@@ -1268,8 +1272,19 @@ class SdlcPipelineRunner:
             self._run_python(args, step="gitlab-agent")
         else:
             # Apps-repo and monorepo both use sdlc/<app> so GitLab CI deploy rules match.
+            # gitlab-agent's A2A handler (parse_publish_request) reads targetApp/runId/
+            # gitlabPublishLayout from a "Context:\n<json>" block in the task text - it
+            # does not read the orchestrator's own context.json/S3 state directly.
             branch_hint = f"sdlc/{self.feature}"
-            task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
+            task_context = {
+                "targetApp": self.feature,
+                "runId": self.run_id or "",
+                "gitlabPublishLayout": "apps" if apps_repo else "monorepo",
+            }
+            task = (
+                f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}.\n\n"
+                f"Context:\n{json.dumps(task_context)}"
+            )
             self._invoke_a2a("gitlab-agent", task, step="gitlab-agent")
 
         handoff = self._read_gitlab_handoff()
