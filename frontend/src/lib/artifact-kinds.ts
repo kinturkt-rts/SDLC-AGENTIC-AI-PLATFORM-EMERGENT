@@ -15,15 +15,17 @@ export const ARTIFACT_KIND_LABELS: Record<ArtifactKind, string> = {
 
 /**
  * Filter options shown on the Artifacts page.
- * Only kinds the SDLC pipeline currently produces (no CI/CD / test / scan yet).
+ * Deliverables review surface, not a file browser - SQL, code, tests, and config
+ * are intentionally excluded from every user of this platform, not just hidden by default.
  */
-export const ARTIFACT_FILTER_KINDS: ArtifactKind[] = [
-  'prd',
-  'architecture',
-  'diagram',
-  'migration',
-  'code',
-];
+export const ARTIFACT_FILTER_KINDS: ArtifactKind[] = ['prd', 'architecture', 'diagram'];
+
+const ARTIFACT_FILTER_KIND_SET = new Set<ArtifactKind>(ARTIFACT_FILTER_KINDS);
+
+/** True when this artifact's kind belongs on the Artifacts page at all (any filter, including "all"). */
+export function isVisibleArtifactKind(kind: ArtifactKind): boolean {
+  return ARTIFACT_FILTER_KIND_SET.has(kind);
+}
 
 export function artifactKindLabel(kind: ArtifactKind): string {
   return ARTIFACT_KIND_LABELS[kind] ?? kind;
@@ -31,7 +33,7 @@ export function artifactKindLabel(kind: ArtifactKind): string {
 
 /** Strict path checks so mis-tagged rows never leak into Kind filters. */
 export function artifactMatchesKind(artifact: Artifact, kind: ArtifactKind | 'all'): boolean {
-  if (kind === 'all') return true;
+  if (kind === 'all') return isVisibleArtifactKind(artifact.kind);
 
   const lower = artifact.path.replace(/\\/g, '/').toLowerCase();
   const isCodeLike =

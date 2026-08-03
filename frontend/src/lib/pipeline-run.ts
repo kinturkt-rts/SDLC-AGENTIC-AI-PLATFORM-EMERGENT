@@ -7,7 +7,7 @@ import { isS3Store, putRunArtifact, runInputRelPath, runInputS3Uri } from './art
 import { withTimeout } from './async-utils';
 import { invalidateCacheKeys } from './request-cache';
 import { finalizeRunJson, runOrchestratorCloud } from './orchestrator-cloud-run';
-import { listRunGuardCandidates, listRuns } from './repo-reader';
+import { findRunSummariesForSlug, listRunGuardCandidates, listRuns } from './repo-reader';
 import { RUN_LIVE_IDLE_MS } from './run-reconcile';
 import { validateProductBrief } from './brief-quality';
 
@@ -23,15 +23,12 @@ const RUNS_CACHE_KEYS = [
 const SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-/** Human-friendly run ids (e.g. smoke-004) or UUIDs - matches agent pipeline runId usage. */
 const RUN_ID_RE = /^(?:[a-z][a-z0-9-]{0,62}[a-z0-9]|[0-9a-f-]{36})$/i;
 const MAX_BYTES = 256 * 1024;
 const S3_UPLOAD_TIMEOUT_MS = 45_000;
 const MAX_CONCURRENT_RUNS = Math.max(1, parseInt(process.env.SDLC_MAX_CONCURRENT_RUNS ?? '3', 10) || 3);
-/** run.json is never rewritten when a cloud run dies, so ignore long-idle "running" rows. */
 const RUN_STALL_MS = RUN_LIVE_IDLE_MS;
 
-/** True when only DevOps/CI deploy remains (agents already finished). */
 export function isDeployFollowOn(run: {
   status?: string;
   currentPhase?: string | null;
@@ -54,7 +51,6 @@ export async function getActiveRuns() {
     return runs.filter((r) => {
       if (r.status === 'paused') return true;
       if (r.status !== 'running') return false;
-      // Deploy follow-on stays visible as "running" for UX but does not hold a slot.
       return !isDeployFollowOn(r);
     });
   } catch {
@@ -62,7 +58,6 @@ export async function getActiveRuns() {
   }
 }
 
-/** Returns the conflicting run if this targetApp already has an active pipeline (incl. deploy). */
 export async function findRunningTargetApp(targetApp: string) {
   const slug = targetApp.trim().toLowerCase();
   try {
@@ -118,7 +113,6 @@ export async function resolvePythonExecutable(repoRoot: string): Promise<string>
       await fs.access(candidate);
       return candidate;
     } catch {
-      // try next
     }
   }
   return 'python';
@@ -134,11 +128,59 @@ export interface UploadBriefResult {
   runPrefix: string;
 }
 
-/** Stage brief under runs/<runId>/inputs/<targetApp>.txt (always a fresh runId unless provided). */
+export interface ExistingProjectInfo {
+  projectId: string;
+  runCount: number;
+  firstSeenAt: string;
+  lastRunAt: string;
+  lastRunStatus: string;
+}
+
+export class ExistingProjectConflictError extends Error {
+  constructor(public readonly project: ExistingProjectInfo) {
+    super(
+      `"${project.projectId}" already exists (${project.runCount} previous run` +
+        `${project.runCount === 1 ? '' : 's'}, last ${project.lastRunStatus}). Confirm you want to ` +
+        'continue this existing app, or choose a different name.',
+    );
+    this.name = 'ExistingProjectConflictError';
+  }
+}
+
+/** Pure: given a full run list, summarize this slug's prior runs (or null if never used). */
+export function summarizeExistingProject(
+  runs: { projectId: string; startedAt: string; status: string }[],
+  slug: string,
+): ExistingProjectInfo | null {
+  const matches = runs.filter((r) => r.projectId === slug);
+  if (matches.length === 0) return null;
+
+  const sorted = [...matches].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  return {
+    projectId: slug,
+    runCount: matches.length,
+    firstSeenAt: first.startedAt,
+    lastRunAt: last.startedAt,
+    lastRunStatus: last.status,
+  };
+}
+
+/** Null when this slug has never been used; otherwise a summary of its prior runs.
+ * Scoped to just this slug's own runs (not a full platform-wide run listing) so
+ * this check stays fast regardless of total run history size — it runs on every
+ * brief submission, not just page loads. */
+export async function findExistingProject(slug: string): Promise<ExistingProjectInfo | null> {
+  const runs = await findRunSummariesForSlug(slug);
+  return summarizeExistingProject(runs, slug);
+}
+
 export async function uploadBrief(
   targetApp: string,
   content: string,
   runId?: string,
+  options?: { confirmExistingProject?: boolean },
 ): Promise<UploadBriefResult> {
   const slugError = validateTargetApp(targetApp);
   if (slugError) throw new Error(slugError);
@@ -146,6 +188,11 @@ export async function uploadBrief(
   if (briefError) throw new Error(briefError);
 
   const slug = targetApp.trim().toLowerCase();
+
+  if (!options?.confirmExistingProject) {
+    const existing = await findExistingProject(slug);
+    if (existing) throw new ExistingProjectConflictError(existing);
+  }
   const byteLen = Buffer.byteLength(content, 'utf-8');
   if (byteLen > MAX_BYTES) {
     throw new Error(`content too large (${byteLen} bytes; limit ${MAX_BYTES})`);
@@ -198,6 +245,7 @@ export async function startPipeline(options: {
   inputFile: string;
   withJira?: boolean;
   jiraProject?: string;
+  triggeredBy?: string;
 }): Promise<StartPipelineResult> {
   const slugError = validateTargetApp(options.targetApp);
   if (slugError) throw new Error(slugError);
@@ -209,9 +257,6 @@ export async function startPipeline(options: {
   const inputRel = options.inputFile.trim() || runInputRelPath(feature);
   const repoRoot = getBackendRoot();
 
-  // Guard on raw run.json only. Fully enriching every run (listRuns) grew past the
-  // client's start timeout, and an aborted request still started the pipeline —
-  // users then resubmitted and got duplicate runs for the same app.
   const candidates = (await listRunGuardCandidates()).filter((c) => c.runId !== runId);
   const stalled = (c: { lastActivityMs: number }) =>
     c.lastActivityMs > 0 && Date.now() - c.lastActivityMs > RUN_STALL_MS;
@@ -222,7 +267,7 @@ export async function startPipeline(options: {
       `"${feature}" already has an active pipeline run (${duplicate.runId.slice(0, 8)}…). Wait for it to finish or cancel it.`,
     );
   }
-  // awaiting_deploy waits on GitLab CI, so it never holds an agent-chain slot.
+
   const others = candidates.filter(
     (c) =>
       !stalled(c) &&
@@ -261,7 +306,7 @@ export async function startPipeline(options: {
         feature,
         targetApp: feature,
         status: 'running',
-        triggeredBy: 'frontend',
+        triggeredBy: options.triggeredBy?.trim() || 'frontend',
         startedAt: new Date().toISOString(),
         finishedAt: null,
         currentStep: 'product-agent',
@@ -310,7 +355,6 @@ export async function startPipeline(options: {
     jiraProject: options.withJira ? (options.jiraProject ?? '').trim() : '',
   };
 
-  // S3 mode: invoke orchestrator via AgentCore SDK (no local Python subprocess).
   if (isS3Store() && !useLocalPythonInvoke) {
     void runOrchestratorCloud({
       ...taskOptions,
@@ -319,7 +363,7 @@ export async function startPipeline(options: {
     }).catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err);
       await fs.appendFile(logPath, `\n[cloud-invoke] FAILED: ${message}\n`, 'utf-8');
-      // Mark the run terminal so the UI never shows a silently stuck "running" state.
+
       await finalizeRunJson(runId, {
         status: 'failed',
         error: `Cloud orchestrator invoke failed: ${message.slice(0, 300)}`,
@@ -339,7 +383,7 @@ export async function startPipeline(options: {
     };
   }
 
-  // Local / legacy: spawn invoke-orchestrator-smoke.py
+
   const smokeScript = path.join(repoRoot, 'scripts', 'invoke-orchestrator-smoke.py');
   const python = await resolvePythonExecutable(repoRoot);
   const args = [
@@ -395,14 +439,18 @@ export async function startPipeline(options: {
   };
 }
 
-/** One submission: new runId, upload brief, start orchestrator. */
-export async function submitBrief(targetApp: string, content: string) {
-  const upload = await uploadBrief(targetApp, content);
+
+export async function submitBrief(
+  targetApp: string,
+  content: string,
+  options?: { confirmExistingProject?: boolean; triggeredBy?: string },
+) {
+  const upload = await uploadBrief(targetApp, content, undefined, options);
   const started = await startPipeline({
     targetApp: upload.targetApp,
     runId: upload.runId,
     inputFile: upload.inputFile,
+    triggeredBy: options?.triggeredBy,
   });
   return { ...upload, ...started };
 }
-

@@ -19,6 +19,8 @@ import {
   getS3RunArtifactIndex,
   listS3RunIds,
   isHiddenAppSlug,
+  listDynamoRunIndex,
+  runInputRelPath,
 } from './artifact-store';
 import { TIMELINE_PHASES, PHASE_AGENT, COMPLETION_PHASES } from './pipeline-phases';
 import {
@@ -61,7 +63,6 @@ import {
   parseCloudWatchActivityLine,
 } from './cloudwatch-activity';
 import { filterLiveRuns, isRecentLiveTs } from './live-activity';
-import { listAgentMessagesFromRuns } from './agent-messages';
 import type {
   Agent,
   AgentAvailability,
@@ -895,7 +896,45 @@ function mergeStepProgressFromPhases(
   });
 }
 
-async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promise<PipelineRun> {
+/**
+ * Last-resort detail for a failed run when no handoff file names a concrete error
+ * (e.g. the orchestrator process died mid-run and never got to write one). Checks
+ * whether the agent responsible for the stalled phase logged anything at all for
+ * this run — that distinguishes "started, then crashed" from "never invoked",
+ * and surfaces the tail of whatever it did log.
+ */
+async function describeAgentActivityForFailure(
+  runId: string,
+  agent: string | null,
+  startedAtIso: string,
+): Promise<string | null> {
+  if (!agent) return null;
+  const displayName = AGENT_DISPLAY[agent]?.displayName ?? agent;
+  try {
+    const startMs = Date.parse(startedAtIso) - 2 * 60_000;
+    const logs = await listCloudWatchLogs({
+      runId,
+      agent,
+      startMs: Number.isFinite(startMs) ? startMs : undefined,
+      endMs: Date.now(),
+      limit: 5,
+    });
+    if (!logs.length) {
+      return `${displayName}-agent produced no logs for this run — it likely never started.`;
+    }
+    const lastLine = logs[logs.length - 1]?.message?.trim();
+    return lastLine ? `${displayName}-agent last logged: "${lastLine.slice(0, 240)}"` : null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildPipelineRunFromLive(
+  slug: string,
+  live: LiveRunState,
+  opts?: { includeFailureLogFallback?: boolean },
+): Promise<PipelineRun> {
+  const includeFailureLogFallback = opts?.includeFailureLogFallback ?? false;
   const runId = live.runId;
   const log = await readPipelineLog(runId);
   let enriched = log ? enrichLiveRunFromLog(live, log) : live;
@@ -968,7 +1007,17 @@ async function buildPipelineRunFromLive(slug: string, live: LiveRunState): Promi
   let reconciledError = reconciled.error ?? enriched.error ?? null;
   if (reconciled.status === 'failed') {
     const detail = await resolveRunFailureDetail(runId, slug);
-    if (detail) reconciledError = detail;
+    if (detail) {
+      reconciledError = detail;
+    } else if (includeFailureLogFallback) {
+      // Skipped for bulk list views (dashboard, /api/v1/runs) - a CloudWatch lookup per
+      // failed run there would repeat the exact per-row latency mistake already fixed
+      // once today. Only single-run lookups (getRun) opt in.
+      const activity = await describeAgentActivityForFailure(runId, reconciled.currentStep, startedAt);
+      if (activity) {
+        reconciledError = reconciledError ? `${reconciledError} ${activity}` : activity;
+      }
+    }
   }
 
   phaseDone = applyCurrentStepPhaseOverride(
@@ -1866,26 +1915,51 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
 
   if (isS3Store()) {
     try {
-      await getS3RunArtifactIndex();
-      const s3RunByApp = await buildS3RunIdByApp();
-      for (const [slug, runId] of s3RunByApp) {
-        if (coveredRunIds.has(runId)) continue;
-        const live = await readUuidRunState(runId);
-        if (live) {
-          runs.push(await buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId }));
-        } else {
-          const live = await readUuidRunState(runId);
-          runs.push(
-            await buildPipelineRunFromLive(slug, live ?? {
-              runId,
-              feature: slug,
-              targetApp: slug,
-              status: 'completed',
-              triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
-            }),
-          );
+      // The full-bucket S3 listing is expensive and grows with every artifact ever
+      // written, so it's cached for HEAVY_LIST_TTL_MS instead of the 4s live-progress
+      // TTL. The DynamoDB run-index (cheap: only META rows carry targetApp) is scanned
+      // fresh every call and overlaid on top, so brand-new runs still show up without
+      // waiting on the long cache.
+      const [dynamoEntries, historicalRunByApp] = await Promise.all([
+        listDynamoRunIndex().catch((err) => {
+          console.warn('[listRuns] DynamoDB run-index scan failed, using S3 only:', err);
+          return [] as Awaited<ReturnType<typeof listDynamoRunIndex>>;
+        }),
+        cachedAsync('s3RunIdByAppHistorical', HEAVY_LIST_TTL_MS, buildS3RunIdByApp),
+      ]);
+
+      const runByApp = new Map(historicalRunByApp);
+      const dynamoLatestByApp = new Map<string, { runId: string; ts: string }>();
+      for (const entry of dynamoEntries) {
+        const ts = entry.updatedAt || entry.createdAt || '';
+        const current = dynamoLatestByApp.get(entry.targetApp);
+        if (!current || ts > current.ts) {
+          dynamoLatestByApp.set(entry.targetApp, { runId: entry.runId, ts });
         }
-        coveredRunIds.add(runId);
+      }
+      for (const [app, { runId }] of dynamoLatestByApp) runByApp.set(app, runId);
+
+      const pending = [...runByApp].filter(([, runId]) => !coveredRunIds.has(runId));
+
+      for (let i = 0; i < pending.length; i += UUID_RUN_BUILD_BATCH) {
+        const batch = pending.slice(i, i + UUID_RUN_BUILD_BATCH);
+        const batchRuns = await Promise.all(
+          batch.map(async ([slug, runId]) => {
+            const live = await readUuidRunState(runId);
+            return buildPipelineRunFromLive(
+              slug,
+              live ?? {
+                runId,
+                feature: slug,
+                targetApp: slug,
+                status: 'completed',
+                triggeredBy: UUID_RE.test(runId) ? 'frontend' : 'orchestrator-agent',
+              },
+            );
+          }),
+        );
+        runs.push(...batchRuns);
+        for (const [, runId] of batch) coveredRunIds.add(runId);
       }
     } catch (err) {
       console.warn('[listRuns] S3 enrichment failed, using local run.json only:', err);
@@ -1985,12 +2059,33 @@ export async function listRuns(): Promise<PipelineRun[]> {
   return cachedAsync(LIST_RUNS_CACHE_KEY, LIST_RUNS_TTL_MS, listRunsUncached);
 }
 
+export async function findRunSummariesForSlug(
+  slug: string,
+): Promise<{ projectId: string; startedAt: string; status: string }[]> {
+  const candidateIds = isS3Store()
+    ? (await listS3RunAppEntries()).filter((e) => e.app === slug).map((e) => e.runId)
+    : await listUuidRunIds();
+
+  const states = await Promise.all(candidateIds.map((id) => readUuidRunState(id)));
+  const summaries: { projectId: string; startedAt: string; status: string }[] = [];
+  states.forEach((live) => {
+    if (!live || !live.startedAt) return;
+    if (featureSlugFromLive(live) !== slug) return;
+    summaries.push({ projectId: slug, startedAt: live.startedAt, status: live.status });
+  });
+  return summaries;
+}
+
 export async function getRun(id: string): Promise<PipelineRun | undefined> {
   if (UUID_RE.test(id)) {
     const live = await readUuidRunState(id);
     if (live) {
       const slug = featureSlugFromLive(live);
-      if (slug) return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || id });
+      if (slug) {
+        return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || id }, {
+          includeFailureLogFallback: true,
+        });
+      }
     }
   }
 
@@ -1998,15 +2093,15 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
   const direct = runs.find((r) => r.id === id || r.projectId === id);
   if (direct) return direct;
 
-  // Slug-based runIds (e.g. "change-request-hub-003") are stored under runs/<id>/run.json
-  // but listRuns() only scans UUID dirs. Try reading it directly.
   const slugRunState = await readUuidRunState(id);
   if (slugRunState) {
     const slug = featureSlugFromLive(slugRunState);
     if (slug) {
       const bySlug = runs.find((r) => r.projectId === slug);
       if (bySlug) return bySlug;
-      return buildPipelineRunFromLive(slug, { ...slugRunState, runId: slugRunState.runId || id });
+      return buildPipelineRunFromLive(slug, { ...slugRunState, runId: slugRunState.runId || id }, {
+        includeFailureLogFallback: true,
+      });
     }
   }
 
@@ -2129,12 +2224,69 @@ export async function listContextItems(projectSlug?: string): Promise<ContextIte
   return items;
 }
 
+/** Key names that must never render in the Context page's raw-JSON view. */
+const SECRET_KEY_RE = /token|secret|password|credential|api[_-]?key|access[_-]?key|private[_-]?key/i;
+
+function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = SECRET_KEY_RE.test(k) ? '[redacted]' : redactSecrets(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function latestRunTimestamp(run: PipelineRun): string | null {
+  const stamps = [run.finishedAt, ...run.steps.flatMap((s) => [s.finishedAt, s.startedAt]), run.startedAt].filter(
+    (v): v is string => !!v,
+  );
+  return stamps.length ? stamps.sort().at(-1)! : null;
+}
+
 export async function getPipelineContext(projectSlug: string): Promise<PipelineContext | null> {
   const ctx = await resolveContextForSlug(projectSlug);
   if (!ctx) return null;
   const slug = projectSlug;
   const appRoot = isS3Store() ? slug : `target-apps/${slug}`;
   const summaries = await buildContextSummaries(slug, ctx, ctx.runId);
+
+  let runStatus: RunStatus | null = null;
+  let activeAgent: AgentName | null = null;
+  let completedAgents: AgentName[] = [];
+  let lastUpdatedAt: string | null = null;
+  let gitlabBranchUrl: string | null = null;
+  let gitlabMergeRequestUrl: string | null = null;
+  let liveUrl: string | null = null;
+
+  if (ctx.runId) {
+    // Best-effort enrichment from already-existing run/handoff readers — a failure here
+    // must not break the page, since the base context fields above are already resolved.
+    try {
+      const run = await getRun(ctx.runId);
+      if (run) {
+        runStatus = run.status;
+        activeAgent = run.currentAgent;
+        completedAgents = Array.from(
+          new Set(run.steps.filter((s) => s.status === 'completed').map((s) => s.agent)),
+        );
+        lastUpdatedAt = latestRunTimestamp(run);
+      }
+    } catch {
+      /* enrichment only */
+    }
+    try {
+      const handoffs = await getRunHandoffs(ctx.runId, slug);
+      gitlabBranchUrl = handoffs.gitlab?.branchUrl ?? null;
+      gitlabMergeRequestUrl = handoffs.gitlab?.mergeRequestUrl ?? handoffs.contextMergeRequestUrl ?? null;
+      liveUrl = handoffs.devops?.appUrl ?? null;
+    } catch {
+      /* enrichment only */
+    }
+  }
+
   return {
     targetApp: ctx.targetApp ?? projectSlug,
     runId: ctx.runId,
@@ -2146,8 +2298,45 @@ export async function getPipelineContext(projectSlug: string): Promise<PipelineC
     architectSummary: summaries.architectSummary,
     dbOutputDir: asRepoPath(ctx.dbOutputDir) ?? `${appRoot}/db`,
     preferredSqlPath: asRepoPath(ctx.preferredSqlPath) ?? `${appRoot}/db/sql`,
-    raw: ctx as Record<string, unknown>,
+    runStatus,
+    activeAgent,
+    completedAgents,
+    lastUpdatedAt,
+    gitlabBranchUrl,
+    gitlabMergeRequestUrl,
+    liveUrl,
+    raw: redactSecrets(ctx) as Record<string, unknown>,
   };
+}
+
+export interface InputBrief {
+  slug: string;
+  path: string;
+  content: string;
+}
+
+export async function readInputBrief(slug: string, runId?: string): Promise<InputBrief | null> {
+  const cleanSlug = slug.trim().toLowerCase();
+  if (!cleanSlug) return null;
+
+  const ctx = await resolveContextForSlug(cleanSlug).catch(() => null);
+  const ctxInput = asRepoPath(ctx?.inputPath) ?? asRepoPath(ctx?.inputFile);
+
+  const candidates: string[] = [];
+  if (isS3Store() && runId) {
+    const rel = ctxInput ?? runInputRelPath(cleanSlug);
+    candidates.push(`runs/${runId}/${rel.replace(/^\/+/, '')}`);
+  }
+  if (ctxInput) candidates.push(ctxInput);
+  candidates.push(`inputs/${cleanSlug}.txt`);
+
+  for (const rel of candidates) {
+    const asset = await readRepoAsset(rel);
+    if (asset) {
+      return { slug: cleanSlug, path: rel, content: asset.buffer.toString('utf-8') };
+    }
+  }
+  return null;
 }
 
 export async function listAgents(): Promise<Agent[]> {
@@ -2207,12 +2396,6 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
       usedByAgents: usedBy,
     };
   });
-}
-
-/** Live orchestration-bus view derived from pipeline run steps (read-only). */
-export async function listAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
-  const runs = await listRuns();
-  return listAgentMessagesFromRuns(runs, { correlationId, maxRuns: 25 });
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
@@ -2326,7 +2509,6 @@ function mergeRunEventsFromLists(...groups: RunEvent[][]): RunEvent[] {
   return [...byId.values()].sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
-/** Live agent activity for active runs only (CloudWatch, fresh S3 artifacts, pipeline logs). */
 export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]> {
   return cachedAsync(`${ACTIVITY_CACHE_KEY}:${limit}`, ACTIVITY_LIVE_TTL_MS, () =>
     listRecentActivityUncached(limit),

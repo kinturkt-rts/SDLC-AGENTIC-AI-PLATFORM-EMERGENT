@@ -83,11 +83,10 @@ def test_is_branch_not_found_detects_gitlab_message() -> None:
     assert _is_branch_not_found(GitLabMcpError("commit failed")) is False
 
 
-def test_publish_commit_message_generic_and_batched() -> None:
-    assert _publish_commit_message("notice-board-ui") == "feat(notice-board-ui): SDLC pipeline output"
+def test_publish_commit_message() -> None:
     assert (
-        _publish_commit_message("notice-board-ui", batch=2, total=3)
-        == "feat(notice-board-ui): SDLC pipeline output (batch 2/3)"
+        _publish_commit_message("notice-board-ui")
+        == "feat(notice-board-ui): SDLC Agentic AI Pipeline Output"
     )
 
 

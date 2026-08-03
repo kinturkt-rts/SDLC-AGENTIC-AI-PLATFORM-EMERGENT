@@ -1,11 +1,23 @@
 """pgvector similarity retrieval for the local RAG pattern.
 
 Reads from the `document_chunks` table created by database-agent. Adjust the
-table/column names and schema to match db/HANDOFF.md. Cosine distance (`<=>`)
-is used; similarity = 1 - distance.
+table/column names, dataclass fields, and SQL below to match the REAL schema
+in db/HANDOFF.md (they are illustrative placeholders here, not a fixed
+contract) — e.g. `doc_id` → `document_id`, `text` → `content`,
+`d.collection_id` → whatever join actually scopes access for this app.
 
-Routers depend on `Retriever` (the Protocol) so tests can inject a fake without
-a live database or Bedrock.
+This retriever MUST be wired into the query router via `get_retriever()`
+(a FastAPI dependency, mirroring `get_bedrock_client()`) — never leave it
+unused in favor of an unranked "grab the first N chunks" query. An unused
+retriever means answers aren't actually grounded by relevance, and the
+"insufficient information" fallback ends up meaning "zero chunks exist"
+instead of "nothing relevant was found for this question."
+
+Routers depend on `get_retriever` rather than instantiating `PgVectorRetriever`
+directly, so tests can override it with a fake `Retriever` and never touch a
+live Postgres/pgvector connection (the `<=>` operator and `vector` cast used
+here have no SQLite equivalent — wiring raw pgvector SQL directly into a
+router breaks the SQLite-based test suite).
 """
 
 from __future__ import annotations
@@ -13,10 +25,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
+from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.bedrock_client import BedrockClient
+from app.dependencies import DbSession
+from app.services.bedrock_client import BedrockClient, get_bedrock_client
 
 
 @dataclass
@@ -78,3 +92,11 @@ class PgVectorRetriever:
             )
             for r in rows
         ]
+
+
+def get_retriever(
+    db: DbSession,
+    bedrock: BedrockClient = Depends(get_bedrock_client),
+) -> Retriever:
+    """FastAPI dependency factory; override in tests with a fake Retriever."""
+    return PgVectorRetriever(db=db, bedrock=bedrock)

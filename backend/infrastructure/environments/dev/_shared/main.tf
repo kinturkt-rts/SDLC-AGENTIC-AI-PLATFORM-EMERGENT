@@ -95,7 +95,7 @@ resource "aws_lb_listener" "http" {
     fixed_response {
       content_type = "text/plain"
       status_code  = "404"
-      message_body = "SDLC target-apps ALB — no app matches this path. Apps live at /<app-name>/."
+      message_body = "This app isn't deployed - its infrastructure may have been destroyed. Redeploy to bring it back online."
     }
   }
 }

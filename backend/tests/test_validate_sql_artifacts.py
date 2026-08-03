@@ -11,10 +11,12 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.validate_sql_artifacts import (  # noqa: E402
     _parse_create_table_columns,
     check_ddl_column_drift,
+    check_seed_conflict_on_ruled_tables,
     check_seed_schema_nullability,
     check_uuid_literals,
     check_vector_literal_format,
     parse_seed_inserts,
+    split_sql_statements,
     validate_sql_dir,
 )
 
@@ -415,3 +417,96 @@ def test_check_ddl_column_drift_ignores_table_level_unique_without_space(tmp_pat
         {("compliance_management", "document_versions"): ["id", "document_id", "version_number"]}
     )
     assert check_ddl_column_drift(cur, app_schema="compliance_management", sql_dir=sql_dir) == []
+
+
+def test_check_seed_conflict_on_ruled_tables_detects_incident(tmp_path: Path) -> None:
+    """Regression: insurance-claims incident (run 49b51e3a-...).
+
+    009_add_history_no_update_delete_rule.sql adds UPDATE/DELETE rules to
+    claim_history for an append-only pattern; 010_seed.sql then seeds that
+    same table with ON CONFLICT DO NOTHING. PostgreSQL rejects ON CONFLICT on
+    any table with any rule, regardless of the rule's own event type — this
+    fails even on a freshly-reset schema, so it's a real generation bug, not
+    a drift/staleness issue.
+    """
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "007_create_claim_history.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS claim_history (
+            id uuid PRIMARY KEY,
+            claim_id uuid NOT NULL,
+            event_type text NOT NULL
+        );
+        """,
+        encoding="utf-8",
+    )
+    (sql_dir / "009_add_history_no_update_delete_rule.sql").write_text(
+        """
+        CREATE RULE prevent_update_claim_history AS
+            ON UPDATE TO claim_history
+            DO INSTEAD NOTHING;
+
+        CREATE RULE prevent_delete_claim_history AS
+            ON DELETE TO claim_history
+            DO INSTEAD NOTHING;
+        """,
+        encoding="utf-8",
+    )
+    (sql_dir / "010_seed.sql").write_text(
+        """
+        INSERT INTO claim_history (id, claim_id, event_type) VALUES
+            ('00000001-aaaa-0000-0000-000000000001', 'c1', 'status_change')
+        ON CONFLICT DO NOTHING;
+        """,
+        encoding="utf-8",
+    )
+    errors = check_seed_conflict_on_ruled_tables(sql_dir)
+    assert len(errors) == 1
+    assert "claim_history" in errors[0]
+    assert "ON CONFLICT" in errors[0]
+    assert "010_seed.sql" in errors[0]
+
+
+def test_check_seed_conflict_on_ruled_tables_clean_when_no_rules(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_users.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS users (id uuid PRIMARY KEY, name text NOT NULL);",
+        encoding="utf-8",
+    )
+    (sql_dir / "002_seed.sql").write_text(
+        "INSERT INTO users (id, name) VALUES ('00000001-0000-0000-0000-000000000001', 'a')"
+        " ON CONFLICT DO NOTHING;",
+        encoding="utf-8",
+    )
+    assert check_seed_conflict_on_ruled_tables(sql_dir) == []
+
+
+def test_check_seed_conflict_on_ruled_tables_clean_when_seed_has_no_on_conflict(tmp_path: Path) -> None:
+    """A ruled table is fine to seed as long as the INSERT doesn't use ON CONFLICT."""
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "007_create_claim_history.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS claim_history (id uuid PRIMARY KEY, event_type text NOT NULL);",
+        encoding="utf-8",
+    )
+    (sql_dir / "009_rule.sql").write_text(
+        "CREATE RULE prevent_update_claim_history AS ON UPDATE TO claim_history DO INSTEAD NOTHING;",
+        encoding="utf-8",
+    )
+    (sql_dir / "010_seed.sql").write_text(
+        "INSERT INTO claim_history (id, event_type) VALUES "
+        "('00000001-0000-0000-0000-000000000001', 'status_change');",
+        encoding="utf-8",
+    )
+    assert check_seed_conflict_on_ruled_tables(sql_dir) == []
+
+
+def test_split_sql_statements_still_importable_after_move() -> None:
+    """split_sql_statements moved from apply_sql_to_rds.py into this shared module
+    (apply_sql_to_rds.py now imports it) so validate_sql_artifacts.py can reuse it
+    without a reverse dependency on scripts/. Guard the public contract directly."""
+    stmts = split_sql_statements("INSERT INTO a VALUES ('x;y'); INSERT INTO b VALUES (1);")
+    assert len(stmts) == 2
+    assert "x;y" in stmts[0]

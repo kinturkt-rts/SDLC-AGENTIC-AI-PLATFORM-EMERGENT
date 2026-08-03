@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { loadBackendEnv } from '@/src/lib/backend-env';
-import { submitBrief, validateTargetApp } from '@/src/lib/pipeline-run';
+import { ExistingProjectConflictError, submitBrief, validateTargetApp } from '@/src/lib/pipeline-run';
 import { decodeBriefContent } from '@/src/lib/brief-payload';
 
 function formatSubmitError(err: unknown): string {
@@ -26,6 +26,8 @@ interface SubmitBody {
   feature?: unknown;
   content?: unknown;
   contentBase64?: unknown;
+  confirmExistingProject?: unknown;
+  triggeredBy?: unknown;
 }
 
 function bad(message: string, status = 400) {
@@ -65,8 +67,14 @@ export async function POST(request: Request) {
     return bad(`content too large (limit ${MAX_BYTES})`, 413);
   }
 
+  const confirmExistingProject = body.confirmExistingProject === true;
+  const triggeredBy = typeof body.triggeredBy === 'string' ? body.triggeredBy.trim() : '';
+
   try {
-    const result = await submitBrief(featureRaw, content);
+    const result = await submitBrief(featureRaw, content, {
+      confirmExistingProject,
+      triggeredBy: triggeredBy || undefined,
+    });
     return NextResponse.json({
       ...result,
       feature: result.targetApp,
@@ -74,6 +82,12 @@ export async function POST(request: Request) {
       submittedAt: new Date().toISOString(),
     });
   } catch (err) {
+    if (err instanceof ExistingProjectConflictError) {
+      return NextResponse.json(
+        { error: err.message, existingProject: err.project },
+        { status: 409 },
+      );
+    }
     const message = formatSubmitError(err);
     const status = /already has an active pipeline|Maximum concurrent runs/i.test(message)
       ? 409

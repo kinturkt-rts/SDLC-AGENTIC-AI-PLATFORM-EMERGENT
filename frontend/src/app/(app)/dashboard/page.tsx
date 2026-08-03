@@ -38,6 +38,16 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { StatusBadge } from '@/src/components/common/StatusBadge';
 import {
   useDashboardSummary,
@@ -52,6 +62,7 @@ import { api } from '@/src/lib/api';
 import { formatRelative, titleCase } from '@/src/lib/format';
 import { LiveElapsed } from '@/src/components/common/LiveElapsed';
 import { encodeUtf8Base64, readJsonResponse } from '@/src/lib/http-json';
+import { cognitoCurrentUserEmail } from '@/src/lib/auth-cognito';
 import { validateProductBrief } from '@/src/lib/brief-quality';
 import { PHASE_DISPLAY_LABEL } from '@/src/lib/pipeline-phases';
 import { artifactKindLabel } from '@/src/lib/artifact-kinds';
@@ -63,11 +74,43 @@ import { cn } from '@/lib/utils';
 const FEATURE_SLUG_RE = /^[a-z][a-z0-9-]{1,63}$/;
 const MAX_CONCURRENT_RUNS = 3;
 
-function briefUploadBody(feature: string, content: string): string {
+function briefUploadBody(feature: string, content: string, confirmExistingProject?: boolean): string {
   return JSON.stringify({
     feature,
     contentBase64: encodeUtf8Base64(content),
+    ...(confirmExistingProject ? { confirmExistingProject: true } : {}),
   });
+}
+
+interface ExistingProjectInfo {
+  projectId: string;
+  runCount: number;
+  firstSeenAt: string;
+  lastRunAt: string;
+  lastRunStatus: string;
+}
+
+const CONFIRMED_SLUGS_KEY = 'sdlc:confirmed-existing-projects';
+
+/** Slugs the user has already been warned about and chose to continue with, this session. */
+function loadConfirmedSlugs(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.sessionStorage.getItem(CONFIRMED_SLUGS_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function markSlugConfirmed(slug: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const confirmed = loadConfirmedSlugs();
+    confirmed.add(slug);
+    window.sessionStorage.setItem(CONFIRMED_SLUGS_KEY, JSON.stringify(Array.from(confirmed)));
+  } catch {
+  }
 }
 
 interface BriefUploadResponse {
@@ -76,6 +119,36 @@ interface BriefUploadResponse {
   inputFile?: string;
   inputS3Uri?: string;
   error?: string;
+}
+
+type BriefUploadOutcome =
+  | { ok: true; data: BriefUploadResponse }
+  | { ok: false; error: string; existingProject?: ExistingProjectInfo };
+
+/**
+ * Reads a /api/v1/inputs response, special-casing the 409 "slug already has
+ * prior runs" conflict (see ExistingProjectConflictError on the API route) so
+ * the caller can offer a confirm-or-rename choice instead of a flat error.
+ * Falls back to the shared readJsonResponse handling for every other case.
+ */
+async function readBriefUploadResponse(res: Response): Promise<BriefUploadOutcome> {
+  const rawText = await res.text();
+  if (res.status === 409) {
+    try {
+      const body = JSON.parse(rawText) as { error?: string; existingProject?: ExistingProjectInfo };
+      if (body.existingProject) {
+        return {
+          ok: false,
+          error: body.error ?? `"${body.existingProject.projectId}" already exists`,
+          existingProject: body.existingProject,
+        };
+      }
+    } catch {
+      // not the conflict shape - fall through to generic handling below
+    }
+  }
+  const reconstructed = new Response(rawText, { status: res.status, statusText: res.statusText, headers: res.headers });
+  return readJsonResponse<BriefUploadResponse>(reconstructed);
 }
 
 function inferFeatureSlugFromFilename(filename: string): string {
@@ -87,9 +160,6 @@ function inferFeatureSlugFromFilename(filename: string): string {
     .replace(/^-|-$/g, '');
 }
 
-/* ─────────────────────────────────────────────────────
-   SDLC Pipeline Steps
-   ───────────────────────────────────────────────────── */
 const PIPELINE_STEPS: {
   id: string;
   label: string;
@@ -471,6 +541,10 @@ function InputRequirementsCard() {
   const [starting, setStarting] = React.useState(false);
   const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
   const [fileLoading, setFileLoading] = React.useState(false);
+  const [existingProjectConflict, setExistingProjectConflict] = React.useState<{
+    info: ExistingProjectInfo;
+    retry: () => void;
+  } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadSeqRef = React.useRef(0);
   const submitLockRef = React.useRef(false);
@@ -548,7 +622,7 @@ function InputRequirementsCard() {
     e.target.value = '';
   };
 
-  const handleSave = async () => {
+  const handleSave = async (opts?: { confirmExistingProject?: boolean }) => {
     if (!content.trim()) {
       toast.error('Cannot save empty requirements');
       return;
@@ -564,13 +638,23 @@ function InputRequirementsCard() {
     }
     setSaving(true);
     try {
+      const confirmExistingProject = opts?.confirmExistingProject || loadConfirmedSlugs().has(feature);
       const res = await fetch('/api/v1/inputs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: briefUploadBody(feature, content),
+        body: briefUploadBody(feature, content, confirmExistingProject),
       });
-      const parsed = await readJsonResponse<BriefUploadResponse>(res);
-      if (!parsed.ok) throw new Error(parsed.error);
+      const parsed = await readBriefUploadResponse(res);
+      if (!parsed.ok) {
+        if (parsed.existingProject) {
+          setExistingProjectConflict({
+            info: parsed.existingProject,
+            retry: () => void handleSave({ confirmExistingProject: true }),
+          });
+          return;
+        }
+        throw new Error(parsed.error);
+      }
       const data = parsed.data;
       setStatus('saved');
       setLastSaved(new Date().toLocaleTimeString());
@@ -609,7 +693,7 @@ function InputRequirementsCard() {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (opts?: { confirmExistingProject?: boolean }) => {
     if (submitLockRef.current || submitting || fileLoading) return;
     if (!content.trim()) {
       toast.error('Cannot submit empty requirements');
@@ -643,21 +727,32 @@ function InputRequirementsCard() {
     const submitFeature = feature;
     let uploadedRunId: string | null = null;
     try {
+      const confirmExistingProject = opts?.confirmExistingProject || loadConfirmedSlugs().has(submitFeature);
       const uploadRes = await fetchWithTimeout(
         '/api/v1/inputs',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: briefUploadBody(submitFeature, submitContent),
+          body: briefUploadBody(submitFeature, submitContent, confirmExistingProject),
         },
         45_000,
       );
-      const uploadParsed = await readJsonResponse<BriefUploadResponse>(uploadRes);
-      if (!uploadParsed.ok) throw new Error(uploadParsed.error);
+      const uploadParsed = await readBriefUploadResponse(uploadRes);
+      if (!uploadParsed.ok) {
+        if (uploadParsed.existingProject) {
+          setExistingProjectConflict({
+            info: uploadParsed.existingProject,
+            retry: () => void handleSubmit({ confirmExistingProject: true }),
+          });
+          return;
+        }
+        throw new Error(uploadParsed.error);
+      }
       const uploadData = uploadParsed.data;
       uploadedRunId = uploadData.runId ?? null;
 
       setSubmitPhase('start');
+      const triggeredBy = await cognitoCurrentUserEmail();
       const startRes = await fetchWithTimeout(
         '/api/v1/runs/start',
         {
@@ -667,6 +762,7 @@ function InputRequirementsCard() {
             targetApp: submitFeature,
             runId: uploadData.runId,
             inputFile: uploadData.inputPath ?? uploadData.inputFile,
+            ...(triggeredBy ? { triggeredBy } : {}),
           }),
         },
         30_000,
@@ -735,6 +831,7 @@ function InputRequirementsCard() {
     }
     setStarting(true);
     try {
+      const triggeredBy = await cognitoCurrentUserEmail();
       const res = await fetch('/api/v1/runs/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -742,6 +839,7 @@ function InputRequirementsCard() {
           targetApp: feature,
           runId: savedRunId,
           inputFile: savedPath ?? `inputs/${feature}.txt`,
+          ...(triggeredBy ? { triggeredBy } : {}),
         }),
       });
       const startParsed = await readJsonResponse<BriefUploadResponse>(res);
@@ -801,6 +899,7 @@ function InputRequirementsCard() {
   const sc = headerBadge;
 
   return (
+    <>
     <Card className="overflow-hidden border-white/[0.06] bg-card/80">
       <div className="border-b border-white/[0.06] px-4 py-3">
         <div className="flex items-center gap-2">
@@ -976,7 +1075,7 @@ function InputRequirementsCard() {
             <Button
               size="sm"
               className="gap-1.5 bg-teal-600 text-white hover:bg-teal-700"
-              onClick={handleSubmit}
+              onClick={() => void handleSubmit()}
               disabled={
                 !content.trim() ||
                 !feature ||
@@ -1015,6 +1114,49 @@ function InputRequirementsCard() {
         </div>
       </div>
     </Card>
+    <AlertDialog
+      open={!!existingProjectConflict}
+      onOpenChange={(o) => !o && setExistingProjectConflict(null)}
+    >
+      <AlertDialogContent className="border-white/[0.08] bg-card">
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            &ldquo;{existingProjectConflict?.info.projectId}&rdquo; already exists
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {existingProjectConflict ? (
+              <>
+                This name was already used {existingProjectConflict.info.runCount} time
+                {existingProjectConflict.info.runCount === 1 ? '' : 's'}, most recently{' '}
+                {formatRelative(existingProjectConflict.info.lastRunAt)} (
+                {existingProjectConflict.info.lastRunStatus}). Continuing will update that same app, not
+                create a new one. If this isn&apos;t your app, choose a different name instead.
+              </>
+            ) : null}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            className="border-white/[0.08]"
+            onClick={() => setExistingProjectConflict(null)}
+          >
+            Choose a different name
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              if (!existingProjectConflict) return;
+              markSlugConfirmed(existingProjectConflict.info.projectId);
+              const retry = existingProjectConflict.retry;
+              setExistingProjectConflict(null);
+              retry();
+            }}
+          >
+            Continue with this app
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 

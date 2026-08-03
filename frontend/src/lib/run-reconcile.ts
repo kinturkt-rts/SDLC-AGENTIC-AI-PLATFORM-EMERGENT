@@ -5,6 +5,10 @@ export const RUN_LIVE_IDLE_MS = 60 * 60 * 1000;
 export const RUN_NO_PROGRESS_IDLE_MS = 12 * 60 * 1000;
 export const DEPLOY_STALE_MS = 30 * 60 * 1000;
 
+// Placeholder strings a caller may pass as `error` that carry no more information
+// than "status is failed" — not worth preferring over a phase-specific message.
+const GENERIC_FAILURE_ERRORS = new Set(['sdlc pipeline failed', 'pipeline failed', 'orchestrator invoke failed']);
+
 export function isDeployStale(input: {
   isTerminalForDeploy: boolean;
   deploySucceeded: boolean;
@@ -258,6 +262,15 @@ export function reconcileRunStatus(input: ReconcileRunInput): ReconcileRunResult
   // operator-marked (or log-failed) run with a finished publish gets upgraded to
   // completed, then the deploy UX remaps it back to running.
   if (input.status === 'failed') {
+    // A generic/missing error (e.g. the orchestrator process died mid-run and never
+    // got to write a specific message) is the exact case where blaming "SDLC pipeline
+    // failed" on nothing in particular is unhelpful. Name the phase we can actually
+    // verify never finished instead — reuses the same evidence-based lookup the
+    // "claimed completion but a required phase is missing" branch below already trusts.
+    const hasSpecificError = !!input.error?.trim() && !GENERIC_FAILURE_ERRORS.has(input.error.trim().toLowerCase());
+    if (!hasSpecificError && missingRequired) {
+      return partialCompletionFailure(missingRequired);
+    }
     return {
       status: 'failed',
       currentStep: null,

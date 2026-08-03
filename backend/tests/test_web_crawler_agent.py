@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from _shared.mcp_clients import firecrawl_api_key  # noqa: E402
+
 
 import pytest
 
@@ -27,8 +29,6 @@ content_hash = _mod.content_hash
 extract_scrape_urls = _mod.extract_scrape_urls
 task_requires_web_scraping = _mod.task_requires_web_scraping
 url_to_filename = _mod.url_to_filename
-
-from _shared.mcp_clients import firecrawl_api_key  # noqa: E402
 
 
 def test_task_requires_web_scraping_from_keyword() -> None:

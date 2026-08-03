@@ -44,6 +44,7 @@ class PipelineContext(_BaseHandoff):
     dbOutputDir: str | None = None
     preferredSqlPath: str | None = None
     databaseHandoffPath: str | None = None
+    dbSchemaHandoffPath: str | None = None
     dbBackend: Literal["postgres", "mongodb", "postgres+mongodb"] | None = None
     storyTitleStyle: Literal["concise", "user-story"] | None = None
     jiraKey: str | None = None
@@ -137,6 +138,61 @@ class SecurityHandoff(_BaseHandoff):
     jiraKey: str | None = None
 
 
+# ── 5. DatabaseHandoff ───────────────────────────────────────────────────────
+# Written by architect-agent alongside solution_design.md; validated and read by
+# database-agent before it writes DDL. Prescriptive (what to build), unlike the
+# other handoffs above which are retrospective (what was built) — the first of
+# its kind in this file, matching the redesign discussed for architect->database.
+
+class ColumnSpec(_BaseHandoff):
+    name: str
+    type: str
+    primaryKey: bool = False
+    foreignKey: str | None = None  # e.g. "categories.id"
+    nullable: bool = True
+    unique: bool = False
+    default: str | None = None
+
+
+class IndexSpec(_BaseHandoff):
+    columns: list[str]
+    unique: bool = False
+    condition: str | None = None  # partial index WHERE clause, if any
+
+
+class RelationshipSpec(_BaseHandoff):
+    fromEntity: str
+    toEntity: str
+    cardinality: Literal["one-to-one", "one-to-many", "many-to-many"]
+    via: str | None = None  # FK column or join table
+
+
+class StatusEnumSpec(_BaseHandoff):
+    name: str
+    values: list[str]
+    transitions: list[str] = Field(default_factory=list)  # e.g. "available->assigned"
+
+
+class EntitySpec(_BaseHandoff):
+    name: str
+    tableName: str
+    columns: list[ColumnSpec]
+    indexes: list[IndexSpec] = Field(default_factory=list)
+    softDelete: bool = False
+    auditLogged: bool = False
+
+
+class DatabaseHandoff(_BaseHandoff):
+    targetApp: str
+    designDocPath: str | None = None
+    entities: list[EntitySpec]
+    relationships: list[RelationshipSpec] = Field(default_factory=list)
+    statusEnums: list[StatusEnumSpec] = Field(default_factory=list)
+    transactionBoundaries: list[str] = Field(default_factory=list)
+    seedExpectations: str | None = None
+    assumptions: list[str] = Field(default_factory=list)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 class HandoffValidationError(ValueError):
@@ -192,3 +248,49 @@ def validate_dict(payload: dict[str, Any], model: type[T]) -> T:
         return model.model_validate(payload)
     except ValidationError as exc:
         raise ValueError(f"payload does not match {model.__name__}:\n{exc}") from exc
+
+
+def handoff_rel_path(target_app: str, suffix: str) -> str:
+    """Repo-relative path for a handoff JSON — same convention as write_handoff's local path."""
+    return f"agents/pipeline/{target_app}.{suffix}.json"
+
+
+def write_handoff_artifact(
+    model_instance: BaseModel,
+    target_app: str,
+    suffix: str,
+    *,
+    context: dict[str, Any] | None = None,
+) -> str:
+    """Write a handoff JSON via the run's artifact store (S3 when runId is set, else local disk).
+
+    Unlike `write_handoff` (local-disk only — fine for same-container use, e.g. security-agent),
+    this is for handoffs that must cross an AgentCore step boundary in the cloud pipeline, where
+    the producer and consumer are separate invocations with no shared local filesystem.
+    """
+    from _shared.artifact_store import write_repo_artifact
+
+    rel = handoff_rel_path(target_app, suffix)
+    content = model_instance.model_dump_json(indent=2, exclude_none=False) + "\n"
+    write_repo_artifact(rel, content, context=context)
+    return rel
+
+
+def load_handoff_artifact(
+    rel_path: str,
+    model: type[T],
+    *,
+    context: dict[str, Any] | None = None,
+) -> T:
+    """Read + validate a handoff JSON via the run's artifact store. Raises loudly on drift."""
+    from _shared.artifact_store import read_repo_artifact
+
+    raw_bytes = read_repo_artifact(rel_path, context=context)
+    try:
+        raw = json.loads(raw_bytes.decode("utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"handoff at {rel_path} is not valid JSON: {exc}") from exc
+    try:
+        return model.model_validate(raw)
+    except ValidationError as exc:
+        raise HandoffValidationError(Path(rel_path), model.__name__, exc) from exc

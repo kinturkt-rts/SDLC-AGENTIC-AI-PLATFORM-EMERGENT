@@ -827,8 +827,8 @@ async def _publish_text_file_batches(
 
     commit_ids: list[str] = []
     batches = _batch_files(text_files)
-    for index, batch in enumerate(batches, start=1):
-        message = _publish_commit_message(slug, batch=index, total=len(batches))
+    for batch in batches:
+        message = _publish_commit_message(slug)
         if skip_ci_tracker is not None:
             message = skip_ci_tracker.message(message)
         commit_result = await call_gitlab_mcp_tool(
@@ -989,10 +989,8 @@ def create_mr_note(**kwargs: Any) -> dict[str, Any]:
 
 # --- SDLC publish workflow ---
 
-def _publish_commit_message(slug: str, *, batch: int | None = None, total: int | None = None) -> str:
-    if batch is not None and total is not None and total > 1:
-        return f"feat({slug}): SDLC pipeline output (batch {batch}/{total})"
-    return f"feat({slug}): SDLC pipeline output"
+def _publish_commit_message(slug: str) -> str:
+    return f"feat({slug}): SDLC Agentic AI Pipeline Output"
 
 
 class _SkipCiCommitTracker:

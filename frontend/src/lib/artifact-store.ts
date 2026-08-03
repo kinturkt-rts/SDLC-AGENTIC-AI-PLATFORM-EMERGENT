@@ -5,6 +5,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
+import { DynamoDBClient, ScanCommand, type AttributeValue } from '@aws-sdk/client-dynamodb';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { loadBackendEnv } from './backend-env';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
@@ -67,6 +68,81 @@ export function s3Client(): S3Client {
     }),
   });
   return _s3Client;
+}
+
+let _dynamoClient: DynamoDBClient | null = null;
+
+/** Mirrors backend's `dynamodb_enabled()` (`_shared/artifact_store.py`) - same env var. */
+export function dynamoIndexEnabled(): boolean {
+  loadBackendEnv();
+  return process.env.ARTIFACT_DYNAMODB_ENABLED?.trim().toLowerCase() === 'true';
+}
+
+function dynamoTable(): string {
+  loadBackendEnv();
+  return process.env.ARTIFACT_DYNAMODB_TABLE?.trim() || 'sdlc-pipeline-runs';
+}
+
+function dynamoClient(): DynamoDBClient {
+  if (_dynamoClient) return _dynamoClient;
+  loadBackendEnv();
+  const region = process.env.AWS_REGION?.trim() || 'us-east-2';
+  _dynamoClient = new DynamoDBClient({
+    region,
+    maxAttempts: 2,
+    requestHandler: new NodeHttpHandler({ connectionTimeout: 5000, requestTimeout: 20000 }),
+  });
+  return _dynamoClient;
+}
+
+export interface DynamoRunIndexEntry {
+  runId: string;
+  targetApp: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+const DYNAMO_INDEX_CACHE_KEY = 'dynamoRunIndex';
+const DYNAMO_INDEX_TTL_MS = 4_000;
+
+/**
+ * Fast run discovery via the `targetApp-index` GSI. Only the per-run META row carries
+ * `targetApp`, so this GSI scan never touches the (much larger) per-artifact pointer rows -
+ * unlike a full S3 bucket listing, it stays cheap as runs accumulate.
+ */
+export async function listDynamoRunIndex(): Promise<DynamoRunIndexEntry[]> {
+  if (!dynamoIndexEnabled()) return [];
+
+  return cachedAsync(DYNAMO_INDEX_CACHE_KEY, DYNAMO_INDEX_TTL_MS, async () => {
+    const entries: DynamoRunIndexEntry[] = [];
+    let ExclusiveStartKey: Record<string, AttributeValue> | undefined;
+
+    do {
+      const response = await dynamoClient().send(
+        new ScanCommand({
+          TableName: dynamoTable(),
+          IndexName: 'targetApp-index',
+          ExclusiveStartKey,
+        }),
+      );
+      for (const item of response.Items ?? []) {
+        const runId = item.runId?.S;
+        const targetApp = item.targetApp?.S;
+        if (!runId || !targetApp) continue;
+        entries.push({
+          runId,
+          targetApp,
+          status: item.status?.S,
+          createdAt: item.createdAt?.S,
+          updatedAt: item.updatedAt?.S,
+        });
+      }
+      ExclusiveStartKey = response.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+
+    return entries;
+  });
 }
 
 export async function putRunArtifact(
@@ -426,10 +502,7 @@ export async function getS3ObjectLastModifiedMs(key: string): Promise<number | n
   }
 }
 
-export async function getRunArtifactJson(
-  runId: string,
-  relPath: string,
-): Promise<Record<string, unknown> | null> {
+async function readRunArtifactRaw(runId: string, relPath: string): Promise<string | null> {
   const rel = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
   if (isS3Store()) {
     try {
@@ -439,12 +512,10 @@ export async function getRunArtifactJson(
           Key: `${runS3Prefix(runId)}${rel}`,
         }),
       );
-      let raw = await response.Body?.transformToString('utf-8');
+      const raw = await response.Body?.transformToString('utf-8');
       if (!raw) return null;
       // PowerShell Set-Content -Encoding utf8 writes a BOM; JSON.parse rejects it.
-      if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-      const parsed = JSON.parse(raw) as unknown;
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+      return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
     } catch {
       return null;
     }
@@ -455,11 +526,39 @@ export async function getRunArtifactJson(
   const { getBackendRoot } = await import('./repo-root');
   const filePath = pathMod.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, rel);
   try {
-    let raw = await fs.readFile(filePath, 'utf-8');
-    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+    const raw = await fs.readFile(filePath, 'utf-8');
+    return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRunArtifactJson(
+  runId: string,
+  relPath: string,
+): Promise<Record<string, unknown> | null> {
+  const raw = await readRunArtifactRaw(runId, relPath);
+  if (!raw) return null;
+  try {
     const parsed = JSON.parse(raw) as unknown;
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
+  }
+}
+
+/** Reads a `<app>/events/<agent>.json` live-activity file (a JSON array of event
+ * objects, full-rewritten by the agent's telemetry callback) - [] when absent. */
+export async function getRunArtifactEvents(
+  runId: string,
+  relPath: string,
+): Promise<Array<Record<string, unknown>>> {
+  const raw = await readRunArtifactRaw(runId, relPath);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
+  } catch {
+    return [];
   }
 }

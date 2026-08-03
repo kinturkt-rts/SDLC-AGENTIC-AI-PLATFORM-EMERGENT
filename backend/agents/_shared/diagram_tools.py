@@ -66,6 +66,10 @@ _PREAMBLE = textwrap.dedent("""
     except ImportError:
         pass
     try:
+        from diagrams.aws.ml import Bedrock
+    except ImportError:
+        pass
+    try:
         from diagrams.onprem.client import User, Users
     except ImportError:
         pass
@@ -151,6 +155,10 @@ _ICONS = textwrap.dedent("""
     # DevTools
     CodeBuild, CodePipeline
 
+    # ML
+    Bedrock  (use for any Bedrock LLM/embedding component - e.g. "Bedrock Titan embed",
+              "Bedrock Claude" - do NOT substitute Lambda or another compute icon for this)
+
     # Generic / on-prem
     User, Users, Internet
     Cluster, Edge  (layout helpers, not nodes)
@@ -187,15 +195,15 @@ def awsdiagram_list_icons(provider: str = "aws") -> str:
     return _ICONS
 
 
-_DIAGRAM_TITLE_MVP_SUFFIX = re.compile(
+_DIAGRAM_TITLE_SUFFIX = re.compile(
     r'(with Diagram\s*\(\s*)(["\'])([^"\']*?)\s+MVP\s*\2',
     re.IGNORECASE,
 )
 
 
-def strip_mvp_from_diagram_title(code: str) -> str:
+def strip_from_diagram_title(code: str) -> str:
     """Remove trailing MVP from Diagram() title — scope belongs in the doc, not the PNG."""
-    return _DIAGRAM_TITLE_MVP_SUFFIX.sub(r"\1\2\3\2", code)
+    return _DIAGRAM_TITLE_SUFFIX.sub(r"\1\2\3\2", code)
 
 
 @tool
@@ -217,7 +225,7 @@ def awsdiagram_generate_diagram(code: str, filename: str, workspace_dir: str) ->
     Returns:
         Absolute path of the saved PNG on success, or an error description.
     """
-    code = strip_mvp_from_diagram_title(code)
+    code = strip_from_diagram_title(code)
     script = (
         f"filename = {filename!r}\n"
         f"workspace_dir = {workspace_dir!r}\n"

@@ -78,7 +78,7 @@ async function updateRunJson(
   const file = path.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, 'run.json');
   try {
     const data = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
-    // Never clobber a user cancel with a later poll/finalize/currentStep write.
+
     if (
       String(data.status ?? '').toLowerCase() === 'cancelled' &&
       patch.status !== 'cancelled'
@@ -99,9 +99,7 @@ async function updateRunJson(
           }
         }
       } else if (patch.status === 'failed' || patch.status === 'cancelled') {
-        // Mark the in-flight step failed too - otherwise it stays "running" forever in
-        // the steps array (set by an earlier currentStep update) even though the top-level
-        // status is terminal, and the UI's step timeline shows a phantom live step.
+
         const steps = data.steps as Array<{ name: string; status?: string }> | undefined;
         if (steps) {
           for (const step of steps) {
@@ -130,7 +128,6 @@ async function updateRunJson(
       await putRunArtifact(runId, 'run.json', body, 'application/json').catch(() => {});
     }
   } catch {
-    // run.json is best-effort for UI
   }
 }
 
@@ -164,11 +161,6 @@ function developerFallbackModel(): string {
   return raw.trim();
 }
 
-/**
- * Invoke developer-agent directly (bypasses orchestrator) with the Sonnet fallback so
- * a killed orchestrator session cannot leave the run stuck at status="in_progress".
- * Returns true when the resulting developer handoff reaches status=completed.
- */
 async function invokeDeveloperFallback(
   runId: string,
   app: string,
@@ -227,7 +219,6 @@ async function invokeGitlabFallback(
   const glTask =
     `Publish SDLC artifacts for ${app} to GitLab branch sdlc/${app}.\n\n` +
     `Context:\n${JSON.stringify({ targetApp: app, runId }, null, 2)}`;
-  // Publish is idempotent (same branch/artifacts), so retry transient gitlab-agent failures.
   const maxAttempts = envInt('SDLC_GITLAB_PUBLISH_RETRIES', 2) + 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await appendLog(
@@ -260,12 +251,6 @@ interface RunStatusDoc {
   error?: unknown;
 }
 
-/**
- * Poll the orchestrator's S3 run.json mirror until it reports a terminal state.
- * This is the primary completion signal for async (fire-and-forget) orchestrator
- * runs; the AgentCore invoke itself only returns a "PIPELINE_ASYNC_STARTED" ack.
- * Mirrors currentStep into the local run.json so the UI live-updates while polling.
- */
 async function pollRunStatusUntilTerminal(
   runId: string,
   logPath: string,
@@ -279,7 +264,6 @@ async function pollRunStatusUntilTerminal(
   const localRunJson = path.join(getBackendRoot(), 'agents', 'pipeline', 'runs', runId, 'run.json');
 
   while (Date.now() < deadline) {
-    // Local cancel wins over a later cloud "completed" mirror write.
     try {
       const local = JSON.parse(await readFile(localRunJson, 'utf-8')) as RunStatusDoc;
       if (typeof local.status === 'string' && local.status.toLowerCase() === 'cancelled') {
@@ -289,7 +273,6 @@ async function pollRunStatusUntilTerminal(
         };
       }
     } catch {
-      // local run.json may not exist yet
     }
 
     const doc = (await getRunArtifactJson(runId, 'run.json')) as RunStatusDoc | null;
@@ -330,10 +313,6 @@ export interface RunOrchestratorCloudOptions extends PipelineTaskOptions {
   timeoutSec: number;
 }
 
-/**
- * Invoke orchestrator-agent on AgentCore (AWS SDK) and optional cloud gitlab-agent fallback.
- * No local Python subprocess - only the AgentCore runtimes execute the pipeline.
- */
 export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions): Promise<void> {
   const { logPath, timeoutSec, ...taskOpts } = options;
   const app = taskOpts.targetApp;
@@ -375,10 +354,6 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   const text = result.text ?? '';
   await appendLog(logPath, `--- response ---\n${text.slice(0, 8000)}\n`);
 
-  // Async orchestrator: the invoke returns an ack in seconds and the pipeline
-  // keeps running in the cloud. Poll the S3 run.json mirror to the terminal
-  // state; only fall through to the legacy fallback chain on poll timeout or
-  // when a "completed" claim cannot be verified against the publish handoff.
   const asyncStarted = result.status === 'success' && text.includes('PIPELINE_ASYNC_STARTED');
   if (asyncStarted) {
     const statusWaitSec = envInt('SDLC_PIPELINE_STATUS_WAIT_SEC', 7200);

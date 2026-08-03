@@ -1,0 +1,10 @@
+{
+  "targetApp": "contacts-api",
+  "prdPath": "docs/PRD/contacts-api.md",
+  "designDocPath": "docs/design/contacts-api.md",
+  "inputPath": "inputs/contacts-api.txt",
+  "deploy_url": "https://contacts-api-demo.preview.emergentagent.com",
+  "diagramPaths": [
+    "docs/generated-diagrams/contacts-api.png"
+  ]
+}

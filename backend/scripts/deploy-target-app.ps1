@@ -59,6 +59,40 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) { throw "$Label failed (exit $LASTEXITCODE)." }
 }
 
+function Get-FailureDiagnostics {
+    # Pulls the most recent stopped task's stop reason + a log tail per container,
+    # so a failed health check is diagnosable from the CI job output alone instead
+    # of requiring manual `aws ecs`/`aws logs` archaeology after the fact.
+    param([string] $Cluster, [string] $Service, [string] $Feature, [string] $Region)
+    $result = [ordered]@{}
+    try {
+        $stoppedArn = aws ecs list-tasks --cluster $Cluster --service-name $Service --desired-status STOPPED --region $Region --query 'taskArns[0]' --output text 2>$null
+        if (-not $stoppedArn -or $stoppedArn -eq "None") { return $result }
+
+        $taskId = ($stoppedArn -split '/')[-1]
+        $task = (aws ecs describe-tasks --cluster $Cluster --tasks $stoppedArn --region $Region --output json 2>$null | ConvertFrom-Json).tasks[0]
+        if (-not $task) { return $result }
+
+        $result["taskId"] = $taskId
+        $result["stoppedReason"] = $task.stoppedReason
+        $result["containers"] = @(
+            foreach ($c in $task.containers) {
+                $logStream = "$($c.name)/$($c.name)/$taskId"
+                $logTail = aws logs get-log-events --log-group-name "/ecs/sdlc/dev/$Feature" --log-stream-name $logStream --region $Region --limit 30 --query 'events[*].message' --output text 2>$null
+                [ordered]@{
+                    name     = $c.name
+                    exitCode = $c.exitCode
+                    reason   = $c.reason
+                    logTail  = $logTail
+                }
+            }
+        )
+    } catch {
+        $result["diagnosticsError"] = "$_"
+    }
+    return $result
+}
+
 function Test-TfRootComplete {
     if (-not (Test-Path $TfMain)) { return $false }
     $text = Get-Content -Raw -Path $TfMain
@@ -235,6 +269,7 @@ try {
     # Smoke test through the ALB (Streamlit health first, /health for api-only apps)
     $healthy = $false
     $healthUrl = ""
+    $diagnostics = $null
     foreach ($attempt in 1..10) {
         foreach ($suffix in @("_stcore/health", "health")) {
             $candidate = "$($AppUrl.TrimEnd('/'))/$suffix"
@@ -244,9 +279,21 @@ try {
             } catch {}
         }
         if ($healthy) { break }
+        # After a few attempts, check for an actual crash loop (essential container
+        # exited) instead of burning the full 10x15s poll window on a hopeless case.
+        if ($attempt -ge 3) {
+            $diagnostics = Get-FailureDiagnostics -Cluster $Cluster -Service $Service -Feature $Feature -Region $Region
+            if ($diagnostics["stoppedReason"] -match 'essential container.*exited') {
+                Write-Host "Detected crash-looping task (essential container exited) - stopping health poll early." -ForegroundColor Red
+                break
+            }
+        }
         Start-Sleep -Seconds 15
     }
     if (-not $healthUrl) { $healthUrl = "$($AppUrl.TrimEnd('/'))/_stcore/health" }
+    if (-not $healthy -and -not $diagnostics) {
+        $diagnostics = Get-FailureDiagnostics -Cluster $Cluster -Service $Service -Feature $Feature -Region $Region
+    }
 
     Write-Host "`n=== $Feature deployed ===" -ForegroundColor Green
     if ($healthy) {
@@ -254,6 +301,14 @@ try {
         Write-Host "Live UI: $LiveUrl" -ForegroundColor Yellow
     } else {
         Write-Warning "Health endpoint not answering ($healthUrl) after all retries - NOT reporting this as live."
+        if ($diagnostics -and $diagnostics["stoppedReason"]) {
+            Write-Host "`n--- Failure diagnostics: task $($diagnostics['taskId']) ---" -ForegroundColor Red
+            Write-Host "stoppedReason: $($diagnostics['stoppedReason'])" -ForegroundColor Red
+            foreach ($c in $diagnostics["containers"]) {
+                Write-Host "`n[$($c.name)] exitCode=$($c.exitCode) reason=$($c.reason)" -ForegroundColor Red
+                if ($c.logTail) { Write-Host $c.logTail -ForegroundColor DarkGray }
+            }
+        }
     }
 
     $handoffDir = Join-Path $RepoRoot "agents\pipeline"
@@ -274,6 +329,7 @@ try {
         $handoff["ecsService"] = $Service
         $handoff["imageTag"] = $ImageTag
         $handoff["healthy"] = $healthy
+        if ($diagnostics -and $diagnostics["stoppedReason"]) { $handoff["failureDiagnostics"] = $diagnostics } else { $handoff.Remove("failureDiagnostics") | Out-Null }
         $handoff["deployedAt"] = (Get-Date).ToUniversalTime().ToString("o")
 # Standard GitLab CI predefined vars (empty outside CI) — an ordering key so a
         # stale/superseded pipeline's write can't clobber a newer one's in S3/DynamoDB.

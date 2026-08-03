@@ -20,6 +20,7 @@ boto3>=1.35.0
 
 # RAG (pgvector local pattern) — add only when design uses document Q&A
 # pypdf>=5.0.0
+# python-docx>=1.1.0
 # pgvector>=0.3.0
 
 # Testing

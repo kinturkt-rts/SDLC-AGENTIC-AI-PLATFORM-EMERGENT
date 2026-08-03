@@ -33,7 +33,6 @@ export function parseLogAgentQuery(value: string | null | undefined): AgentName 
   return trimmed && LOG_AGENT_SET.has(trimmed) ? (trimmed as AgentName) : undefined;
 }
 
-/** User-facing labels for SDLC timeline phases. */
 export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
   requirements: 'PRD',
   architecture: 'Architecture Diagram',
@@ -45,10 +44,16 @@ export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
   deploy: 'Deploy',
 };
 
-/**
- * Phases required for "authoring succeeded" (GitLab publish is the last AgentCore step).
- * Deploy is async via GitLab CI; run status stays awaiting_deploy until appUrl.
- */
+export const ORCHESTRATED_PIPELINE_AGENTS: AgentName[] = [
+  'product-agent',
+  'architect-agent',
+  'database-agent',
+  'developer-agent',
+  'gitlab-agent',
+];
+
+export const ORCHESTRATED_PIPELINE_SET = new Set<string>(ORCHESTRATED_PIPELINE_AGENTS);
+
 export const COMPLETION_PHASES: SdlcPhase[] = [
   'requirements',
   'architecture',
@@ -57,7 +62,6 @@ export const COMPLETION_PHASES: SdlcPhase[] = [
   'publish',
 ];
 
-/** Full timeline shown on run detail / dashboard (includes Deploy). */
 export const TIMELINE_PHASES: SdlcPhase[] = [...COMPLETION_PHASES, 'deploy'];
 
 export function phaseDisplayLabel(phase: SdlcPhase | string | null | undefined): string {

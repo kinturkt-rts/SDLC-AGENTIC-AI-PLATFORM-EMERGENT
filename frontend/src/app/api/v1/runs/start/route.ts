@@ -12,6 +12,7 @@ interface StartBody {
   inputFile?: unknown;
   withJira?: unknown;
   jiraProject?: unknown;
+  triggeredBy?: unknown;
 }
 
 function bad(message: string, status = 400) {
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
     '';
   const withJira = body.withJira === true || body.withJira === 'true';
   const jiraProject = typeof body.jiraProject === 'string' ? body.jiraProject.trim().toUpperCase() : '';
+  const triggeredBy = typeof body.triggeredBy === 'string' ? body.triggeredBy.trim() : '';
 
   const slugError = validateTargetApp(featureRaw);
   if (slugError) return bad(slugError);
@@ -53,6 +55,7 @@ export async function POST(request: Request) {
       inputFile,
       withJira,
       jiraProject: withJira ? jiraProject : undefined,
+      triggeredBy: triggeredBy || undefined,
     });
     return NextResponse.json({
       ...result,

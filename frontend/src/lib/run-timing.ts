@@ -97,7 +97,6 @@ function telemetryMatchesRun(
   return snapRunId === runId;
 }
 
-/** Sum MVP agent elapsed seconds for a run (S3 run folder or local pipeline dir). */
 export async function loadRunTelemetryElapsedSec(
   slug: string,
   runId: string,

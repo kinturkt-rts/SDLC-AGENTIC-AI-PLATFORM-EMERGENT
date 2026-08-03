@@ -40,6 +40,13 @@ export function formatDateTime(iso: string | null): string {
 
 export function titleCase(value: string): string {
   return value
-    .replace(/[-_]/g, ' ')
+    .replace(/[-_.]/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** "kintur.shah@acme.example" or "kintur.shah" -> "Kintur Shah". Non-email values
+ * (e.g. 'orchestrator-agent') just get title-cased as-is. */
+export function formatTriggeredBy(value: string): string {
+  const local = value.includes('@') ? value.split('@')[0] : value;
+  return titleCase(local);
 }

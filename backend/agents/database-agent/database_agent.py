@@ -12,12 +12,15 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
+import botocore.config
+from a2a.types import AgentSkill
+from strands import Agent
+from strands.models import BedrockModel
+from strands.models.model import CacheConfig
+from strands.multiagent.a2a import A2AServer
+from strands.tools.decorator import tool
+from strands.types.exceptions import MCPClientInitializationError
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_TARGET_APPS = _REPO_ROOT / "target-apps"
-_DEFAULT_DB_SUBDIR = "db"
-
-sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.artifact_store import (
     delete_repo_artifact,
     get_artifact,
@@ -47,16 +50,16 @@ from _shared.pipeline_context import (
 )
 from _shared.telemetry import RunTelemetry, StrandsTelemetryCallback
 
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TARGET_APPS = _REPO_ROOT / "target-apps"
+_DEFAULT_DB_SUBDIR = "db"
+
+sys.path.insert(0, str(_REPO_ROOT / "agents"))
+
+
 load_repo_env()
 
-import botocore.config
-from a2a.types import AgentSkill
-from strands import Agent
-from strands.models import BedrockModel
-from strands.models.model import CacheConfig
-from strands.multiagent.a2a import A2AServer
-from strands.tools.decorator import tool
-from strands.types.exceptions import MCPClientInitializationError
 
 AGENT_NAME = "database-agent"
 A2A_PORT = 9108
@@ -129,6 +132,7 @@ and before developer-agent. You author migrations and dev seeds; the host applie
 | Source | Action | Use |
 |--------|--------|-----|
 | `designDocPath` | `db_read_file` | **§3** → DDL; **§6** → file order + seed spec |
+| "Database contract" block (this message, when present) | Already inlined below — no file read needed | **Authoritative** for table/column/index/FK/relationship/status-enum detail when present; validated JSON from architect-agent. Absent on some runs — design §3/§6 above is always still correct and is your fallback. |
 | `prdPath` | `db_read_file` when present | PRD **§7 Core Data Entities** — validate RDS scope |
 | `productBrief` | Context JSON | Compact product orientation only |
 | `diagramPaths` | Context JSON | Optional; do not parse PNGs |
@@ -712,11 +716,35 @@ def _clear_sql_output_dir(target_app: str, db_subdir: str = _DEFAULT_DB_SUBDIR) 
     if removed:
         print(f"[database-agent] cleared {len(removed)} stale sql files", file=sys.stderr)
 
+def _load_database_schema_handoff_block(context: dict[str, Any]) -> str:
+    """Validated structured DB contract from architect-agent, if present - see handoff_schemas.py.
+
+    Best-effort: absent on older runs or when architect-agent's generation failed, in which case
+    this returns "" and the agent falls back to designDocPath §3/§6 exactly as it always has.
+    """
+    rel = str(context.get("dbSchemaHandoffPath") or "").strip()
+    if not rel:
+        return ""
+    try:
+        from _shared.handoff_schemas import DatabaseHandoff, load_handoff_artifact
+
+        handoff = load_handoff_artifact(rel, DatabaseHandoff, context=context)
+    except Exception as exc:  # noqa: BLE001 - validation/read failure must not block the run
+        print(f"[{AGENT_NAME}] dbSchemaHandoffPath present but unusable, falling back to design sections 3/6: {exc}")
+        return ""
+    return (
+        "\n\n## Database contract (validated, from architect-agent - use this for table/column/"
+        "index/FK detail; design §3/§6 remain the source for anything not covered here)\n"
+        f"{handoff.model_dump_json(indent=2, exclude_none=True)}\n"
+    )
+
+
 
 def _user_message(task: str, context: dict[str, Any] | None) -> str:
     if not context:
         return task
-    return f"{task}\n\nContext:\n{json.dumps(context, indent=2)}"
+    handoff_block = _load_database_schema_handoff_block(context)
+    return f"{task}{handoff_block}\n\nContext:\n{json.dumps(context, indent=2)}"
 
 
 def _build_agent(

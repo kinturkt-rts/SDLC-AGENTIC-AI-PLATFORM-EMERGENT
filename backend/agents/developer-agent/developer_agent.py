@@ -542,7 +542,29 @@ app/routers/documents.py       # POST /documents/upload, GET /documents, DELETE 
 tests/test_ingestion.py, tests/test_chat_rag.py (fake retriever)
 ```
 Never ship a stub retriever or discard uploaded bytes — upload must fully ingest on the request.
-requirements.txt adds: pypdf, pgvector, boto3.
+`app/services/ingestion.py` MUST dispatch on the upload's filename extension and support every
+format the brief/UI actually accepts (at minimum pdf, docx, and plain text — txt/md/log) — never
+hard-code a single-format parser (e.g. PDF-only via pypdf) and let it silently swallow other
+extensions. Raise a typed `UnsupportedDocumentTypeError` for anything with no extractor so the
+failure has a name and a message, never a bare `except Exception`.
+The `documents` table MUST carry an explicit ingestion status (`ingestion_status`:
+processing/ready/failed, plus `ingestion_error` text) distinct from `active_version_id` —
+otherwise "still processing" and "permanently failed" are indistinguishable to the user, and a
+failed upload looks identical to one still ingesting, forever, with no visible reason.
+The query router MUST actually call `pgvector_retriever.py`'s retriever (via a `get_retriever`
+FastAPI dependency, mirroring `get_bedrock_client`) and filter by `CONFIDENCE_THRESHOLD` — never
+fall back to "grab the first N chunks in table order" and never gate the "insufficient
+information" fallback on "do any chunks exist for this document" alone. That check must be
+per-question relevance (retrieved score >= confidence_threshold), or every question — including
+irrelevant ones like "hi" — gets the identical canned answer whenever a scoped document happens to
+have zero or low-relevance chunks. Adapt the retriever's illustrative column names (`doc_id`,
+`page`, `text`, `collection_id`) to the ACTUAL schema you generated in db/sql/*.sql — do not leave
+them as placeholders that don't match real columns; a query router built on a retriever with
+guessed columns will throw at runtime.
+Because pgvector's `<=>` operator and `vector` cast have no SQLite equivalent, the retriever must
+be dependency-injected (never instantiated inline in the router) so `tests/test_chat_rag.py` can
+override it with a fake and stay off a live Postgres/pgvector connection.
+requirements.txt adds: pypdf, python-docx, pgvector, boto3.
 .env.example adds: AWS_REGION=us-east-2, BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0,
                     BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0, EMBED_DIM=1024, CHUNK_SIZE=500,
                     CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
@@ -838,6 +860,7 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
 | FK columns on ORM | Every FK column on a SQLAlchemy model MUST declare `ForeignKey("<table>.<col>")` as an argument to `mapped_column` / `Column`. Having `REFERENCES users(id)` in the SQL DDL is **not enough** — SQLAlchemy reads only the ORM declaration when resolving `relationship(...)`. Without it, every `relationship` raises `NoForeignKeysError: Could not determine join condition`. Example: `assigned_to: Mapped[str] = mapped_column(pg_uuid_column(), ForeignKey("users.id"), nullable=False)`. |
 | Conditional aggregates | `case` is a top-level SQLAlchemy construct, NOT a `func` member. `func.case((cond, 1), else_=0)` raises `OperationalError: no such function: case` at runtime. Correct: `from sqlalchemy import case` then `case((cond, 1), else_=0)`. Same for `cast`, `null`, `true`, `false` — all top-level imports, not `func` members. |
+| `ARRAY(PG_UUID(...))` column assigned a request's `list[str]` | Postgres allows an implicit `varchar → uuid` cast for a single scalar, but refuses it for arrays — binding a plain `list[str]` into a `uuid[]` column raises `DatatypeMismatch: column "..." is of type uuid[] but expression is of type character varying[]`. SQLite tests pass anyway (no type enforcement), so this only surfaces on real RDS, exactly like the other rows in this table. Always convert to `uuid.UUID` objects at the router before assigning: `[uuid.UUID(x) for x in body.some_ids] if body.some_ids else None`. |
 
 ## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag / streamlit patterns)
 
@@ -876,6 +899,7 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | SQLAlchemy ENUM on SQLite | `create_type=True` (default) fails on SQLite with `CompileError` | `SAEnum(..., create_type=False, native_enum=True).with_variant(String(N), "sqlite")` |
 | Pydantic `EmailStr` | Importing `EmailStr` alone is fine, but at *validation time* Pydantic imports `email-validator` lazily and raises `ImportError: email-validator is not installed` | Any schema that uses `EmailStr` requires `pydantic[email]>=2.0` (or `email-validator>=2.0`) in `requirements.txt`. Add it the moment you write `EmailStr` anywhere — not later. |
 | `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
+| `Form(...)` / `File(...)` / `UploadFile` route params | FastAPI raises `RuntimeError: Form data requires "python-multipart" to be installed` **at import time** — the whole module fails to load, so SQLite pytest never even reaches the route. On ECS this kills the essential API container at startup and crash-loops the task forever (deploy health check never passes). | The moment any router uses `Form(...)`, `File(...)`, or `UploadFile`, add `python-multipart>=0.0.9` to `requirements.txt` immediately — do not wait until testing surfaces it. |
 | `import app.models` + bare `app` name | `from app.main import app` then `import app.models` rebinds `app` to the **package**; `app.dependency_overrides` raises `AttributeError` on every test using the `client` fixture | Always `from app.main import app as fastapi_app`; use `fastapi_app.dependency_overrides` and `TestClient(fastapi_app)`. The golden conftest_reference.py already includes `import app.models` — do not re-add it under a bare `app` name. |
 | Streamlit `use_container_width` / `width=0` | Deprecated/invalid; Streamlit 1.41+ raises `StreamlitInvalidWidthError` on live UI | Never `use_container_width=True/False` and never `width=0`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
 | Streamlit `_get("/api/v1/...//...")` double slash | FastAPI 404 `{"detail":"Not Found"}` on Status/Audit/Query while login/`/health` still work — looks like ALB failure | Paths must match routes exactly with single slashes (`/api/v1/admin/status`). Keep scaffold `_api_url()`; never invent `admin//status` or `v1//query`. `dev_validate_app` autofixes `/api/...` literals. |
