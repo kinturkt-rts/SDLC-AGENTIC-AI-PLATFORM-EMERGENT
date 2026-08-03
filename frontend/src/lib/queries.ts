@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from './api';
 
 export const queryKeys = {
@@ -64,6 +64,18 @@ export const useRun = (id: string, sseConnected = false) =>
       return status === 'running' || status === 'paused' ? 4000 : false;
     },
   });
+/** Same queryKey/queryFn as useRun so caches stay shared - used by dashboard's active-run
+ * strip to poll several runs at once without one useRun call per row. */
+export const useLiveRunsById = (ids: string[]) =>
+  useQueries({
+    queries: ids.map((id) => ({
+      queryKey: queryKeys.run(id),
+      queryFn: async () => (await api.getRun(id)) ?? null,
+      enabled: !!id,
+      refetchInterval: 4000,
+    })),
+  });
+
 export const useRunLogs = (id: string, live = false) =>
   useQuery({
     queryKey: queryKeys.runLogs(id),

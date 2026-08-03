@@ -3,6 +3,37 @@
 import { create } from 'zustand';
 import type { Environment, RunStatus } from '@/src/types';
 
+const RECENTS_KEY = 'sdlc-recent-visits';
+
+type Recents = { runs: string[]; projects: string[] };
+
+function loadRecents(): Recents {
+  if (typeof window === 'undefined') return { runs: [], projects: [] };
+  try {
+    const raw = window.localStorage.getItem(RECENTS_KEY);
+    const p = raw ? JSON.parse(raw) : null;
+    return {
+      runs: Array.isArray(p?.runs) ? p.runs : [],
+      projects: Array.isArray(p?.projects) ? p.projects : [],
+    };
+  } catch {
+    return { runs: [], projects: [] };
+  }
+}
+
+function saveRecents(r: Recents): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(RECENTS_KEY, JSON.stringify(r));
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function prependUnique(list: string[], id: string, cap = 6): string[] {
+  return [id, ...list.filter((x) => x !== id)].slice(0, cap);
+}
+
 interface UiState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -46,6 +77,12 @@ interface UiState {
 
   globalSearch: string;
   setGlobalSearch: (q: string) => void;
+
+  /** Recently visited run / project ids (persisted). */
+  recentRunIds: string[];
+  recentProjectIds: string[];
+  pushRecentRun: (id: string) => void;
+  pushRecentProject: (id: string) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -85,4 +122,19 @@ export const useUiStore = create<UiState>((set) => ({
 
   globalSearch: '',
   setGlobalSearch: (q) => set({ globalSearch: q }),
+
+  recentRunIds: loadRecents().runs,
+  recentProjectIds: loadRecents().projects,
+  pushRecentRun: (id) =>
+    set((s) => {
+      const runs = prependUnique(s.recentRunIds, id);
+      saveRecents({ runs, projects: s.recentProjectIds });
+      return { recentRunIds: runs };
+    }),
+  pushRecentProject: (id) =>
+    set((s) => {
+      const projects = prependUnique(s.recentProjectIds, id);
+      saveRecents({ runs: s.recentRunIds, projects });
+      return { recentProjectIds: projects };
+    }),
 }));

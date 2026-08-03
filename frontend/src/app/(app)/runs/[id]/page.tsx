@@ -32,7 +32,7 @@ import { EmptyState } from '@/src/components/common/EmptyState';
 import { LogTable } from '@/src/components/logs/LogTable';
 import { useRun, useRunEvents, useRunHandoffs, useRunLogs, useArtifacts, useCheckpoints } from '@/src/lib/queries';
 import { formatRelative, formatDuration } from '@/src/lib/format';
-import { MVP_TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
+import { TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import { InputBriefCard } from '@/src/features/runs/InputBriefCard';
 import { CostTrendCard } from '@/src/features/runs/CostTrendCard';
@@ -263,7 +263,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
               </div>
               <ol className="p-4">
                 {run.steps
-                  .filter((step) => MVP_TIMELINE_PHASES.includes(step.phase))
+                  .filter((step) => TIMELINE_PHASES.includes(step.phase))
                   .map((step: PipelineStep, i: number, arr) => {
                   const Icon = STEP_ICON[step.status];
                   const last = i === arr.length - 1;

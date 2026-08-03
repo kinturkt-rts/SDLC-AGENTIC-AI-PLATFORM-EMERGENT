@@ -59,10 +59,7 @@ export default function ArtifactsPage() {
   const { data: projects } = useProjects();
   const artifactsProjectId = useUiStore((s) => s.artifactsProjectId);
   const [kind, setKind] = React.useState<ArtifactKind | 'all'>('all');
-  const { data: artifacts, isLoading } = useArtifacts({
-    projectId: artifactsProjectId,
-    kind,
-  });
+  const { data: artifacts, isLoading } = useArtifacts();
   const [preview, setPreview] = React.useState<Artifact | null>(null);
   const [previewText, setPreviewText] = React.useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);

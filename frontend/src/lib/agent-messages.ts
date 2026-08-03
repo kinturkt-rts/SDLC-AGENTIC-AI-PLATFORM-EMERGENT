@@ -7,7 +7,7 @@ import type {
   RunHandoffs,
   SdlcPhase,
 } from '@/src/types';
-import { MVP_TIMELINE_PHASES } from './pipeline-phases';
+import { TIMELINE_PHASES } from './pipeline-phases';
 
 const ASSIGN_SUMMARY: Record<SdlcPhase, string> = {
   requirements: 'Generate the PRD and scope requirements from the product brief.',
@@ -56,7 +56,7 @@ export function buildRunAgentMessages(
   handoffs: RunHandoffs | null = null,
 ): AgentMessage[] {
   const messages: AgentMessage[] = [];
-  const steps = run.steps.filter((s) => MVP_TIMELINE_PHASES.includes(s.phase));
+  const steps = run.steps.filter((s) => TIMELINE_PHASES.includes(s.phase));
 
   for (const step of steps as PipelineStep[]) {
     if (step.status === 'queued' || step.status === 'skipped') continue;

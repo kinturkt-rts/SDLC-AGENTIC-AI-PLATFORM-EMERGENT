@@ -20,6 +20,7 @@ import {
   listS3RunIds,
   isHiddenAppSlug,
   listDynamoRunIndex,
+  runInputRelPath,
 } from './artifact-store';
 import { TIMELINE_PHASES, PHASE_AGENT, COMPLETION_PHASES } from './pipeline-phases';
 import {
@@ -62,7 +63,6 @@ import {
   parseCloudWatchActivityLine,
 } from './cloudwatch-activity';
 import { filterLiveRuns, isRecentLiveTs } from './live-activity';
-import { listAgentMessagesFromRuns } from './agent-messages';
 import type {
   Agent,
   AgentAvailability,
@@ -2309,6 +2309,36 @@ export async function getPipelineContext(projectSlug: string): Promise<PipelineC
   };
 }
 
+export interface InputBrief {
+  slug: string;
+  path: string;
+  content: string;
+}
+
+export async function readInputBrief(slug: string, runId?: string): Promise<InputBrief | null> {
+  const cleanSlug = slug.trim().toLowerCase();
+  if (!cleanSlug) return null;
+
+  const ctx = await resolveContextForSlug(cleanSlug).catch(() => null);
+  const ctxInput = asRepoPath(ctx?.inputPath) ?? asRepoPath(ctx?.inputFile);
+
+  const candidates: string[] = [];
+  if (isS3Store() && runId) {
+    const rel = ctxInput ?? runInputRelPath(cleanSlug);
+    candidates.push(`runs/${runId}/${rel.replace(/^\/+/, '')}`);
+  }
+  if (ctxInput) candidates.push(ctxInput);
+  candidates.push(`inputs/${cleanSlug}.txt`);
+
+  for (const rel of candidates) {
+    const asset = await readRepoAsset(rel);
+    if (asset) {
+      return { slug: cleanSlug, path: rel, content: asset.buffer.toString('utf-8') };
+    }
+  }
+  return null;
+}
+
 export async function listAgents(): Promise<Agent[]> {
   const registry = await readJson<AgentRegistry>(repoPath('a2a', 'agent-registry.json'));
   if (!registry?.agents) return [];
@@ -2366,12 +2396,6 @@ export async function listMcpServersFromCatalog(): Promise<McpServer[]> {
       usedByAgents: usedBy,
     };
   });
-}
-
-/** Live orchestration-bus view derived from pipeline run steps (read-only). */
-export async function listAgentMessages(correlationId?: string): Promise<AgentMessage[]> {
-  const runs = await listRuns();
-  return listAgentMessagesFromRuns(runs, { correlationId, maxRuns: 25 });
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
@@ -2485,7 +2509,6 @@ function mergeRunEventsFromLists(...groups: RunEvent[][]): RunEvent[] {
   return [...byId.values()].sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
-/** Live agent activity for active runs only (CloudWatch, fresh S3 artifacts, pipeline logs). */
 export async function listRecentActivity(limit = 12): Promise<ActivityFeedItem[]> {
   return cachedAsync(`${ACTIVITY_CACHE_KEY}:${limit}`, ACTIVITY_LIVE_TTL_MS, () =>
     listRecentActivityUncached(limit),
