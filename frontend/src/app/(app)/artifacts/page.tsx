@@ -34,6 +34,11 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
   ...ARTIFACT_FILTER_KINDS.map((k) => ({ value: k, label: artifactKindLabel(k) })),
 ];
 
+/** Storage path with the internal `runs/<runId>/` S3 prefix stripped for display. */
+function displayPath(path: string): string {
+  return path.replace(/^runs\/[0-9a-f-]{8,}\//i, '');
+}
+
 /** Final gate before a card can render - never trust a single filter path alone. */
 function passesFilters(
   artifact: Artifact,
@@ -192,7 +197,7 @@ export default function ArtifactsPage() {
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
             <DialogDescription className="truncate">
-              {preview?.path} &middot; produced by {preview?.producedBy}
+              {preview ? displayPath(preview.path) : ''} &middot; produced by {preview?.producedBy}
             </DialogDescription>
           </DialogHeader>
           {preview?.imageUrl ? (

@@ -181,7 +181,7 @@ $PipelineAgents = @(
 )
 
 # Isolated demo runtimes — same bundles (AGENTCORE_AGENT), new AWS names + ECR repos.
-# GitLab MCP stays shared; demo orchestrator peers to existing gitlab_agent ARN.
+# GitLab MCP HTTP server stays shared; gitlab_agent_demo uses the demo artifact bucket.
 # First-time: .\scripts\deploy-agentcore-agents.ps1 -Demo -Configure
 # Redeploy:   .\scripts\deploy-agentcore-agents.ps1 -Demo -SkipConfigure
 $DemoAgents = @(
@@ -189,6 +189,7 @@ $DemoAgents = @(
     @{ awsName = "architect_agent_demo"; bundle = "architect-agent"; node = $false; extra = @() },
     @{ awsName = "database_agent_demo"; bundle = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
     @{ awsName = "developer_agent_demo"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
+    @{ awsName = "gitlab_agent_demo"; bundle = "gitlab-agent"; node = $false; extra = $GitLabAgentMcpEnv },
     @{ awsName = "orchestrator_agent_demo"; bundle = "orchestrator-agent"; node = $false; extra = @("AGENTCORE_RUNTIMES_CONFIG=config/agentcore/runtimes.demo.json") }
 )
 
@@ -288,6 +289,7 @@ $AgentSecretKeys = @{
     developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     developer_agent_demo   = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE", "GITLAB_APPS_REPO")
+    gitlab_agent_demo      = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE", "GITLAB_APPS_REPO")
     orchestrator_agent     = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     orchestrator_agent_demo = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     orchestrator_agent_vpc = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
@@ -376,7 +378,7 @@ foreach ($agent in $TargetAgents) {
         }
     }
 
-    # Demo orchestrator: pin specialist ARNs from runtimes.demo.json (and shared gitlab_agent).
+    # Demo orchestrator: pin specialist ARNs from runtimes.demo.json (includes gitlab_agent_demo).
     if ($awsName -eq "orchestrator_agent_demo" -and -not $ConfigureOnly) {
         $syncDemo = Join-Path $PSScriptRoot "sync-runtimes-demo.py"
         if (Test-Path $syncDemo) {
@@ -413,7 +415,7 @@ print(json.dumps(peers, separators=(',', ':')))
     if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc" -or $awsName -eq "orchestrator_agent_demo") {
         $envBlock += Get-EnvPairsForKeys -Keys $OrchestratorRdsKeys
     }
-    if ($awsName -eq "gitlab_agent" -and $GitLabAgentMcpEnv.Count -gt 0) {
+    if (($awsName -eq "gitlab_agent" -or $awsName -eq "gitlab_agent_demo") -and $GitLabAgentMcpEnv.Count -gt 0) {
         $envBlock = @($envBlock | Where-Object {
             $_ -notlike "GITLAB_MCP_URL=*" -and
             $_ -notlike "GITLAB_MCP_HTTP_DIRECT_URL=*" -and
@@ -421,7 +423,7 @@ print(json.dumps(peers, separators=(',', ':')))
         }) + $GitLabAgentMcpEnv
     }
     foreach ($item in $envBlock) {
-        if ($awsName -eq "gitlab_agent" -and $item -like "MODEL_ID=*") {
+        if (($awsName -eq "gitlab_agent" -or $awsName -eq "gitlab_agent_demo") -and $item -like "MODEL_ID=*") {
             continue
         }
         $deployArgs += @("--env", $item)

@@ -8,9 +8,8 @@ Demo AWS names → logical pipeline keys:
   architect_agent_demo    → architect-agent
   database_agent_demo     → database-agent
   developer_agent_demo    → developer-agent
+  gitlab_agent_demo       → gitlab-agent
   orchestrator_agent_demo → orchestrator-agent
-
-gitlab-agent is shared: copied from config/agentcore/runtimes.json when present.
 """
 
 from __future__ import annotations
@@ -32,6 +31,7 @@ DEMO_AWS_TO_LOGICAL = {
     "architect_agent_demo": "architect-agent",
     "database_agent_demo": "database-agent",
     "developer_agent_demo": "developer-agent",
+    "gitlab_agent_demo": "gitlab-agent",
     "orchestrator_agent_demo": "orchestrator-agent",
 }
 
@@ -100,15 +100,15 @@ def main() -> int:
             "notes": "Demo runtime — isolated from dev *_agent names.",
         }
 
-    # Shared GitLab agent (MCP shared; no gitlab_agent_demo for now)
-    if DEV_CONFIG.is_file():
+    # Fallback only: if gitlab_agent_demo is not deployed yet, reuse shared gitlab_agent ARN.
+    if not (agents.get("gitlab-agent") or {}).get("runtimeArn") and DEV_CONFIG.is_file():
         try:
             dev = json.loads(DEV_CONFIG.read_text(encoding="utf-8"))
             gitlab = (dev.get("agents") or {}).get("gitlab-agent")
             if gitlab and gitlab.get("runtimeArn"):
                 agents["gitlab-agent"] = {
                     **gitlab,
-                    "notes": "SHARED with dev — GitLab MCP unchanged; demo reuses this runtime ARN.",
+                    "notes": "TEMPORARY shared fallback — deploy gitlab_agent_demo so demo uses artifacts-demo bucket.",
                 }
         except json.JSONDecodeError:
             pass

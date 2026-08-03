@@ -60,22 +60,11 @@
     },
     "gitlab-agent": {
       "deployed": true,
-      "awsName": "gitlab_agent",
-      "runtimeId": "gitlab_agent-qgx3u2CWtC",
-      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/gitlab_agent-qgx3u2CWtC",
-      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fgitlab_agent-qgx3u2CWtC/invocations",
-      "env": {
-        "MODEL_ID": "us.anthropic.claude-sonnet-4-6",
-        "GITLAB_MCP_URL": "https://d1cvmpnnohwpj8.cloudfront.net/mcp",
-        "GITLAB_MCP_HTTP_DIRECT_URL": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
-        "GITLAB_MCP_HTTP_BATCH_SIZE": "20"
-      },
-      "gitlabMcp": {
-        "configFile": "config/agentcore/gitlab-mcp-endpoints.json",
-        "canonicalUrl": "cloudFront.mcpUrl",
-        "fallbackUrl": "directMcpUrl"
-      },
-      "notes": "SHARED with dev \u2014 GitLab MCP unchanged; demo reuses this runtime ARN."
+      "awsName": "gitlab_agent_demo",
+      "runtimeId": "gitlab_agent_demo-kLF8Cz4zYD",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/gitlab_agent_demo-kLF8Cz4zYD",
+      "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Fgitlab_agent_demo-kLF8Cz4zYD/invocations",
+      "notes": "Demo runtime \u2014 isolated from dev *_agent names."
     }
   }
 }

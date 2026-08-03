@@ -727,9 +727,11 @@ def test_step_gitlab_a2a_embeds_apps_layout_context(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A2A publish task must carry a Context: block with gitlabPublishLayout=apps
-    (the default) - gitlab-agent's A2A handler (parse_publish_request) reads layout
-    from the task text itself, not from the orchestrator's own context.json/S3 state."""
+    """A2A publish call must pass gitlabPublishLayout=apps (the default) via
+    extra_context, not a hand-rolled Context: block in the task string - _invoke_a2a
+    already appends its own single Context: block (targetApp/runId included via
+    _context_for_agent); a second one in the task text would stack and break JSON
+    parsing on gitlab-agent's receiving end (this was a real production bug)."""
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     monkeypatch.setenv("ARTIFACT_STORE", "s3")
     monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
@@ -749,12 +751,8 @@ def test_step_gitlab_a2a_embeds_apps_layout_context(
 
     invoke_mock.assert_called_once()
     task = invoke_mock.call_args.args[1]
-    assert "Context:" in task
-    _, _, json_part = task.partition("Context:")
-    ctx = json.loads(json_part.strip())
-    assert ctx["gitlabPublishLayout"] == "apps"
-    assert ctx["targetApp"] == "demo-api"
-    assert ctx["runId"] == "run-gitlab-001"
+    assert "Context:" not in task
+    assert invoke_mock.call_args.kwargs["extra_context"] == {"gitlabPublishLayout": "apps"}
     assert "gitlab-agent" in runner.agents_run
 
 
@@ -780,10 +778,7 @@ def test_step_gitlab_a2a_respects_monorepo_opt_out(
     ):
         runner._step_gitlab()
 
-    task = invoke_mock.call_args.args[1]
-    _, _, json_part = task.partition("Context:")
-    ctx = json.loads(json_part.strip())
-    assert ctx["gitlabPublishLayout"] == "monorepo"
+    assert invoke_mock.call_args.kwargs["extra_context"] == {"gitlabPublishLayout": "monorepo"}
 
 
 def test_step_developer_fails_after_all_retry_attempts(

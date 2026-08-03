@@ -1273,19 +1273,18 @@ class SdlcPipelineRunner:
         else:
             # Apps-repo and monorepo both use sdlc/<app> so GitLab CI deploy rules match.
             # gitlab-agent's A2A handler (parse_publish_request) reads targetApp/runId/
-            # gitlabPublishLayout from a "Context:\n<json>" block in the task text - it
-            # does not read the orchestrator's own context.json/S3 state directly.
+            # gitlabPublishLayout from the single "Context:\n<json>" block _invoke_a2a
+            # appends via extra_context - do not embed a second Context block in the task
+            # text here, it stacks with _invoke_a2a's own and breaks JSON parsing on the
+            # receiving end (silently drops runId, which skips S3 materialization).
             branch_hint = f"sdlc/{self.feature}"
-            task_context = {
-                "targetApp": self.feature,
-                "runId": self.run_id or "",
-                "gitlabPublishLayout": "apps" if apps_repo else "monorepo",
-            }
-            task = (
-                f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}.\n\n"
-                f"Context:\n{json.dumps(task_context)}"
+            task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
+            self._invoke_a2a(
+                "gitlab-agent",
+                task,
+                step="gitlab-agent",
+                extra_context={"gitlabPublishLayout": "apps" if apps_repo else "monorepo"},
             )
-            self._invoke_a2a("gitlab-agent", task, step="gitlab-agent")
 
         handoff = self._read_gitlab_handoff()
         if handoff:
