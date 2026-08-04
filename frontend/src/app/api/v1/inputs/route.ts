@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { uploadBrief, validateTargetApp } from '@/src/lib/pipeline-run';
+import { ExistingProjectConflictError, uploadBrief, validateTargetApp } from '@/src/lib/pipeline-run';
 import { readInputBrief } from '@/src/lib/repo-reader';
 import { formatApiRouteError } from '@/src/lib/api-route-error';
+import { decodeBriefContent } from '@/src/lib/brief-payload';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -12,7 +13,9 @@ interface SaveInputBody {
   feature?: unknown;
   targetApp?: unknown;
   content?: unknown;
+  contentBase64?: unknown;
   runId?: unknown;
+  confirmExistingProject?: unknown;
 }
 
 function bad(message: string, status = 400) {
@@ -39,7 +42,7 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as SaveInputBody;
   } catch {
-    return bad('Body must be JSON: { targetApp|feature, content, runId? }');
+    return bad('Body must be JSON: { targetApp|feature, content|contentBase64, runId? }');
   }
 
   const featureRaw =
@@ -48,8 +51,14 @@ export async function POST(request: Request) {
       : typeof body.feature === 'string'
         ? body.feature
         : '';
-  const content = typeof body.content === 'string' ? body.content : '';
+  let content = '';
+  try {
+    content = decodeBriefContent(body);
+  } catch (err) {
+    return bad(err instanceof Error ? err.message : String(err));
+  }
   const runId = typeof body.runId === 'string' ? body.runId.trim() : undefined;
+  const confirmExistingProject = body.confirmExistingProject === true;
 
   const slugError = validateTargetApp(featureRaw);
   if (slugError) return bad(slugError);
@@ -59,7 +68,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await uploadBrief(featureRaw, content, runId);
+    const result = await uploadBrief(featureRaw, content, runId, { confirmExistingProject });
     return NextResponse.json({
       ...result,
       feature: result.targetApp,
@@ -67,6 +76,12 @@ export async function POST(request: Request) {
       savedAt: new Date().toISOString(),
     });
   } catch (err) {
+    if (err instanceof ExistingProjectConflictError) {
+      return NextResponse.json(
+        { error: err.message, existingProject: err.project },
+        { status: 409 },
+      );
+    }
     const message = formatApiRouteError(err);
     const status = /S3|AWS|timed out|SSO/i.test(message) ? 503 : 400;
     return NextResponse.json({ error: message }, { status });

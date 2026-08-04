@@ -26,12 +26,22 @@ export function MarkdownPreview({ content, className }: { content: string; class
         'prose-a:text-teal-400 prose-strong:text-foreground',
         'prose-code:before:content-none prose-code:after:content-none',
         'prose-pre:border prose-pre:border-white/[0.06]',
+        'prose-table:border prose-table:border-white/[0.08]',
+        'prose-thead:border-b prose-thead:border-white/[0.12] prose-th:bg-white/[0.03] prose-th:px-3 prose-th:py-2 prose-th:align-bottom',
+        'prose-td:border-b prose-td:border-white/[0.06] prose-td:px-3 prose-td:py-2 prose-td:align-top',
         className,
       )}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight, [rehypeSanitize, schema]]}
+        components={{
+          table: ({ children }) => (
+            <div className="overflow-x-auto">
+              <table>{children}</table>
+            </div>
+          ),
+        }}
       >
         {content}
       </ReactMarkdown>

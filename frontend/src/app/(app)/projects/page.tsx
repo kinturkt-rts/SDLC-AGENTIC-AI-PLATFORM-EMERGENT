@@ -197,10 +197,6 @@ export default function ProjectsPage() {
             })}
           </div>
 
-          <p className="text-center text-[11px] text-muted-foreground/80">
-            Status comes from the latest reconciled pipeline run (refreshes about every 15s). Artifacts are counted from
-            S3/<code className="rounded bg-muted/40 px-1">backend/target-apps/</code>.
-          </p>
         </div>
       )}
     </>

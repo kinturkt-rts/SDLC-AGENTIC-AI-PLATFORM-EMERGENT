@@ -16,7 +16,8 @@ const ASSIGN_SUMMARY: Record<SdlcPhase, string> = {
   implementation: 'Implement the FastAPI application, routers and service layer.',
   qa: 'Run the integration and unit test suite before the deploy gate.',
   security: 'Run SAST and dependency scans before publishing.',
-  deploy: 'Publish the feature branch and open the merge request.',
+  publish: 'Publish the feature branch and open the merge request.',
+  deploy: 'Deploy the published app to AWS and return a live URL.',
 };
 
 const RESULT_SUMMARY: Record<SdlcPhase, string> = {
@@ -26,7 +27,8 @@ const RESULT_SUMMARY: Record<SdlcPhase, string> = {
   implementation: 'FastAPI application code written and validated.',
   qa: 'Test suite executed and QA checks passed.',
   security: 'Security scan completed with no blocking findings.',
-  deploy: 'Branch published and merge request opened.',
+  publish: 'Branch published and merge request opened.',
+  deploy: 'App deployed to AWS and reachable at its live URL.',
 };
 
 function shortId(runId: string): string {

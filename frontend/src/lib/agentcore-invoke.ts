@@ -137,7 +137,11 @@ export async function loadRuntimeArn(agentName: string): Promise<string | null> 
 export async function loadAgentRuntimeMeta(
   agentName: string,
 ): Promise<{ deployed: boolean; runtimeArn: string | null }> {
-  const file = path.join(getBackendRoot(), 'config', 'agentcore', 'runtimes.json');
+  const override = process.env.AGENTCORE_RUNTIMES_CONFIG?.trim();
+  const relative = override || path.join('config', 'agentcore', 'runtimes.json');
+  const file = path.isAbsolute(relative)
+    ? relative
+    : path.join(getBackendRoot(), relative.replace(/^\//, ''));
   try {
     const data = JSON.parse(await readFile(file, 'utf-8')) as {
       agents?: Record<string, { deployed?: boolean; runtimeArn?: string }>;
@@ -164,7 +168,7 @@ export async function invokeAgentRuntimeA2a(
     return {
       status: 'error',
       agentName,
-      error: `No runtimeArn for ${agentName} in config/agentcore/runtimes.json`,
+      error: `No runtimeArn for ${agentName} in AgentCore runtimes config`,
     };
   }
 

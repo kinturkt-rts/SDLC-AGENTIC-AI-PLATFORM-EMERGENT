@@ -194,7 +194,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
         </div>
       ) : (
         <>
-          {pipelineContext?.deployUrl ? <OpenLiveAppButton url={pipelineContext.deployUrl} /> : null}
+          {pipelineContext?.liveUrl ? <OpenLiveAppButton url={pipelineContext.liveUrl} /> : null}
 
           <InputBriefCard slug={run.projectId} runId={run.id} />
 

@@ -103,8 +103,13 @@ export const useRunComparison = (a: string, b: string) =>
     queryFn: () => api.getRunComparison(a, b),
     enabled: !!a && !!b,
   });
-export const useAgentMessages = (correlationId?: string) =>
-  useQuery({ queryKey: queryKeys.messages(correlationId), queryFn: () => api.getAgentMessages(correlationId) });
+export const useAgentMessages = (correlationId?: string, live = false) =>
+  useQuery({
+    queryKey: queryKeys.messages(correlationId),
+    queryFn: () => api.getAgentMessages(correlationId),
+    staleTime: 3_000,
+    refetchInterval: live ? 3_000 : false,
+  });
 export const useRunAgentMessages = (runId: string, live = false) =>
   useQuery({
     queryKey: ['runAgentMessages', runId],

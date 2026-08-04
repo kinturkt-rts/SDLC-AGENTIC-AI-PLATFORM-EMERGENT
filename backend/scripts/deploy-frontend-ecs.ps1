@@ -8,15 +8,18 @@
 # Usage (from backend/):
 #   .\scripts\deploy-frontend-ecs.ps1 -WhatIf
 #   .\scripts\deploy-frontend-ecs.ps1
+#   .\scripts\push-frontend-ecr.ps1 -Demo; .\scripts\deploy-frontend-ecs.ps1 -Demo
+#
+# Estimated cost (dev-tier demo): ~1 Fargate 0.5vCPU/1GB (~$18/mo) + ALB (~$16/mo) + CloudFront (low).
 
 param(
     [string] $Region = "us-east-2",
     [string] $Profile = "eks-admin-user",
     [string] $AccountId = "061836593297",
     [string] $Cluster = "sdlc-agentic-ai",
-    [string] $ServiceName = "sdlc-control-plane",
-    [string] $TaskFamily = "sdlc-control-plane",
-    [string] $Repository = "sdlc-control-plane",
+    [string] $ServiceName = "",
+    [string] $TaskFamily = "",
+    [string] $Repository = "",
     [string] $ImageTag = "latest",
     [string] $VpcId = "vpc-036155f359e2e940c",
     [string[]] $SubnetIds = @(
@@ -24,9 +27,10 @@ param(
         "subnet-07651619f77b51d7f",
         "subnet-0c0e7c749de659e32"
     ),
-    [string] $AlbName = "sdlc-control-plane-alb",
-    [string] $TargetGroupName = "sdlc-control-plane-tg",
+    [string] $AlbName = "",
+    [string] $TargetGroupName = "",
     [int] $DesiredCount = 1,
+    [switch] $Demo,
     [switch] $WhatIf
 )
 
@@ -34,6 +38,30 @@ $ErrorActionPreference = "Stop"
 $env:AWS_PROFILE = $Profile
 $BackendRoot = Split-Path $PSScriptRoot -Parent
 $MonorepoRoot = Split-Path $BackendRoot -Parent
+
+if ($Demo) {
+    if (-not $ServiceName) { $ServiceName = "sdlc-control-plane-demo" }
+    if (-not $TaskFamily) { $TaskFamily = "sdlc-control-plane-demo" }
+    if (-not $Repository) { $Repository = "sdlc-control-plane-demo" }
+    if (-not $AlbName) { $AlbName = "sdlc-cp-demo-alb" }
+    if (-not $TargetGroupName) { $TargetGroupName = "sdlc-cp-demo-tg" }
+    $LogGroupName = "/ecs/sdlc-control-plane-demo"
+    $AlbSgName = "sdlc-cp-demo-alb-sg"
+    $TaskSgName = "sdlc-cp-demo-task-sg"
+    $TaskDefTemplateName = "task-definition.demo.json"
+    Write-Host "Demo deploy: service=$ServiceName alb=$AlbName bucket=sdlc-agentic-ai-app-artifacts-demo" -ForegroundColor DarkGray
+} else {
+    if (-not $ServiceName) { $ServiceName = "sdlc-control-plane" }
+    if (-not $TaskFamily) { $TaskFamily = "sdlc-control-plane" }
+    if (-not $Repository) { $Repository = "sdlc-control-plane" }
+    if (-not $AlbName) { $AlbName = "sdlc-control-plane-alb" }
+    if (-not $TargetGroupName) { $TargetGroupName = "sdlc-control-plane-tg" }
+    $LogGroupName = "/ecs/sdlc-control-plane"
+    $AlbSgName = "sdlc-cp-alb-sg"
+    $TaskSgName = "sdlc-cp-task-sg"
+    $TaskDefTemplateName = "task-definition.json"
+}
+
 $ImageUri = "$AccountId.dkr.ecr.$Region.amazonaws.com/${Repository}:$ImageTag"
 $ExecutionRoleName = "ecsTaskExecutionRole"
 $TaskRoleName = "sdlc-control-plane-task"
@@ -165,7 +193,7 @@ function Invoke-Aws([string[]] $AwsArgs) {
 }
 
 function Get-OrCreateLogGroup {
-    $name = "/ecs/sdlc-control-plane"
+    $name = $LogGroupName
     if ($WhatIf) { return }
     $existing = aws logs describe-log-groups --log-group-name-prefix $name --region $Region --profile $Profile 2>$null | ConvertFrom-Json
     if ($existing.logGroups | Where-Object { $_.logGroupName -eq $name }) {
@@ -186,7 +214,7 @@ function Get-OrCreateSecurityGroup {
     return $created.GroupId
 }
 
-Write-Host "Ensuring CloudWatch log group /ecs/sdlc-control-plane ..." -ForegroundColor Cyan
+Write-Host "Ensuring CloudWatch log group $LogGroupName ..." -ForegroundColor Cyan
 Get-OrCreateLogGroup
 
 Write-Host "Checking IAM task role $TaskRoleName (create manually if missing) ..." -ForegroundColor Cyan
@@ -195,7 +223,7 @@ if (-not $WhatIf) {
     if ($LASTEXITCODE -ne 0) {
         Write-Warning @"
 Task role '$TaskRoleName' not found. Create it with policies for:
-  - s3:GetObject, s3:PutObject, s3:ListBucket on artifact bucket
+  - s3:GetObject, s3:PutObject, s3:ListBucket on artifact bucket(s)
   - logs:FilterLogEvents on /aws/bedrock-agentcore/*
   - bedrock-agentcore:InvokeAgentRuntime
 Then re-run this script.
@@ -204,13 +232,30 @@ Then re-run this script.
     }
 }
 
+# Ensure task role can read demo artifact bucket (dev bucket already allowed).
+if (-not $WhatIf) {
+    $policyFile = Join-Path $BackendRoot "deploy\control-plane-frontend\task-policy.json"
+    if (Test-Path $policyFile) {
+        Write-Host "Refreshing IAM inline policy sdlc-control-plane-task-policy (includes demo S3) ..." -ForegroundColor Cyan
+        aws iam put-role-policy `
+            --role-name $TaskRoleName `
+            --policy-name sdlc-control-plane-task-policy `
+            --policy-document "file://$($policyFile.Replace('\', '/'))" `
+            --profile $Profile | Out-Null
+    }
+}
+
 $gitlabPatArn = Ensure-GitlabPatSecret
 $gitlabUrl = if ($env:GITLAB_URL) { $env:GITLAB_URL.Trim().TrimEnd('/') } else { "https://code.junodev.net" }
 
-$taskDefTemplate = Join-Path $BackendRoot "deploy\control-plane-frontend\task-definition.json"
+$taskDefTemplate = Join-Path $BackendRoot "deploy\control-plane-frontend\$TaskDefTemplateName"
 $taskDefRaw = Get-Content $taskDefTemplate -Raw
 $taskDefRaw = $taskDefRaw.Replace(
     "061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane:latest",
+    $ImageUri
+)
+$taskDefRaw = $taskDefRaw.Replace(
+    "061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane-demo:latest",
     $ImageUri
 )
 # Prefer full secret ARN (includes random suffix) so ECS can resolve GetSecretValue.
@@ -233,8 +278,8 @@ Write-Host "Registering task definition $TaskFamily ..." -ForegroundColor Cyan
 $reg = Invoke-Aws @("ecs", "register-task-definition", "--cli-input-json", "file://$($taskDefFile.Replace('\', '/'))", "--region", $Region, "--profile", $Profile)
 $taskDefArn = $reg.taskDefinition.taskDefinitionArn
 
-$albSg = Get-OrCreateSecurityGroup -Name "sdlc-cp-alb-sg" -Description "ALB for SDLC control plane"
-$taskSg = Get-OrCreateSecurityGroup -Name "sdlc-cp-task-sg" -Description "ECS tasks for SDLC control plane"
+$albSg = Get-OrCreateSecurityGroup -Name $AlbSgName -Description "ALB for SDLC control plane ($ServiceName)"
+$taskSg = Get-OrCreateSecurityGroup -Name $TaskSgName -Description "ECS tasks for SDLC control plane ($ServiceName)"
 
 if (-not $WhatIf) {
     $prevEap = $ErrorActionPreference

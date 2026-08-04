@@ -4,6 +4,7 @@ import * as React from 'react';
 import { FileBox, FileText, Image as ImageIcon } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,11 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
   { value: 'all', label: 'All kinds' },
   ...ARTIFACT_FILTER_KINDS.map((k) => ({ value: k, label: artifactKindLabel(k) })),
 ];
+
+/** Storage path with the internal `runs/<runId>/` S3 prefix stripped for display. */
+function displayPath(path: string): string {
+  return path.replace(/^runs\/[0-9a-f-]{8,}\//i, '');
+}
 
 /** Final gate before a card can render - never trust a single filter path alone. */
 function passesFilters(
@@ -79,11 +85,7 @@ export default function ArtifactsPage() {
     fetch(`/api/v1/repo-asset?path=${encodeURIComponent(preview.path)}`)
       .then((res) => (res.ok ? res.text() : Promise.reject(new Error('preview failed'))))
       .then((text) => {
-        if (!cancelled) {
-          setPreviewText(
-            text.length > 20000 ? text.slice(0, 20000) + '\n\n... (truncated for preview)' : text,
-          );
-        }
+        if (!cancelled) setPreviewText(text);
       })
       .catch(() => {
         if (!cancelled) setPreviewText('Preview unavailable for this artifact.');
@@ -186,25 +188,34 @@ export default function ArtifactsPage() {
       )}
 
       <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
-        <DialogContent className="max-w-2xl border-white/[0.08] bg-card">
+        <DialogContent
+          className={cn(
+            'max-h-[90vh] overflow-y-auto border-white/[0.08] bg-card',
+            preview?.imageUrl ? 'max-w-4xl' : 'max-w-5xl',
+          )}
+        >
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
-            <DialogDescription>
-              {preview?.path} &middot; produced by {preview?.producedBy}
+            <DialogDescription className="truncate">
+              {preview ? displayPath(preview.path) : ''} &middot; produced by {preview?.producedBy}
             </DialogDescription>
           </DialogHeader>
           {preview?.imageUrl ? (
-            <div className="overflow-hidden rounded-lg border border-white/[0.06] bg-muted/20 p-2">
-              <img src={preview.imageUrl} alt={preview.name} className="w-full rounded-md object-contain" />
+            <div className="max-h-[80vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/20 p-2">
+              <img
+                src={preview.imageUrl}
+                alt={preview.name}
+                className="max-h-[76vh] w-full rounded-md object-contain"
+              />
             </div>
           ) : previewLoading ? (
             <p className="text-sm text-muted-foreground">Loading preview…</p>
           ) : preview?.path.toLowerCase().endsWith('.md') ? (
-            <div className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4">
+            <div className="max-h-[80vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4">
               <MarkdownPreview content={previewText ?? preview?.preview ?? 'No preview available.'} />
             </div>
           ) : (
-            <pre className="max-h-[60vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
+            <pre className="max-h-[80vh] overflow-auto rounded-lg border border-white/[0.06] bg-muted/30 p-4 text-xs leading-relaxed text-foreground">
               {previewText ?? preview?.preview ?? 'No preview available.'}
             </pre>
           )}

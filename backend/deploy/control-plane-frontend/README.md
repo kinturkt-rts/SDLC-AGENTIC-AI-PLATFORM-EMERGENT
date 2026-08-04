@@ -12,6 +12,25 @@ Hosts the SDLC control-plane UI with live S3 / CloudWatch / AgentCore data via N
 | **ALB (direct, HTTP)** | http://sdlc-control-plane-alb-804473930.us-east-2.elb.amazonaws.com |
 | Health | `…/api/health` on either host |
 
+### Demo instance (isolated)
+
+| Use | URL |
+|-----|-----|
+| **CloudFront** | https://d1cqru677bg9xc.cloudfront.net |
+| **Custom domain (after DNS)** | https://demo-sdlc-agentic-ai-platform.junolabs.ai |
+| **ALB (direct, HTTP)** | http://sdlc-cp-demo-alb-373023640.us-east-2.elb.amazonaws.com |
+| ECS | cluster `sdlc-agentic-ai` / service `sdlc-control-plane-demo` |
+| ECR | `sdlc-control-plane-demo` |
+| Artifacts | `s3://sdlc-agentic-ai-app-artifacts-demo` |
+| Agents | `config/agentcore/runtimes.demo.json` → `orchestrator_agent_demo` |
+
+DNS: CNAME `demo-sdlc-agentic-ai-platform.junolabs.ai` → `d1cqru677bg9xc.cloudfront.net` (cert `*.junolabs.ai` already on the distro).
+
+```powershell
+.\scripts\push-frontend-ecr.ps1 -Demo
+.\scripts\deploy-frontend-ecs.ps1 -Demo
+```
+
 CloudFront sits in front of the ALB. Use CloudFront for day-to-day access; use the ALB for debugging or bypassing CDN cache.
 
 Login is UI-only for now (no Cognito yet) — `/dashboard` is still reachable directly without signing in.

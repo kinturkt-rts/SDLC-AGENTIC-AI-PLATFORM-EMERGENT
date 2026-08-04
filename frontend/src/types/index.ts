@@ -1,4 +1,4 @@
-// Core domain types for the SDLC Agentic AI Platform control plane.
+﻿// Core domain types for the SDLC Agentic AI Platform control plane.
 
 export type AgentName =
   | 'orchestrator-agent'
@@ -16,6 +16,7 @@ export type RunStatus =
   | 'queued'
   | 'running'
   | 'paused'
+  | 'awaiting_deploy'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -35,6 +36,7 @@ export type SdlcPhase =
   | 'implementation'
   | 'qa'
   | 'security'
+  | 'publish'
   | 'deploy';
 
 export type AgentAvailability = 'online' | 'offline' | 'unknown';
@@ -90,6 +92,8 @@ export interface PipelineStep {
   error?: string | null;
 }
 
+export type DeployStatus = 'pending' | 'running' | 'live' | 'failed' | 'stale' | null;
+
 export interface PipelineRun {
   id: string;
   projectId: string;
@@ -104,6 +108,8 @@ export interface PipelineRun {
   triggeredBy: string;
   steps: PipelineStep[];
   error?: string | null;
+  /** Follow-on deploy status ΓÇö independent of run.status after publish completes. */
+  deployStatus?: DeployStatus;
 }
 
 /** GitLab publish result from gitlab-agent (handoffs/gitlab.json or legacy slug file). */
@@ -114,7 +120,23 @@ export interface GitlabHandoffInfo {
   mergeRequestUrl?: string | null;
   mergeRequestIid?: number | null;
   gitlabProject?: string | null;
+  repoUrl?: string | null;
   pathsPublishedCount: number;
+  error?: string | null;
+  source: 's3' | 'local';
+  path: string;
+}
+
+/** AWS deploy result from devops-agent (live app URL for users). */
+export interface DevopsHandoffInfo {
+  status: string;
+  targetApp: string;
+  appUrl?: string | null;
+  environment?: string | null;
+  region?: string | null;
+  healthy?: boolean | null;
+  ecsService?: string | null;
+  deployedAt?: string | null;
   error?: string | null;
   source: 's3' | 'local';
   path: string;
@@ -123,9 +145,10 @@ export interface GitlabHandoffInfo {
 /** Developer contract written after implementation (for QA / GitLab publish). */
 export interface DeveloperHandoffInfo {
   targetApp: string;
+  status: string;
   writtenFilesCount: number;
-  testCommand?: string | null;
-  runCommand?: string | null;
+  validationStatus?: 'passed' | 'failed' | null;
+  error?: string | null;
   source: 's3' | 'local';
   path: string;
 }
@@ -136,6 +159,7 @@ export interface RunHandoffs {
   projectSlug: string;
   gitlab: GitlabHandoffInfo | null;
   developer: DeveloperHandoffInfo | null;
+  devops: DevopsHandoffInfo | null;
   /** From shared context.json when gitlab handoff is missing. */
   contextMergeRequestUrl?: string | null;
   contextFeatureBranch?: string | null;
@@ -179,6 +203,14 @@ export interface Project {
   artifactCount: number;
   lastRunAt: string;
   repo: string;
+  /** Where the repository row links (GitLab branch URL or /runs/<id>). */
+  repoHref?: string | null;
+  /** True when repoHref is an external GitLab URL. */
+  repoExternal?: boolean;
+  /** Latest cloud pipeline run id when known (S3 mode). */
+  runId?: string | null;
+  /** Live app URL from devops-agent when a deploy succeeded. */
+  liveUrl?: string | null;
   environment: Environment;
 }
 
@@ -225,9 +257,17 @@ export interface PipelineContext {
   architectSummary: string;
   dbOutputDir: string;
   preferredSqlPath: string;
-  /** Live deployment URL when the run has been deployed (from context deploy_url). */
-  deployUrl?: string;
-  /** Full handoff JSON from S3/local context.json (for raw view). */
+  /** Current pipeline run state, when the run is still resolvable. */
+  runStatus?: RunStatus | null;
+  activeAgent?: AgentName | null;
+  completedAgents?: AgentName[];
+  lastUpdatedAt?: string | null;
+  /** GitLab publish reference, from the run's handoffs when available. */
+  gitlabBranchUrl?: string | null;
+  gitlabMergeRequestUrl?: string | null;
+  /** Live deployed app URL, from devops-agent's handoff. */
+  liveUrl?: string | null;
+  /** Full handoff JSON from S3/local context.json (for raw view) ΓÇö secret-shaped keys redacted. */
   raw?: Record<string, unknown>;
 }
 

@@ -388,6 +388,50 @@ def test_after_agent_step_merges_remote_context_before_put(
     assert loaded["preferredSqlPath"] == "target-apps/expense-tracker/db/sql"
 
 
+def test_update_run_json_preserves_triggered_by_seeded_in_s3(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The AgentCore container running a step has its own empty local disk on its
+    first run.json write - it must pull the S3 copy the frontend already seeded
+    (with triggeredBy) as the merge base, or that attribution is silently dropped
+    the moment this container's first status update lands (the 'every run shows
+    Frontend' bug)."""
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr("agents._shared.sdlc_pipeline.load_repo_env", lambda: None)
+    (tmp_path / "agents" / "pipeline").mkdir(parents=True)
+
+    run_id = "trig-by-run"
+    seeded = {
+        "runId": run_id,
+        "feature": "expense-tracker",
+        "targetApp": "expense-tracker",
+        "triggeredBy": "kintur.shah@resolvetech.com",
+        "startedAt": "2026-08-03T14:00:00+00:00",
+        "status": "running",
+        "steps": [{"name": "product-agent", "label": "1/6", "status": "queued"}],
+    }
+
+    def fake_get_artifact_text(rid: str, rel: str) -> str:
+        assert (rid, rel) == (run_id, "run.json")
+        return json.dumps(seeded)
+
+    captured = {}
+
+    def fake_put_artifact(rid, rel, body, **kwargs):
+        captured["data"] = json.loads(body)
+
+    monkeypatch.setattr("agents._shared.artifact_store.get_artifact_text", fake_get_artifact_text)
+    monkeypatch.setattr("agents._shared.sdlc_pipeline.put_artifact", fake_put_artifact)
+
+    options = PipelineOptions(target_app="expense-tracker", run_id=run_id, transport="a2a")
+    runner = SdlcPipelineRunner(options)
+    runner._update_run_json(status="running", current_step="product-agent")
+
+    assert captured["data"]["triggeredBy"] == "kintur.shah@resolvetech.com"
+
+
 def test_parse_pipeline_request_from_a2a_message() -> None:
     message = (
         "Run run_sdlc_pipeline with:\n\n"
@@ -671,6 +715,77 @@ def test_step_developer_retries_with_fallback_model(
     }
     assert "RETRY NOTE" in calls[1]["task"]
     assert "developer-agent" in runner.agents_run
+
+
+def _make_a2a_gitlab_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "demo-api"
+    runner.root = repo_root
+    runner.context = {"targetApp": "demo-api", "runId": run_id}
+    runner.options = PipelineOptions(target_app="demo-api", transport="a2a")
+    runner.agents_run = []
+    runner.artifacts = {}
+    return runner
+
+
+def test_step_gitlab_a2a_embeds_apps_layout_context(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2A publish call must pass gitlabPublishLayout=apps (the default) via
+    extra_context, not a hand-rolled Context: block in the task string - _invoke_a2a
+    already appends its own single Context: block (targetApp/runId included via
+    _context_for_agent); a second one in the task text would stack and break JSON
+    parsing on gitlab-agent's receiving end (this was a real production bug)."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.delenv("GITLAB_APPS_REPO", raising=False)
+
+    runner = _make_a2a_gitlab_runner(repo_root, "run-gitlab-001")
+
+    with (
+        patch.object(runner, "_wait_for_developer_handoff"),
+        patch.object(runner, "_invoke_a2a") as invoke_mock,
+        patch.object(runner, "_read_gitlab_handoff", return_value={"status": "published"}),
+        patch.object(runner, "_update_context"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_gitlab()
+
+    invoke_mock.assert_called_once()
+    task = invoke_mock.call_args.args[1]
+    assert "Context:" not in task
+    assert invoke_mock.call_args.kwargs["extra_context"] == {"gitlabPublishLayout": "apps"}
+    assert "gitlab-agent" in runner.agents_run
+
+
+def test_step_gitlab_a2a_respects_monorepo_opt_out(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GITLAB_APPS_REPO=false must still be honored for the A2A publish path."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("GITLAB_APPS_REPO", "false")
+
+    runner = _make_a2a_gitlab_runner(repo_root, "run-gitlab-002")
+
+    with (
+        patch.object(runner, "_wait_for_developer_handoff"),
+        patch.object(runner, "_invoke_a2a") as invoke_mock,
+        patch.object(runner, "_read_gitlab_handoff", return_value={"status": "published"}),
+        patch.object(runner, "_update_context"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_gitlab()
+
+    assert invoke_mock.call_args.kwargs["extra_context"] == {"gitlabPublishLayout": "monorepo"}
 
 
 def test_step_developer_fails_after_all_retry_attempts(

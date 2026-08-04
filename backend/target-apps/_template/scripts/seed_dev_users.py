@@ -14,8 +14,8 @@ Required environment:
     DATABASE_URL  — same DSN the app uses (postgresql+psycopg://... or sqlite:///)
 
 The developer-agent overwrites `_CREDENTIALS` below with the exact mapping from
-the database-agent's HANDOFF.md `### seedCredentials` table. Do not hand-edit
-the rest of this file unless the bcrypt API changes.
+the database-agent's handoff doc (`databaseHandoffPath`) `### seedCredentials`
+table. Do not hand-edit the rest of this file unless the bcrypt API changes.
 """
 
 from __future__ import annotations
@@ -36,11 +36,11 @@ except ImportError:
     raise SystemExit(1)
 
 
-# ── Developer-agent OVERWRITES this constant from HANDOFF.md seedCredentials ──
+# ── Developer-agent OVERWRITES this constant from the database handoff's seedCredentials ──
 # Format: ("username_or_email_column_value", "plaintext_password")
 # The script does NOT log plaintext passwords beyond the count below.
 _CREDENTIALS: list[tuple[str, str]] = [
-    # Example (delete and replace with real entries from HANDOFF.md):
+    # Example (delete and replace with real entries from the database handoff doc):
     # ("priya@example.com", "AuditPass123!"),
 ]
 

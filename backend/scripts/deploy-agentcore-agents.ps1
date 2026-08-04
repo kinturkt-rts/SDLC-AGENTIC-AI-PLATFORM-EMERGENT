@@ -5,7 +5,9 @@ param(
     [string[]] $Agents = @(),
     [switch] $Configure,
     [switch] $ConfigureOnly,
-    [switch] $SkipConfigure
+    [switch] $SkipConfigure,
+    # Deploy isolated demo runtimes (product_agent_demo, …). Does not touch existing *_agent runtimes.
+    [switch] $Demo
 )
 
 $ErrorActionPreference = "Stop"
@@ -178,6 +180,19 @@ $PipelineAgents = @(
     @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() }
 )
 
+# Isolated demo runtimes — same bundles (AGENTCORE_AGENT), new AWS names + ECR repos.
+# GitLab MCP HTTP server stays shared; gitlab_agent_demo uses the demo artifact bucket.
+# First-time: .\scripts\deploy-agentcore-agents.ps1 -Demo -Configure
+# Redeploy:   .\scripts\deploy-agentcore-agents.ps1 -Demo -SkipConfigure
+$DemoAgents = @(
+    @{ awsName = "product_agent_demo"; bundle = "product-agent"; node = $true; extra = $ProductAgentExtra },
+    @{ awsName = "architect_agent_demo"; bundle = "architect-agent"; node = $false; extra = @() },
+    @{ awsName = "database_agent_demo"; bundle = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
+    @{ awsName = "developer_agent_demo"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
+    @{ awsName = "gitlab_agent_demo"; bundle = "gitlab-agent"; node = $false; extra = $GitLabAgentMcpEnv },
+    @{ awsName = "orchestrator_agent_demo"; bundle = "orchestrator-agent"; node = $false; extra = @("AGENTCORE_RUNTIMES_CONFIG=config/agentcore/runtimes.demo.json") }
+)
+
 # Deploy on demand via -Agents (not part of default pipeline batch).
 $OptionalAgents = @(
     @{ awsName = "qa_agent"; bundle = "qa-agent"; node = $false; extra = @() },
@@ -206,14 +221,30 @@ $OptionalAgents = @(
     ) }
 )
 
-$AllAgents = $PipelineAgents + $OptionalAgents
+$AllAgents = $PipelineAgents + $DemoAgents + $OptionalAgents
 
 $TargetAgents = if ($Agents.Count -gt 0) {
-    $AllAgents | Where-Object {
-        ($Agents -contains $_.awsName) -or ($Agents -contains $_.bundle)
+    # Prefer exact awsName matches (product_agent_demo). Bundle names (product-agent)
+    # resolve to demo only with -Demo, otherwise to the non-demo runtime.
+    $byAwsName = @($AllAgents | Where-Object { $Agents -contains $_.awsName })
+    if ($byAwsName.Count -gt 0) {
+        $byAwsName
+    } else {
+        $byBundle = @($AllAgents | Where-Object { $Agents -contains $_.bundle })
+        if ($Demo) {
+            @($byBundle | Where-Object { $_.awsName -like "*_demo" })
+        } else {
+            @($byBundle | Where-Object { $_.awsName -notlike "*_demo" })
+        }
     }
+} elseif ($Demo) {
+    $DemoAgents
 } else {
     $PipelineAgents
+}
+
+if ($TargetAgents.Count -eq 0) {
+    Write-Error "No matching agents for selection. Use awsName (product_agent_demo) or -Demo with bundle names."
 }
 
 $CommonEnv = @(
@@ -223,6 +254,13 @@ $CommonEnv = @(
 
 if ($env:MODEL_ID) { $CommonEnv += "MODEL_ID=$($env:MODEL_ID)" }
 else { $CommonEnv += "MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0" }
+
+# Demo uses a separate artifact bucket so client demos never mix with teammate runs.
+if ($Demo -or ($TargetAgents | Where-Object { $_.awsName -like "*_demo" })) {
+    $demoBucket = if ($env:ARTIFACT_S3_BUCKET_DEMO) { $env:ARTIFACT_S3_BUCKET_DEMO } else { "sdlc-agentic-ai-app-artifacts-demo" }
+    [Environment]::SetEnvironmentVariable("ARTIFACT_S3_BUCKET", $demoBucket, "Process")
+    Write-Host "Demo deploy: ARTIFACT_S3_BUCKET=$demoBucket" -ForegroundColor DarkGray
+}
 
 if ($env:ARTIFACT_S3_BUCKET) { $CommonEnv += "ARTIFACT_S3_BUCKET=$($env:ARTIFACT_S3_BUCKET)" }
 if ($env:ARTIFACT_DYNAMODB_ENABLED) { $CommonEnv += "ARTIFACT_DYNAMODB_ENABLED=$($env:ARTIFACT_DYNAMODB_ENABLED)" }
@@ -250,11 +288,17 @@ if ($env:DEVELOPER_AGENT_AUTO_VALIDATE_PYTEST) { $CommonEnv += "DEVELOPER_AGENT_
 # Per-agent secrets forwarded from .env.local (never commit these values).
 $AgentSecretKeys = @{
     product_agent          = @("ATLASSIAN_MCP_TOKEN", "ATLASSIAN_MCP_EMAIL", "ATLASSIAN_MCP_BASIC_AUTH", "ATLASSIAN_MCP_URL")
+    product_agent_demo     = @("ATLASSIAN_MCP_TOKEN", "ATLASSIAN_MCP_EMAIL", "ATLASSIAN_MCP_BASIC_AUTH", "ATLASSIAN_MCP_URL")
     architect_agent        = @()
+    architect_agent_demo   = @()
     database_agent         = @()
+    database_agent_demo    = @()
     developer_agent        = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
+    developer_agent_demo   = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     gitlab_agent           = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE", "GITLAB_APPS_REPO")
+    gitlab_agent_demo      = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH", "GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL", "GITLAB_MCP_HTTP_DIRECT_URL", "GITLAB_MCP_HTTP_BATCH_SIZE", "GITLAB_APPS_REPO")
     orchestrator_agent     = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
+    orchestrator_agent_demo = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     orchestrator_agent_vpc = @("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN", "GITLAB_URL", "GITLAB_API_URL", "GITLAB_PROJECT_PATH")
     security_agent         = @()
     devops_agent           = @()
@@ -330,7 +374,7 @@ foreach ($agent in $TargetAgents) {
         continue
     }
 
-    if ($awsName -eq "developer_agent") {
+    if ($awsName -eq "developer_agent" -or $awsName -eq "developer_agent_demo") {
         Write-Host "Publishing target-apps/_template to S3 (AgentCore has no local _template copy)..." -ForegroundColor DarkGray
         $publishScript = Join-Path $PSScriptRoot "publish-template-to-s3.py"
         python $publishScript
@@ -341,15 +385,44 @@ foreach ($agent in $TargetAgents) {
         }
     }
 
+    # Demo orchestrator: pin specialist ARNs from runtimes.demo.json (includes gitlab_agent_demo).
+    if ($awsName -eq "orchestrator_agent_demo" -and -not $ConfigureOnly) {
+        $syncDemo = Join-Path $PSScriptRoot "sync-runtimes-demo.py"
+        if (Test-Path $syncDemo) {
+            Write-Host "Refreshing config/agentcore/runtimes.demo.json from AWS..." -ForegroundColor DarkGray
+            python $syncDemo --region $Region
+        }
+        $demoRuntimes = Join-Path $RepoRoot "config\agentcore\runtimes.demo.json"
+        if (Test-Path $demoRuntimes) {
+            $peerMap = python -c @"
+import json, sys
+from pathlib import Path
+data = json.loads(Path(r'$demoRuntimes').read_text(encoding='utf-8'))
+peers = {}
+for name, entry in (data.get('agents') or {}).items():
+    arn = (entry or {}).get('runtimeArn') or ''
+    if arn and name != 'orchestrator-agent':
+        peers[name] = arn
+print(json.dumps(peers, separators=(',', ':')))
+"@
+            if ($peerMap -and $peerMap -ne "{}") {
+                $agent.extra = @($agent.extra) + @("AGENTCORE_PEER_RUNTIME_ARNS=$peerMap")
+                Write-Host "Demo orchestrator peers: $peerMap" -ForegroundColor DarkGray
+            } else {
+                Write-Warning "runtimes.demo.json has no specialist ARNs yet — deploy specialists first, then re-run orchestrator_agent_demo."
+            }
+        }
+    }
+
     $deployArgs = @("deploy", "--agent", $awsName, "--env", "AGENTCORE_AGENT=$bundle")
     $envBlock = $CommonEnv + $agent.extra
     if ($AgentSecretKeys.ContainsKey($awsName)) {
         $envBlock += Get-EnvPairsForKeys -Keys $AgentSecretKeys[$awsName]
     }
-    if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc") {
+    if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc" -or $awsName -eq "orchestrator_agent_demo") {
         $envBlock += Get-EnvPairsForKeys -Keys $OrchestratorRdsKeys
     }
-    if ($awsName -eq "gitlab_agent" -and $GitLabAgentMcpEnv.Count -gt 0) {
+    if (($awsName -eq "gitlab_agent" -or $awsName -eq "gitlab_agent_demo") -and $GitLabAgentMcpEnv.Count -gt 0) {
         $envBlock = @($envBlock | Where-Object {
             $_ -notlike "GITLAB_MCP_URL=*" -and
             $_ -notlike "GITLAB_MCP_HTTP_DIRECT_URL=*" -and
@@ -357,7 +430,7 @@ foreach ($agent in $TargetAgents) {
         }) + $GitLabAgentMcpEnv
     }
     foreach ($item in $envBlock) {
-        if ($awsName -eq "gitlab_agent" -and $item -like "MODEL_ID=*") {
+        if (($awsName -eq "gitlab_agent" -or $awsName -eq "gitlab_agent_demo") -and $item -like "MODEL_ID=*") {
             continue
         }
         $deployArgs += @("--env", $item)
@@ -441,4 +514,12 @@ if ($DeployFailures.Count -gt 0) {
     Write-Error "Deploy failed for: $($DeployFailures -join ', ')"
 }
 
-Write-Host "`nUpdate config/agentcore/runtimes.json with runtime ARNs and invoke URLs." -ForegroundColor Green
+if ($Demo -or ($TargetAgents | Where-Object { $_.awsName -like "*_demo" })) {
+    $syncDemo = Join-Path $PSScriptRoot "sync-runtimes-demo.py"
+    if (Test-Path $syncDemo) {
+        python $syncDemo --region $Region
+    }
+    Write-Host "`nDemo: update/check config/agentcore/runtimes.demo.json (dev runtimes.json unchanged)." -ForegroundColor Green
+} else {
+    Write-Host "`nUpdate config/agentcore/runtimes.json with runtime ARNs and invoke URLs." -ForegroundColor Green
+}

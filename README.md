@@ -28,7 +28,7 @@ inputs/*.txt
 | 1 | **product-agent** | Default (skip with `-SkipProduct`) | `target-apps/<app>/docs/PRD/<app>.md`, `agents/pipeline/<app>.context.json` |
 | 2 | **architect-agent** | Default (skip with `-SkipArchitect`) | `target-apps/<app>/docs/design/<app>.md`, diagram PNG |
 | 2b | web-crawler-agent | Opt-in `-WithWebCrawler` | `docs/PRD/scraped/<app>/` |
-| 3 | **database-agent** | Default (skip with `-SkipDb`) | `target-apps/<app>/db/sql/`, `db/HANDOFF.md` |
+| 3 | **database-agent** | Default (skip with `-SkipDb`) | `target-apps/<app>/db/sql/`, `agents/pipeline/<app>.database-handoff.md` |
 | 3b | `apply_sql_to_rds.py` | Default when DB runs (skip with `-SkipPostgres`) | RDS schema + seed |
 | 4 | **developer-agent** | Default (skip with `-SkipDeveloper`) | `target-apps/<app>/` (app, tests, README) |
 | 5 | local verify | Default (skip with `-SkipVerify`) | pytest in app folder |
@@ -102,7 +102,7 @@ sdlc-agentic-ai-mvp/
 | **product-agent** | Brief → PRD, pipeline context; optional Jira epic/stories (Atlassian MCP) | **1** |
 | **architect-agent** | AWS architecture diagram, `docs/design/<app>.md`, ADRs | **2** |
 | web-crawler-agent | Scrapes external docs via Firecrawl MCP | 2b (optional) |
-| **database-agent** | SQL migrations, seeds, `db/HANDOFF.md`; pre-apply SQL validation | **3** |
+| **database-agent** | SQL migrations, seeds, `agents/pipeline/<app>.database-handoff.md`; pre-apply SQL validation | **3** |
 | **developer-agent** | FastAPI (+ Streamlit when required) under `target-apps/` | **4** |
 | **gitlab-agent** | Publishes app + PRD/design/pipeline artifacts to GitLab branch `sdlc/<app>` | **6** |
 | **qa-agent** | Extended pytest, coverage gaps, QA handoff | **7** (`-WithQa`) |
@@ -189,7 +189,7 @@ runs/<runId>/<slug>/
   docs/design/<slug>.md
   docs/generated-diagrams/<slug>.png
   db/sql/*.sql
-  db/HANDOFF.md
+  handoffs/database-handoff.md
   handoffs/gitlab-handoff.json
   app/ …                    # developer-agent (FastAPI scaffold)
 ```

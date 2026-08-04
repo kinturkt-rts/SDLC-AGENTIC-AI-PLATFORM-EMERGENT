@@ -308,6 +308,7 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
             "gitlab-handoff.json": f"agents/pipeline/{slug}.gitlab-handoff.json",
             "qa-handoff.json": f"agents/pipeline/{slug}.qa-handoff.json",
             "devops-handoff.json": f"agents/pipeline/{slug}.devops-handoff.json",
+            "database-handoff.md": f"agents/pipeline/{slug}.database-handoff.md",
         }
         return handoff_map.get(Path(tail).name)
 
@@ -392,6 +393,7 @@ def _collect_local_monorepo_artifact_paths(feature: str, *, root: Path | None = 
         root / "agents" / "pipeline" / f"{slug}.qa-handoff.json",
         root / "agents" / "pipeline" / f"{slug}.devops-handoff.json",
         root / "agents" / "pipeline" / f"{slug}.gitlab-handoff.json",
+        root / "agents" / "pipeline" / f"{slug}.database-handoff.md",
     ):
         if candidate.is_file():
             rel_paths.add(candidate.relative_to(root).as_posix())
@@ -453,13 +455,21 @@ def write_pipeline_run_marker(
 
 
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
-    """Map monorepo-relative paths to apps-repo branch root (target-apps stripped)."""
+    """Map monorepo-relative paths to the apps-repo branch layout:
+    ``<slug>/backend/**`` for the FastAPI/db source tree, ``<slug>/frontend/**``
+    for the UI, ``.sdlc/`` marker and ``inputs/*.txt`` unchanged at branch root.
+    """
     if rel_path.startswith("inputs/") and rel_path.endswith(".txt"):
         return rel_path
     prefix = f"target-apps/{slug}/"
-    if rel_path.startswith(prefix):
-        return rel_path[len(prefix) :]
-    return None
+    if not rel_path.startswith(prefix):
+        return None
+    tail = rel_path[len(prefix) :]
+    if tail.startswith(".sdlc/"):
+        return tail
+    if tail.startswith("ui/"):
+        return f"{slug}/frontend/{tail[len('ui/') :]}"
+    return f"{slug}/backend/{tail}"
 
 
 def _input_brief_candidate_rels(slug: str, root: Path) -> list[str]:
@@ -685,7 +695,7 @@ def resolve_apps_repo_ci_template(root: Path | None = None) -> Path | None:
 
 
 def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -> list[dict[str, Any]]:
-    """Publish target-apps/<slug>/ at branch root plus inputs/<brief>.txt (apps GitLab project)."""
+    """Publish <slug>/backend/ + <slug>/frontend/ at branch root plus inputs/<brief>.txt (apps GitLab project)."""
     root_path = root or repo_root()
     slug = slugify_feature(feature)
     seen_dest: set[str] = set()

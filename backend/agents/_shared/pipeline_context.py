@@ -104,8 +104,14 @@ def sql_dir_rel_for_app(target_app: str) -> str:
 
 
 def db_handoff_rel_for_app(target_app: str) -> str:
-    """``HANDOFF.md`` path under the app db directory."""
-    return f"{db_dir_rel_for_app(target_app)}/HANDOFF.md"
+    """Database handoff Markdown — same ``agents/pipeline/`` convention as the other
+    inter-agent handoffs (developer/gitlab/qa/devops), not the app's own db/ tree."""
+    slug = slugify(target_app)
+    if _is_cloud_store():
+        return f"{slug}/handoffs/database-handoff.md"
+    if artifact_layout() == "target-app-root":
+        return f"{target_app_root_rel(slug)}/agents/pipeline/{slug}.database-handoff.md"
+    return f"agents/pipeline/{slug}.database-handoff.md"
 
 
 _PATH_REWRITE_KEYS = (
@@ -615,7 +621,9 @@ def enrich_handoff_context(ctx: dict[str, Any], *, include_db_paths: bool = Fals
                 ctx.setdefault("dbOutputDir", repo_rel(db_dir))
             if sql_dir.is_dir():
                 ctx.setdefault("preferredSqlPath", repo_rel(sql_dir))
-            handoff = db_dir / "HANDOFF.md"
+            handoff = _REPO_ROOT / db_handoff_rel_for_app(slug)
+            if not handoff.is_file():
+                handoff = db_dir / "HANDOFF.md"  # legacy location (pre-move)
             if handoff.is_file():
                 ctx.setdefault("databaseHandoffPath", repo_rel(handoff))
 

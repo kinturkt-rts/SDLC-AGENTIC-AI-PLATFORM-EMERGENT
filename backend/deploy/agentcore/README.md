@@ -204,7 +204,7 @@ See `agents/README.md` for MCP credentials (`ATLASSIAN_*`, `GITLAB_*`, `FIRECRAW
 ## Operational notes
 
 - **Ephemeral disk** — `developer-agent` / `architect-agent` file writes do not persist; use S3, EFS, or git for artifacts.
-- **S3 + RDS (cloud pipeline)** — `database-agent` writes `target-apps/<app>/db/sql/` to S3 when `runId` is in Context (`write_repo_artifact`). The **orchestrator** (not database-agent) runs `apply_sql_to_rds.py` after the DB step: it materializes `runs/<runId>/` from S3, applies SQL via psycopg, materializes seed passwords, and writes `HANDOFF.md` back to S3. Deploy **orchestrator-agent** with `POSTGRES_MCP_*` env vars and VPC access to RDS (port 5432).
+- **S3 + RDS (cloud pipeline)** — `database-agent` writes `target-apps/<app>/db/sql/` to S3 when `runId` is in Context (`write_repo_artifact`). The **orchestrator** (not database-agent) runs `apply_sql_to_rds.py` after the DB step: it materializes `runs/<runId>/` from S3, applies SQL via psycopg, materializes seed passwords, and writes the database handoff (`handoffs/database-handoff.md`) back to S3. Deploy **orchestrator-agent** with `POSTGRES_MCP_*` env vars and VPC access to RDS (port 5432).
 - **database-agent runtime** — needs `ARTIFACT_STORE=s3`, `ARTIFACT_S3_BUCKET`, and `runId` in pipeline context (orchestrator sets this). It does **not** apply migrations on AgentCore; RDS apply is orchestrator-only.
 - **VPC** — use `--vpc` on `agentcore configure` for **orchestrator-agent** (RDS apply) and optionally database-agent if using Postgres MCP read tools later.
 - **Auth** — production endpoints need OAuth or SigV4 ([A2A deploy guide](https://aws.github.io/bedrock-agentcore-starter-toolkit/user-guide/runtime/a2a.md)).

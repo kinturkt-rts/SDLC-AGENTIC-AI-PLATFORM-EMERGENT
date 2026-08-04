@@ -228,8 +228,13 @@ def parse_seed_credentials(seed_path: Path) -> list[tuple[str, str, str, str]]:
     return [(u, password, lookup_col, hash_col) for u in lookups]
 
 
-def collect_credentials(app_dir: Path) -> list[tuple[str, str, str, str]]:
-    handoff = app_dir / "db" / "HANDOFF.md"
+def collect_credentials(
+    app_dir: Path, *, handoff_path: Path | None = None
+) -> list[tuple[str, str, str, str]]:
+    """`handoff_path` overrides the default lookup — pass the current
+    ``agents/pipeline/<app>.database-handoff.md`` location; callers that omit it
+    fall back to the app's own ``db/HANDOFF.md`` (pre-move runs)."""
+    handoff = handoff_path if handoff_path is not None else app_dir / "db" / "HANDOFF.md"
     sql_dir = app_dir / "db" / "sql"
     creds = parse_handoff_credentials(handoff)
     if creds:

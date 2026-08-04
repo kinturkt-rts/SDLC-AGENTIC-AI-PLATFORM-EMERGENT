@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,11 +17,38 @@ RUNTIMES_CONFIG = repo_root() / "config" / "agentcore" / "runtimes.json"
 
 
 def load_runtime_arn(agent_name: str) -> str | None:
-    """Resolve specialist runtime ARN from config/agentcore/runtimes.json."""
-    if not RUNTIMES_CONFIG.is_file():
+    """Resolve specialist runtime ARN.
+
+    Priority:
+    1. ``AGENTCORE_PEER_RUNTIME_ARNS`` JSON map (``{"product-agent":"arn:..."}``)
+       — used by demo orchestrator so peers stay env-pinned without rebuilding.
+    2. ``AGENTCORE_RUNTIMES_CONFIG`` file (e.g. ``config/agentcore/runtimes.demo.json``)
+    3. Default ``config/agentcore/runtimes.json``
+    """
+    raw_peers = os.getenv("AGENTCORE_PEER_RUNTIME_ARNS", "").strip()
+    if raw_peers:
+        try:
+            peers = json.loads(raw_peers)
+        except json.JSONDecodeError:
+            logger.warning("AGENTCORE_PEER_RUNTIME_ARNS is not valid JSON")
+            peers = None
+        if isinstance(peers, dict):
+            arn = str(peers.get(agent_name) or "").strip()
+            if arn:
+                return arn
+
+    override = os.getenv("AGENTCORE_RUNTIMES_CONFIG", "").strip()
+    if override:
+        cfg_path = Path(override)
+        if not cfg_path.is_absolute():
+            cfg_path = repo_root() / cfg_path
+    else:
+        cfg_path = RUNTIMES_CONFIG
+
+    if not cfg_path.is_file():
         return None
     try:
-        data = json.loads(RUNTIMES_CONFIG.read_text(encoding="utf-8"))
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
     entry = (data.get("agents") or {}).get(agent_name) or {}

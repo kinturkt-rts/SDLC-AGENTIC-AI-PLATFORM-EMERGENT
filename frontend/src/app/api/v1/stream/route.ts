@@ -53,13 +53,13 @@ async function logsPayload(searchParams: URLSearchParams) {
         endMs,
         agent,
         limit,
-        mvpOnly: true,
+        pipelineOnly: true,
         timeWindowForRun: true,
       });
       return { logs };
     }
   }
-  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 240, limit, mvpOnly: true });
+  const logs = await listCloudWatchLogs({ agent, minutes: minutes ?? 240, limit, pipelineOnly: true });
   return { logs };
 }
 

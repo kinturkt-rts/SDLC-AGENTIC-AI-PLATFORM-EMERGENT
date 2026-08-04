@@ -777,7 +777,7 @@ Section numbers vary per feature. Locate content by heading text:
 | `.gitignore` | developer-agent | Write once per service |
 | `.env` (real secrets) | Human / local setup | **Never write** |
 | `tests/test_qa_*.py`, `QA_REPORT.md` | qa-agent | **Never write** |
-| `db/sql/`, `db/HANDOFF.md` | database-agent | Read only |
+| `db/sql/`, `databaseHandoffPath` | database-agent | Read only |
 | `.venv/`, `node_modules/` | Human / local | **Never write** |
 
 ## MVP phase scope
@@ -4175,15 +4175,15 @@ def _enrich_developer_context(ctx: dict[str, Any]) -> None:
     if resolve_run_id(ctx):
         enrich_db_paths_from_run(ctx)
 
-    # Database-agent handoff file
+    # Database-agent handoff file (agents/pipeline/<app>.database-handoff.md; legacy
+    # runs wrote it under the app's own db/ dir instead)
     if not ctx.get("databaseHandoffPath"):
         for candidate in (
+            _REPO_ROOT / db_handoff_rel_for_app(app),
             app_root / "db" / "HANDOFF.md",
             service_dir / "db" / "HANDOFF.md",
             service_dir / "db" / "handoff.md",
             service_dir / "db" / "database_handoff.md",
-            _REPO_ROOT / db_handoff_rel_for_app(app),
-            _REPO_ROOT / "agents" / "pipeline" / f"{app}.db-handoff.md",
         ):
             if candidate.is_file():
                 ctx["databaseHandoffPath"] = candidate.relative_to(_REPO_ROOT).as_posix()
@@ -4519,6 +4519,8 @@ def _execute_developer_pipeline_message(message: Any) -> str:
     try:
         summary, written, handoff_rel = run_task(task, ctx or None)
     except (ValueError, TargetAppRequiredError, SystemExit) as exc:
+        from _shared.pipeline_context import db_handoff_rel_for_app
+
         app = (ctx or {}).get("targetApp") or "your-app"
         run_id = resolve_run_id(ctx) or "smoke-001"
         root = target_app_root_rel(str(app))
@@ -4526,7 +4528,7 @@ def _execute_developer_pipeline_message(message: Any) -> str:
             "targetApp": app,
             "runId": run_id,
             "designDocPath": f"{root}/docs/design/{app}.md",
-            "databaseHandoffPath": f"{root}/db/HANDOFF.md",
+            "databaseHandoffPath": db_handoff_rel_for_app(str(app)),
         }
         return (
             "Developer pipeline could not start.\n\n"
@@ -4681,9 +4683,11 @@ def main() -> None:
             file=sys.stderr,
         )
     elif ctx.get("preferredSqlPath") or ctx.get("dbOutputDir"):
+        from _shared.pipeline_context import db_handoff_rel_for_app
+
         print(
             "[developer-agent] DB handoff : (not found — run database-agent first; "
-            "expected target-apps/<app>/db/HANDOFF.md)",
+            f"expected {db_handoff_rel_for_app(str(ctx.get('targetApp') or ''))})",
             file=sys.stderr,
         )
     if ctx.get("preferredSqlPath"):

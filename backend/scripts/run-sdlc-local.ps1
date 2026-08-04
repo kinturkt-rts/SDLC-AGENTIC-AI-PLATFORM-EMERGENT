@@ -461,7 +461,7 @@ function Write-RunInstructions {
 }
 
 $devTaskDb = @"
-Implement API surface from designDocPath as FastAPI routes. dev_read_file db/HANDOFF.md and every db/sql/*.sql before models.
+Implement API surface from designDocPath as FastAPI routes. dev_read_file databaseHandoffPath and every db/sql/*.sql before models.
 Postgres parity (mandatory): psycopg[binary] + postgresql+psycopg:// in .env.example with ?sslmode=require; dialect-guarded database.py;
 ENUM columns use sqlalchemy.Enum(create_type=False, native_enum=True) with sqlite String variant;
 uuid columns use PG_UUID(as_uuid=False).with_variant(String(36), sqlite); Pydantic response schemas coerce UUID to str.
@@ -566,7 +566,7 @@ if (-not $SkipDb) {
         "agents/database-agent/database_agent.py",
         "--target-app", $Feature,
         "--context-file", $ContextFile,
-        "--task", "Implement data model from designDocPath sections 3/6: numbered sql/ migrations, ### seedCredentials in HANDOFF.md, stable UUIDs. JWT apps only: __BCRYPT_PLACEHOLDER__ in hashed_password plus documented password comment. Opaque token/API-key apps: do NOT put __BCRYPT_PLACEHOLDER__ in token_hash/key_hash; use distinct sha256 placeholder strings per row (see database-agent api_keys rule)."
+        "--task", "Implement data model from designDocPath sections 3/6: numbered sql/ migrations, ### seedCredentials in the database handoff doc, stable UUIDs. JWT apps only: __BCRYPT_PLACEHOLDER__ in hashed_password plus documented password comment. Opaque token/API-key apps: do NOT put __BCRYPT_PLACEHOLDER__ in token_hash/key_hash; use distinct sha256 placeholder strings per row (see database-agent api_keys rule)."
     )
     if ($applyPostgres) { $dbArgs += "--with-postgres" }
     if ((Invoke-PipelinePython -ArgumentList $dbArgs) -ne 0) { throw "database-agent failed" }

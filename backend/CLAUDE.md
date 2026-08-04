@@ -50,7 +50,7 @@ All specialist agents import from `agents/_shared/`. Key modules:
 | `handoff_schemas.py` | Pydantic models for developer/devops/gitlab/qa handoff JSONs |
 | `pipeline_telemetry.py` | Read/write `<app>.<agent>-telemetry.json`; `pipeline-telemetry.json` summary |
 | `delivery_profile.py` | Per-app delivery profile (UI enabled, DB type, etc.) |
-| `db_handoff.py` | `write_db_handoff()` — writes `HANDOFF.md` to local or S3 |
+| `db_handoff.py` | `write_db_handoff()` — writes `agents/pipeline/<app>.database-handoff.md` to local or S3 |
 | `validate_sql_artifacts.py` | Guards nullable-column drift before RDS apply |
 | `materialize_seed_passwords.py` | Replaces `__BCRYPT_PLACEHOLDER__` in seed SQL before apply |
 | `gitlab_mcp_client.py` | Typed wrappers around GitLab MCP actions |
@@ -207,6 +207,7 @@ Prereqs: `aws sso login --profile eks-admin-user` and Docker Desktop running.
 | File pattern | Written by | Consumed by |
 |---|---|---|
 | `<app>.context.json` | orchestrator / product-agent | every downstream agent |
+| `<app>.database-handoff.md` | host (after database-agent run) | developer-agent |
 | `<app>.developer-handoff.json` | developer-agent | gitlab-agent, devops-agent |
 | `<app>.gitlab-handoff.json` | gitlab-agent | devops-agent |
 | `<app>.devops-handoff.json` | devops-agent | (terminal) |

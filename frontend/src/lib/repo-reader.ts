@@ -502,7 +502,9 @@ async function extractDescription(slug: string, ctx: PipelineContextFile | null)
   } catch {
     // fall through
   }
-  return `FastAPI target app at target-apps/${slug}/`;
+  // No PRD summary yet. The repository link and live URL already tell users where the
+  // app lives, so don't surface the internal monorepo path as a description.
+  return '';
 }
 
 async function listTargetAppSlugs(): Promise<string[]> {

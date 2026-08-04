@@ -111,15 +111,11 @@ function PipelineContextCard({ ctx, projectSlug }: { ctx: PipelineContext; proje
 }
 
 export function ContextView({ projectSlug }: { projectSlug: string }) {
-  const all = projectSlug === 'all';
-  const { data: items, isLoading } = useContextItems(all ? undefined : projectSlug);
-  const { data: pipeline } = usePipelineContext(all ? '' : projectSlug);
+  const { data: items, isLoading } = useContextItems(projectSlug);
+  const { data: pipeline } = usePipelineContext(projectSlug);
 
   const columns: Column<ContextItem>[] = [
     { key: 'key', header: 'Key', render: (c) => <span className="font-mono text-foreground">{c.key}</span> },
-    ...(all
-      ? [{ key: 'projectName', header: 'Project', render: (c: ContextItem) => <span className="text-foreground">{c.projectName}</span> }]
-      : []),
     { key: 'scope', header: 'Scope', render: (c) => <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] capitalize text-muted-foreground">{c.scope}</span> },
     { key: 'type', header: 'Type', render: (c) => <span className="capitalize text-muted-foreground">{c.type}</span> },
     { key: 'summary', header: 'Summary', className: 'max-w-md', render: (c) => <span className="line-clamp-2 text-muted-foreground">{c.summary}</span> },
@@ -131,25 +127,20 @@ export function ContextView({ projectSlug }: { projectSlug: string }) {
 
   return (
     <div className="space-y-4">
-      {!all && pipeline ? <PipelineContextCard ctx={pipeline} projectSlug={projectSlug} /> : null}
-      {!all && !pipeline ? (
+      {pipeline ? (
+        <PipelineContextCard ctx={pipeline} projectSlug={projectSlug} />
+      ) : (
         <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
           Structured pipeline context isn&apos;t available for this app yet - it&apos;s created once a pipeline run
           produces agent handoff. Individual context entries below (if any) still work as raw memory/document
           references.
         </div>
-      ) : null}
-      {all ? (
-        <p className="text-xs text-muted-foreground">
-          Summaries of context entries across every project. Select a project to see its full readable pipeline
-          context, including run state and artifact/GitLab references.
-        </p>
-      ) : null}
+      )}
       {(items ?? []).length === 0 ? (
         <EmptyState
           icon={Database}
           title="No context yet"
-          description={all ? 'No context entries.' : 'This project has no context. It is created when a pipeline run produces agent handoff.'}
+          description="This project has no context. It is created when a pipeline run produces agent handoff."
         />
       ) : (
         <DataTable columns={columns} rows={items ?? []} getRowId={(c) => c.id} />

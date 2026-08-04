@@ -1,0 +1,59 @@
+{
+  "family": "sdlc-control-plane-demo",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::061836593297:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::061836593297:role/sdlc-control-plane-task",
+  "containerDefinitions": [
+    {
+      "name": "sdlc-control-plane",
+      "image": "061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-control-plane-demo:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "3000" },
+        { "name": "HOSTNAME", "value": "0.0.0.0" },
+        { "name": "BACKEND_ROOT", "value": "/backend" },
+        { "name": "ARTIFACT_STORE", "value": "s3" },
+        { "name": "ARTIFACT_S3_BUCKET", "value": "sdlc-agentic-ai-app-artifacts-demo" },
+        { "name": "AWS_REGION", "value": "us-east-2" },
+        { "name": "SDLC_PIPELINE_TRANSPORT", "value": "a2a" },
+        { "name": "AGENTCORE_RUNTIMES_CONFIG", "value": "config/agentcore/runtimes.demo.json" },
+        { "name": "SDLC_ENVIRONMENT", "value": "demo" },
+        { "name": "COGNITO_USER_POOL_ID", "value": "us-east-2_KBdvEUenC" },
+        { "name": "COGNITO_CLIENT_ID", "value": "202iq7pu97a461lre5daoti3o8" },
+        { "name": "COGNITO_REGION", "value": "us-east-2" },
+        { "name": "GITLAB_URL", "value": "https://code.junodev.net" }
+      ],
+      "secrets": [
+        {
+          "name": "GITLAB_PERSONAL_ACCESS_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:061836593297:secret:sdlc/control-plane/gitlab-pat"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/sdlc-control-plane-demo",
+          "awslogs-region": "us-east-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

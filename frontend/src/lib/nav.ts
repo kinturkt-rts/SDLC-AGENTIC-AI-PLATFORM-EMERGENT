@@ -7,7 +7,6 @@ import {
   Bot,
   Network,
   FileBox,
-  Database,
   Plug,
   ScrollText,
   Settings,
@@ -47,10 +46,7 @@ export const navSections: NavSection[] = [
   },
   {
     title: 'Assets',
-    items: [
-      { label: 'Artifacts', href: '/artifacts', icon: FileBox },
-      { label: 'Context', href: '/context', icon: Database },
-    ],
+    items: [{ label: 'Artifacts', href: '/artifacts', icon: FileBox }],
   },
   {
     title: 'Integrations',
