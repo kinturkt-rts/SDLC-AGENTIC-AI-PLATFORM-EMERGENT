@@ -8,6 +8,10 @@ from pathlib import Path
 from _shared.verify_seed_bcrypt import documented_password, first_seed_username
 
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
+# Matches the bare placeholder AND per-row suffixed variants (e.g.
+# __BCRYPT_PLACEHOLDER_VIEWER__), any case — see apply_sql_to_rds.py's
+# _QUOTED_BCRYPT_PLACEHOLDER_RE for the matching quoted-token pattern.
+_PLACEHOLDER_RE = re.compile(r"__BCRYPT_PLACEHOLDER(?:_[A-Za-z0-9]+)*__", re.IGNORECASE)
 _SEED_CREDENTIALS_HEADER = re.compile(r"^###\s*seedCredentials\s*$", re.MULTILINE | re.IGNORECASE)
 
 # Users PK is either a UUID string or an auto-increment integer — both are valid
@@ -277,6 +281,6 @@ def seed_sql_has_placeholders(app_dir: Path) -> bool:
         if "fix" in seed.name.lower():
             continue
         text = seed.read_text(encoding="utf-8")
-        if _PLACEHOLDER in text:
+        if _PLACEHOLDER_RE.search(text):
             return True
     return False

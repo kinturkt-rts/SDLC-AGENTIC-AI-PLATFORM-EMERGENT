@@ -1,0 +1,52 @@
+Recipe Vault — a shared kitchen library where cooks store recipes, reuse ingredients, and build recipes out of other recipes.
+
+Client story:
+A small culinary team keeps its recipes in scattered documents. They want one place to store recipes, attach ingredients with quantities, tag recipes for browsing, and compose larger recipes from smaller sub-recipes (a sauce that is itself a recipe used inside a main dish). They care most about the relationships being correct: the same ingredient reused across many recipes, and a recipe referencing other recipes as components.
+
+MVP:
+- Create and edit recipes (title, description, servings, prep_minutes, cook_minutes).
+- Attach ingredients to a recipe with a quantity and unit for each (the same ingredient can appear in many recipes, and a recipe has many ingredients).
+- Tag recipes with reusable tags (many-to-many) and browse/filter recipes by tag.
+- Compose a recipe from sub-recipes: a recipe can include other recipes as components, each with a quantity (e.g. "2 batches of house sauce"). This is a self-referential relationship on recipes.
+- View a recipe with its full ingredient list, its tags, and its sub-recipe components resolved.
+- List and filter recipes by tag and by title search.
+
+Data model (DDL under target-apps/recipe-vault/db/sql/):
+- recipes: id, title, description nullable, servings int, prep_minutes int, cook_minutes int, created_at, updated_at
+- ingredients: id, name unique, default_unit
+- recipe_ingredients: JOIN TABLE carrying its own columns — recipe_id FK, ingredient_id FK, quantity numeric(10,2), unit; composite uniqueness on (recipe_id, ingredient_id)
+- tags: id, name unique
+- recipe_tags: JOIN TABLE — recipe_id FK, tag_id FK; composite PK (recipe_id, tag_id)
+- recipe_components: SELF-REFERENTIAL JOIN on recipes — parent_recipe_id FK -> recipes.id, child_recipe_id FK -> recipes.id, quantity numeric(10,2); a recipe must not be its own direct component (parent != child)
+
+Business rules:
+- A recipe cannot list itself as a direct sub-recipe component (reject parent_recipe_id == child_recipe_id with 422).
+- The same ingredient cannot be attached to the same recipe twice (unique on recipe_id+ingredient_id; 409 on duplicate).
+- Deleting a recipe removes its ingredient links, tag links, and its component links (as parent), but must not delete the child recipes themselves.
+- Quantities must be positive (422 otherwise).
+
+API contracts (implement all):
+| Method | Path | Behavior |
+|--------|------|----------|
+| GET | /health | DB ping |
+| GET | /api/v1/recipes | list; filters: tag, q (title search) |
+| POST | /api/v1/recipes | create recipe |
+| GET | /api/v1/recipes/{id} | recipe with ingredients, tags, and resolved sub-recipe components |
+| PUT | /api/v1/recipes/{id} | update recipe fields |
+| DELETE | /api/v1/recipes/{id} | delete recipe + its links |
+| POST | /api/v1/recipes/{id}/ingredients | attach an ingredient with quantity + unit |
+| DELETE | /api/v1/recipes/{id}/ingredients/{ingredient_id} | detach an ingredient |
+| POST | /api/v1/recipes/{id}/tags | attach a tag |
+| POST | /api/v1/recipes/{id}/components | add a sub-recipe component with quantity |
+| GET | /api/v1/ingredients | list all ingredients |
+| GET | /api/v1/tags | list all tags |
+
+Stack:
+- FastAPI + Postgres + pytest
+- React/Vite under frontend/
+
+Seed: 6 recipes (including at least one that uses another recipe as a component), 8 ingredients, 5 tags, ingredient links and tag links across recipes, 2 recipe_components rows.
+Tests: attach ingredient twice -> 409; recipe as its own component -> 422; delete a recipe used as a component -> child survives; get recipe returns nested ingredients+tags+components; filter recipes by tag.
+Out of scope: nutrition calc, images, shopping lists.
+Target app slug: recipe-vault
+Output directory: target-apps/recipe-vault/

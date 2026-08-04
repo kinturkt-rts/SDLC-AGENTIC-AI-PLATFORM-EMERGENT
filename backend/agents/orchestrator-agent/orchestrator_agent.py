@@ -85,6 +85,8 @@ def run_sdlc_pipeline_tool(
     skip_verify: bool = False,
     with_web_crawler: bool = False,
     with_qa: bool = False,
+    with_frontend: bool = False,
+    skip_frontend: bool = False,
     with_jira: bool = False,
     jira_project: str = "",
     transport: str = "auto",
@@ -106,6 +108,7 @@ def run_sdlc_pipeline_tool(
         skip_verify: Skip local pytest gate
         with_web_crawler: Run web-crawler-agent after architect
         with_qa: Run qa-agent after gitlab
+        with_frontend: Generate React frontend after developer/verify, before gitlab
         with_jira: Create Jira epic/stories when true (requires jira_project; AgentCore needs AGENTCORE_PRODUCT_SKIP_JIRA=false)
         jira_project: Jira project key when with_jira is true
         transport: auto | local | a2a
@@ -125,6 +128,8 @@ def run_sdlc_pipeline_tool(
         skip_verify=skip_verify,
         with_web_crawler=with_web_crawler,
         with_qa=with_qa,
+        with_frontend=with_frontend,
+        skip_frontend=skip_frontend,
         with_jira=with_jira,
         jira_project=jira_project,
         transport=transport if transport in ("auto", "local", "a2a") else "auto",  # type: ignore[arg-type]
@@ -359,6 +364,8 @@ def _add_pipeline_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-web-crawler", action="store_true")
     parser.add_argument("--with-qa", action="store_true")
     parser.add_argument("--skip-qa", action="store_true")
+    parser.add_argument("--with-frontend", action="store_true")
+    parser.add_argument("--skip-frontend", action="store_true")
     parser.add_argument("--with-jira", action="store_true")
     parser.add_argument("--jira-project", default="")
     parser.add_argument("--plan-only", action="store_true", help="Print pipeline plan and exit")
@@ -421,6 +428,8 @@ def main() -> None:
             skip_web_crawler=args.skip_web_crawler,
             with_qa=args.with_qa,
             skip_qa=args.skip_qa,
+            with_frontend=args.with_frontend,
+            skip_frontend=args.skip_frontend,
             with_jira=args.with_jira,
             jira_project=args.jira_project,
         )

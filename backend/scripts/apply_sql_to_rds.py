@@ -327,18 +327,24 @@ def _is_seed_file(path: Path) -> bool:
 
 
 _BCRYPT_PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
+# Matches the bare placeholder AND per-row LLM-invented suffixed variants
+# (e.g. __BCRYPT_PLACEHOLDER_VIEWER__, __bcrypt_placeholder_viewer_role__) —
+# all of them need hashing at apply time, not just the exact bare token.
+_QUOTED_BCRYPT_PLACEHOLDER_RE = re.compile(
+    r"""(['"])__BCRYPT_PLACEHOLDER(?:_[A-Za-z0-9]+)*__\1""",
+    re.IGNORECASE,
+)
 
 
 def _preprocess_bcrypt_placeholders(sql: str) -> str:
-    """Replace __BCRYPT_PLACEHOLDER__ with a real bcrypt hash before executing.
+    """Replace __BCRYPT_PLACEHOLDER__ (and suffixed variants) with a real bcrypt hash
+    before executing.
 
     Each occurrence gets its OWN freshly-salted hash of the same documented password —
     required when the placeholder lands in a UNIQUE column (e.g. api_keys.key_hash).
     Use this only when the app verifies with bcrypt.checkpw — not for SHA-256 hex lookup.
     """
-    placeholder_sq = f"'{_BCRYPT_PLACEHOLDER}'"
-    placeholder_dq = f'"{_BCRYPT_PLACEHOLDER}"'
-    if placeholder_sq not in sql and placeholder_dq not in sql:
+    if not _QUOTED_BCRYPT_PLACEHOLDER_RE.search(sql):
         return sql
 
     try:
@@ -365,18 +371,16 @@ def _preprocess_bcrypt_placeholders(sql: str) -> str:
             file=sys.stderr,
         )
 
-    def _fresh_hash(_match: re.Match[str], *, quote: str) -> str:
+    def _fresh_hash(match: re.Match[str]) -> str:
+        quote = match.group(1)
         digest = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
         return f"{quote}{digest}{quote}"
 
-    result = re.sub(re.escape(placeholder_sq), lambda m: _fresh_hash(m, quote="'"), sql)
-    result = re.sub(re.escape(placeholder_dq), lambda m: _fresh_hash(m, quote='"'), result)
-    replaced = (sql.count(placeholder_sq) + sql.count(placeholder_dq)) - (
-        result.count(placeholder_sq) + result.count(placeholder_dq)
-    )
+    replaced = len(_QUOTED_BCRYPT_PLACEHOLDER_RE.findall(sql))
+    result = _QUOTED_BCRYPT_PLACEHOLDER_RE.sub(_fresh_hash, sql)
     print(
-        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} __BCRYPT_PLACEHOLDER__ "
-        "occurrence(s), each with its own freshly-salted bcrypt hash",
+        f"[apply-sql] Pre-processed seed SQL: replaced {replaced} BCRYPT placeholder "
+        "occurrence(s) (bare + variant), each with its own freshly-salted bcrypt hash",
         file=sys.stderr,
     )
     return result

@@ -18,6 +18,7 @@ export const PIPELINE_MODELS = [
   { agentId: 'architect-agent', shortName: 'Architect', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
   { agentId: 'database-agent', shortName: 'Database', model: 'Claude Opus 4.6', family: 'opus' as const },
   { agentId: 'developer-agent', shortName: 'Developer', model: 'Claude Opus 4.6', family: 'opus' as const },
+  { agentId: 'frontend-agent', shortName: 'Frontend', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
 ] as const;
 
 export type PipelineAgentId = (typeof PIPELINE_MODELS)[number]['agentId'];
@@ -33,6 +34,7 @@ export const AGENT_CHART_COLOR: Record<string, string> = {
   'architect-agent': 'hsl(263 70% 65%)',
   'database-agent': 'hsl(160 60% 45%)',
   'developer-agent': 'hsl(38 92% 50%)',
+  'frontend-agent': 'hsl(217 91% 60%)',
   'devops-agent': 'hsl(200 80% 45%)',
   'security-agent': 'hsl(350 80% 60%)',
   'qa-agent': 'hsl(189 80% 45%)',
@@ -45,6 +47,7 @@ export const AGENT_TOKEN_ACCENT: Record<string, string> = {
   'architect-agent': 'bg-violet-400',
   'database-agent': 'bg-emerald-400',
   'developer-agent': 'bg-amber-400',
+  'frontend-agent': 'bg-blue-400',
   'devops-agent': 'bg-sky-400',
   'security-agent': 'bg-rose-400',
   'qa-agent': 'bg-cyan-400',
@@ -58,6 +61,7 @@ export const AGENT_TOKEN_ICON: Record<string, LucideIcon> = {
   'architect-agent': Building2,
   'database-agent': Database,
   'developer-agent': Code2,
+  'frontend-agent': Code2,
   'gitlab-agent': GitBranch,
   'devops-agent': Server,
   'qa-agent': Shield,

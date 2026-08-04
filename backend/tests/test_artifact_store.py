@@ -121,6 +121,71 @@ def test_artifact_paths_for_developer(repo_root: Path) -> None:
     assert paths == ["target-apps/my-app"]
 
 
+def test_artifact_paths_for_frontend(repo_root: Path) -> None:
+    from _shared.artifact_store import artifact_paths_for_agent
+
+    paths = artifact_paths_for_agent("frontend-agent", "my-app", {})
+    assert paths == ["target-apps/my-app/frontend"]
+
+
+def test_artifact_paths_for_frontend_matches_local_write_dir_in_s3_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """frontend_agent.py always writes to the literal target-apps/<slug>/frontend dir
+    on local disk, regardless of ARTIFACT_STORE. Guard against regressing to
+    target_app_root_rel() (which drops the "target-apps/" prefix when
+    ARTIFACT_STORE=s3) — that would silently desync sync_repo_paths_to_run's local
+    read from the agent's real write location and upload nothing."""
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    from _shared.artifact_store import artifact_paths_for_agent
+
+    paths = artifact_paths_for_agent("frontend-agent", "my-app", {})
+    assert paths == ["target-apps/my-app/frontend"]
+
+
+def test_sync_frontend_paths_to_run_uploads_to_s3(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Proves the orchestrator's existing S3-mode sync (artifact_paths_for_agent +
+    sync_repo_paths_to_run, already called from sdlc_pipeline._after_agent_step for
+    every agent) now actually uploads frontend-agent's output, instead of silently
+    syncing zero files because "frontend-agent" had no branch."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    frontend_dir = repo_root / "target-apps" / "my-app" / "frontend"
+    (frontend_dir / "src" / "components").mkdir(parents=True)
+    (frontend_dir / "package.json").write_text("{}", encoding="utf-8")
+    (frontend_dir / "src" / "App.tsx").write_text("export default App;", encoding="utf-8")
+    (frontend_dir / "src" / "components" / "List.tsx").write_text("List", encoding="utf-8")
+
+    from _shared.artifact_store import artifact_paths_for_agent, sync_repo_paths_to_run
+
+    paths = artifact_paths_for_agent("frontend-agent", "my-app", {})
+    assert paths == ["target-apps/my-app/frontend"]
+
+    with patch("_shared.artifact_store._s3_client") as mock_client_factory:
+        mock_client = mock_client_factory.return_value
+        synced = sync_repo_paths_to_run("run-frontend-001", paths)
+
+    uploaded_keys = {call.kwargs["Key"] for call in mock_client.put_object.call_args_list}
+    assert uploaded_keys == {
+        "runs/run-frontend-001/target-apps/my-app/frontend/package.json",
+        "runs/run-frontend-001/target-apps/my-app/frontend/src/App.tsx",
+        "runs/run-frontend-001/target-apps/my-app/frontend/src/components/List.tsx",
+    }
+    for call in mock_client.put_object.call_args_list:
+        assert call.kwargs["Bucket"] == "test-bucket"
+    assert set(synced) == {
+        "target-apps/my-app/frontend/package.json",
+        "target-apps/my-app/frontend/src/App.tsx",
+        "target-apps/my-app/frontend/src/components/List.tsx",
+    }
+
+
 def test_write_repo_artifact_local(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     from _shared.artifact_store import get_artifact_text, read_repo_artifact, write_repo_artifact

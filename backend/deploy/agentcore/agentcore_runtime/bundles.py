@@ -189,6 +189,36 @@ def developer_agent_bundle() -> BundleFactory:
     return factory
 
 
+def frontend_agent_bundle() -> BundleFactory:
+    """Standalone runtime (not in the pipeline batch / no orchestrator peering yet).
+
+    Mirrors developer_agent_bundle() exactly: yields the *_pipeline_agent() variant
+    (deterministic handoff -> run_task handler wired into __call__/stream_async), not
+    the bare build_frontend_agent() — that bare Agent has no tools and would just
+    chat with the LLM on invoke, never reaching run_task().
+    """
+    mod = import_agent_module("frontend-agent")
+
+    skills = [
+        AgentSkill(
+            id="generate_frontend",
+            name="generate_frontend",
+            description=(
+                "Generates a React + TypeScript frontend from a backend OpenAPI "
+                "spec and product/design context, consuming the Developer->Frontend "
+                "handoff (target_app, runId, openapi_path)."
+            ),
+            tags=["frontend", "react", "typescript", "codegen"],
+        )
+    ]
+
+    @contextmanager
+    def factory() -> Iterator[AgentBundle]:
+        yield mod.build_frontend_pipeline_agent(), skills  # noqa: SLF001
+
+    return factory
+
+
 def qa_agent_bundle() -> BundleFactory:
     mod = import_agent_module("qa-agent")
 
@@ -299,4 +329,5 @@ BUNDLE_FACTORIES: dict[str, BundleFactory] = {
     "database-agent": database_agent_bundle,
     "web-crawler-agent": web_crawler_agent_bundle,
     "gitlab-agent": gitlab_agent_bundle,
+    "frontend-agent": frontend_agent_bundle,
 }

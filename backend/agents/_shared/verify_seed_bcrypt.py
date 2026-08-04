@@ -34,6 +34,12 @@ _DOLLAR_QUOTED_BCRYPT_RE = re.compile(
     re.IGNORECASE,
 )
 _PLACEHOLDER = "__BCRYPT_PLACEHOLDER__"
+# Matches the bare placeholder AND per-row suffixed variants (e.g.
+# __BCRYPT_PLACEHOLDER_VIEWER__), any case, wrapped in either quote style.
+_QUOTED_PLACEHOLDER_RE = re.compile(
+    r"""['"]__BCRYPT_PLACEHOLDER(?:_[A-Za-z0-9]+)*__['"]""",
+    re.IGNORECASE,
+)
 
 
 def seed_targets_user_passwords(seed_text: str) -> bool:
@@ -74,7 +80,8 @@ def scan_sql_antipatterns(path: Path) -> list[str]:
 def verify_seed_file(path: Path) -> list[str]:
     errors = scan_sql_antipatterns(path)
     text = path.read_text(encoding="utf-8")
-    has_placeholder = f"'{_PLACEHOLDER}'" in text or f'"{_PLACEHOLDER}"' in text
+
+    has_placeholder = bool(_QUOTED_PLACEHOLDER_RE.search(text))
     password = documented_password(text)
 
     # Apps may put __BCRYPT_PLACEHOLDER__ in hashed_password OR in token_hash / key_hash.

@@ -1,0 +1,51 @@
+Support SLA Desk — internal support ticket tracker with SLA deadlines, role-gated handling, and an immutable status history.
+
+Client story:
+An internal IT team fields support requests over email and loses track of which are overdue. They want a service where staff raise tickets, agents work them, and managers oversee everything, with each ticket carrying an SLA deadline so overdue work is obvious at a glance. They care most that a ticket's overdue state is always computed correctly from its deadline and that a closed ticket cannot quietly be reopened or edited out of order.
+
+MVP:
+- Raise tickets (title, description, priority). Each ticket gets an SLA deadline derived from its priority at creation time.
+- Ticket status moves forward through a lifecycle: open -> in_progress -> resolved -> closed. It cannot move backward.
+- Agents pick up and progress tickets; only a manager can reopen the flow by creating a follow-up ticket (a closed ticket itself never reopens).
+- Every status change is appended to an immutable status-history trail.
+- An SLA breach flag is computed at read time: a ticket is breached if it is not yet resolved/closed and the current time is past its sla_deadline.
+- Overdue report: all open/in_progress tickets whose sla_deadline is in the past.
+- Role-gated actions: requesters raise and view own tickets; agents progress any ticket; managers additionally reassign and view all.
+
+Auth: X-API-Key header carrying a per-user token; identity and role resolved from the users table. No JWT.
+
+Data model (DDL under target-apps/support-sla-desk/db/sql/):
+- users: id, token unique NOT NULL (per-user opaque key sent as X-API-Key, e.g. tok_amy_agent), role NOT NULL (requester, agent, manager), name
+- tickets: id, title, description, priority (low, normal, high, urgent), status (open, in_progress, resolved, closed), requester_user_id FK, assignee_user_id FK nullable, sla_deadline timestamptz NOT NULL, created_at timestamptz, updated_at timestamptz
+- ticket_events: id, ticket_id FK, from_status nullable, to_status, actor_user_id FK, note nullable, created_at timestamptz — IMMUTABLE (no update/delete route)
+
+Business rules (enforce in API):
+- SLA deadline at creation: low = created_at + 72h, normal = +48h, high = +24h, urgent = +4h. Store the resolved timestamptz on the ticket.
+- Status is forward-only: allowed transitions are open->in_progress, in_progress->resolved, resolved->closed. Any backward or skipping transition -> 409.
+- A closed ticket accepts no further status changes (409).
+- SLA breach (computed, never stored): breached = (status in open,in_progress) AND (now > sla_deadline).
+- Role gating: raise a ticket requires requester+; progress a ticket's status requires agent+; reassign assignee or view all tickets requires manager. Enforce with the provided require_role helper.
+- A requester may only view their own tickets (403 otherwise); agents and managers may view any.
+- Every status change writes a ticket_events row with from_status/to_status.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+|--------|------|------|----------|
+| GET | /health | none | DB ping |
+| GET | /api/v1/tickets | X-API-Key | requester: own; agent/manager: all; filters status, breached |
+| POST | /api/v1/tickets | X-API-Key (requester+) | create ticket; computes sla_deadline from priority |
+| GET | /api/v1/tickets/{id} | X-API-Key | 403 if requester and not owner; includes computed breached flag |
+| PATCH | /api/v1/tickets/{id}/status | X-API-Key (agent+) | forward-only transition; writes event |
+| PATCH | /api/v1/tickets/{id}/assignee | X-API-Key (manager) | reassign ticket |
+| GET | /api/v1/tickets/{id}/events | X-API-Key | immutable status history |
+| GET | /api/v1/reports/overdue | X-API-Key (agent+) | open/in_progress tickets past sla_deadline |
+
+Stack:
+- FastAPI + Postgres + pytest
+- React/Vite under frontend/
+
+Seed: 6 users across roles with distinct tokens (e.g. tok_ray_requester, tok_amy_agent, tok_ben_agent, tok_mia_manager, plus two more), 8 tickets spanning all priorities and all statuses, with at least two open/in_progress tickets whose sla_deadline is already in the past (so the overdue report and breached flag are non-empty), and seeded ticket_events consistent with each ticket's current status.
+Tests: create urgent ticket -> sla_deadline is created_at + 4h; backward transition (resolved->open) -> 409; any change on a closed ticket -> 409; breached flag true for a past-deadline open ticket and false once resolved; requester viewing another's ticket -> 403; agent progressing status -> ok; requester progressing status -> 403; overdue report returns only past-deadline open/in_progress tickets; PATCH/DELETE on a ticket_event -> no such route.
+Out of scope: email ingestion, attachments, customer-facing portal.
+Target app slug: support-sla-desk
+Output directory: target-apps/support-sla-desk/

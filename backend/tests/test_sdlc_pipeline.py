@@ -704,8 +704,15 @@ def test_step_developer_retries_with_fallback_model(
         runner._step_developer()
 
     assert len(calls) == 2
-    assert calls[0].get("extra_context") is None
-    assert calls[1]["extra_context"] == {"codingModelOverride": "us.anthropic.claude-sonnet-4-6"}
+    # fullRegen is intentional on EVERY A2A developer attempt, not just retries — it
+    # signals developer-agent to clear the app tree before a clean regeneration (a
+    # no-op in cloud/S3 mode; see _clear_app_tree's _is_cloud_store() guard). Do not
+    # "fix" this back to expecting None on the first call.
+    assert calls[0]["extra_context"] == {"fullRegen": True}
+    assert calls[1]["extra_context"] == {
+        "fullRegen": True,
+        "codingModelOverride": "us.anthropic.claude-sonnet-4-6",
+    }
     assert "RETRY NOTE" in calls[1]["task"]
     assert "developer-agent" in runner.agents_run
 

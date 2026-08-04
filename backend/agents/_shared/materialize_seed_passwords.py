@@ -19,19 +19,27 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "agents"))
 
 from _shared.rds_env import connection_url, load_target_app_env, schema_for_app
+
 from _shared.seed_credentials import _PLACEHOLDER
 from _shared.sha256_api_keys import (
     collect_documented_api_keys,
     is_sha256_placeholder_or_fake,
     sha256_hex,
 )
+
 from _shared.verify_seed_bcrypt import documented_password
 
 import bcrypt
 import psycopg
 from psycopg import sql as psql
 
+
+# Matches the bare placeholder AND per-row suffixed variants (e.g.
+# __BCRYPT_PLACEHOLDER_VIEWER__), any case. Used with Postgres's case-insensitive
+# ~* operator, not exact equality, so live rows holding a variant are still found.
+_PLACEHOLDER_PG_RE = r"__BCRYPT_PLACEHOLDER(?:_[A-Za-z0-9]+)*__"
 _LABELED_SHA256_RE = re.compile(r"^__SHA256_PLACEHOLDER:([A-Za-z0-9_-]+)__$")
+
 
 
 def _connect(conn_url: str) -> psycopg.Connection:
@@ -60,12 +68,12 @@ def find_remaining_placeholder_columns(target_app: str) -> list[tuple[str, str]]
             candidates = cur.fetchall()
             for table_name, column_name in candidates:
                 cur.execute(
-                    psql.SQL("SELECT EXISTS (SELECT 1 FROM {}.{} WHERE {} = %s)").format(
+                    psql.SQL("SELECT EXISTS (SELECT 1 FROM {}.{} WHERE {} ~* %s)").format(
                         psql.Identifier(schema),
                         psql.Identifier(table_name),
                         psql.Identifier(column_name),
                     ),
-                    (_PLACEHOLDER,),
+                    (_PLACEHOLDER_PG_RE,),
                 )
                 if cur.fetchone()[0]:
                     hits.append((table_name, column_name))
@@ -95,12 +103,12 @@ def _materialize_columns_in_place(
         with conn.cursor() as cur:
             for table_name, column_name in columns:
                 cur.execute(
-                    psql.SQL("SELECT ctid FROM {}.{} WHERE {} = %s").format(
+                    psql.SQL("SELECT ctid FROM {}.{} WHERE {} ~* %s").format(
                         psql.Identifier(schema),
                         psql.Identifier(table_name),
                         psql.Identifier(column_name),
                     ),
-                    (_PLACEHOLDER,),
+                    (_PLACEHOLDER_PG_RE,),
                 )
                 rows = cur.fetchall()
                 for (ctid,) in rows:

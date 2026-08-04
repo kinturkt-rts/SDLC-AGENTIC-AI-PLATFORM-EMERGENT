@@ -26,6 +26,7 @@ from _shared.pipeline_context import (
     TargetAppRequiredError,
     design_doc_rel_for_app,
     enrich_handoff_context,
+    read_context_json,
     resolve_design_doc_path,
     resolve_target_app,
     slugify,
@@ -337,7 +338,7 @@ def _load_pipeline_context(target_app: str) -> dict[str, Any] | None:
         if not path.is_file():
             continue
         try:
-            parsed = json.loads(path.read_text(encoding="utf-8-sig"))
+            parsed = read_context_json(path)
         except (json.JSONDecodeError, OSError):
             continue
         if isinstance(parsed, dict):

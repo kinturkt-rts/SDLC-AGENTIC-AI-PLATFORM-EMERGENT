@@ -42,6 +42,7 @@ param(
     [switch] $SkipQa,
     [switch] $SkipVerify,
     [switch] $SkipGitlab,
+    [switch] $SkipFrontend,
     [switch] $WithJira,
     [string] $GitlabProject = "",
     [string] $GitlabBase = "",
@@ -145,6 +146,9 @@ $runQa = $false
 if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
 # GitLab publish runs after verify unless skipped (-SkipGitlab).
 $runGitlab = (-not $SkipGitlab) -and (-not $SkipDeveloper)
+# Frontend-agent runs by default after developer, before GitLab (matches sdlc_pipeline _step_frontend).
+# -SkipFrontend to disable. Not wired into the orchestrator; this is the local pipeline's own step.
+$runFrontend = (-not $SkipFrontend) -and (-not $SkipDeveloper)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
 
@@ -237,7 +241,14 @@ function Update-Context {
     foreach ($k in $Fields.Keys) { $obj[$k] = $Fields[$k] }
     if (-not $obj["targetApp"]) { $obj["targetApp"] = $Feature }
     if (-not $obj["designDocPath"]) { $obj["designDocPath"] = "docs/design/$Feature.md" }
-    $obj | ConvertTo-Json -Depth 5 | Set-Content $ctxPath -Encoding utf8
+    # PS 5.1's Set-Content/Out-File -Encoding utf8 always emits a UTF-8 BOM (no
+    # plain-utf8-no-BOM option exists on that encoding parameter in 5.1). A BOM
+    # broke Python readers that parse this file with plain "utf-8" + json.loads
+    # (json.JSONDecodeError on the BOM). $ctxPath is already absolute (built
+    # from $RepoRoot via Join-Path at the top of this script), which
+    # [System.IO.File]::WriteAllText requires.
+    $json = $obj | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($ctxPath, $json, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "[pipeline] Context -> agents/pipeline/$Feature.context.json" -ForegroundColor Cyan
 }
 
@@ -265,6 +276,16 @@ function Invoke-DeliveryVerify {
     }
 }
 
+function Sync-AuthMode {
+    # Deterministic (not LLM) — derives authMode from designDocPath's Auth line(s) and
+    # logs it so the value is visible on every run, regardless of entry point. Nothing
+    # consumes authMode yet.
+    if (-not (Test-Path $ctxPath)) { return }
+    Invoke-PipelinePython -ArgumentList @(
+        "agents/_shared/auth_profile.py", "--context-file", $ContextFile, "--repo-root", $RepoRoot, "--sync"
+    ) | Out-Null
+}
+
 function Get-DeveloperStepLabel {
     param([string]$ContextPath = $ctxPath)
     $stack = @("FastAPI")
@@ -285,7 +306,7 @@ function Invoke-RdsApply {
         return
     }
     Write-Host "`n=== Apply SQL to RDS (apply_sql_to_rds.py) ===" -ForegroundColor Green
-    if ((Invoke-PipelinePython -ArgumentList @("scripts/apply_sql_to_rds.py", "--target-app", $Feature)) -ne 0) {
+    if ((Invoke-PipelinePython -ArgumentList @("scripts/apply_sql_to_rds.py", "--target-app", $Feature, "--reset-schema")) -ne 0) {
         throw "RDS apply failed. Fix network/credentials (.env.local POSTGRES_MCP_*) then re-run: python scripts/apply_sql_to_rds.py --target-app $Feature"
     }
 }
@@ -297,6 +318,18 @@ function Invoke-SeedMaterialize {
         "agents/_shared/materialize_seed_passwords.py", "--target-app", $TargetFeature, "--repo-root", $RepoRoot
     )) -ne 0) {
         throw "Seed password materialization failed - check HANDOFF seedCredentials or seed SQL password comment."
+    }
+}
+
+function Invoke-GenerateEnv {
+    param([string]$TargetFeature)
+    $targetDir = Join-Path $RepoRoot "target-apps\$TargetFeature"
+    if (-not (Test-Path (Join-Path $targetDir ".env.example"))) { return }
+    Write-Host "`n=== Generate .env from .env.example + .env.local (generate_target_app_env.py) ===" -ForegroundColor Green
+    if ((Invoke-PipelinePython -ArgumentList @(
+        "agents/_shared/generate_target_app_env.py", "--target-app", $TargetFeature
+    )) -ne 0) {
+        Write-Warning ".env generation failed - copy target-apps/$TargetFeature/.env.example to .env by hand."
     }
 }
 
@@ -314,6 +347,10 @@ function Invoke-LocalVerify {
 
     $venvPython = Join-Path $targetDir ".venv\Scripts\python.exe"
     $python = if (Test-Path $venvPython) { $venvPython } else { "python" }
+    # verify_seed_bcrypt.py is a SHARED repo tool (needs bcrypt from the repo venv),
+    # never the app venv above - the app venv doesn't install repo-level deps.
+    $repoVenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    $repoPython = if (Test-Path $repoVenvPython) { $repoVenvPython } else { "python" }
 
     Push-Location $targetDir
     $prevDbUrl = $env:DATABASE_URL
@@ -333,23 +370,35 @@ function Invoke-LocalVerify {
             throw "app import failed - developer-agent must fix startup errors before pipeline continues."
         }
 
-        $pytestOut = & $python -m pytest tests/ -q --tb=line 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $pytestOut | Write-Host
+        # Pytest runs against a throwaway Postgres schema built from this app's
+        # db/sql/*.sql (agents/_shared/pg_test_schema.py) - NOT SQLite. The app's
+        # tests/conftest.py now requires a real Postgres DATABASE_URL and refuses
+        # to fall back to SQLite (see target-apps/_template/tests/conftest_reference.py),
+        # since SQLite silently accepted values a real Postgres native enum would
+        # reject, hiding ORM-vs-DDL drift. run_app_tests_pg.py runs on the REPO venv
+        # (it imports _shared/apply_sql_to_rds), unlike $python above; it guarantees
+        # the temp schema is dropped even if pytest fails or crashes.
+        # Absolute path required here: this try block runs inside a Push-Location
+        # $targetDir (see above), so the relative "scripts/..." path Invoke-RdsApply
+        # uses (called at $RepoRoot scope, before any Push-Location) would resolve
+        # against target-apps/<app>/ instead of backend/ and silently fail to find
+        # the script — same reason the verify_seed_bcrypt.py calls above use
+        # Join-Path $RepoRoot rather than a bare relative path.
+        $runTestsScript = Join-Path $RepoRoot "scripts\run_app_tests_pg.py"
+        if ((Invoke-PipelinePython -ArgumentList @($runTestsScript, "--target-app", $TargetFeature)) -ne 0) {
             throw "pytest failed - developer-agent must fix tests before pipeline continues."
         }
-        $pytestLine = ($pytestOut | Select-Object -Last 1)
 
-        & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --quiet
+        & $repoPython (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --quiet
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Seed bcrypt verification failed - README login will fail on RDS even if pytest passes."
         }
-        & $python (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds --quiet
+        & $repoPython (Join-Path $RepoRoot "agents\_shared\verify_seed_bcrypt.py") --target-app $TargetFeature --repo-root $RepoRoot --check-rds --quiet
         if ($LASTEXITCODE -ne 0) {
             throw "RDS seed password mismatch - re-run apply_sql_to_rds.py (auto-materializes passwords)."
         }
 
-        Write-Host "  Local verify passed (import, pytest, seed bcrypt, delivery profile). $pytestLine" -ForegroundColor Green
+        Write-Host "  Local verify passed (import smoke, pytest vs. Postgres temp schema, seed bcrypt, delivery profile)." -ForegroundColor Green
     }
     finally {
         $ErrorActionPreference = $prevEap
@@ -395,7 +444,7 @@ function Write-RunInstructions {
         Write-Host "  pip install -r requirements.txt"
     }
     if ($UsesDb) {
-        Write-Host "  copy .env.example .env   # DATABASE_URL (?sslmode=require), POSTGRES_SCHEMA, auth secret"
+        Write-Host "  .env already generated (target-apps/$TargetFeature/.env) - edit only if you need to override it"
         Write-Host "  RDS smoke: GET /health then one DB list/read route (pytest SQLite != RDS proof)"
     }
     Write-Host "  uvicorn app.main:app --reload --port 8000"
@@ -491,6 +540,7 @@ if (-not $SkipArchitect) {
 else {
     Update-Context @{ diagramPaths = @("docs/generated-diagrams/$Feature.png") }
 }
+Sync-AuthMode
 
 # 2b) Web crawler (optional)
 $runWebCrawler = $WithWebCrawler -and -not $SkipWebCrawler
@@ -553,10 +603,27 @@ if (-not $SkipDeveloper) {
     )) -ne 0) { throw "developer-agent failed" }
     $pipelineAgentsRun += "developer-agent"
 }
+Invoke-GenerateEnv -TargetFeature $Feature
 
 # 5) Local verify (before publish - do not push broken code)
 if (-not $SkipVerify) {
     Invoke-LocalVerify -TargetFeature $Feature
+}
+
+# 5b) Frontend-agent -> React frontend from OpenAPI contract (runs by default; -SkipFrontend to disable).
+# Mirrors sdlc_pipeline _step_frontend (local transport): passes --full-regen for a clean from-scratch build.
+if ($runFrontend) {
+    Write-Host "`n=== 5b/6 frontend-agent (React from OpenAPI contract) ===" -ForegroundColor Green
+    $frontendArgs = @(
+        "agents/frontend-agent/frontend_agent.py",
+        "--target-app", $Feature,
+        "--context-file", $ContextFile,
+        "--full-regen"
+    )
+    if ((Invoke-PipelinePython -ArgumentList $frontendArgs) -ne 0) {
+        Write-Warning "frontend-agent reported issues - review target-apps/$Feature/frontend before GitLab publish."
+    }
+    $pipelineAgentsRun += "frontend-agent"
 }
 
 # 6) GitLab-agent -> MCP push to sdlc/<app> branch (default publish; MR opt-in via gitlab-agent --open-mr)

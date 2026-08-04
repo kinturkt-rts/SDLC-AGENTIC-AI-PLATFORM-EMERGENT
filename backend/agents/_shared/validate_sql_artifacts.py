@@ -20,14 +20,9 @@ _INSERT_INTO_RE = re.compile(
     r"INSERT\s+INTO\s+((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)\s*\(",
     re.IGNORECASE,
 )
-_SKIP_COLUMN_PREFIXES = (
-    "CONSTRAINT",
-    "PRIMARY",
-    "UNIQUE",
-    "CHECK",
-    "FOREIGN",
-    "EXCLUDE",
-)
+# Table-level constraint keywords to skip when classifying a CREATE TABLE body line as
+# a column (CREATE TABLE ... (col1 ..., CONSTRAINT ..., PRIMARY KEY (...), ...)).
+_SKIP_COLUMN_PREFIXES = ("CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "EXCLUDE")
 # Match on a word boundary, not an exact whitespace-split token — a table-level
 # constraint written without a space before its parenthesis (e.g. "UNIQUE(a, b)")
 # otherwise produces a first token of "UNIQUE(a," which is not "UNIQUE" and slips

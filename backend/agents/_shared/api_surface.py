@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -93,17 +92,21 @@ def is_streamlit_ui_route(method: str, path: str) -> bool:
 
 
 def requires_streamlit(app_slug: str, app_dir: Path, repo_root: Path) -> bool:
+    """True when deliveryProfile.requiresStreamlit is explicitly true; False when
+    explicitly false. Falls back to "does ui/streamlit_app.py exist" ONLY when
+    context.json doesn't exist at all — never on a parse failure, since a
+    parse failure on an existing file (e.g. genuine corruption) must not be
+    silently confused with "no opinion was ever recorded"."""
+    from _shared.pipeline_context import read_context_json
+
     ctx_path = repo_root / "agents" / "pipeline" / f"{app_slug}.context.json"
     if ctx_path.is_file():
-        try:
-            ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
-            profile = ctx.get("deliveryProfile") or {}
-            if profile.get("requiresStreamlit") is True:
-                return True
-            if profile.get("requiresStreamlit") is False:
-                return False
-        except (json.JSONDecodeError, OSError):
-            pass
+        ctx = read_context_json(ctx_path)
+        profile = ctx.get("deliveryProfile") or {}
+        if profile.get("requiresStreamlit") is True:
+            return True
+        if profile.get("requiresStreamlit") is False:
+            return False
     return (app_dir / "ui" / "streamlit_app.py").is_file()
 
 

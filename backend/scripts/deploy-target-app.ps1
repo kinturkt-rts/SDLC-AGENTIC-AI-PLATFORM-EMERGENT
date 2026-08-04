@@ -331,11 +331,17 @@ try {
         $handoff["healthy"] = $healthy
         if ($diagnostics -and $diagnostics["stoppedReason"]) { $handoff["failureDiagnostics"] = $diagnostics } else { $handoff.Remove("failureDiagnostics") | Out-Null }
         $handoff["deployedAt"] = (Get-Date).ToUniversalTime().ToString("o")
-        # Standard GitLab CI predefined vars (empty outside CI) — an ordering key so a
+# Standard GitLab CI predefined vars (empty outside CI) — an ordering key so a
         # stale/superseded pipeline's write can't clobber a newer one's in S3/DynamoDB.
         if ($env:CI_PIPELINE_ID) { $handoff["gitlabPipelineId"] = [int64]$env:CI_PIPELINE_ID }
         if ($env:CI_COMMIT_SHA) { $handoff["gitlabCommitSha"] = $env:CI_COMMIT_SHA }
-        $handoff | ConvertTo-Json -Depth 10 | Out-File -FilePath $handoffPath -Encoding utf8
+        # PS 5.1's Out-File -Encoding utf8 always emits a UTF-8 BOM. Existing
+        # readers (devops_agent.py, deploy_manifest.py) already tolerate it via
+        # utf-8-sig, but there's no reason to keep emitting the stray byte.
+        # $handoffPath is already absolute (built from $RepoRoot), which
+        # [System.IO.File]::WriteAllText requires.
+        $json = $handoff | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($handoffPath, $json, (New-Object System.Text.UTF8Encoding($false)))
         Write-Host "Handoff: agents/pipeline/$Feature.devops-handoff.json" -ForegroundColor DarkGray
     }
 

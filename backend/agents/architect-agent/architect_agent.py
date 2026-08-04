@@ -132,6 +132,7 @@ Briefs explicitly call out the MVP scope (local filesystem, single shared API ke
 | "local filesystem under `data/evidence/`" | Local FS in Stack + design | S3, EFS, EBS |
 | "JWT auth" (with no provider named) | Library-based JWT (PyJWT) | AWS Cognito, Auth0, Okta |
 | "API key in `.env`" | `X-API-Key` header check | Cognito, API Gateway authorizers |
+| No auth/login/persona requirement at all | Default to JWT (PyJWT, username/password login) | Any invented API-key, X-API-Key, or token-header scheme |
 | "FastAPI on Postgres" | FastAPI + RDS | API Gateway, Lambda, DynamoDB, ElastiCache |
 | "Bedrock for chat" | `app/services/bedrock_client.py` | SageMaker, Bedrock Agents, Knowledge Bases |
 | "RAG" / "vector search" / "embeddings" (no store named) | **pgvector on existing RDS + Bedrock Titan embed** (`amazon.titan-embed-text-v2:0`, 1024-dim) | ChromaDB, Pinecone, Weaviate, Qdrant, Milvus — any external vector store |
@@ -180,6 +181,13 @@ When React/Next is required (Phase 2), note `frontend/` in Stack — developer i
 - Brief says "local filesystem" → use local FS, do not list S3.
 - Brief says "JWT" → use library JWT (PyJWT), do not list Cognito.
 - Brief says "API key in env" → header check, do not list Cognito or API Gateway authorizers.
+- **Brief has NO auth/login/persona requirement at all** → the Auth row MUST default to
+  `| Auth | JWT (PyJWT, username/password login) | POST /api/v1/auth/login issues Bearer token |`.
+  Do **NOT** invent an API-key, X-API-Key header, token-header, or any other scheme when the brief
+  is silent on auth — JWT is the required safe default. Only write an api-key/token-header Auth row
+  when the brief **explicitly** asks for one (e.g. "API key in `.env`", "X-API-Key header", "per-user
+  API tokens", "no JWT"). A brief that merely mentions "REST API" or "API endpoints" is NOT an auth
+  requirement — that describes the interface, not the auth scheme.
 - Brief says "FastAPI + Postgres" → don't add Lambda, DynamoDB, ElastiCache, WAF.
 - Database migrations on this platform are **numbered raw SQL files** (`001_....sql`, `002_....sql`,
   applied via `apply_sql_to_rds.py` — see §6). Never write "Alembic" in the Stack table or DB delivery
@@ -219,6 +227,8 @@ Pattern for every rule:
   - <Rule name> (FR-N, NFR-N): <what it enforces>; API: <route/guard>; [Streamlit: <UI gate>] if UI present
   - Auth / RBAC (FR-N, NFR-N): roles + protected routes; if Streamlit in Stack → explicitly add
     "Streamlit: gate on st.session_state.token; role-gated tabs: viewer=X, editor=Y, admin=Z"
+    Auth scheme MUST match the Stack table's Auth row (JWT default when brief is silent on auth —
+    never introduce an API-key/X-API-Key/token-header scheme here that wasn't explicitly requested).
   - Audit (FR-N): events to log, table/service, immutable rules
   - Status / idempotency (FR-N): enums, transition guards
 
