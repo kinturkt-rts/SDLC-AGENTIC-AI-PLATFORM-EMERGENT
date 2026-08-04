@@ -4,7 +4,7 @@
 # Consumed by backend/scripts/gitlab-apps-repo-ci.yml (target-app:deploy).
 #
 # Prereqs: Docker Desktop, AWS CLI, aws sso login
-# Runner note: juno-labs-3 must be able to pull this private ECR image
+# Runner note: devops-agent-runner must be able to pull this private ECR image
 # (credential helper / IAM on the runner host). Image pull happens before
 # the job's OIDC role is available.
 #

@@ -9,7 +9,7 @@ workflow:
 # Verify the OIDC role your AWS admin created
 oidc:test:
   stage: test
-  tags: [juno-labs-3]
+  tags: [devops-agent-runner]
   image:
     name: amazon/aws-cli:2.17.62
     entrypoint: [""]
@@ -37,7 +37,7 @@ oidc:test:
 # and then flips the run to completed (or failed).
 target-app:deploy:
   stage: deploy
-  tags: [juno-labs-3]
+  tags: [devops-agent-runner]
   image:
     # name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
     name: mcr.microsoft.com/powershell:7.4-debian-12

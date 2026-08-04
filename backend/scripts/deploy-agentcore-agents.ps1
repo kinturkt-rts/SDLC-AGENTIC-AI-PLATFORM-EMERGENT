@@ -437,8 +437,6 @@ print(json.dumps(peers, separators=(',', ':')))
         $DeployFailures += $awsName
         Write-Warning "Deploy failed for $awsName (exit $agentcoreExit)."
     } else {
-        # agentcore deploy pushes a versioned tag but AgentCore references :latest.
-        # Re-tag the most recent versioned image as :latest so the runtime pulls it.
         $ecrRepo = "bedrock-agentcore-$awsName"
         if (-not $env:AWS_PROFILE) {
             $env:AWS_PROFILE = "eks-admin-user"
@@ -465,7 +463,8 @@ except ecr.exceptions.ImageAlreadyExistsException:
         # timeout, which silently kills long developer/orchestrator sessions.
         # Re-apply the 1h idle timeout after every deploy.
         python -c @"
-import os, boto3, sys
+import json, os, boto3, sys
+from pathlib import Path
 profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
 cc = boto3.Session(profile_name=profile, region_name='$Region').client('bedrock-agentcore-control')
 rts = cc.list_agent_runtimes(maxResults=100)['agentRuntimes']
@@ -474,27 +473,37 @@ if rt is None:
     print('  WARNING: runtime $awsName not found; lifecycle not updated')
     sys.exit(0)
 full = cc.get_agent_runtime(agentRuntimeId=rt['agentRuntimeId'])
+env = dict(full.get('environmentVariables') or {})
+# agentcore CLI --env strips quotes from JSON maps. Re-pin demo orchestrator peers
+# from runtimes.demo.json so gitlab_agent_demo (and specialists) resolve correctly.
+if '$awsName' == 'orchestrator_agent_demo':
+    demo_cfg = Path(r'$RepoRoot') / 'config' / 'agentcore' / 'runtimes.demo.json'
+    if demo_cfg.is_file():
+        data = json.loads(demo_cfg.read_text(encoding='utf-8'))
+        peers = {}
+        for name, entry in (data.get('agents') or {}).items():
+            arn = (entry or {}).get('runtimeArn') or ''
+            if arn and name != 'orchestrator-agent':
+                peers[name] = arn
+        if peers:
+            env['AGENTCORE_PEER_RUNTIME_ARNS'] = json.dumps(peers, separators=(',', ':'))
+            env['AGENTCORE_RUNTIMES_CONFIG'] = 'config/agentcore/runtimes.demo.json'
+            print('  Peer ARNs re-applied from runtimes.demo.json (' + str(len(peers)) + ' peers)')
 kwargs = dict(
     agentRuntimeId=rt['agentRuntimeId'],
     agentRuntimeArtifact=full['agentRuntimeArtifact'],
     roleArn=full['roleArn'],
     networkConfiguration=full['networkConfiguration'],
     lifecycleConfiguration={'idleRuntimeSessionTimeout': 3600, 'maxLifetime': 28800},
+    environmentVariables=env,
 )
 if full.get('protocolConfiguration'):
     kwargs['protocolConfiguration'] = full['protocolConfiguration']
-if full.get('environmentVariables'):
-    kwargs['environmentVariables'] = full['environmentVariables']
 cc.update_agent_runtime(**kwargs)
 print('  Lifecycle re-applied: idle=3600s maxLifetime=28800s for $awsName')
 "@
     }
 
-    # Undo the root-Dockerfile copy (line ~319): CodeBuild only reads the ROOT
-    # Dockerfile, not source_path, so node-hack agents (product/web-crawler/devops)
-    # temporarily overwrite it. Restore orchestrator-agent default immediately so a
-    # crash mid-loop or an early exit never leaves Dockerfile pointing at the wrong
-    # bundle for the next `agentcore launch` / local build.
     if ($agent.node) {
         & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null
     }

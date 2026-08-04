@@ -26,7 +26,7 @@ RUN apt-get update -qq \
         python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Docker CLI only — juno-labs-3 bind-mounts the host daemon socket into jobs.
+# Docker CLI only — devops-agent-runner bind-mounts the host daemon socket into jobs.
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
         -o /tmp/docker.tgz \
     && tar -xzf /tmp/docker.tgz -C /tmp \

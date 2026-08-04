@@ -216,9 +216,14 @@ async function invokeGitlabFallback(
   timeoutSec: number,
 ): Promise<void> {
   await updateRunJson(runId, { currentStep: 'gitlab-agent' });
+  // Match orchestrator _step_gitlab: apps-repo layout is the default publish path.
   const glTask =
     `Publish SDLC artifacts for ${app} to GitLab branch sdlc/${app}.\n\n` +
-    `Context:\n${JSON.stringify({ targetApp: app, runId }, null, 2)}`;
+    `Context:\n${JSON.stringify(
+      { targetApp: app, runId, feature: app, gitlabPublishLayout: 'apps' },
+      null,
+      2,
+    )}`;
   const maxAttempts = envInt('SDLC_GITLAB_PUBLISH_RETRIES', 2) + 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await appendLog(
@@ -380,16 +385,28 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
       });
       return;
     } else if (final.status === 'failed') {
-      // "SDLC pipeline failed" is one of parseLogTerminalStatus's recognized markers
-      // (run-reconcile.ts) - without it, a reconciler pass driven only by log text (no
-      // run.json) can't tell this run apart from one still in progress.
-      await appendLog(
-        logPath,
-        `[status-poll] SDLC pipeline failed: ${final.error ?? 'unknown error'}\n`,
-      );
+      const failedError = final.error ?? 'pipeline failed in cloud - check CloudWatch orchestrator logs';
+      await appendLog(logPath, `[status-poll] SDLC pipeline failed: ${failedError}\n`);
+      if (
+        !taskOpts.skipGitlab &&
+        /gitlab/i.test(failedError) &&
+        (await developerHandoffSucceededForRun(runId, app)) &&
+        !(await gitlabPublished(runId, app))
+      ) {
+        await appendLog(
+          logPath,
+          '[status-poll] Developer handoff is complete; attempting gitlab-agent fallback after orchestrator gitlab failure.\n',
+        );
+        await invokeGitlabFallback(runId, app, logPath, timeoutSec);
+        if (await gitlabPublished(runId, app)) {
+          await appendLog(logPath, '[status-poll] GitLab fallback recovered the run.\n');
+          await finalizeRunJson(runId, { status: 'completed', error: null });
+          return;
+        }
+      }
       await finalizeRunJson(runId, {
         status: 'failed',
-        error: final.error ?? 'pipeline failed in cloud - check CloudWatch orchestrator logs',
+        error: failedError,
       });
       return;
     } else {
@@ -461,9 +478,6 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
   const orchestratorOk = result.status === 'success' && !textLower.includes('pipeline failed');
   const gitlabDidPublish = !taskOpts.skipGitlab && (await gitlabPublished(runId, app));
 
-  // A run is only truly complete when GitLab published (or GitLab was skipped and the
-  // orchestrator succeeded). Otherwise report the real failure instead of a false green
-  // pipeline that masks a developer/gitlab step that produced nothing.
   if (taskOpts.skipGitlab) {
     if (orchestratorOk) {
       await finalizeRunJson(runId, { status: 'completed' });

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -99,6 +100,10 @@ def invoke_agent(
             agent_name,
             result.get("error"),
         )
+        # On AgentCore / S3 pipeline runs, never fall back to localhost registry URLs
+        # (they are not listening in the runtime). Surface the ARN error instead.
+        if os.getenv("AGENTCORE_AGENT", "").strip() or os.getenv("ARTIFACT_STORE", "").strip().lower() == "s3":
+            return result
 
     url = agent_base_url(agent_name).rstrip("/")
     try:

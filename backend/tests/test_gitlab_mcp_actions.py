@@ -123,7 +123,16 @@ def test_dest_path_for_apps_repo() -> None:
         dest_path_for_apps_repo("target-apps/notice-board-ui/.sdlc/pipeline-run.json", "notice-board-ui")
         == ".sdlc/pipeline-run.json"
     )
-    assert dest_path_for_apps_repo("docs/PRD/notice-board-ui.md", "notice-board-ui") is None
+    assert (
+        dest_path_for_apps_repo("docs/PRD/notice-board-ui.md", "notice-board-ui")
+        == "docs/PRD/notice-board-ui.md"
+    )
+    assert (
+        dest_path_for_apps_repo(
+            "agents/pipeline/notice-board-ui.developer-handoff.json", "notice-board-ui"
+        )
+        == "agents/pipeline/notice-board-ui.developer-handoff.json"
+    )
     assert dest_path_for_apps_repo("inputs/notice-board-ui.txt", "notice-board-ui") == "inputs/notice-board-ui.txt"
 
 
@@ -176,6 +185,28 @@ def test_apps_repo_publish_includes_local_input_brief(tmp_path: Path) -> None:
     paths = {item["path"] for item in files}
     assert f"{feature}/backend/app/main.py" in paths
     assert f"inputs/{feature}.txt" in paths
+
+
+def test_apps_repo_publish_includes_docs_and_handoffs(tmp_path: Path) -> None:
+    """docs/ and agents/pipeline/ must reach the apps-repo branch, not be dropped."""
+    feature = "demo-app"
+    (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
+    (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# main", encoding="utf-8")
+    (tmp_path / "docs" / "PRD").mkdir(parents=True)
+    (tmp_path / "docs" / "PRD" / f"{feature}.md").write_text("# PRD", encoding="utf-8")
+    (tmp_path / "docs" / "design").mkdir(parents=True)
+    (tmp_path / "docs" / "design" / f"{feature}.md").write_text("# Design", encoding="utf-8")
+    (tmp_path / "agents" / "pipeline").mkdir(parents=True)
+    (tmp_path / "agents" / "pipeline" / f"{feature}.developer-handoff.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    files = _collect_apps_repo_publish_files(feature, root=tmp_path)
+    paths = {item["path"] for item in files}
+    assert f"docs/PRD/{feature}.md" in paths
+    assert f"docs/design/{feature}.md" in paths
+    assert f"agents/pipeline/{feature}.developer-handoff.json" in paths
+    assert f"{feature}/backend/app/main.py" in paths
 
 
 def test_apps_repo_publish_includes_ci_yml_from_backend_scripts(tmp_path: Path) -> None:

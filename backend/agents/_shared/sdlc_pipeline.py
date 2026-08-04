@@ -1255,6 +1255,7 @@ class SdlcPipelineRunner:
         # legacy flat monorepo-mirror layout.
         apps_repo_env = os.getenv("GITLAB_APPS_REPO", "").strip().lower()
         apps_repo = apps_repo_env not in {"0", "false", "no", "off"}
+        gl_arn = ""
         if self.transport == "local":
             args = [
                 "agents/gitlab-agent/gitlab_agent.py",
@@ -1279,12 +1280,30 @@ class SdlcPipelineRunner:
             # receiving end (silently drops runId, which skips S3 materialization).
             branch_hint = f"sdlc/{self.feature}"
             task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
+            extra = {"gitlabPublishLayout": "apps" if apps_repo else "monorepo"}
+            try:
+                from .agentcore_invoke import load_runtime_arn
+
+                gl_arn = load_runtime_arn("gitlab-agent") or ""
+            except Exception:
+                gl_arn = ""
+            _safe_print(f"[gitlab-agent] resolved runtimeArn={gl_arn or '(none)'}")
             self._invoke_a2a(
                 "gitlab-agent",
                 task,
                 step="gitlab-agent",
-                extra_context={"gitlabPublishLayout": "apps" if apps_repo else "monorepo"},
+                extra_context=extra,
             )
+            handoff = self._read_gitlab_handoff()
+            publish_status = str((handoff or {}).get("status") or "").strip().lower()
+            if (not handoff or publish_status not in {"published", "already-published"}) and gl_arn:
+                _safe_print("[gitlab-agent] no publish handoff after first invoke; retrying once")
+                self._invoke_a2a(
+                    "gitlab-agent",
+                    task,
+                    step="gitlab-agent",
+                    extra_context=extra,
+                )
 
         handoff = self._read_gitlab_handoff()
         if handoff:
@@ -1305,6 +1324,8 @@ class SdlcPipelineRunner:
         publish_status = str((handoff or {}).get("status") or "").strip().lower()
         if not handoff or publish_status not in {"published", "already-published"}:
             detail = (handoff or {}).get("error") or "no gitlab handoff produced"
+            if not handoff and not gl_arn:
+                detail = f"{detail} (no gitlab-agent runtimeArn resolved)"
             raise PipelineStepError(f"gitlab-agent publish failed: {detail}")
 
         self.agents_run.append("gitlab-agent")

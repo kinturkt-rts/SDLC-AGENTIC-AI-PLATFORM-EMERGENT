@@ -457,9 +457,13 @@ def write_pipeline_run_marker(
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     """Map monorepo-relative paths to the apps-repo branch layout:
     ``<slug>/backend/**`` for the FastAPI/db source tree, ``<slug>/frontend/**``
-    for the UI, ``.sdlc/`` marker and ``inputs/*.txt`` unchanged at branch root.
+    for the UI; ``docs/``, ``agents/pipeline/``, ``.sdlc/`` marker, and
+    ``inputs/*.txt`` are unchanged at branch root (PRD/design/diagram docs and
+    pipeline handoffs live alongside backend/frontend, not nested under either).
     """
     if rel_path.startswith("inputs/") and rel_path.endswith(".txt"):
+        return rel_path
+    if rel_path.startswith("docs/") or rel_path.startswith("agents/pipeline/"):
         return rel_path
     prefix = f"target-apps/{slug}/"
     if not rel_path.startswith(prefix):
