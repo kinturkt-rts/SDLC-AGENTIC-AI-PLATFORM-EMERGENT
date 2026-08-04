@@ -122,7 +122,7 @@ def main() -> int:
         "environment": "demo",
         "region": args.region,
         "accountId": account,
-        "mvpPipeline": [
+        "sdlcPipeline": [
             "orchestrator-agent",
             "product-agent",
             "architect-agent",

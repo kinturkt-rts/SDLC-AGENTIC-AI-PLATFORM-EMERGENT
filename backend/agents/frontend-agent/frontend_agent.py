@@ -428,7 +428,7 @@ SYS_PROMPT = _build_frontend_system_prompt(None)
 
 def _model() -> BedrockModel:
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
-    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     return BedrockModel(
         model_id=model_id,
         region_name=os.getenv("AWS_REGION", "us-east-2"),
@@ -1274,7 +1274,7 @@ def run_task(
         telemetry = RunTelemetry(
             AGENT_NAME,
             target_app=app,
-            model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+            model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
             run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
         )
         agent = Agent(
@@ -1888,11 +1888,13 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
       app slug (see _fetch_inputs_from_s3) instead of trusting the handoff's local
       path, which cannot exist on a remote runtime.
     """
-    target_app = str(payload.get("target_app") or "").strip()
+    target_app = str(
+        payload.get("target_app") or payload.get("targetApp") or ""
+    ).strip()
     if not target_app:
         return {
             "status": "error",
-            "target_app": payload.get("target_app"),
+            "target_app": payload.get("target_app") or payload.get("targetApp"),
             "error": "target_app is required in the handoff payload",
         }
 

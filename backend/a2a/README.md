@@ -7,7 +7,7 @@ Specialist agents expose an **A2A HTTP server** (Strands `A2AServer`) so peers c
 | `agent-registry.json` | Base URLs and ports for all agents |
 | `agent-cards/*.json` | Static capability cards (one per registered agent) |
 
-Registered agents: orchestrator, product, architect, developer, qa, devops, security, database, web-crawler. Jira is handled by product-agent (no separate card).
+Registered agents: orchestrator, product, architect, developer, frontend, qa, devops, security, database, web-crawler, gitlab. Jira is handled by product-agent (no separate card). Frontend-agent (port 9111) sits after developer in the MVP chain; cloud opt-in via `with_frontend`.
 
 ## Run an agent as A2A server
 

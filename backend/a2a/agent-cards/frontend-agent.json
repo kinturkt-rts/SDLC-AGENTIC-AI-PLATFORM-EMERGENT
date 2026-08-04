@@ -1,0 +1,18 @@
+{
+  "name": "frontend-agent",
+  "description": "Generates a React + TypeScript + Vite + Tailwind UI under target-apps/<app>/frontend/ from the backend OpenAPI contract and developer handoff.",
+  "url": "http://127.0.0.1:9111/",
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "capabilities": { "streaming": true },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [
+    {
+      "id": "generate_frontend",
+      "name": "generate_frontend",
+      "description": "Scaffold and implement the target-app frontend from OpenAPI + developer handoff (after developer-agent, before gitlab-agent)",
+      "tags": ["frontend", "react", "typescript", "vite", "tailwind", "codegen"]
+    }
+  ]
+}

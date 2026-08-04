@@ -186,7 +186,7 @@ MCP server entries are stored in `frontend/data/mcp.json` (git-ignored) via rout
 
 ### AgentCore (cloud) deployed agents
 
-Deployed runtimes are tracked in `backend/config/agentcore/runtimes.json` (no secrets). The MVP pipeline (`orchestrator → product → architect → database → developer → gitlab`) is deployed to `us-east-2`. `qa-agent`, `web-crawler-agent`, `devops-agent`, and `security-agent` are not yet deployed. Deploy script: `backend/scripts/deploy-agentcore-agents.ps1`.
+Deployed runtimes are tracked in `backend/config/agentcore/runtimes.json` (no secrets). The SDLC pipeline (`orchestrator → product → architect → database → developer → frontend → gitlab`) is deployed to `us-east-2` (`sdlcPipeline` key). `frontend-agent` is opt-in via `with_frontend` until the control plane defaults it on. `qa-agent`, `web-crawler-agent`, `devops-agent`, and `security-agent` are outside the default chain or not fully deployed. Deploy script: `backend/scripts/deploy-agentcore-agents.ps1`.
 
 VPC-mode runtimes are parked — they need a NAT Gateway or VPC endpoints to reach ECR/S3/DynamoDB/Bedrock before they can be used.
 

@@ -190,7 +190,7 @@ def developer_agent_bundle() -> BundleFactory:
 
 
 def frontend_agent_bundle() -> BundleFactory:
-    """Standalone runtime (not in the pipeline batch / no orchestrator peering yet).
+    """SDLC pipeline specialist (after developer-agent; opt-in via with_frontend).
 
     Mirrors developer_agent_bundle() exactly: yields the *_pipeline_agent() variant
     (deterministic handoff -> run_task handler wired into __call__/stream_async), not

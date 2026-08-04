@@ -1,6 +1,7 @@
 # This repo (sdlc-agentic-ai-platform-apps) holds generated app output only —
 # devops-agent's own code (agents/, scripts/, infrastructure/) lives in the
 # main platform repo (sdlc-agentic-ai-platform) and is cloned in before_script.
+
 workflow:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
@@ -34,7 +35,8 @@ oidc:test:
 # Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
 # fires on branches gitlab-agent publishes here (sdlc/<app>). After publish the
 # orchestrator marks the run awaiting_deploy; this job writes devops.json/appUrl
-# and then flips the run to completed (or failed).
+# and then flips the run to completed or failed.
+
 target-app:deploy:
   stage: deploy
   tags: [devops-agent-runner]
@@ -42,13 +44,7 @@ target-app:deploy:
     # name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
     name: mcr.microsoft.com/powershell:7.4-debian-12
     entrypoint: [""]
-  # gitlab-agent publishes each app as several rapid commits (batch 1, batch
-  # 2, final) - each one independently triggers its own pipeline, and without
-  # this, they race on the runner and on the shared :latest ECR tag. The one
-  # that finishes last wins, regardless of which commit was actually correct
-  # - this is exactly what broke contacts-api (an earlier, incomplete commit's
-  # image silently overwrote the final, correct one). resource_group forces
-  # GitLab to queue deploys for the same app one at a time instead.
+
   resource_group: "deploy-$CI_COMMIT_REF_SLUG"
   variables:
     TF_VERSION: "1.10.5"

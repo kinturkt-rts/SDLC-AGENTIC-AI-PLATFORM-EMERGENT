@@ -827,7 +827,7 @@ def _max_output_tokens() -> int:
 def _security_model() -> BedrockModel:
     model_id = os.getenv(
         "SECURITY_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
     )
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     return BedrockModel(
@@ -1118,7 +1118,7 @@ def main() -> None:
 
     model_id = os.getenv(
         "SECURITY_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
     )
     print("", file=sys.stderr)
     print("=" * 64, file=sys.stderr)

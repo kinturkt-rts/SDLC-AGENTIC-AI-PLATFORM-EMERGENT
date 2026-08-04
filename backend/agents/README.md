@@ -7,6 +7,7 @@
 | **web-crawler-agent** | `web-crawler/web_crawler_agent.py` | Firecrawl MCP + Postgres MCP (optional) |
 | **database-agent** | `database-agent/database_agent.py` | Postgres MCP + MongoDB MCP |
 | **developer-agent** | `developer-agent/developer_agent.py` | Scoped file tools (writes under `target-apps/`) |
+| **frontend-agent** | `frontend-agent/frontend_agent.py` | Scaffold + file tools (`target-apps/<app>/frontend/` from OpenAPI) |
 | **orchestrator-agent** | `orchestrator-agent/orchestrator_agent.py` | A2A peers via `_shared/runner.py` |
 | **qa-agent** | `qa-agent/qa_agent.py` | Scoped test tools + pytest runner (GitLab optional) |
 | **devops-agent** | `devops-agent/devops_agent.py` | GitLab via `_shared/runner.py` |
@@ -23,6 +24,8 @@
 | security-agent | 9106 |
 | database-agent | 9108 |
 | web-crawler-agent | 9109 |
+| gitlab-agent | 9110 |
+| frontend-agent | 9111 |
 
 **Jira** is owned by **product-agent** (not a separate agent). Port 9107 is reserved for a future `jira-agent` if split out later.
 

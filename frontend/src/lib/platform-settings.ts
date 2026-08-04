@@ -21,7 +21,9 @@ export interface PlatformSettings {
 }
 
 interface RuntimesConfig {
-  /** AgentCore pipeline agent list (JSON key kept for backend compatibility). */
+  /** Canonical AgentCore pipeline agent order. */
+  sdlcPipeline?: string[];
+  /** @deprecated Use sdlcPipeline — kept for older runtimes.json copies. */
   mvpPipeline?: string[];
   agents?: Record<string, { deployed?: boolean }>;
 }
@@ -45,7 +47,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
   loadBackendEnv();
 
   const runtimes = await readRuntimesConfig();
-  const pipelineAgents = runtimes?.mvpPipeline ?? [];
+  const pipelineAgents = runtimes?.sdlcPipeline ?? runtimes?.mvpPipeline ?? [];
   const agents = runtimes?.agents ?? {};
   const deployedAgentCount = pipelineAgents.filter((name) => agents[name]?.deployed).length;
 

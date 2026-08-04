@@ -54,9 +54,22 @@ $TfRoot = Join-Path $RepoRoot "infrastructure\environments\dev\$Feature"
 $TfMain = Join-Path $TfRoot "main.tf"
 
 function Invoke-Native {
-    param([string] $Exe, [string[]] $Arguments, [string] $Label)
-    & $Exe @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$Label failed (exit $LASTEXITCODE)." }
+    # -Retries is opt-in (default 1 = old behavior). Destroy runs -parallelism=1
+    # (safe deletion ordering) so it takes far longer than plan/apply, giving a
+    # transient local DNS/VPN blip ("no such host") much more wall-clock time to
+    # hit - and that error happens before any HTTP request is sent, so the AWS
+    # SDK's own retry/backoff never sees it. Destroy is idempotent, so retrying
+    # the whole command is safe.
+    param([string] $Exe, [string[]] $Arguments, [string] $Label, [int] $Retries = 1)
+    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+        & $Exe @Arguments
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($attempt -lt $Retries) {
+            Write-Host "[$Label] failed (exit $LASTEXITCODE) - retrying in 15s (attempt $($attempt + 1)/$Retries)..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 15
+        }
+    }
+    throw "$Label failed (exit $LASTEXITCODE)."
 }
 
 function Get-FailureDiagnostics {
@@ -192,7 +205,7 @@ try {
 
     if ($Destroy) {
         $wasAutoScaffolded = Test-TfRootAutoScaffolded
-        Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve", "-parallelism=1") "terraform destroy"
+        Invoke-Native $Terraform @("destroy", "-input=false", "-auto-approve", "-parallelism=1") "terraform destroy" -Retries 3
         Write-Host "`n[$Feature] destroyed. (ECR repos had force_delete, images are gone too.)" -ForegroundColor Yellow
         $cleanupScaffoldedTfRoot = $wasAutoScaffolded
         return

@@ -4,8 +4,23 @@ Default: full cloud chain (product → architect → database → RDS apply in o
 → developer → gitlab). Brief is uploaded to S3 from this machine; all agent work runs
 on AgentCore.
 
+Add frontend-agent (after developer, before gitlab) with --with-frontend:
+  python scripts/invoke-orchestrator-smoke.py --app recipe-vault --run-id fe-smoke-1 --with-frontend --timeout 3600
+
+Cloud orchestrator returns PIPELINE_ASYNC_STARTED immediately — this script now polls
+S3 run.json until a terminal status before gitlab-fallback, so frontend/developer
+work is not raced.
+
+After a frontend run, verify artifacts:
+  aws s3 ls s3://$ARTIFACT_S3_BUCKET/runs/<runId>/<app>/frontend/ --recursive
+  aws s3 ls s3://$ARTIFACT_S3_BUCKET/runs/<runId>/<app>/ | findstr openapi
+
+Control run without frontend (current Dashboard behavior):
+  python scripts/invoke-orchestrator-smoke.py --app recipe-vault --run-id ctrl-1 --timeout 3600
+
 The Next.js dashboard (ARTIFACT_STORE=s3) invokes orchestrator via AgentCore SDK
-directly — no local Python subprocess. This script remains for CLI/manual use.
+directly — no local Python subprocess. This script remains for CLI/manual use
+until the control plane sends with_frontend.
 
 DB + RDS only (skips developer/gitlab):
   python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --full
@@ -203,6 +218,11 @@ def _reconcile_run_steps(run_id: str, app: str, skip_gitlab: bool) -> None:
     )
     has_sql = has(f"{slug}/db/sql/") or has("db/sql/")
     has_code = has(f"{slug}/app/") or has(f"{slug}/main.py")
+    has_frontend = (
+        has(f"{slug}/frontend/")
+        or has("frontend/package.json")
+        or has(f"{slug}/frontend/package.json")
+    )
     gitlab_status = _gitlab_handoff_status(run_id)
 
     for step in data.get("steps", []):
@@ -219,6 +239,11 @@ def _reconcile_run_steps(run_id: str, app: str, skip_gitlab: bool) -> None:
         elif name == "developer-agent":
             if has_code:
                 step["status"] = "completed"
+        elif name == "frontend-agent":
+            if has_frontend:
+                step["status"] = "completed"
+            elif step.get("status") == "queued":
+                step["status"] = "skipped"
         elif name == "gitlab-agent":
             if gitlab_status == "published":
                 step["status"] = "completed"
@@ -231,6 +256,44 @@ def _reconcile_run_steps(run_id: str, app: str, skip_gitlab: bool) -> None:
 
     data["error"] = None
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _wait_for_pipeline_terminal(run_id: str, timeout_sec: int) -> dict[str, Any]:
+    """Poll S3 run.json until terminal status (async orchestrator finishes in background)."""
+    import os
+    import time
+
+    from _shared.artifact_store import get_artifact_text
+
+    os.environ.setdefault("ARTIFACT_STORE", "s3")
+    _resolve_artifact_bucket()
+
+    terminal = {"awaiting_deploy", "completed", "failed", "error", "cancelled"}
+    deadline = time.monotonic() + max(30, timeout_sec)
+    last: dict[str, Any] = {}
+    poll = float(os.getenv("SDLC_SMOKE_POLL_SEC", "20"))
+    print(
+        f"[poll] Waiting for terminal run.json status "
+        f"(timeout={timeout_sec}s, poll={poll}s) for run {run_id}..."
+    )
+    while time.monotonic() < deadline:
+        try:
+            raw = get_artifact_text(run_id, "run.json")
+            last = json.loads(raw)
+            status = str(last.get("status") or "").strip().lower()
+            step = last.get("currentStep") or last.get("current_step") or "?"
+            print(f"[poll] status={status} step={step}")
+            if status in terminal:
+                return last
+        except Exception as exc:
+            print(f"[poll] run.json not ready yet: {exc}")
+        time.sleep(max(5.0, poll))
+    print(
+        f"[poll] Timed out after {timeout_sec}s — last status="
+        f"{(last or {}).get('status')!r}. Continuing with gitlab-fallback check.",
+        file=sys.stderr,
+    )
+    return last
 
 
 def _run_gitlab_fallback_cloud(app: str, run_id: str, timeout: int) -> int:
@@ -326,6 +389,8 @@ def _build_task(
     skip_developer: bool = False,
     skip_gitlab: bool = False,
     skip_verify: bool = True,
+    with_frontend: bool = False,
+    skip_frontend: bool = False,
 ) -> str:
     payload = {
         "target_app": target_app,
@@ -339,6 +404,8 @@ def _build_task(
         "skip_developer": skip_developer,
         "skip_gitlab": skip_gitlab,
         "skip_verify": skip_verify,
+        "with_frontend": with_frontend,
+        "skip_frontend": skip_frontend,
     }
     return "Run run_sdlc_pipeline with:\n\n" + json.dumps(payload, indent=2)
 
@@ -383,6 +450,18 @@ def main() -> None:
     parser.add_argument("--no-skip-gitlab", action="store_false", dest="skip_gitlab")
     parser.add_argument("--skip-verify", action="store_true", default=True)
     parser.add_argument("--no-skip-verify", action="store_false", dest="skip_verify")
+    parser.add_argument(
+        "--with-frontend",
+        action="store_true",
+        default=False,
+        help="Run frontend-agent after developer (React UI from OpenAPI). Required for Step 5 e2e.",
+    )
+    parser.add_argument(
+        "--skip-frontend",
+        action="store_true",
+        default=False,
+        help="Force-skip frontend even if --with-frontend is set.",
+    )
     args = parser.parse_args()
 
     _resolve_artifact_bucket()
@@ -396,6 +475,7 @@ def main() -> None:
         args.skip_developer = True
         args.skip_gitlab = True
         args.skip_verify = True
+        args.with_frontend = False
 
     input_file = args.input_file
     if not input_file and not args.skip_product:
@@ -412,10 +492,14 @@ def main() -> None:
         skip_developer=args.skip_developer,
         skip_gitlab=args.skip_gitlab,
         skip_verify=args.skip_verify,
+        with_frontend=args.with_frontend,
+        skip_frontend=args.skip_frontend,
     )
 
     print("Invoking orchestrator-agent...")
     print(task)
+    if args.with_frontend and not args.skip_frontend:
+        print("Note: with_frontend=True — frontend-agent runs after developer, before gitlab.")
     if args.apply_rds_local and not args.skip_db and args.skip_postgres:
         print("Note: skip_postgres=True — RDS apply will run locally after orchestrator.")
     elif not args.skip_postgres and not args.skip_db:
@@ -434,6 +518,11 @@ def main() -> None:
         text = extract_text_from_a2a_jsonrpc(result["response"])
     print("--- response ---")
     print(text[:8000])
+
+    # Async orchestrator returns quickly; wait for background pipeline before fallback.
+    if "PIPELINE_ASYNC_STARTED" in (text or "") or args.with_frontend:
+        print("--- poll pipeline ---")
+        _wait_for_pipeline_terminal(args.run_id, args.timeout)
 
     # Step 1: RDS apply (local fallback when skip_postgres=True)
     if args.apply_rds_local and not args.skip_db and args.skip_postgres:
