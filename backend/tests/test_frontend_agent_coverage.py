@@ -412,6 +412,207 @@ def test_tailwind_theme_gate_accepts_template_without_named_spacing(tmp_path: Pa
     assert report == "[tailwind-theme-gate] PASSED"
 
 
+# ---------------------------------------------------------------------------
+# 5. Dialog layout gate (narrow detail dialog clips table columns + actions)
+# ---------------------------------------------------------------------------
+
+
+def _write_screen(frontend_dir: Path, name: str, body: str) -> None:
+    screens = frontend_dir / "src" / "components"
+    screens.mkdir(parents=True, exist_ok=True)
+    (screens / name).write_text(body, encoding="utf-8")
+
+
+def test_dialog_layout_gate_rejects_table_in_default_width_dialog(tmp_path: Path) -> None:
+    """Regression for multi-tenant-pay-platform: Payment Details rendered a
+    transactions table with Review/Refund/Dispute buttons inside a bare
+    <DialogContent>, so the Actions column was clipped off the dialog."""
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    _write_screen(
+        frontend_dir,
+        "Payments.tsx",
+        "<Dialog>\n"
+        "  <DialogContent>\n"
+        "    <Table><TableBody /></Table>\n"
+        "  </DialogContent>\n"
+        "</Dialog>\n",
+    )
+
+    passed, report = fa._validate_dialog_layout_gate(frontend_dir)
+
+    assert passed is False
+    assert "dialog-layout-gate" in report
+    assert "components/Payments.tsx" in report
+
+
+def test_dialog_layout_gate_accepts_widened_dialog(tmp_path: Path) -> None:
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    _write_screen(
+        frontend_dir,
+        "Payments.tsx",
+        '<DialogContent className="sm:max-w-2xl">\n'
+        '  <div className="overflow-x-auto"><Table><TableBody /></Table></div>\n'
+        "</DialogContent>\n",
+    )
+
+    passed, report = fa._validate_dialog_layout_gate(frontend_dir)
+
+    assert passed is True
+    assert report == "[dialog-layout-gate] PASSED"
+
+
+def test_dialog_layout_gate_allows_narrow_confirm_dialog(tmp_path: Path) -> None:
+    """Delete/confirm prompts have no table — default max-w-sm is correct there."""
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    _write_screen(
+        frontend_dir,
+        "Customers.tsx",
+        "<DialogContent>\n"
+        "  <DialogHeader><DialogTitle>Delete customer?</DialogTitle></DialogHeader>\n"
+        "  <DialogFooter><Button>Delete</Button></DialogFooter>\n"
+        "</DialogContent>\n",
+    )
+
+    passed, _report = fa._validate_dialog_layout_gate(frontend_dir)
+
+    assert passed is True
+
+
+def test_dialog_layout_gate_ignores_template_ui_components(tmp_path: Path) -> None:
+    """src/components/ui/dialog.tsx defines the default width itself — the gate
+    must not flag the primitive it is asserting against."""
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    ui = frontend_dir / "src" / "components" / "ui"
+    ui.mkdir(parents=True)
+    (ui / "dialog.tsx").write_text(
+        "<DialogContent>\n  <Table />\n</DialogContent>\n", encoding="utf-8"
+    )
+
+    passed, _report = fa._validate_dialog_layout_gate(frontend_dir)
+
+    assert passed is True
+
+
+def test_dialog_layout_rules_are_in_system_prompt() -> None:
+    fa = _load_agent_module()
+    prompt = fa._build_frontend_system_prompt({})
+
+    assert "sm:max-w-2xl" in prompt
+    assert "overflow-x-auto" in prompt
+    assert "flex flex-wrap gap-1" in prompt
+
+
+# ---------------------------------------------------------------------------
+# 6. Action payload + method-mismatch gates (409/422/405 regressions)
+# ---------------------------------------------------------------------------
+
+
+def test_action_payload_gate_rejects_shortened_decision_literals(tmp_path: Path) -> None:
+    """Regression: PaymentList sent decision: 'approve' while API wanted 'approved'."""
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    _write_screen(
+        frontend_dir,
+        "Payments.tsx",
+        "await apiPost(`/api/v1/transactions/${id}/review`, { decision: 'approve' });\n"
+        '<SelectItem value="reject">Reject</SelectItem>\n',
+    )
+
+    passed, report = fa._validate_action_payload_gate(frontend_dir)
+
+    assert passed is False
+    assert "action-payload-gate" in report
+    assert "components/Payments.tsx" in report
+
+
+def test_action_payload_gate_accepts_approved_rejected(tmp_path: Path) -> None:
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    _write_screen(
+        frontend_dir,
+        "Payments.tsx",
+        "await apiPost(`/api/v1/transactions/${id}/review`, { decision: 'approved' });\n"
+        '<SelectItem value="rejected">Reject</SelectItem>\n'
+        "{tx.status === 'under_review' && <Button>Review</Button>}\n",
+    )
+
+    passed, report = fa._validate_action_payload_gate(frontend_dir)
+
+    assert passed is True
+    assert report == "[action-payload-gate] PASSED"
+
+
+def test_action_payload_gate_ignores_files_without_review_path(tmp_path: Path) -> None:
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    _write_screen(
+        frontend_dir,
+        "Customers.tsx",
+        "const form = { decision: 'approve' };\n",
+    )
+
+    passed, _report = fa._validate_action_payload_gate(frontend_dir)
+
+    assert passed is True
+
+
+def test_method_mismatch_gate_rejects_wrong_http_method(tmp_path: Path) -> None:
+    """Regression: GET /api/v1/organisations when OpenAPI only declares POST → 405."""
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    openapi_path = tmp_path / "openapi.json"
+    _write_openapi(
+        openapi_path,
+        {"/api/v1/organisations": {"post": {"summary": "create"}}},
+    )
+    _write_screen(
+        frontend_dir,
+        "Orgs.tsx",
+        "apiGet<unknown>('/api/v1/organisations');\n",
+    )
+
+    passed, report = fa._validate_method_mismatch_gate(frontend_dir, openapi_path)
+
+    assert passed is False
+    assert "method-mismatch-gate" in report
+    assert "GET" in report
+    assert "organisations" in report
+
+
+def test_method_mismatch_gate_accepts_matching_methods(tmp_path: Path) -> None:
+    fa = _load_agent_module()
+    frontend_dir = tmp_path / "frontend"
+    openapi_path = tmp_path / "openapi.json"
+    _write_openapi(
+        openapi_path,
+        {"/api/v1/organisations": {"post": {"summary": "create"}}},
+    )
+    _write_screen(
+        frontend_dir,
+        "Orgs.tsx",
+        "apiPost<unknown>('/api/v1/organisations', body);\n",
+    )
+
+    passed, report = fa._validate_method_mismatch_gate(frontend_dir, openapi_path)
+
+    assert passed is True
+    assert report == "[method-mismatch-gate] PASSED"
+
+
+def test_status_gate_and_payload_rules_are_in_system_prompt() -> None:
+    fa = _load_agent_module()
+    prompt = fa._build_frontend_system_prompt({})
+
+    assert "under_review" in prompt
+    assert "approved" in prompt
+    assert "Status-gated actions" in prompt or "status-gated" in prompt.lower()
+    assert "EXACTLY" in prompt
+
+
 def test_index_css_is_protected_from_llm_writes() -> None:
     fa = _load_agent_module()
 

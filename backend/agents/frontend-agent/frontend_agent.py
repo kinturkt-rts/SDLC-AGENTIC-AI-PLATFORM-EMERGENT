@@ -67,6 +67,7 @@ _JWT_AUTH_SCREEN_SECTION = """\
 - Prefer passing the path as a string or template literal DIRECTLY to apiGet/apiPost/etc. (e.g. apiGet<T>('/api/v1/items') or apiGet<T>(`/api/v1/items/${id}`)). If you must build a query string, keep the `/api/v1/...` prefix inside the literal passed to the helper (or assigned to the variable you pass) so static coverage checks can see it.
 - Do NOT pass a token argument to any api helper. They read the token from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
+- Request-body string literals MUST match the OpenAPI schema / backend contract EXACTLY — never shorten or paraphrase them. If the schema or route docs say decision must be "approved" or "rejected", the SelectItem values and the JSON body must be those exact strings — NOT "approve"/"reject", NOT "ok"/"deny". Inventing a shorter synonym causes 422 at runtime while the UI looks fine. Same rule for status, type, role, and any other closed string field: copy the literal from the OpenAPI enum or the backend's allowed set.
 - Store the auth token under the exact localStorage key "token" on login: localStorage.setItem("token", response.access_token). Remove it on logout: localStorage.removeItem("token"). The api helpers read this exact key, so any other key breaks authentication.
 - The Login screen's identifier field label and input type MUST match the login identifier property in the OpenAPI spec's LoginRequest schema (components.schemas.LoginRequest), not a generic assumption. This codebase's standardized users table logs in by "username", never "email" — so unless the schema's login identifier property is literally named/formatted "email", the field label is "Username" and the input is type="text". Never default to label "Email" / type="email" for a JWT login form; type="email" makes the browser reject a plain username (e.g. "jdoe") before the request is even sent, even though the POST body key would still be correct. Read the schema's property name for the identifier field and label/type the input after it.
 - To identify the logged-in user, import and call getCurrentUser() from api.ts, which returns { id, roles } decoded from the token. Use user.id for the current user's id and user.roles for their roles. NEVER use users[0] or the first item of any list as the current user, and never leave the current user unknown. To gate UI by role, use hasRole("admin", "floor_lead") from api.ts. If you need the logged-in user's display name (username, email), look up their id from getCurrentUser() in the users list; do not guess.
@@ -90,6 +91,7 @@ _API_KEY_AUTH_SCREEN_SECTION = """\
 - Prefer passing the path as a string or template literal DIRECTLY to apiGet/apiPost/etc. (e.g. apiGet<T>('/api/v1/items') or apiGet<T>(`/api/v1/items/${id}`)). If you must build a query string, keep the `/api/v1/...` prefix inside the literal passed to the helper (or assigned to the variable you pass) so static coverage checks can see it.
 - Do NOT pass a token argument to any api helper. They read the credential from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
+- Request-body string literals MUST match the OpenAPI schema / backend contract EXACTLY — never shorten or paraphrase them. If the schema or route docs say decision must be "approved" or "rejected", the SelectItem values and the JSON body must be those exact strings — NOT "approve"/"reject", NOT "ok"/"deny". Inventing a shorter synonym causes 422 at runtime while the UI looks fine. Same rule for status, type, role, and any other closed string field: copy the literal from the OpenAPI enum or the backend's allowed set.
 - This app has NO username/password login flow and NO /auth/login endpoint — do not build a login form with email/password fields, and do not call any auth endpoint on "login". The login screen is a PASTE-KEY screen for ALL api-key apps, single-tier or two-tier alike: one text field for the credential, a submit button, nothing else. Never render a role selector — the real role is resolved from the backend, not chosen by the user. On submit, call `await login(pastedValue)` from api.ts — it stores the credential, then calls GET /api/v1/users/me with it to resolve the real user id and role and stores those too — then `setIsAuthenticated(true)`. login() is async and throws if the key is rejected; wrap the call in try/catch and show an error on the paste-key screen instead of authenticating when it throws (do not call setIsAuthenticated(true) in that case).
 - getCurrentUser() now returns the caller's REAL id and role — { id, roles } — resolved by login() from the backend's GET /users/me, not a user-chosen role or a placeholder. hasRole("admin") / hasRole("employee") is meaningful for every api-key app, not just two-tier ones, and gates admin-only screens/buttons normally — do not special-case single-tier apps as "roles never work" here. isCurrentUser() also compares against the real backend user id now.
 - On mount, App.tsx MUST decide login-screen-vs-authenticated-shell by calling isSessionValid() from api.ts and gating on its return value — same requirement as JWT apps, simpler semantics: isSessionValid() is true exactly when a credential is stored (no expiry to check, so "present" and "valid" are the same thing here). Never write a mount check that reads localStorage directly instead of calling isSessionValid(). Required pattern (copy exactly, adapting names) — call ALL hooks (including useNavigate) BEFORE any early return:
@@ -263,7 +265,11 @@ matching component below instead):
 - Tables (was "table-wrap"/"data"/"num"/"mono"): <Table>, <TableHeader>, <TableRow>, <TableHead>, <TableBody>, <TableCell> from '@/components/ui/table'. Right-align numeric cells with className="text-right tabular-nums". Use className="font-mono tabular-nums" for codes/SKUs.
 - Buttons (was "btn"/"btn-primary"/"btn-danger"): <Button> from '@/components/ui/button'. Default variant is the main teal action (was "btn-primary"). variant="secondary" is a plain button (was bare "btn"). variant="destructive" is a destructive action (was "btn-danger"). Never style a <button> by hand.
 - Forms (was "field"/"input"): <Label> + <Input> from '@/components/ui/label' and '@/components/ui/input', each field wrapped in <div className="space-y-2">. Multi-line notes/comments use <Textarea> from '@/components/ui/textarea'. Keep create/edit forms INLINE inside a <Card> on the screen itself (toggle a "showForm" state, same pattern as before) — do NOT put create/edit forms in a Dialog.
-- Delete/confirm prompts: <Dialog>/<DialogContent>/<DialogHeader>/<DialogTitle>/<DialogFooter> from '@/components/ui/dialog'. Dialog is for delete/confirm prompts ONLY — never for create/edit forms.
+- Delete/confirm prompts: <Dialog>/<DialogContent>/<DialogHeader>/<DialogTitle>/<DialogFooter> from '@/components/ui/dialog'. Dialog is for delete/confirm prompts and read-only DETAIL views ONLY — never for create/edit forms.
+- Dialog width: bare <DialogContent> is capped at sm:max-w-sm (~384px) by the template component — correct for a short confirm prompt, far too narrow for anything else. A DialogContent that holds a <Table>, a nested list, a two-column field grid, or more than one action Button MUST widen itself: <DialogContent className="sm:max-w-2xl"> (use sm:max-w-3xl when the table has 5+ columns). Skipping this clips the right-hand columns and the row action buttons straight off the dialog — the user cannot reach them at all.
+- Tables inside a Dialog: always wrap the <Table> in <div className="overflow-x-auto"> so wide content scrolls instead of being cut off.
+- Row action buttons (Review / Refund / Dispute / Approve / Delete style cells): render them inside <div className="flex flex-wrap gap-1"> and give each one size="sm" (e.g. <Button size="sm" variant="outline">). Never emit multiple full-size Buttons side by side in a table cell with no wrapper — they overflow the cell and get clipped, especially inside a Dialog.
+- Status-gated actions: only render a row action when the row's current status (or other precondition) matches what the backend endpoint accepts. Read the OpenAPI description / error contract. Example: POST /transactions/{id}/review that returns 409 unless status is "under_review" → show the Review button ONLY when `tx.status === 'under_review'` (never on pending/completed/failed). Showing Review on every row floods the UI with 409 Conflict errors. Same pattern for approve/reject/archive/cancel endpoints that require a specific status.
 - Foreign-key selects: <Select>/<SelectTrigger>/<SelectValue>/<SelectContent>/<SelectItem> from '@/components/ui/select' — see the worked example below.
 - Status pills (was "badge badge-success"/"badge-warn"/"badge-danger"): <Badge variant="success">, <Badge variant="warning">, <Badge variant="destructive"> from '@/components/ui/badge'.
 - States (was "loading"/"empty"/"alert alert-error"): "loading" and "empty" are plain text, e.g. <p className="text-center py-8 text-muted-foreground">Loading...</p>. Errors use <Alert variant="destructive"><AlertDescription>...</AlertDescription></Alert> from '@/components/ui/alert'.
@@ -641,9 +647,10 @@ but it MUST call the {id} route):
     ...
   </TableRow>
 
-  // detail Dialog:
+  // detail Dialog — note sm:max-w-2xl: the default DialogContent is max-w-sm and
+  // would clip the nested table's right-hand columns and its action buttons.
   <Dialog open={selectedId != null} onOpenChange={(open) => !open && setSelectedId(null)}>
-    <DialogContent>
+    <DialogContent className="sm:max-w-2xl">
       <DialogHeader><DialogTitle>{detail?.name ?? 'Loading...'}</DialogTitle></DialogHeader>
       {detail && (
         <div className="space-y-2 text-sm">
@@ -651,6 +658,34 @@ but it MUST call the {id} route):
           {/* ...every other field on the detail record... */}
         </div>
       )}
+      {/* nested child rows (transactions, line items, history) — overflow-x-auto
+          so wide tables scroll instead of being cut off by the dialog edge */}
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead>Actions</TableHead></TableRow>
+          </TableHeader>
+          <TableBody>
+            {children.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell className="text-right tabular-nums">{c.amount}</TableCell>
+                <TableCell><Badge variant="warning">{c.status}</Badge></TableCell>
+                <TableCell>
+                  {/* status-gated Review: only when under_review — otherwise POST /review 409s.
+                      decision body must be "approved"|"rejected" (not "approve"|"reject").
+                      multiple actions: flex-wrap + size="sm" */}
+                  <div className="flex flex-wrap gap-1">
+                    {c.status === 'under_review' && (
+                      <Button size="sm" variant="outline" onClick={() => handleReview(c.id, 'approved')}>Review</Button>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => handleRefund(c.id)}>Refund</Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </DialogContent>
   </Dialog>
 
@@ -1060,6 +1095,139 @@ def _validate_tailwind_theme_gate(frontend_dir: Path) -> tuple[bool, str]:
             "keep numeric spacing utilities (p-4, gap-2) and --container-* for max-w-*."
         )
     return True, "[tailwind-theme-gate] PASSED"
+
+
+# A <DialogContent ...> opening tag, capturing its attributes so the width
+# override can be checked. Non-greedy up to the first ">" that closes the tag.
+_DIALOG_CONTENT_OPEN_RE = re.compile(r"<DialogContent\b([^>]*)>", re.DOTALL)
+# Any max-w-* / w-* utility on that tag counts as an explicit width override.
+_DIALOG_WIDTH_OVERRIDE_RE = re.compile(r"\b(?:sm:|md:|lg:)?(?:max-)?w-(?:\[|\w)")
+
+
+def _dialog_content_blocks(text: str) -> list[tuple[str, str]]:
+    """Return (attrs, inner_text) for each <DialogContent> ... </DialogContent>.
+
+    Inner text runs to the matching closing tag when present, else to end of
+    file — good enough for the substring checks the layout gate performs (it
+    never needs a real JSX parse, only "does this dialog contain a Table").
+    """
+    blocks: list[tuple[str, str]] = []
+    for match in _DIALOG_CONTENT_OPEN_RE.finditer(text):
+        start = match.end()
+        close = text.find("</DialogContent>", start)
+        inner = text[start:close] if close != -1 else text[start:]
+        blocks.append((match.group(1), inner))
+    return blocks
+
+
+def _validate_dialog_layout_gate(frontend_dir: Path) -> tuple[bool, str]:
+    """Fail when a Dialog holding a table keeps the default narrow width.
+
+    The template's DialogContent is capped at sm:max-w-sm (~384px), which is
+    right for a confirm prompt but clips a nested table's right-hand columns
+    and its row action buttons (Review/Refund/Dispute) clean off the dialog —
+    the user cannot click them at all. tsc builds fine, so only a static check
+    catches it. Regression: multi-tenant-pay-platform's Payment Details dialog.
+    """
+    src = frontend_dir / "src"
+    if not src.is_dir():
+        return True, "[dialog-layout-gate] PASSED (no src/)"
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.tsx")):
+        if "components/ui/" in path.as_posix():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for attrs, inner in _dialog_content_blocks(text):
+            if "<Table" not in inner:
+                continue
+            if _DIALOG_WIDTH_OVERRIDE_RE.search(attrs):
+                continue
+            offenders.append(path.relative_to(frontend_dir).as_posix())
+            break
+    if offenders:
+        return False, (
+            "[dialog-layout-gate] FAILED: these files render a <Table> inside a "
+            "<DialogContent> that has no width override, so the dialog stays at the "
+            "template default sm:max-w-sm (~384px) and the table's right-hand columns "
+            "and row action buttons are clipped off the dialog edge:\n  - "
+            + "\n  - ".join(offenders)
+            + "\nFix: widen the dialog with <DialogContent className=\"sm:max-w-2xl\"> "
+            "(sm:max-w-3xl for 5+ columns) and wrap the table in "
+            '<div className="overflow-x-auto">. Row action buttons go in '
+            '<div className="flex flex-wrap gap-1"> with size="sm".'
+        )
+    return True, "[dialog-layout-gate] PASSED"
+
+
+# Shortened decision synonyms the LLM invents for review/approve endpoints.
+# Backend contracts almost always use the past-participle form ("approved").
+_SHORT_DECISION_LITERAL_RE = re.compile(
+    r"""(?:decision\s*[:=]\s*|value\s*=\s*|['"])(approve|reject)(['"]|\s*[,}])""",
+    re.IGNORECASE,
+)
+_REVIEW_PATH_HINT_RE = re.compile(r"/review\b", re.IGNORECASE)
+
+
+def _validate_action_payload_gate(frontend_dir: Path) -> tuple[bool, str]:
+    """Fail when a /review (or similar) screen uses shortened decision literals.
+
+    Regression: multi-tenant-pay-platform sent decision: "approve"|"reject"
+    while the backend required "approved"|"rejected" (422 after the 409 status
+    check). tsc cannot catch string-literal drift against OpenAPI. Status-gated
+    button visibility is enforced via the system prompt + DETAIL-VIEW example
+    (too app-specific to hard-code "under_review" here).
+    """
+    src = frontend_dir / "src"
+    if not src.is_dir():
+        return True, "[action-payload-gate] PASSED (no src/)"
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.tsx")):
+        if "components/ui/" in path.as_posix():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if not _REVIEW_PATH_HINT_RE.search(text):
+            continue
+        if _SHORT_DECISION_LITERAL_RE.search(text):
+            offenders.append(path.relative_to(frontend_dir).as_posix())
+    if offenders:
+        return False, (
+            "[action-payload-gate] FAILED: these files call a /review endpoint but "
+            'use shortened decision literals ("approve"/"reject") instead of the '
+            "exact OpenAPI values:\n  - "
+            + "\n  - ".join(offenders)
+            + '\nFix: use "approved" and "rejected" (or whatever the OpenAPI schema '
+            "lists) as SelectItem values and in the JSON body. Also gate the Review "
+            "button on the status the endpoint accepts (often "
+            "`tx.status === 'under_review'`) so pending/completed rows do not 409."
+        )
+    return True, "[action-payload-gate] PASSED"
+
+
+def _validate_method_mismatch_gate(
+    frontend_dir: Path, openapi_path: Path
+) -> tuple[bool, str]:
+    """Fail when scraped apiGet/apiPost/... calls use a method OpenAPI disallows.
+
+    Complements route-coverage (every backend route has some UI) with the reverse
+    hard check: every frontend call must be an allowed (METHOD, path) pair.
+    Regression: multi-tenant-pay-platform hit GET /api/v1/organisations while the
+    spec only declared POST → browser 405 Method Not Allowed.
+    """
+    status, mismatches = _check_backend_integration(frontend_dir, openapi_path)
+    if status == "not_run":
+        return True, "[method-mismatch-gate] PASSED (skipped — no openapi/calls to check)"
+    if status == "validated":
+        return True, "[method-mismatch-gate] PASSED"
+    # status == "mismatch"
+    return False, (
+        "[method-mismatch-gate] FAILED: these frontend API calls do not match any "
+        "(METHOD, path) declared in openapi.json — wrong method causes 405, invented "
+        "path causes 404:\n  - "
+        + "\n  - ".join(mismatches)
+        + "\nFix: use the api helper that matches the OpenAPI method for that exact "
+        "path (GET->apiGet, POST->apiPost, PUT->apiPut, PATCH->apiPatch, "
+        "DELETE->apiDelete). Do not invent endpoints."
+    )
 
 
 def _validate_role_source_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[bool, str]:
@@ -1603,6 +1771,11 @@ def run_task(
                 role_passed, role_report = _validate_role_source_gate(frontend_dir, auth_mode)
                 wired_passed, wired_report = _validate_wired_callbacks_gate(frontend_dir, auth_mode)
                 theme_passed, theme_report = _validate_tailwind_theme_gate(frontend_dir)
+                dialog_passed, dialog_report = _validate_dialog_layout_gate(frontend_dir)
+                payload_passed, payload_report = _validate_action_payload_gate(frontend_dir)
+                method_passed, method_report = _validate_method_mismatch_gate(
+                    frontend_dir, openapi_path
+                )
                 coverage_passed, coverage_report = _validate_route_coverage_gate(
                     frontend_dir, openapi_path, auth_mode
                 )
@@ -1614,6 +1787,9 @@ def run_task(
                     and role_passed
                     and wired_passed
                     and theme_passed
+                    and dialog_passed
+                    and payload_passed
+                    and method_passed
                     and coverage_passed
                 ):
                     print(f"[frontend-agent] {report}")
@@ -1621,6 +1797,9 @@ def run_task(
                     print(f"[frontend-agent] {role_report}")
                     print(f"[frontend-agent] {wired_report}")
                     print(f"[frontend-agent] {theme_report}")
+                    print(f"[frontend-agent] {dialog_report}")
+                    print(f"[frontend-agent] {payload_report}")
+                    print(f"[frontend-agent] {method_report}")
                     print("[frontend-agent] BUILD PASSED. Frontend generated successfully.")
                     return
                 if not gate_passed:
@@ -1631,6 +1810,12 @@ def run_task(
                     passed, report = wired_passed, wired_report
                 elif not theme_passed:
                     passed, report = theme_passed, theme_report
+                elif not dialog_passed:
+                    passed, report = dialog_passed, dialog_report
+                elif not payload_passed:
+                    passed, report = payload_passed, payload_report
+                elif not method_passed:
+                    passed, report = method_passed, method_report
                 else:
                     passed, report = coverage_passed, coverage_report
                     coverage_gap_data = _route_coverage_report(frontend_dir, openapi_path, auth_mode)
