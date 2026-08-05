@@ -145,10 +145,11 @@ $applyPostgres = (-not $SkipDb) -and (-not $SkipPostgres)
 $runQa = $false
 if ($WithQa) { $runQa = (-not $SkipDeveloper) -and (-not $SkipQa) }
 # GitLab publish runs after verify unless skipped (-SkipGitlab).
-$runGitlab = (-not $SkipGitlab) -and (-not $SkipDeveloper)
+# May still run when -SkipDeveloper if target-apps/<app> already exists (resume).
+$runGitlab = (-not $SkipGitlab)
 # Frontend-agent runs by default after developer, before GitLab (matches sdlc_pipeline _step_frontend).
-# -SkipFrontend to disable. Not wired into the orchestrator; this is the local pipeline's own step.
-$runFrontend = (-not $SkipFrontend) -and (-not $SkipDeveloper)
+# -SkipFrontend to disable. Allowed with -SkipDeveloper for frontend-only resume when OpenAPI exists.
+$runFrontend = (-not $SkipFrontend)
 if ($WithPostgres) { $applyPostgres = $true }
 if ($WithQa) { $runQa = $true }
 
@@ -634,7 +635,7 @@ if ($runFrontend) {
         "--full-regen"
     )
     if ((Invoke-PipelinePython -ArgumentList $frontendArgs) -ne 0) {
-        Write-Warning "frontend-agent reported issues - review target-apps/$Feature/frontend before GitLab publish."
+        throw "frontend-agent failed - refusing to publish a broken frontend to GitLab. Fix target-apps/$Feature/frontend or re-run with -SkipFrontend only if intentional."
     }
     $pipelineAgentsRun += "frontend-agent"
 }

@@ -9,63 +9,259 @@
 @custom-variant dark (&:is(.dark *));
 
 /* =====================================================================
-   Design tokens — single dark navy theme, teal accent. No light/dark
-   toggle: every generated app is dark-only by design, so tokens are
-   declared once, directly in @theme, with no :root/.dark indirection.
-   Every value below is carried over EXACTLY from the pre-Tailwind
-   index.css — see the migration's token diff for the full audit.
+   Design tokens — light (default) + dark navy theme, teal accent, toggled
+   via a `dark` class on <html> (next-themes, see src/main.tsx). Raw values
+   live in :root (light) / .dark (dark — carried over EXACTLY from the
+   pre-toggle single-theme index.css, zero visual change when the class is
+   present) and are re-exposed as theme tokens through `@theme inline` so
+   Tailwind utilities like bg-background keep working unchanged. Light
+   values were chosen and contrast-checked (WCAG relative luminance, ≥4.5:1)
+   against their paired surface so light mode never repeats the navy-on-navy
+   bug as light-on-light — see the PR/commit description for the full ratio
+   table.
    ===================================================================== */
-@theme {
+:root {
+  --background: #f6f8fb;
+  --foreground: #101826;
+
+  --card: #ffffff;
+  --card-foreground: #101826;
+
+  --popover: #ffffff;
+  --popover-foreground: #101826;
+
+  --secondary: #eef1f6;
+  --secondary-foreground: #1a2540;
+
+  --muted: #eef1f6;
+  --muted-foreground: #5b6880;
+
+  --accent: #e3e8f0;
+  --accent-foreground: #1a2540;
+
+  /* Darker than the dark-mode teal (#2dd4bf) on purpose: this token is also
+     used as text (link variant, bg-primary/10 text-primary badges), and
+     #2dd4bf on a light surface fails contrast. */
+  --primary: #0f766e;
+  --primary-hover: #0d9488;
+  --primary-dim: rgba(15, 118, 110, 0.1);
+  --primary-foreground: #f8fafc;
+
+  /* red-700, not red-600 — red-600 measured 4.54:1 on --background, too
+     tight a margin for a token that's also used as bare text. */
+  --destructive: #b91c1c;
+  --destructive-dim: rgba(185, 28, 28, 0.08);
+  --destructive-foreground: #ffffff;
+
+  --warning: #92400e;
+  --warning-dim: rgba(146, 64, 14, 0.1);
+  --warning-foreground: #451a03;
+
+  --success: #047857;
+  --success-foreground: #ffffff;
+
+  --faint: #5b6880;
+
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --input: #e2e8f0;
+  --ring: #0f766e;
+}
+
+.dark {
   /* Surfaces — contrast fix: background darkened a step and card/popover/
      secondary/muted lightened a step so surfaces visibly lift off the page
      (previous values were ~2-step-close, effectively indistinguishable). */
-  --color-background: #080d18;
-  --color-foreground: #e6edf7;
+  --background: #080d18;
+  --foreground: #e6edf7;
 
-  --color-card: #1a2540;
-  --color-card-foreground: #e6edf7;
+  --card: #1a2540;
+  --card-foreground: #e6edf7;
 
-  --color-popover: #212d4d;
-  --color-popover-foreground: #e6edf7;
+  --popover: #212d4d;
+  --popover-foreground: #e6edf7;
 
-  --color-secondary: #212d4d;
-  --color-secondary-foreground: #e6edf7;
+  --secondary: #212d4d;
+  --secondary-foreground: #e6edf7;
 
-  --color-muted: #212d4d;
-  --color-muted-foreground: #8b98b0;
+  --muted: #212d4d;
+  --muted-foreground: #8b98b0;
 
-  /* shadcn's own hover/highlight slot — NOT the brand color (see --color-primary) */
-  --color-accent: #26324f;
-  --color-accent-foreground: #e6edf7;
+  /* shadcn's own hover/highlight slot — NOT the brand color (see --primary) */
+  --accent: #26324f;
+  --accent-foreground: #e6edf7;
 
   /* Brand teal (old --accent) */
-  --color-primary: #2dd4bf;
-  --color-primary-hover: #14b8a6;
-  --color-primary-dim: rgba(45, 212, 191, 0.12);
-  --color-primary-foreground: #06231f;
+  --primary: #2dd4bf;
+  --primary-hover: #14b8a6;
+  --primary-dim: rgba(45, 212, 191, 0.12);
+  --primary-foreground: #06231f;
 
   /* Destructive (old --danger) */
-  --color-destructive: #f4726a;
-  --color-destructive-dim: rgba(244, 114, 106, 0.12);
-  --color-destructive-foreground: #e6edf7;
+  --destructive: #f4726a;
+  --destructive-dim: rgba(244, 114, 106, 0.12);
+  --destructive-foreground: #e6edf7;
 
   /* Warning (old --warn) */
-  --color-warning: #f0b429;
-  --color-warning-dim: rgba(240, 180, 41, 0.12);
-  --color-warning-foreground: #06231f;
+  --warning: #f0b429;
+  --warning-dim: rgba(240, 180, 41, 0.12);
+  --warning-foreground: #06231f;
 
   /* Success — real green for the first time; old --success was defined but
      never actually consumed (old .badge-success rendered teal). */
-  --color-success: #34d399;
-  --color-success-foreground: #06231f;
+  --success: #34d399;
+  --success-foreground: #06231f;
 
-  --color-faint: #5b6880;
+  --faint: #5b6880;
 
   /* Border bumped from 0.07 -> 0.12 so card edges are actually visible. */
-  --color-border: rgba(255, 255, 255, 0.12);
-  --color-border-strong: rgba(255, 255, 255, 0.14);
-  --color-input: rgba(255, 255, 255, 0.14);
-  --color-ring: #2dd4bf;
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --input: rgba(255, 255, 255, 0.14);
+  --ring: #2dd4bf;
+}
+
+/* =====================================================================
+   Accent palettes — ONLY --primary/--primary-hover/--primary-dim/
+   --primary-foreground/--ring are overridden here. Every other token
+   (background, card, foreground, muted, border, destructive/warning/
+   success) stays exactly as defined in :root/.dark above, in every
+   palette, in both modes — surfaces are untouched by design.
+
+   --ring and --primary-dim aren't named in the 5-palette brief, but both
+   are DERIVED from --primary in the existing (teal) theme above (ring
+   reuses the exact primary color; primary-dim is primary at low alpha,
+   consumed by --shadow-glow and bg-primary/10 tints) — leaving them
+   pinned to teal while --primary changed per palette would mismatch the
+   focus ring/glow color against the button color. Included them so the
+   whole accent, not just the button fill, tracks the chosen palette.
+
+   Switching mechanism: set data-palette="teal|blue|violet|emerald|rose" on
+   <html> (Shell.tsx does this from its accentPalette prop — see
+   src/Shell.tsx). No attribute (or data-palette="teal") = the unchanged
+   default above; existing apps/tests that never set the attribute are
+   byte-identical to before this system existed. Composes independently
+   with the dark-mode class next-themes already manages:
+     :root[data-palette="X"]      -> light-mode accent for palette X
+     .dark[data-palette="X"]      -> dark-mode accent for palette X
+   Each selector has higher specificity than the plain :root/.dark rules
+   above, so it overrides them regardless of source order.
+
+   Contrast (WCAG relative-luminance ratio, primary vs primary-foreground,
+   >=4.5:1 required for AA text): teal light 5.23:1 / dark 8.90:1 (existing,
+   unchanged) — blue light 4.94:1 / dark 7.34:1 — violet light 5.45:1 /
+   dark 6.93:1 — emerald light 4.80:1 / dark 9.41:1 (emerald's light accent
+   is too pale for white text at AA, so — per "adjust the foreground, not
+   the accent" — its foreground is dark in BOTH modes, unlike the other 4
+   palettes which flip light-text/dark-text between modes) — rose light
+   4.70:1 / dark 6.89:1 (rose needed pure #ffffff in light mode; the
+   #f8fafc used by the other palettes measures 4.489:1, just under 4.5).
+   ===================================================================== */
+:root[data-palette="teal"] {
+  --primary: #0f766e;
+  --primary-hover: #0d9488;
+  --primary-dim: rgba(15, 118, 110, 0.1);
+  --primary-foreground: #f8fafc;
+  --ring: #0f766e;
+}
+.dark[data-palette="teal"] {
+  --primary: #2dd4bf;
+  --primary-hover: #14b8a6;
+  --primary-dim: rgba(45, 212, 191, 0.12);
+  --primary-foreground: #06231f;
+  --ring: #2dd4bf;
+}
+
+:root[data-palette="blue"] {
+  --primary: #2563eb;
+  --primary-hover: #3b82f6;
+  --primary-dim: rgba(37, 99, 235, 0.1);
+  --primary-foreground: #f8fafc;
+  --ring: #2563eb;
+}
+.dark[data-palette="blue"] {
+  --primary: #60a5fa;
+  --primary-hover: #3b82f6;
+  --primary-dim: rgba(96, 165, 250, 0.12);
+  --primary-foreground: #05112e;
+  --ring: #60a5fa;
+}
+
+:root[data-palette="violet"] {
+  --primary: #7c3aed;
+  --primary-hover: #8b5cf6;
+  --primary-dim: rgba(124, 58, 237, 0.1);
+  --primary-foreground: #f8fafc;
+  --ring: #7c3aed;
+}
+.dark[data-palette="violet"] {
+  --primary: #a78bfa;
+  --primary-hover: #8b5cf6;
+  --primary-dim: rgba(167, 139, 250, 0.12);
+  --primary-foreground: #1a0533;
+  --ring: #a78bfa;
+}
+
+:root[data-palette="emerald"] {
+  --primary: #059669;
+  --primary-hover: #10b981;
+  --primary-dim: rgba(5, 150, 105, 0.1);
+  --primary-foreground: #031a12;
+  --ring: #059669;
+}
+.dark[data-palette="emerald"] {
+  --primary: #34d399;
+  --primary-hover: #10b981;
+  --primary-dim: rgba(52, 211, 153, 0.12);
+  --primary-foreground: #031a12;
+  --ring: #34d399;
+}
+
+:root[data-palette="rose"] {
+  --primary: #e11d48;
+  --primary-hover: #f43f5e;
+  --primary-dim: rgba(225, 29, 72, 0.1);
+  --primary-foreground: #ffffff;
+  --ring: #e11d48;
+}
+.dark[data-palette="rose"] {
+  --primary: #fb7185;
+  --primary-hover: #f43f5e;
+  --primary-dim: rgba(251, 113, 133, 0.12);
+  --primary-foreground: #2b0510;
+  --ring: #fb7185;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-dim: var(--primary-dim);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-dim: var(--destructive-dim);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-dim: var(--warning-dim);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-faint: var(--faint);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 
   /* Radius (old --radius-sm / --radius / --radius-lg) */
   --radius-sm: 8px;

@@ -1,0 +1,55 @@
+We run a network of outpatient medical clinics and we need one system to run the whole operation. Today we juggle patients, appointments, billing, and insurance across spreadsheets and separate tools, and things slip: appointments get double-booked, claims go unfiled, follow-ups are forgotten, and providers don't get clear records of what they're owed. We want a single system that handles all of it.
+
+About our business
+
+We operate several clinics, each staffed by providers (doctors, nurses, specialists) who see patients. Patients book appointments, get seen, receive diagnoses and treatments, and are billed. We file insurance claims on their behalf, collect patient co-pays, and reconcile what insurers pay. We also manage provider schedules, referrals to specialists, and prescriptions.
+
+What the system needs to handle
+
+Clinics. We run multiple clinics, each at an address, with its own set of rooms and operating hours. Each clinic has staff assigned to it. We need each clinic's details, which providers work there, and its capacity.
+
+Providers. Doctors, nurses, and specialists who see patients. We need each provider's details, their specialty, which clinic(s) they work at, their availability, and a record of the appointments they've handled. A provider who is inactive cannot be booked for new appointments.
+
+Patients. People who come to our clinics. We keep patient records with contact details, date of birth, insurance information, medical history, and their appointment and billing history with us.
+
+Appointments. A patient books an appointment with a provider at a clinic for a time slot, with a reason for the visit and a status from scheduled through checked-in, in progress, completed, cancelled, or no-show. A provider can only have one appointment per time slot. An appointment cannot be booked with an inactive provider or outside the clinic's operating hours. We need to see which slots are free and which appointments are coming up.
+
+Visits and diagnoses. When a patient is seen, the visit records what happened: the provider's notes, diagnoses, treatments given, and any follow-up needed. A visit is tied to a completed appointment. Visit records must never be quietly deleted or edited; corrections have to be tracked.
+
+Prescriptions. During a visit a provider may prescribe medication, with the drug, dosage, quantity, and refills allowed. We track each prescription, whether it's been filled, and refills remaining. A prescription can only be written by the provider who saw the patient.
+
+Referrals. A provider may refer a patient to a specialist. A referral records the referring provider, the specialist, the reason, and a status from requested through accepted, scheduled, or declined. We need to track open referrals so none are lost.
+
+Billing and claims. Each visit generates charges. We bill the patient's co-pay and file an insurance claim for the rest. We track each charge, whether it's been billed, paid, partially paid, or denied, and record payments. A claim goes from submitted through paid or denied, and a denied claim can be resubmitted. We need to see, at any time, who owes what and which claims are outstanding.
+
+Insurance. We keep each patient's insurance details: the insurer, policy number, coverage, and co-pay amount. Claims are filed against the patient's insurance. A patient with no active insurance is billed the full amount directly.
+
+Reports our managers need. Managers want to see: which appointment slots are unfilled, which patients are overdue for follow-up, which claims are outstanding and how long they've been pending, how each provider and clinic is performing, and which patients owe money. Different staff should see different things, and a provider should only see their own patients and appointments.
+
+Important rules we must never break
+
+A provider cannot be double-booked for the same time slot.
+An appointment cannot be booked with an inactive provider.
+A prescription can only be written by the provider who conducted the visit.
+Visit records, charges, and payment history must never be quietly deleted or edited; corrections have to be tracked.
+A denied claim can be resubmitted but the original filing must stay in history.
+Cancelled, no-show, and declined records must stay in history and never disappear.
+A billing statement must correctly reflect charges minus insurance-covered amounts minus payments.
+Every important change, who did it and when, must be recorded so we can always trace what happened for disputes and audits.
+
+Who uses the system
+
+Providers who see their own patients and handle their own appointments and prescriptions.
+Front-desk staff who book appointments, check patients in, and handle intake.
+Billing staff who handle charges, claims, insurance, and payments.
+Clinic managers who oversee their clinic's schedule, staff, and performance.
+Administrators who oversee everything across all clinics.
+Read-only auditors who can review everything but change nothing.
+
+Each role should only be able to do what its job requires, and the system should decide sensible permissions for each.
+
+What success looks like
+
+The network runs the entire clinic operation from one system: registering patients and their insurance, scheduling appointments, seeing patients and recording visits and diagnoses, writing prescriptions, making referrals, billing patients and filing insurance claims, chasing outstanding claims and balances, and producing accurate records, all while keeping a complete and trustworthy history that managers can report on and auditors can review.
+
+We want a working web application for our staff to use, along with the system that runs behind it. A mobile app isn't needed yet, but it should be possible to add one later.

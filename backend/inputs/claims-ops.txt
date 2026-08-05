@@ -1,0 +1,90 @@
+We’re looking to build a web application that helps a regional insurance carrier manage policyholders, policies, claims, adjusters, payments, and compliance reviews from one central platform.
+The application should be built with FastAPI and should expose a well-structured API that can later support web, mobile, and internal operations tools.
+
+Scenario
+The carrier currently uses separate systems for policy administration, claims intake, adjuster assignment, and claim payments. This creates duplicate records, inconsistent validation, and limited visibility into the full claim lifecycle.
+The new system should provide a unified claims operations layer while preserving complete history for financial and audit purposes.
+
+Features
+Maintain policyholder profiles with personal or business details, contact information, identity references, risk tier, and status
+Support individual and commercial policyholders
+Create and manage insurance policies (auto, home, commercial) linked to policyholders
+Track policy status, coverage limits, deductibles, effective dates, and premium amounts
+Intake claims against active policies with incident details, loss type, reported date, and initial reserve
+Assign claims to adjusters and track investigation status
+Support claim states such as Draft, Submitted, Under Review, Approved, Partially Paid, Paid, Denied, Reopened, and Closed
+Record claim payments, reserves, recoveries, and fee adjustments without deleting original financial entries
+Allow authorized reviewers to approve, deny, or escalate high-value claims
+Record review notes, approval decisions, and denial reasons
+Handle claim reopenings and supplemental payments while preserving the original claim history
+Maintain coverage limits and remaining available indemnity per policy
+Create service tasks for document requests, inspections, salvage, and subrogation follow-ups
+Assign tasks to adjusters or operations teams
+Track task status, priority, owner, comments, and resolution details
+Search and filter policyholders, policies, claims, payments, adjusters, and tasks
+Provide operational summaries for open claims, aging claims, pending reviews, and high-value payouts
+Maintain complete audit history for important actions and state changes
+Seed realistic sample policyholders, policies, claims, payments, adjusters, and tasks
+
+Important Business Rules
+Policy numbers and verified email addresses must be unique where applicable.
+Cancelled or lapsed policies cannot accept new claims except when explicitly reopened for a prior covered loss.
+Claim amounts must be positive and cannot exceed remaining coverage after deductible unless an authorized override is recorded.
+A claim payment cannot be issued until the claim is Approved or Partially Paid.
+High-value claims above a configurable threshold require additional review before payment.
+Completed financial claim payments cannot be edited or deleted; corrections use reversal or adjustment entries.
+Duplicate claim submissions with the same idempotency reference must not create duplicate claims or payments.
+Denied and closed claims must remain available in history.
+Service tasks must follow valid status transitions.
+Sensitive policyholder and claim data must only be available to authorized roles.
+Every change to policy status, claim status, reserves, payments, and reviews must be auditable.
+
+Expected Roles
+Claims intake representative
+Adjuster
+Claims reviewer
+Compliance user
+Claims administrator
+Read-only auditor
+The Product and Architecture Agents should determine the final permission model and role boundaries.
+
+Expected Data Areas
+Policyholders
+Policies
+Claims
+Claim reviews
+Claim payments and adjustments
+Adjusters
+Coverage limits / reserves
+Service tasks
+Comments
+Audit events
+The Database Agent should determine the final schema, relationships, constraints, and indexing strategy.
+
+Technical Expectations
+FastAPI backend
+Persisted relational database (Postgres)
+Clear request and response models
+Strong validation and structured error handling
+Pagination, sorting, and filtering for large result sets
+Idempotency for sensitive claim and payment operations
+Transaction-safe reserve and payment updates
+Role-aware access control (JWT)
+OpenAPI documentation
+Health and readiness checks
+Database migrations
+Seed data with demo users
+Structured logging
+Unit, API, and workflow tests
+Secrets and credentials stored outside source code
+
+Must have for v1 — staff web UI
+A working React + TypeScript browser UI (Vite) for staff use — this is required, not optional
+Build the frontend with React, TypeScript, and Vite
+Use Tailwind CSS for all styling (utility classes)
+Use shadcn/ui components for forms, tables, buttons, dialogs, and layout
+Do NOT use hand-written CSS files, CSS modules, styled-components, or inline style objects for layout/theming
+Staff must be able to sign in, manage policyholders/policies/claims, and review payments from the UI
+
+Success
+The system is successful when staff can onboard policyholders, issue and manage policies, intake and investigate claims, approve or deny payouts, process payments safely, manage follow-up tasks, and retrieve operational summaries without losing financial or audit history — all from the Tailwind-styled React UI.

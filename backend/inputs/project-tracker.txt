@@ -1,0 +1,74 @@
+Project Tracker — team project and task management with milestones, task dependencies, time logging, role-gated actions, and dashboards.
+
+Client story:
+A software consultancy runs many client projects at once and loses visibility into what is on track versus slipping. They want a service where managers create projects and milestones, leads break work into tasks with dependencies, members log time against tasks, and everyone sees dashboards that roll up progress. They care most that a task cannot be marked done while its blocking dependencies are still open, that time logged always ties to a real task and member, and that the project progress numbers on the dashboard are always computed correctly from the underlying tasks rather than stored and drifting.
+
+MVP:
+- Managers create projects (name, description, status, start and target dates) and assign a project lead.
+- Leads create milestones inside a project (title, due date) and break work into tasks under milestones.
+- Tasks carry a status lifecycle: todo -> in_progress -> in_review -> done, moving forward only, and an assignee, priority, and estimate in hours.
+- Tasks can depend on other tasks in the same project. A task cannot move to done while any of its blocking dependencies are not yet done (409).
+- Members log time entries against tasks (hours, work date, note). A time entry always references a real task and a real member.
+- Comments can be added to tasks for discussion (author, body, created_at), and are append-only.
+- Dashboards: a per-project dashboard rolls up task counts by status, percent complete, total estimated vs logged hours, and overdue milestone count; a global dashboard rolls up across all projects the caller can see.
+- Role-gated actions: members log time and comment and progress their own tasks; leads manage milestones, tasks, and dependencies within their led projects; managers create projects, assign leads, reassign anyone, and see everything.
+
+Auth: X-API-Key header carrying a per-user token; identity and role resolved from the users table. No JWT.
+
+Data model (DDL under target-apps/project-tracker/db/sql/):
+- users: id, token unique NOT NULL (per-user opaque key sent as X-API-Key, e.g. tok_amy_lead), role NOT NULL (member, lead, manager), name, email
+- projects: id, name NOT NULL, description, status NOT NULL (planning, active, on_hold, completed, archived), lead_user_id FK NOT NULL, start_date date, target_date date, created_at timestamptz, updated_at timestamptz
+- project_members: id, project_id FK NOT NULL, user_id FK NOT NULL, added_at timestamptz — unique(project_id, user_id), maps which users belong to which project
+- milestones: id, project_id FK NOT NULL, title NOT NULL, due_date date, status NOT NULL (open, met, missed), created_at timestamptz
+- tasks: id, project_id FK NOT NULL, milestone_id FK nullable, title NOT NULL, description, status NOT NULL (todo, in_progress, in_review, done), priority NOT NULL (low, normal, high, urgent), assignee_user_id FK nullable, estimate_hours numeric nullable, created_at timestamptz, updated_at timestamptz
+- task_dependencies: id, task_id FK NOT NULL, depends_on_task_id FK NOT NULL — unique(task_id, depends_on_task_id), both tasks must be in the same project, a task may not depend on itself
+- time_entries: id, task_id FK NOT NULL, user_id FK NOT NULL, hours numeric NOT NULL, work_date date NOT NULL, note, created_at timestamptz
+- comments: id, task_id FK NOT NULL, author_user_id FK NOT NULL, body NOT NULL, created_at timestamptz — append-only (no update/delete route)
+
+Business rules (enforce in API):
+- Task status is forward-only: allowed transitions are todo->in_progress, in_progress->in_review, in_review->done. Any backward or skipping transition -> 409.
+- A task cannot move to done while any task it depends on is not yet done -> 409 with the list of blocking task ids.
+- A task_dependency may not create a self-dependency (task depending on itself) -> 422, and both tasks must belong to the same project -> 422.
+- A time_entry's hours must be > 0 -> 422; work_date may not be in the future -> 422.
+- Milestone status is derived context but stored: a milestone is missed if its due_date is past and it has any task not done; the API exposes a computed overdue flag at read time (due_date < today AND milestone has >=1 non-done task) without relying on the stored status.
+- Percent complete for a project (computed, never stored): done tasks / total tasks, 0 if no tasks.
+- Role gating: create project / assign lead / reassign any task / archive project requires manager; create milestone / create task / manage dependencies within a project requires lead of that project or manager; log time / comment / progress own assigned task requires member+ who is a project_member. Enforce with the provided require_role helper.
+- A member may only see projects they are a project_member of; leads see their led projects; managers see all. Reading a task, milestone, time entry, or comment is 403 if the caller cannot see its parent project.
+- Every task status change and every reassignment is allowed only forward/by-permission as above; dependency and time rules apply on every write.
+
+API contracts (implement all):
+| Method | Path | Auth | Behavior |
+|--------|------|------|----------|
+| GET | /health | none | DB ping |
+| GET | /api/v1/projects | X-API-Key | member: own projects; lead: led; manager: all; filter status |
+| POST | /api/v1/projects | X-API-Key (manager) | create project, assign lead |
+| GET | /api/v1/projects/{id} | X-API-Key | 403 if caller not a member/lead/manager of it |
+| PATCH | /api/v1/projects/{id} | X-API-Key (manager) | update status, dates, lead |
+| GET | /api/v1/projects/{id}/members | X-API-Key | list project members |
+| POST | /api/v1/projects/{id}/members | X-API-Key (lead+) | add a user to the project |
+| GET | /api/v1/projects/{id}/milestones | X-API-Key | list milestones with computed overdue flag |
+| POST | /api/v1/projects/{id}/milestones | X-API-Key (lead+) | create milestone |
+| GET | /api/v1/projects/{id}/tasks | X-API-Key | list tasks; filters status, assignee, milestone |
+| POST | /api/v1/projects/{id}/tasks | X-API-Key (lead+) | create task under project/milestone |
+| GET | /api/v1/tasks/{id} | X-API-Key | task detail incl. dependencies and computed blocked flag |
+| PATCH | /api/v1/tasks/{id}/status | X-API-Key (member+ assignee or lead+) | forward-only; blocks done if deps open |
+| PATCH | /api/v1/tasks/{id}/assignee | X-API-Key (lead+) | reassign task |
+| POST | /api/v1/tasks/{id}/dependencies | X-API-Key (lead+) | add a blocking dependency |
+| DELETE | /api/v1/tasks/{id}/dependencies/{dep_id} | X-API-Key (lead+) | remove a dependency |
+| GET | /api/v1/tasks/{id}/time | X-API-Key | list time entries for a task |
+| POST | /api/v1/tasks/{id}/time | X-API-Key (member+) | log a time entry |
+| GET | /api/v1/tasks/{id}/comments | X-API-Key | list comments (append-only) |
+| POST | /api/v1/tasks/{id}/comments | X-API-Key (member+) | add a comment |
+| GET | /api/v1/projects/{id}/dashboard | X-API-Key | per-project rollup: task counts by status, percent complete, estimated vs logged hours, overdue milestones |
+| GET | /api/v1/dashboard | X-API-Key | global rollup across projects the caller can see |
+
+Stack:
+- FastAPI + Postgres + pytest
+- React/Vite under frontend/
+
+Seed: 6 users across roles with distinct tokens (e.g. tok_ray_member, tok_sam_member, tok_amy_lead, tok_lee_lead, tok_mia_manager, tok_dan_manager). 3 projects in different statuses, each with a lead and 2-4 members via project_members. 5 milestones spread across projects with at least one already past due with a non-done task (so overdue flag is non-empty). 15 tasks spanning all statuses and priorities across the projects, including at least one done task, at least one in_review, and at least two with dependencies where a task is blocked because a dependency is not yet done. 4 task_dependencies including one chain of two. 10 time_entries across members and tasks with realistic hours and past work_dates. 6 comments across several tasks. Seed data must make both the per-project dashboard and the global dashboard non-empty and non-trivial (varied status counts, a non-zero percent complete, and estimated vs logged hours that differ).
+
+Tests: create task then move todo->in_progress->in_review->done succeeds; backward transition (in_review->todo) -> 409; moving a task to done while a dependency is still open -> 409 listing the blocking task id; self-dependency -> 422; dependency across two different projects -> 422; time entry with hours <= 0 -> 422; time entry with a future work_date -> 422; member logging time on a task in a project they belong to -> ok; member acting on a project they are not a member of -> 403; non-manager creating a project -> 403; lead creating a milestone in their own project -> ok; per-project dashboard percent complete equals done/total; global dashboard only includes projects the caller can see; PATCH/DELETE on a comment -> no such route.
+Out of scope: file attachments, notifications/email, Gantt charts, external calendar sync, billing/invoicing.
+Target app slug: project-tracker
+Output directory: target-apps/project-tracker/

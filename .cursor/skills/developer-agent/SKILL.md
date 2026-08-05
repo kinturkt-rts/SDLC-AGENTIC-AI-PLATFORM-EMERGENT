@@ -223,6 +223,14 @@ It is NOT auto-copied — the agent reads it and adapts. Key files:
 | `db/reference/rag_pgvector_reference.sql` | Expected pgvector schema for B++ apps |
 | `tests/conftest.py` | SQLite override before app import; dependency override; reset_db fixture |
 
+## Common ORM pitfall (M2M + POSTGRES_SCHEMA)
+
+Never write `relationship(..., secondary="junction_table")` as a string.
+With `MetaData(schema=POSTGRES_SCHEMA)` the table is registered as `schema.junction_table`,
+so a bare name fails on the first ORM query (often login) with `InvalidRequestError`.
+Always define `junction = Table(...)` and pass `secondary=junction` (the object).
+`dev_validate_app` hard-fails string `secondary=` values.
+
 ## Downstream handoff JSON keys
 
 After run, agent appends `## Context handoff` to stdout with:

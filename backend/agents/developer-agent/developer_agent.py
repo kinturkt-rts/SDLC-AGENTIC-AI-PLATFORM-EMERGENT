@@ -862,7 +862,7 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
 | FK columns on ORM | Every FK column on a SQLAlchemy model MUST declare `ForeignKey("<table>.<col>")` as an argument to `mapped_column` / `Column`. Having `REFERENCES users(id)` in the SQL DDL is **not enough** — SQLAlchemy reads only the ORM declaration when resolving `relationship(...)`. Without it, every `relationship` raises `NoForeignKeysError: Could not determine join condition`. Example: `assigned_to: Mapped[str] = mapped_column(pg_uuid_column(), ForeignKey("users.id"), nullable=False)`. |
-| M2M / junction `secondary=` | Define the association `Table("book_authors", Base.metadata, ...)` **once** (usually in one of the two model files). BOTH sides MUST use the **same Table object**: `relationship("Book", secondary=book_authors, back_populates="authors")` — NEVER `secondary="book_authors"` (string). String secondary fails mapper init when the other file loads first (`InvalidRequestError: mappers failed to initialize` / `name 'book_authors' is not defined`), and list/CRUD routes 500 while `/health` still looks green. Import the Table into the other model file if needed (`from app.models.book import book_authors`). |
+| M2M / junction `secondary=` | Define the association `Table("book_authors", Base.metadata, ...)` **once** (usually in one of the two model files) and pass that **same Table object** on BOTH sides: `relationship("Book", secondary=book_authors, back_populates="authors")`. NEVER a bare string (`secondary="book_authors"`) — with `MetaData(schema=POSTGRES_SCHEMA)` the table registers as `schema.book_authors`, so the bare name fails at the first ORM query with `InvalidRequestError: expression 'book_authors' failed to locate a name`, and every list/CRUD route plus login 500s while `/health` still looks green. Schema-qualified strings (`secondary="bookstore_inventory.book_authors"`) also break SQLite tests — Table object only. Import it where needed (`from app.models.book import book_authors`) and put that module first in `app/models/__init__.py`. `dev_validate_app` hard-fails on string `secondary=` and on any `configure_mappers()` error. |
 | Conditional aggregates | `case` is a top-level SQLAlchemy construct, NOT a `func` member. `func.case((cond, 1), else_=0)` raises `OperationalError: no such function: case` at runtime. Correct: `from sqlalchemy import case` then `case((cond, 1), else_=0)`. Same for `cast`, `null`, `true`, `false` — all top-level imports, not `func` members. |
 | `ARRAY(PG_UUID(...))` column assigned a request's `list[str]` | Postgres allows an implicit `varchar → uuid` cast for a single scalar, but refuses it for arrays — binding a plain `list[str]` into a `uuid[]` column raises `DatatypeMismatch: column "..." is of type uuid[] but expression is of type character varying[]`. SQLite tests pass anyway (no type enforcement), so this only surfaces on real RDS, exactly like the other rows in this table. Always convert to `uuid.UUID` objects at the router before assigning: `[uuid.UUID(x) for x in body.some_ids] if body.some_ids else None`. |
 
@@ -1499,7 +1499,7 @@ App code rules (container-ready without refactors):
 18. URL path cross-check: for every `@router.get/post/...` decorator, mentally compute `include_router(prefix=) + route_path` and confirm the test calls that exact URL. `/health/health` is a real bug that has shipped before — never double-prefix.
 19. Test fixtures must replicate route side-effects: if `POST /findings` creates both a `Finding` AND an initial `status_history` row, then a `sample_finding` fixture that constructs `Finding` via the ORM **must also** insert the matching `status_history` row. Otherwise tests that read the side-effect (`GET /findings/{id}/history`) see an empty list and fail. Rule of thumb: every `db.add(SecondaryModel(...))` call inside a route handler needs a mirror line in the corresponding test fixture, OR the fixture should call the route via the TestClient instead of constructing models directly.
 20. ORM models referencing other tables: every `mapped_column(... pg_uuid_column())` that points at another table MUST include `ForeignKey("other_table.id")` as a positional argument. SQL DDL constraints don't propagate to the ORM. Missing FK declaration = `relationship()` raises `NoForeignKeysError` at app startup.
-21. Many-to-many / junction tables: never use `relationship(..., secondary="table_name")` strings. Define `Table(...)` once and pass that object on both `relationship(..., secondary=junction_table, back_populates=...)` sides. Host validation runs `configure_mappers()` and will fail the step if string secondary or broken M2M wiring is present.
+21. Many-to-many `relationship(..., secondary=...)`: pass the junction `Table` **object**, never a string. `secondary="book_authors"` breaks under `MetaData(schema=POSTGRES_SCHEMA)` (login / any first query → 500 `InvalidRequestError`). Correct: define `book_authors = Table(...)` once, then `secondary=book_authors` with `back_populates=` on both sides. `dev_validate_app` rejects string `secondary=` and also runs `configure_mappers()`, so broken M2M wiring fails the step before publish.
 """
 
 # Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
@@ -2449,6 +2449,49 @@ def validate_cors_configured(service_dir: Path) -> list[str]:
             'nothing to read. Add `cors_origins: list[str] = Field(default_factory='
             'lambda: ["*"], alias="CORS_ORIGINS")` to the Settings class.'
         )
+    return errors
+
+
+# Bare-string secondary= on relationship() — breaks when MetaData has a schema
+# (POSTGRES_SCHEMA). Bookstore-inventory regression: Author.books used
+# secondary="book_authors" while Book.authors used the Table object; first
+# select(User) at login raised InvalidRequestError and the 500 response had no
+# CORS headers, so the browser reported a false CORS failure.
+_SECONDARY_STRING_RE = re.compile(
+    r"""secondary\s*=\s*(['"])([^'"]+)\1""",
+    re.MULTILINE,
+)
+
+
+def validate_relationship_secondary(service_dir: Path) -> list[str]:
+    """Reject relationship(..., secondary="table_name") string literals.
+
+    With MetaData(schema=POSTGRES_SCHEMA) junction tables are registered as
+    ``schema.table``, so a bare secondary name fails mapper init on the first
+    ORM query (often login). Schema-qualified strings hardcode the schema and
+    break SQLite tests. Always pass the Table object. Returns error strings
+    (empty = OK).
+    """
+    errors: list[str] = []
+    models_dir = service_dir / "app" / "models"
+    if not models_dir.is_dir():
+        return errors
+    for path in sorted(models_dir.glob("*.py")):
+        if path.name.startswith("_") and path.name != "__init__.py":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in _SECONDARY_STRING_RE.finditer(text):
+            name = match.group(2)
+            rel = path.relative_to(service_dir).as_posix()
+            errors.append(
+                f"RELATIONSHIP SECONDARY STRING in {rel}: secondary=\"{name}\" "
+                f"(or single-quoted). Under MetaData(schema=POSTGRES_SCHEMA) "
+                f"SQLAlchemy looks up '{name}' and fails with InvalidRequestError "
+                f"on the first ORM query (login / any select). Define a Table(...) "
+                f"named {name.split('.')[-1]} and pass that object: "
+                f"secondary={name.split('.')[-1]}. Do not use schema-qualified "
+                f"strings either — they break SQLite tests."
+            )
     return errors
 
 
@@ -3532,6 +3575,15 @@ def _run_validation_steps(
         )
         return _fail("cors_configured", detail)
     _ok("cors_configured")
+    secondary_errors = validate_relationship_secondary(service_dir)
+    if secondary_errors:
+        detail = (
+            "RELATIONSHIP_SECONDARY FAILED (string secondary= breaks schema-qualified "
+            "MetaData — first ORM query / login returns 500):\n"
+            + "\n".join(f"  - {e}" for e in secondary_errors)
+        )
+        return _fail("relationship_secondary", detail)
+    _ok("relationship_secondary")
     auth_mode_file_errors = validate_auth_mode_files(service_dir, auth_mode)
     if auth_mode_file_errors:
         detail = f"AUTH_MODE_FILES FAILED (authMode={auth_mode}):\n" + "\n".join(
@@ -3566,17 +3618,19 @@ def _run_validation_steps(
     for warn in validate_rds_parity_warnings(service_dir):
         _warn(f"rds_parity: {warn}")
 
-    from _shared.validate_orm_relationships import validate_orm_relationships
+    from _shared.validate_orm_relationships import check_orm_mappers_configure
 
-    orm_rel_errors = validate_orm_relationships(
-        service_dir, python_cmd=python_cmd, run_mapper_check=True
-    )
-    if orm_rel_errors:
-        detail = "ORM_RELATIONSHIPS FAILED (M2M / mapper init — list/CRUD would 500):\n" + "\n".join(
-            f"  - {e}" for e in orm_rel_errors
+    # String secondary= is already rejected by relationship_secondary above. This
+    # imports the models and forces mapper configuration, which also catches the
+    # wiring a regex cannot see: missing ForeignKey declarations, unresolvable
+    # back_populates targets, circular model imports.
+    orm_mapper_errors = check_orm_mappers_configure(service_dir, python_cmd=python_cmd)
+    if orm_mapper_errors:
+        detail = "ORM_MAPPERS FAILED (mapper init — login and every list/CRUD route would 500):\n" + "\n".join(
+            f"  - {e}" for e in orm_mapper_errors
         )
-        return _fail("orm_relationships", detail)
-    _ok("orm_relationships")
+        return _fail("orm_mappers", detail)
+    _ok("orm_mappers")
 
     from _shared.validate_ui_parity import (
         autofix_streamlit_api_path_slashes,

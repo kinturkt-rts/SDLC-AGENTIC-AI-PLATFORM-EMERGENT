@@ -1,0 +1,72 @@
+We manage a commercial vehicle fleet on behalf of the companies that own the vans and trucks, and we need one system to run the whole operation. Today we juggle vehicles, renters, contracts, maintenance, and owner payouts across spreadsheets and email, and things slip: rentals overlap, inspections get skipped, contracts expire without anyone noticing, and owners don't get clear statements. We want a single system that handles all of it.
+
+About our business
+
+We look after fleets owned by different corporate owners. Each owner has multiple vehicles that get rented to business customers on contracts. We collect rental charges, handle maintenance and repairs, deal with check-outs and check-ins, and pass the money on to the owners after taking our management fee. We also work with outside service shops for repairs and keep track of what we owe them.
+
+What the system needs to handle
+
+Owners. We manage fleets for many different owners. We need each owner's contact and payout details, which vehicles they own, the management fee we've agreed with them, and a running record of what we've collected on their behalf and what we've paid out to them.
+
+Vehicles. Each vehicle has a VIN, plate, make/model, class (van, box truck, sedan), odometer, and current state: available, on rent, in maintenance, or retired. A vehicle that is in maintenance or retired cannot be rented out.
+
+Customers and rental applications. Businesses apply to rent a vehicle. An application has the applicant's details, the vehicle class they want, insurance proof, and a status from submitted through approved or rejected. Only approved applicants can be put on a rental contract. We keep customer records with contact details and their history with us.
+
+Rental contracts. A contract ties a customer to a vehicle for a period of time, with a daily/weekly rate, a security deposit, start and end dates, mileage allowance, and a status such as active, ended, or broken. A vehicle can only have one active contract at a time. When a contract is active the vehicle is on rent; when it ends the vehicle becomes available again. We need to know which contracts are ending soon so we can renew or reassign them.
+
+Charges and payments. Rental charges accrue for every active contract. We need to track each charge, whether it's been paid, partially paid, or is overdue, and record the payments customers make. Late balances past a grace period incur a late fee. We need to see who owes what and how overdue they are.
+
+Security deposits. We hold each customer's deposit. When they return the vehicle we inspect it, deduct for damage beyond normal wear or excess mileage, and return the rest. We need to track the deposit, any deductions with reasons, and what was returned.
+
+Maintenance and repairs. Drivers or staff report problems with a vehicle. Each maintenance request has the vehicle, what's wrong, how urgent it is, and a status from reported through assigned, in progress, and completed. Safety-critical issues must be prioritized. We assign requests to service shops, track the cost, and mark them done. Some repairs are the owner's expense and some are ours, and this affects the owner's statement.
+
+Service shops. We work with outside shops for repairs. We keep their details, their specialties, whether they're currently approved to work for us, and a record of the jobs they've done and what we owe or have paid them. A shop that is not approved cannot be assigned new work.
+
+Inspections. We inspect vehicles at check-out, check-in, and periodically. Each inspection records the vehicle, the date, odometer, who did it, condition found, and any issues that need follow-up. Check-in inspections feed into deposit deductions.
+
+Owner statements and payouts. Each month, for every owner, we produce a statement: the rental revenue we collected on their vehicles, minus our management fee, minus any repairs that were their expense, giving the amount we owe them. We track when we've paid owners out and flag any statement that hasn't been settled.
+
+Reports our managers need. Managers want to see: which vehicles are idle and losing money, which contracts end in the next 30 days, who is behind on payments and by how much, which maintenance requests are open and how long they've been waiting, how each vehicle class is performing, and which owners are owed money. Different staff should see different things, and a fleet manager should only see the fleets they're responsible for.
+
+Important rules we must never break
+
+A vehicle that is in maintenance or retired cannot be put on a new rental contract.
+A vehicle can never have two active contracts at the same time.
+Only an approved applicant can be placed on a rental contract.
+Rental charges and payment history must never be quietly deleted or edited; corrections have to be tracked.
+Late balances past the grace period get a late fee.
+A service shop that is not approved cannot be assigned new maintenance work.
+A check-in deposit return must be based on a completed check-in inspection.
+Ended, broken, and rejected records must stay in history and never disappear.
+An owner statement must correctly reflect collected rentals minus fees minus owner-expense repairs.
+Every important change, who did it and when, must be recorded so we can always trace what happened for disputes and audits.
+
+Who uses the system
+
+Fleet managers who oversee their assigned vehicles, contracts, and maintenance.
+Leasing staff who handle applications, screening, and new contracts.
+Maintenance coordinators who take repair requests and assign service shops.
+Accounting staff who handle charges, deposits, owner statements, and payouts.
+Administrators who oversee everything across all fleets and owners.
+Read-only auditors who can review everything but change nothing.
+
+Each role should only be able to do what its job requires, and the system should decide sensible permissions for each.
+
+What success looks like
+
+The company runs the entire fleet operation from one system: onboarding owners and their vehicles, listing and renting units, screening applicants, collecting charges and chasing arrears, holding and returning deposits, handling maintenance from report to completed repair, working with service shops, inspecting vehicles, and producing accurate monthly owner statements, all while keeping a complete and trustworthy history that managers can report on and auditors can review.
+
+We want a working web application for our staff to use, along with the system that runs behind it. A mobile app isn't needed yet, but it should be possible to add one later.
+
+Must have for v1 — staff web UI
+A working React + TypeScript browser UI (Vite) for staff use — this is required, not optional
+Build the frontend with React, TypeScript, and Vite
+Use Tailwind CSS for all styling (utility classes)
+Use shadcn/ui components for forms, tables, buttons, dialogs, and layout
+Do NOT use hand-written CSS files, CSS modules, styled-components, or inline style objects for layout/theming
+Staff must sign in with username/password (JWT) and operate the fleet from the UI
+
+Stack expected
+FastAPI + Postgres + pytest for the API
+React + TypeScript + Vite + Tailwind CSS + shadcn/ui for the web UI
+No LLM features in MVP

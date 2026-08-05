@@ -559,3 +559,64 @@ def test_validate_cors_configured_passes_clean_app(tmp_path: Path) -> None:
     )
 
     assert mod.validate_cors_configured(service) == []
+
+
+def test_validate_relationship_secondary_catches_bare_string(tmp_path: Path) -> None:
+    """Regression: bookstore-inventory Author used secondary=\"book_authors\" under
+    MetaData(schema=POSTGRES_SCHEMA) → first login query raised InvalidRequestError."""
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    models = service / "app" / "models"
+    models.mkdir(parents=True)
+    (models / "author.py").write_text(
+        "from sqlalchemy.orm import relationship\n"
+        'books = relationship("Book", secondary="book_authors", back_populates="authors")\n',
+        encoding="utf-8",
+    )
+
+    errors = mod.validate_relationship_secondary(service)
+    assert len(errors) == 1
+    assert "RELATIONSHIP SECONDARY STRING" in errors[0]
+    assert "book_authors" in errors[0]
+
+
+def test_validate_relationship_secondary_catches_schema_qualified_string(
+    tmp_path: Path,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    models = service / "app" / "models"
+    models.mkdir(parents=True)
+    (models / "author.py").write_text(
+        'books = relationship("Book", secondary="bookstore_inventory.book_authors")\n',
+        encoding="utf-8",
+    )
+
+    errors = mod.validate_relationship_secondary(service)
+    assert any("bookstore_inventory.book_authors" in e for e in errors)
+
+
+def test_validate_relationship_secondary_passes_table_object(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    models = service / "app" / "models"
+    models.mkdir(parents=True)
+    (models / "author.py").write_text(
+        "from app.models.book import book_authors\n"
+        'books = relationship("Book", secondary=book_authors, back_populates="authors")\n',
+        encoding="utf-8",
+    )
+    (models / "book.py").write_text(
+        "book_authors = Table('book_authors', Base.metadata)\n"
+        'authors = relationship("Author", secondary=book_authors)\n',
+        encoding="utf-8",
+    )
+
+    assert mod.validate_relationship_secondary(service) == []
+
+
+def test_validate_relationship_secondary_noops_without_models_dir(tmp_path: Path) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "svc"
+    service.mkdir()
+    assert mod.validate_relationship_secondary(service) == []

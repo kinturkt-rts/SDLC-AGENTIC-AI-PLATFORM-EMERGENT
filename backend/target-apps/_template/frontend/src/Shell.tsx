@@ -8,8 +8,10 @@
 // App.tsx wires this up as: `<Shell onNavigate={navigate} ...>` (navigate
 // from useNavigate() — its (to: string) => void signature matches directly,
 // no wrapper needed).
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
+import { useTheme } from "next-themes";
+import { LogOut, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -19,25 +21,53 @@ export interface ShellNavItem {
   icon?: ReactNode;
 }
 
+// The 5 accent palettes defined in src/index.css. App.tsx picks exactly one
+// per app (see the frontend-agent system prompt's ACCENT PALETTE rules) and
+// passes it here; Shell applies it as a data-palette attribute on <html>,
+// which index.css's :root[data-palette="X"] / .dark[data-palette="X"] rules
+// key off of. Defaults to "teal" (the original single-accent theme) so an
+// app that omits the prop renders unchanged.
+export type ShellAccentPalette = "teal" | "blue" | "violet" | "emerald" | "rose";
+
 export interface ShellProps {
   brandName: string;
   navItems: ShellNavItem[];
   onNavigate: (to: string) => void;
   onLogout: () => void;
+  accentPalette?: ShellAccentPalette;
   children: ReactNode;
 }
 
-export function Shell({ brandName, navItems, onNavigate, onLogout, children }: ShellProps) {
+export function Shell({
+  brandName,
+  navItems,
+  onNavigate,
+  onLogout,
+  accentPalette = "teal",
+  children,
+}: ShellProps) {
   const location = useLocation();
+  const { resolvedTheme, setTheme } = useTheme();
+  const isDark = resolvedTheme !== "light";
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-palette", accentPalette);
+  }, [accentPalette]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="flex w-60 shrink-0 flex-col gap-8 border-r border-border bg-card p-8">
-        <div className="flex items-center gap-3 text-xl font-bold">
-          <span className="flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-primary to-primary-hover font-bold text-primary-foreground">
-            {brandName.charAt(0).toUpperCase()}
-          </span>
-          {brandName}
+        <div className="flex items-start justify-between gap-2 pr-1">
+          <div className="min-w-0 flex-1 text-lg font-bold leading-tight">{brandName}</div>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Toggle theme"
+            className="shrink-0"
+            onClick={() => setTheme(isDark ? "light" : "dark")}
+          >
+            {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          </Button>
         </div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => {
@@ -60,7 +90,8 @@ export function Shell({ brandName, navItems, onNavigate, onLogout, children }: S
             );
           })}
         </nav>
-        <Button variant="ghost" className="mt-auto w-full justify-start" onClick={onLogout}>
+        <Button variant="default" className="mt-auto w-full gap-2" onClick={onLogout}>
+          <LogOut className="size-4" />
           Log out
         </Button>
       </aside>
