@@ -81,10 +81,6 @@ Implement the **full MVP delivery surface** for targetApp under `target-apps/`:
 FastAPI backend **and** any UI required by `deliveryProfile` / PRD section 11 / input brief.
 
 **UI rule (highest priority after safety):**
-- If `deliveryProfile.requiresStreamlit` is true in Context, you MUST deliver **Pattern C**:
-  `app/` API + `ui/streamlit_app.py` + `ui/requirements.txt`, even if design.md omitted Streamlit.
-- If PRD/brief mentions Streamlit but design omitted it, follow PRD + deliveryProfile and note the gap.
-- Do NOT defer Streamlit to Phase 2 when deliveryProfile or PRD requires it.
 - React/Next `frontend/` only when deliveryProfile.requiresReact is true (else Phase 2).
 
 Implement using all upstream handoff artifacts in Context.
@@ -388,12 +384,9 @@ Rules — apply to every FR regardless of domain:
     apply_sql/materialize script names, seed-apply notes, or SQLite-test notes); password matches
     seed SQL comment exactly
 
-  UI parity (Pattern C / requiresStreamlit only — skip when API-only):
+  UI parity (dev_validate_app always checks this, including API-only apps):
   - `dev_validate_app` must report `UI_PARITY OK`
-  - Every design §4 collection GET implemented in FastAPI AND called from `ui/streamlit_app.py`
   - Every POST-on-collection has matching GET list (e.g. POST+GET `/api/v1/sites`)
-  - No raw UUID `st.text_input` when a list GET exists for that entity
-  - API-only: no `ui/` directory unless deliveryProfile requires Streamlit
 
 **Step 5b — VALIDATE (mandatory — do NOT skip or declare success early)**
 After all files are written and the checklist above is done:
@@ -723,17 +716,8 @@ Section numbers vary per feature. Locate content by heading text:
 ## MVP phase scope
 
 - **In scope:** Python 3.12 + FastAPI + Pydantic v2 under `target-apps/<service>/`.
-- **Streamlit UI (Pattern C):** REQUIRED when `deliveryProfile.requiresStreamlit` is true in Context,
-  or PRD section 11 / input brief requires Streamlit — even if design.md Stack omitted it.
-  Place at `ui/streamlit_app.py`; call API over HTTP; add `streamlit` to `ui/requirements.txt`;
-  README documents Terminal 1 (uvicorn) + Terminal 2 (`streamlit run ui/streamlit_app.py`).
-  Streamlit widgets: use `width="stretch"` / `width="content"` — never `use_container_width`
-  and never `width=0` (crashes live UI on Streamlit 1.41+).
-  **UI scope:** Wire Streamlit to design §4 **collection GET** routes and role-specific views — NOT every
-  internal/admin route needs a screen, but browse/create flows from the PRD MUST be usable without pasting UUIDs.
-- **API-only (Pattern B/B+/B++ without Streamlit):** FastAPI routes + pytest only — no `ui/` folder.
-  `dev_validate_app` skips Streamlit checks when `requiresStreamlit` is false.
-- **JWT vs API key:** Match design **Rules** and PRD — Streamlit must use the same auth mode
+- **API-only (Pattern B/B+/B++):** FastAPI routes + pytest only — no `ui/` folder.
+- **JWT vs API key:** Match design **Rules** and PRD for the declared auth mode
   (Bearer JWT from `POST /api/v1/auth/login`, or `X-API-Key` header when API-key auth).
 - **Out of scope (unless deliveryProfile.requiresReact):** `frontend/`, React, Next.js, Vite.
   If React is required later, note `frontend/` in open_questions when not yet in profile.
@@ -742,7 +726,7 @@ Section numbers vary per feature. Locate content by heading text:
 
 | Context key | Read how | Contents |
 |-------------|----------|----------|
-| `deliveryProfile` | Context JSON | `requiresStreamlit`, `uiPattern` — **UI mandate** |
+| `deliveryProfile` | Context JSON | `requiresReact`, `uiPattern` — **UI mandate** |
 | `prdPath` | `dev_read_file` | Goals, stories, acceptance criteria, NFRs, **§11 Delivery** |
 | `designDocPath` | `dev_read_file` | Tech stack, API surface, Rules (find by heading) |
 | `databaseHandoffPath` | `dev_read_file` | Schema summary, SQL list, DSN, ORM notes |

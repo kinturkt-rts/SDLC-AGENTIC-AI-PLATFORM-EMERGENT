@@ -91,25 +91,6 @@ def is_streamlit_ui_route(method: str, path: str) -> bool:
     return True
 
 
-def requires_streamlit(app_slug: str, app_dir: Path, repo_root: Path) -> bool:
-    """True when deliveryProfile.requiresStreamlit is explicitly true; False when
-    explicitly false. Falls back to "does ui/streamlit_app.py exist" ONLY when
-    context.json doesn't exist at all — never on a parse failure, since a
-    parse failure on an existing file (e.g. genuine corruption) must not be
-    silently confused with "no opinion was ever recorded"."""
-    from _shared.pipeline_context import read_context_json
-
-    ctx_path = repo_root / "agents" / "pipeline" / f"{app_slug}.context.json"
-    if ctx_path.is_file():
-        ctx = read_context_json(ctx_path)
-        profile = ctx.get("deliveryProfile") or {}
-        if profile.get("requiresStreamlit") is True:
-            return True
-        if profile.get("requiresStreamlit") is False:
-            return False
-    return (app_dir / "ui" / "streamlit_app.py").is_file()
-
-
 def collect_implemented_routes(app_dir: Path) -> set[tuple[str, str]]:
     """Scan routers + main.py prefixes into (METHOD, full_path)."""
     main_path = app_dir / "app" / "main.py"

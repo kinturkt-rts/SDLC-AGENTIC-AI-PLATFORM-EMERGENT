@@ -934,10 +934,13 @@ def test_step_developer_handoff_timeout_triggers_retry(
     assert "developer-agent" in runner.agents_run
 
 
-def test_frontend_required_false_when_delivery_profile_says_streamlit() -> None:
+def test_frontend_required_ignores_requires_streamlit_after_consolidation() -> None:
+    """requiresStreamlit can never be true from the classifier anymore (see
+    delivery_profile.py's scan_delivery_text), and _frontend_required() no longer
+    special-cases it — only noFrontendExplicit can skip frontend-agent now."""
     runner = object.__new__(SdlcPipelineRunner)
     runner.context = {"deliveryProfile": {"requiresReact": False, "requiresStreamlit": True}}
-    assert runner._frontend_required() is False
+    assert runner._frontend_required() is True
 
 
 def test_frontend_required_defaults_true_when_profile_missing() -> None:

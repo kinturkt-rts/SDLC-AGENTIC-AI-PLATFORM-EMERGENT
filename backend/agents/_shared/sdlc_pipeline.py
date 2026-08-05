@@ -80,8 +80,6 @@ Postgres parity (mandatory): psycopg[binary] + postgresql+psycopg:// in .env.exa
 ENUM columns use sqlalchemy.Enum(create_type=False, native_enum=True) with sqlite String variant;
 uuid columns use PG_UUID(as_uuid=False).with_variant(String(36), sqlite); Pydantic response schemas coerce UUID to str.
 Auth per design Rules only (API-key and/or JWT+bcrypt  - not both unless design requires).
-If deliveryProfile.requiresStreamlit is true: Pattern C mandatory - ui/streamlit_app.py + ui/requirements.txt;
-login via API; JWT in st.session_state or API_KEY header per auth mode; role-based tabs per PRD; README Terminal 1+2.
 tests/conftest.py: SQLite with schema ATTACH when models use POSTGRES_SCHEMA.
 When db/sql/*seed*.sql has JWT users: add tests/test_seed_bcrypt.py (from _template/tests/test_seed_bcrypt_reference.py); conftest password must match seed SQL comment.
 README: Windows+bash setup, .env copy, uvicorn, Swagger auth header, seed UUIDs, RDS smoke-test steps (GET /health + one DB list route).
@@ -1479,14 +1477,12 @@ class SdlcPipelineRunner:
     
     def _frontend_required(self) -> bool:
         """React frontend is the platform default - build it unless the brief explicitly
-        opted out (chose Streamlit instead, or explicitly said no-frontend/API-only).
+        opted out (explicitly said no-frontend/API-only).
         A brief that's simply silent about UI tech (the common case) must still get the
         default React frontend - scan_delivery_text() only sets requiresReact=True on a
         positive signal, so treating "not detected" as "explicitly rejected" would skip
         frontend-agent for most ordinary briefs, not just the ones that actually opted out."""
         delivery = self.context.get("deliveryProfile") or {}
-        if delivery.get("requiresStreamlit"):
-            return False
         if delivery.get("noFrontendExplicit"):
             return False
         return True
