@@ -6,6 +6,10 @@ server {
     listen       ${UI_PORT};
     server_name  _;
 
+    # nginx sits behind the ALB on a different public port (UI_PORT is internal-only).
+    # Without this, nginx's automatic redirects (e.g. the trailing-slash one below) build
+    absolute_redirect off;
+
     # Full-stack ALB health: nginx must be serving and FastAPI must answer.
     location = /${APP_NAME}/healthz {
         proxy_pass         http://127.0.0.1:8000/${APP_NAME}/health;

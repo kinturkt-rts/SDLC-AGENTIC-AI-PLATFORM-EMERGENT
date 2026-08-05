@@ -126,6 +126,10 @@ target-app:deploy:
       fi
     - terraform -version
     - docker info > /dev/null || (echo "Docker daemon not reachable via the host socket — ask whoever manages the runner whether /var/run/docker.sock is still bind-mounted for this runner." && exit 1)
+    
+    # Free host Docker disk before build to avoid running out of space
+    - docker system prune -af || true
+
     - git clone --depth 1 --branch "$PLATFORM_REPO_BRANCH" "https://oauth2:${GITLAB_PERSONAL_ACCESS_TOKEN}@${PLATFORM_REPO_URL#https://}" /tmp/platform
     - cp -r "$CI_PROJECT_DIR"/. /tmp/platform/backend/
     - rm -rf /tmp/platform/backend/.git
@@ -152,3 +156,6 @@ target-app:deploy:
     - cd /tmp/platform/backend
     - export PIPELINE_RUN_ID ARTIFACT_STORE
     - python3 agents/devops-agent/devops_agent.py --target-app "$SLUG" --deploy
+  after_script:
+    # Runs on success and failure — leave the shared runner clean for the next deploy.
+    - docker system prune -af || true

@@ -167,6 +167,23 @@ def test_nginx_react_proxies_docs_assets() -> None:
     assert "location = /${APP_NAME}/docs {" not in nginx
 
 
+def test_nginx_react_redirects_stay_relative_to_alb_port() -> None:
+    """Regression: nginx listens on UI_PORT (internal-only) behind the ALB's public port.
+    Without absolute_redirect off, its automatic redirects (e.g. the trailing-slash one for
+    `= /${APP_NAME}`) build a Location header from nginx's own host:port, sending the browser
+    to <alb-dns>:<UI_PORT> directly - a port the ALB never exposes - and it times out."""
+    nginx = (
+        _REPO_ROOT
+        / "target-apps"
+        / "_template"
+        / "deploy"
+        / "nginx.react.conf.template"
+    ).read_text(encoding="utf-8")
+    assert "absolute_redirect off;" in nginx
+    # Must appear before any location block so it applies to every redirect the server emits.
+    assert nginx.index("absolute_redirect off;") < nginx.index("location")
+
+
 def test_react_template_keeps_router_under_alb_app_path() -> None:
     template = (
         _REPO_ROOT / "target-apps" / "_template" / "frontend" / "src" / "main.tsx"
