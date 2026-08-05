@@ -86,16 +86,17 @@ import type {
   SdlcPhase,
   StepStatus,
 } from '@/src/types';
-/** Keep short so the dashboard pipeline strip tracks live agent progress. */
-const LIST_RUNS_TTL_MS = 2_500;
+
+const LIST_RUNS_TTL_MS = 12_000;
 const ACTIVITY_CACHE_KEY = 'listRecentActivity';
 const ARTIFACTS_CACHE_KEY = 'listArtifacts';
 const PROJECTS_CACHE_KEY = 'listProjects';
 const DASHBOARD_CACHE_KEY = 'getDashboardSummary';
 const HEAVY_LIST_TTL_MS = 30_000;
 const ACTIVITY_LIVE_TTL_MS = 8_000;
-const UUID_RUN_BUILD_BATCH = 4;
-/** run.json-only reads are cheap, so scan the store far wider than the build batch. */
+
+const UUID_RUN_BUILD_BATCH = 12;
+
 const GUARD_SCAN_BATCH = 24;
 
 function emptyPhaseDone(): Record<SdlcPhase, boolean> {
@@ -1117,10 +1118,7 @@ async function buildPipelineRunFromLive(
         };
       }
       if (runAlreadyFailed && phaseDone.publish) {
-        // Operator/log marked the run failed while deploy was still open — close it.
-        // Gated on phaseDone.publish: a run that failed before gitlab-agent ever
-        // ran (e.g. database-agent) has nothing to do with deploy/devops-agent —
-        // leave this step alone so the real failing step stays the one shown.
+
         return {
           ...step,
           status: 'failed' as StepStatus,
@@ -1277,6 +1275,30 @@ async function buildPipelineRunFromLive(
   };
 }
 
+/** completed/failed/cancelled runs are immutable - safe to cache indefinitely (until
+ * process restart). 'awaiting_deploy' is excluded: deploy can still flip pass/fail. */
+function isImmutableLiveStatus(status: string | undefined | null): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+const TERMINAL_RUN_BUILD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Cached wrapper around buildPipelineRunFromLive - skips redoing the 4-6 S3/log reads
+ * per run on every listRuns() call once a run is done and can no longer change. */
+async function buildPipelineRunFromLiveCached(
+  slug: string,
+  live: LiveRunState,
+  opts?: { includeFailureLogFallback?: boolean },
+): Promise<PipelineRun> {
+  if (!isImmutableLiveStatus(live.status)) {
+    return buildPipelineRunFromLive(slug, live, opts);
+  }
+  const cacheKey = `runBuild:${live.runId}:${opts?.includeFailureLogFallback ? 'full' : 'basic'}`;
+  return cachedAsync(cacheKey, TERMINAL_RUN_BUILD_CACHE_TTL_MS, () =>
+    buildPipelineRunFromLive(slug, live, opts),
+  );
+}
+
 function lastRunActivityMsFromParts(
   startedAt: string,
   logMtimeMs: number,
@@ -1356,7 +1378,7 @@ async function listUuidPipelineRuns(): Promise<PipelineRun[]> {
         if (!live) return null;
         const slug = featureSlugFromLive(live);
         if (!slug || isHiddenAppSlug(slug)) return null;
-        return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || runId });
+        return buildPipelineRunFromLiveCached(slug, { ...live, runId: live.runId || runId });
       }),
     );
     runs.push(...batchRuns.filter((r): r is PipelineRun => r !== null));
@@ -1396,7 +1418,7 @@ async function inferPipelineStatus(slug: string, runId?: string): Promise<RunSta
 
   if (candidateRunId) {
     const live = await readUuidRunState(candidateRunId);
-    const run = await buildPipelineRunFromLive(
+    const run = await buildPipelineRunFromLiveCached(
       slug,
       live
         ? { ...live, runId: live.runId || candidateRunId }
@@ -1778,10 +1800,6 @@ async function phaseCompletionForRun(
       f.key.startsWith(prefix) ? f.key.slice(prefix.length) : f.key,
     );
     const has = (pred: (rel: string) => boolean) => rels.some(pred);
-    // Implementation/deploy: ONLY "handoff succeeded" counts as done while a handoff exists.
-    // Falling back to "any .py file exists" made live runs jump to GitLab while developer
-    // was still writing (status=in_progress). Artifact fallback is only for legacy runs
-    // that never wrote a developer handoff at all.
     const hasAppCode =
       has((r) => r.includes('/app/') && r.endsWith('.py')) ||
       has((r) => r.endsWith('/requirements.txt'));
@@ -1963,7 +1981,7 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
         const batchRuns = await Promise.all(
           batch.map(async ([slug, runId]) => {
             const live = await readUuidRunState(runId);
-            return buildPipelineRunFromLive(
+            return buildPipelineRunFromLiveCached(
               slug,
               live ?? {
                 runId,
@@ -1995,7 +2013,7 @@ async function listRunsUncached(): Promise<PipelineRun[]> {
     if (coveredRunIds.has(runId)) continue;
 
     if (live) {
-      runs.push(await buildPipelineRunFromLive(slug, live));
+      runs.push(await buildPipelineRunFromLiveCached(slug, live));
       continue;
     }
 
@@ -2099,7 +2117,7 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
     if (live) {
       const slug = featureSlugFromLive(live);
       if (slug) {
-        return buildPipelineRunFromLive(slug, { ...live, runId: live.runId || id }, {
+        return buildPipelineRunFromLiveCached(slug, { ...live, runId: live.runId || id }, {
           includeFailureLogFallback: true,
         });
       }
@@ -2116,7 +2134,7 @@ export async function getRun(id: string): Promise<PipelineRun | undefined> {
     if (slug) {
       const bySlug = runs.find((r) => r.projectId === slug);
       if (bySlug) return bySlug;
-      return buildPipelineRunFromLive(slug, { ...slugRunState, runId: slugRunState.runId || id }, {
+      return buildPipelineRunFromLiveCached(slug, { ...slugRunState, runId: slugRunState.runId || id }, {
         includeFailureLogFallback: true,
       });
     }

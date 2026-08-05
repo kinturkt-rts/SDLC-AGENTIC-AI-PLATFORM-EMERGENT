@@ -418,12 +418,12 @@ agents:
     is_generated_by_agentcore_create: false
   frontend_agent:
     name: frontend_agent
-    entrypoint: C:/Users/AryanHirlekar/Desktop/project/sdlc-agentic-ai/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
+    entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
     platform: linux/arm64
     container_runtime: none
-    source_path: C:\Users\AryanHirlekar\Desktop\project\sdlc-agentic-ai\sdlc-agentic-ai-platform\backend
+    source_path: C:\Juno Projects\sdlc-agentic-ai-platform\backend
     aws:
       execution_role: arn:aws:iam::061836593297:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-182c0ff471
       execution_role_auto_create: false

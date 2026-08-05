@@ -915,6 +915,30 @@ def test_frontend_required_defaults_true_when_profile_missing() -> None:
     assert runner._frontend_required() is True
 
 
+def test_frontend_required_true_when_brief_silent_about_ui() -> None:
+    """Regression: a brief that never mentions frontend tech (the common case) scans to
+    requiresReact=False (scan_delivery_text only sets it True on a positive signal) - that
+    must still default to building the React frontend, not be treated as an explicit opt-out."""
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.context = {
+        "deliveryProfile": {
+            "uiRequired": False,
+            "requiresReact": False,
+            "requiresStreamlit": False,
+            "noFrontendExplicit": False,
+        }
+    }
+    assert runner._frontend_required() is True
+
+
+def test_frontend_required_false_when_no_frontend_explicit() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.context = {
+        "deliveryProfile": {"requiresReact": False, "noFrontendExplicit": True}
+    }
+    assert runner._frontend_required() is False
+
+
 def test_frontend_a2a_handoff_payload_includes_run_id_and_target_app(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
