@@ -124,6 +124,7 @@
         "frontend/tsconfig.node.json",
         "frontend/.gitignore",
         "frontend/.env",
+        "frontend/src/vite-env.d.ts",
         "frontend/src/main.tsx",
         "frontend/src/App.tsx",
         "frontend/src/index.css",

@@ -1380,6 +1380,9 @@ _PROTECTED_PATHS = {
     "tsconfig.json",
     "tsconfig.app.json",
     "tsconfig.node.json",
+    "src/vite-env.d.ts",  # ambient import.meta.env / *.css types; tsconfig.app.json
+                          # sets types: [] and relies on this file, so a rewrite
+                          # breaks `tsc -b` in the UI image build.
 }
 # Directory-prefix entry: shadcn's own copied-in primitives (button/input/select/
 # table/card/badge/dialog/alert/...). Identical every app; any per-app variant
