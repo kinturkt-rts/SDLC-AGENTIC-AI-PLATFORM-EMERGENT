@@ -113,23 +113,6 @@ drop it from the manifest silently. Mark it `# NOT IMPLEMENTED: <method> <path> 
 in the manifest AND repeat that exact line in the `### not_implemented` section of your final handoff
 summary (Step 5b). A route that is simply absent, with no NOT IMPLEMENTED line anywhere, is a bug.
 
-**Step 0b — UI manifest (Pattern C / requiresStreamlit ONLY — skip for API-only apps)**
-When `deliveryProfile.requiresStreamlit` is true, build a second manifest from design §4 + PRD roles:
-  # UI manifest (Streamlit calls API over HTTP — never import app/):
-  # - Auth gate: login_form() shown when st.session_state.token absent → ALL other content hidden
-  # - GET  /api/v1/work-orders     → requester "My Orders" table + admin triage table
-  # - GET  /api/v1/sites           → admin Sites table + requester create-WO selectbox
-  # - GET  /api/v1/dashboard/sla   → leadership dashboard
-  # - Role tabs: viewer=[A,B]; editor=[A,B,C]; admin=[A,B,C,D]
-The auth gate line is REQUIRED when the PRD or design Rules specify any auth/RBAC requirement.
-"Unauthenticated users see only the login screen" is a UI requirement, NOT just an API 401 — API guards
-alone do NOT satisfy it; the Streamlit app itself must enforce it.
-Every **collection GET** in design §4 (paths without `{id}`) MUST have a Streamlit `_get()` in at least one role view.
-Every **POST create** on a collection (`POST /api/v1/sites`) MUST have matching **GET list** in the API (paginated) — do not ship create-only.
-Forms MUST use `st.selectbox` / `st.multiselect` fed from list GETs — never `st.text_input("Site ID")` when `GET /api/v1/sites` exists.
-After POST/PATCH success call `st.rerun()` so tables refresh.
-**API-only apps** (`requiresStreamlit` false): implement FastAPI + tests only — do NOT create `ui/streamlit_app.py`.
-
 **Step 0c — FR acceptance checklist (MANDATORY when prdPath is set)**
 After Step 1a (reading the PRD), produce a numbered checklist mapping EVERY FR and NFR to its
 implementation before writing any file. This is the FR equivalent of the route manifest:
@@ -185,7 +168,6 @@ Rules — apply to every FR regardless of domain:
        - Postgres CRUD, no LLM     → postgres      (app/ + db models)      (legacy: B)
        - Postgres + Bedrock/LLM    → postgres-llm  (postgres + services/)  (legacy: B+)
        - Postgres + pgvector + RAG → rag           (postgres-llm + retriever) (legacy: B++)
-       - Any above + "streamlit"   → streamlit     (backend + ui/streamlit_app.py) (legacy: C)
     State your chosen pattern and cite the design heading before writing any file.
 
 2c. **Scaffold golden template (postgres / postgres-llm / rag / streamlit patterns) — ONE tool call, not manual copies:**
@@ -480,13 +462,12 @@ _BLOCKED_PATH_PARTS = frozenset({".venv", "node_modules", "__pycache__", ".pytes
 _written_files: list[str] = []
 _run_context: dict[str, Any] | None = None
 
-# Descriptive pattern names. Legacy A/B/B+/B++/C codes still accepted via _PATTERN_ALIASES.
+# Descriptive pattern names. Legacy A/B/B+/B++ codes still accepted via _PATTERN_ALIASES.
 _PATTERN_KEYS: tuple[str, ...] = (
     "in-memory",
     "postgres",
     "postgres-llm",
     "rag",
-    "streamlit",
 )
 
 # Map legacy codes to current names so existing briefs and docs still resolve.
@@ -495,7 +476,6 @@ _PATTERN_ALIASES: dict[str, str] = {
     "B": "postgres",
     "B+": "postgres-llm",
     "B++": "rag",
-    "C": "streamlit",
 }
 
 _PATTERN_LAYOUTS: dict[str, str] = {
@@ -573,51 +553,11 @@ requirements.txt adds: pypdf, python-docx, pgvector, boto3.
                     CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
                     PDF_STORAGE_DIR=./uploaded_pdfs.
 """,
-    "streamlit": """\
-**Pattern: streamlit (legacy: C) — any backend pattern + Streamlit UI:**
-When tech stack includes `streamlit`:
-```
-app/  (postgres or postgres-llm backend, unchanged — golden template files)
-ui/
-  streamlit_app.py   [SCAFFOLD — then add app-specific tabs/forms]
-  requirements.txt   [SCAFFOLD — add app-specific packages if needed]
-```
-The Streamlit template includes:
-- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
-- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
-- API_KEY + API_BASE_URL config from .env
-ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
-startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
-**UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
-list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
-inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
-**Streamlit API paths (CRITICAL — live ALB 404s):** Paths passed to `_get`/`_post`/`_patch`/`_delete`
-MUST be exact FastAPI routes with **single** slashes — never concatenate a trailing `/` on a prefix
-with a leading `/` on a segment. Wrong: `"/api/v1/admin//status"`, `"/api/v1//query"`.
-Right: `"/api/v1/admin/status"`, `"/api/v1/query"`. FastAPI returns `{"detail":"Not Found"}` for `//`
-paths while login/`/health` still work — looks like ALB breakage but is a UI path bug.
-Keep the scaffold `_api_url()` helper (collapses accidental `//` at runtime); do not remove it.
-`dev_validate_app` auto-fixes `/api/...` string literals with `//` and fails UI_PARITY if any remain.
-**Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Never
-`width=0` / `width=False` (StreamlitInvalidWidthError on Streamlit 1.41+). Use only
-`width="stretch"` for full-width dataframes/buttons, or `width="content"` to fit content.
-**Streamlit string literals:** Never put a raw newline inside `"..."` / `f"..."` quotes.
-Use `"line1\\nline2"` escapes or adjacent string concatenation on one logical statement.
-Broken multiline f-strings pass some editors but crash live UI (`SyntaxError: unterminated f-string`)
-while `_stcore/health` can still return 200 — CI looks green, browser shows Script execution error / 502.
-**Arrow-safe dataframes:** In `st.dataframe`/`st.table` data, never mix string placeholders
-("—", "N/A", "") into numeric columns — pass `None` for missing values (Arrow rejects mixed-type
-columns). Placeholders belong in display formatting (`st.column_config.NumberColumn(format=...)`)
-or single-value widgets like `st.metric`, never in the DataFrame itself.
-README: **Terminal 2** — separate **PowerShell (Windows)** and **Bash** blocks: `cd target-apps/<app>`,
-`.\\.venv\\Scripts\\Activate.ps1` (Windows) or `source .venv/bin/activate` (bash), `cd ui`, then
-`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
-""",
 }
 
 
 def _canonical_pattern(name: str | None) -> str | None:
-    """Resolve a pattern name. Accepts both new names and legacy A/B/B+/B++/C codes."""
+    """Resolve a pattern name. Accepts both new names and legacy A/B/B+/B++ codes."""
     if not name:
         return None
     if name in _PATTERN_LAYOUTS:
@@ -626,7 +566,7 @@ def _canonical_pattern(name: str | None) -> str | None:
 
 
 def _compose_pattern_section(included: tuple[str, ...] | None = None) -> str:
-    """Render the Project layout patterns block. None = all 5 (legacy behavior)."""
+    """Render the Project layout patterns block. None = all 4 (legacy behavior)."""
     canonical = tuple(filter(None, (_canonical_pattern(k) for k in (included or _PATTERN_KEYS))))
     if not canonical:
         canonical = _PATTERN_KEYS
@@ -649,7 +589,6 @@ def _infer_pattern_from_context(ctx: dict[str, Any] | None) -> str | None:
                 text = path.read_text(encoding="utf-8", errors="replace").lower()
             except OSError:
                 text = ""
-    has_streamlit = "streamlit" in text
     has_rag = ("pgvector" in text) or ("retrieval" in text and "embed" in text)
     has_llm = any(token in text for token in ("bedrock", "claude", "/chat"))
     has_postgres = (
@@ -658,8 +597,6 @@ def _infer_pattern_from_context(ctx: dict[str, Any] | None) -> str | None:
         or "postgres" in text
         or "sqlalchemy" in text
     )
-    if has_streamlit:
-        return "streamlit"
     if has_rag and has_postgres:
         return "rag"
     if has_llm and has_postgres:
@@ -1799,8 +1736,8 @@ def _resolve_scaffold_pattern_for_auth_mode(pattern: str, auth_mode: str) -> str
     """Swap base pattern "B" for "B-api-key" when authMode is api-key.
 
     jwt (default) is byte-identical to today: "B" resolves to "B" exactly.
-    B+/B++/C (which extend "B") are not branched yet — an api-key app needing
-    Bedrock/Streamlit is a follow-up, not handled here.
+    B+/B++ (which extend "B") are not branched yet — an api-key app needing
+    Bedrock is a follow-up, not handled here.
     """
     if pattern == "B" and auth_mode == "api-key":
         return "B-api-key"
@@ -1811,14 +1748,14 @@ def _resolve_scaffold_pattern_for_auth_mode(pattern: str, auth_mode: str) -> str
 def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
     """Copy golden template infrastructure into target-apps/<service>/.
 
-    Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++, C.
+    Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++.
     Manifest: target-apps/_template/scaffold-manifest.json
     Pattern "B" automatically resolves to the api-key file set instead of the JWT
     trio when the run's authMode context is "api-key" — callers still just pass "B".
 
     Args:
         service: target app slug (e.g. standup-tracker)
-        pattern: B | B+ | B++ | C
+        pattern: B | B+ | B++
         force: when True, overwrite existing scaffold files from _template/
     """
     resolved_pattern = _resolve_scaffold_pattern_for_auth_mode(pattern, _current_auth_mode())
@@ -4217,8 +4154,8 @@ def _build_agent(
         description=(
             "Implements backend API code under target-apps/ from PRD, design doc, "
             "database-agent handoff, and scraped research. "
-            "Patterns: in-memory, postgres, postgres-llm, rag, streamlit "
-            "(legacy aliases: A, B, B+, B++, C)."
+            "Patterns: in-memory, postgres, postgres-llm, rag "
+            "(legacy aliases: A, B, B+, B++)."
         ),
         model=_coding_model(ctx),
         system_prompt=_build_system_prompt(ctx),
@@ -4687,10 +4624,10 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
             id="implement_feature",
             name="implement_feature",
             description=(
-                "Implement backend API + optional Streamlit UI under target-apps/. "
-                "Patterns A/B/B+/B++/C. Stack driven by design doc tech stack section."
+                "Implement backend API under target-apps/. "
+                "Patterns A/B/B+/B++. Stack driven by design doc tech stack section."
             ),
-            tags=["development", "fastapi", "python", "streamlit", "rag", "bedrock"],
+            tags=["development", "fastapi", "python", "rag", "bedrock"],
         )
     ]
     agent = _build_agent()

@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-_VALID_PATTERNS = ("B", "B-api-key", "B+", "B++", "C", "F", "F-api-key")
+_VALID_PATTERNS = ("B", "B-api-key", "B+", "B++", "F", "F-api-key")
 
 
 def load_manifest(manifest_path: Path) -> dict[str, Any]:

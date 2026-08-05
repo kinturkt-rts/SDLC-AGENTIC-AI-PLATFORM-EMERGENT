@@ -620,3 +620,82 @@ def test_validate_relationship_secondary_noops_without_models_dir(tmp_path: Path
     service = tmp_path / "svc"
     service.mkdir()
     assert mod.validate_relationship_secondary(service) == []
+
+
+# ── Streamlit removal step 3: pattern C / streamlit retired from the generation layer ──
+
+
+def test_pattern_registries_no_longer_expose_streamlit() -> None:
+    """Streamlit (legacy Pattern C) is retired as a developer-agent scaffold target —
+    the descriptive pattern set and its legacy-code aliases must no longer expose it,
+    while in-memory/postgres/postgres-llm/rag and their A/B/B+/B++ aliases stay intact."""
+    mod = _load_agent_module()
+    assert mod._PATTERN_KEYS == ("in-memory", "postgres", "postgres-llm", "rag")
+    assert "streamlit" not in mod._PATTERN_LAYOUTS
+    assert mod._PATTERN_ALIASES == {
+        "A": "in-memory",
+        "B": "postgres",
+        "B+": "postgres-llm",
+        "B++": "rag",
+    }
+
+
+def test_compose_pattern_section_excludes_streamlit() -> None:
+    mod = _load_agent_module()
+    section = mod._compose_pattern_section()
+    assert "streamlit" not in section.lower()
+    for expected in ("in-memory", "postgres", "postgres-llm", "rag"):
+        assert expected in section
+
+
+def test_infer_pattern_from_context_never_returns_streamlit(tmp_path: Path) -> None:
+    """A design doc that still mentions Streamlit (stale PRD language) must fall through
+    to the postgres/llm/rag inference instead of short-circuiting to a pattern
+    developer-agent can no longer scaffold."""
+    mod = _load_agent_module()
+    design = tmp_path / "design.md"
+    design.write_text(
+        "Tech stack: FastAPI, Postgres, Streamlit UI at ui/streamlit_app.py.",
+        encoding="utf-8",
+    )
+    assert mod._infer_pattern_from_context({"designDocPath": str(design)}) == "postgres"
+
+
+def test_infer_pattern_from_context_streamlit_plus_rag_still_infers_rag(
+    tmp_path: Path,
+) -> None:
+    mod = _load_agent_module()
+    design = tmp_path / "design.md"
+    design.write_text(
+        "Tech stack: FastAPI, Postgres, pgvector retrieval with embeddings, "
+        "Streamlit UI at ui/streamlit_app.py.",
+        encoding="utf-8",
+    )
+    assert mod._infer_pattern_from_context({"designDocPath": str(design)}) == "rag"
+
+
+def test_default_pipeline_task_drops_step_0b_and_pattern_c_bullet() -> None:
+    mod = _load_agent_module()
+    assert "Step 0b" not in mod.DEFAULT_PIPELINE_TASK
+    assert "legacy: C" not in mod.DEFAULT_PIPELINE_TASK
+
+
+def test_scaffold_manifest_and_valid_patterns_drop_pattern_c() -> None:
+    """The 'C' scaffold-manifest entry (ui/streamlit_app.py + ui/requirements.txt) and its
+    entry in scaffold.py's _VALID_PATTERNS must both be gone together — leaving one
+    without the other would either dead-end dev_scaffold(pattern="C") on a manifest
+    lookup failure instead of a clean ValueError, or accept a pattern the manifest no
+    longer defines. React frontend patterns (owned by frontend-agent) stay untouched."""
+    _load_agent_module()  # puts agents/ on sys.path so `import scaffold` resolves
+    import scaffold
+
+    assert "C" not in scaffold._VALID_PATTERNS
+    manifest = scaffold.load_manifest(
+        _REPO_ROOT / "target-apps" / "_template" / "scaffold-manifest.json"
+    )
+    assert "C" not in manifest["patterns"]
+    assert "ui/streamlit_app.py" not in manifest.get("customize_after_scaffold", [])
+    assert "F" in scaffold._VALID_PATTERNS
+    assert "F-api-key" in scaffold._VALID_PATTERNS
+    assert "F" in manifest["patterns"]
+    assert "F-api-key" in manifest["patterns"]
