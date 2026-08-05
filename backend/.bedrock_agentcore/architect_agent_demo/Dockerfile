@@ -59,6 +59,14 @@ COPY scripts /app/scripts
 COPY config /app/config
 # Terraform module + env roots (devops-agent generates/validates per-app roots here).
 COPY infrastructure /app/infrastructure
+# frontend-agent scaffolds from target-apps/_template/ (patterns F, F-api-key) at
+# runtime; baked into every image (small, golden-scaffold-only footprint) rather
+# than fetched from S3, so a fresh frontend-agent container can scaffold without
+# depending on scripts/publish-template-to-s3.py having been run first.
+# developer-agent's own _resolve_template_dir() (agents/developer-agent/developer_agent.py)
+# already prefers local disk before falling back to S3, so this is a pure
+# improvement for it too — not a behavior change for any other agent.
+COPY target-apps/_template /app/target-apps/_template
 
 RUN if [ "$INSTALL_GITLAB_MCP_BINARY" = "true" ]; then \
       mkdir -p /app/bin \

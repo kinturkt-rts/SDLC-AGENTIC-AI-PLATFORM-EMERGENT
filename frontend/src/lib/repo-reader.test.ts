@@ -8,6 +8,7 @@ const emptyPhases: Record<SdlcPhase, boolean> = {
   architecture: false,
   data: false,
   implementation: false,
+  frontend: false,
   qa: false,
   security: false,
   publish: false,

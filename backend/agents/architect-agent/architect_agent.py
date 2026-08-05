@@ -521,7 +521,7 @@ def _diagram_work_dir() -> Path:
 
 def _bedrock_model() -> BedrockModel:
     return BedrockModel(
-        model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         streaming=True,
         cache_config=CacheConfig(strategy="auto"),
@@ -530,7 +530,7 @@ def _bedrock_model() -> BedrockModel:
 
 
 def _model_id() -> str:
-    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0").strip()
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
 
 
 def _build_agent(tools: list[Any], *, telemetry: RunTelemetry | None = None) -> Agent:

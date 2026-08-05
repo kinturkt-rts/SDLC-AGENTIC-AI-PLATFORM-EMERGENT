@@ -3,7 +3,7 @@
   "environment": "demo",
   "region": "us-east-2",
   "accountId": "061836593297",
-  "mvpPipeline": [
+  "sdlcPipeline": [
     "orchestrator-agent",
     "product-agent",
     "architect-agent",

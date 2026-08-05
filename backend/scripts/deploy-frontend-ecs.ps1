@@ -2,15 +2,6 @@
 #
 # Prereqs:
 #   aws sso login --profile eks-admin-user
-#   .\scripts\push-frontend-ecr.ps1
-#   IAM task role sdlc-control-plane-task (S3 artifact bucket, CloudWatch Logs, bedrock-agentcore:InvokeAgentRuntime)
-#
-# Usage (from backend/):
-#   .\scripts\deploy-frontend-ecs.ps1 -WhatIf
-#   .\scripts\deploy-frontend-ecs.ps1
-#   .\scripts\push-frontend-ecr.ps1 -Demo; .\scripts\deploy-frontend-ecs.ps1 -Demo
-#
-# Estimated cost (dev-tier demo): ~1 Fargate 0.5vCPU/1GB (~$18/mo) + ALB (~$16/mo) + CloudFront (low).
 
 param(
     [string] $Region = "us-east-2",
@@ -270,7 +261,7 @@ $taskDefRaw = [regex]::Replace(
     ('"name": "GITLAB_URL", "value": "' + $gitlabUrl + '"')
 )
 $taskDefFile = Join-Path $env:TEMP "sdlc-control-plane-task-def.json"
-# AWS CLI rejects UTF-8 BOM in --cli-input-json files (PowerShell 5 default utf8 adds BOM).
+
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($taskDefFile, $taskDefRaw, $utf8NoBom)
 

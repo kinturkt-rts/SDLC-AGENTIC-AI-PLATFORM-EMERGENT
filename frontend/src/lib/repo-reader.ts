@@ -104,6 +104,7 @@ function emptyPhaseDone(): Record<SdlcPhase, boolean> {
     architecture: false,
     data: false,
     implementation: false,
+    frontend: false,
     qa: false,
     security: false,
     publish: false,
@@ -136,6 +137,7 @@ const PIPELINE_AGENT_ORDER = [
   'architect-agent',
   'database-agent',
   'developer-agent',
+  'frontend-agent',
   'gitlab-agent',
   'qa-agent',
 ] as const;
@@ -179,6 +181,7 @@ const PHASES: SdlcPhase[] = [
   'architecture',
   'data',
   'implementation',
+  'frontend',
   'qa',
   'security',
   'publish',
@@ -190,6 +193,7 @@ const phaseAgent: Record<SdlcPhase, AgentName> = {
   architecture: 'architect-agent',
   data: 'database-agent',
   implementation: 'developer-agent',
+  frontend: 'frontend-agent',
   qa: 'qa-agent',
   security: 'security-agent',
   publish: 'gitlab-agent',
@@ -201,6 +205,7 @@ const agentPhase: Record<string, SdlcPhase> = {
   'architect-agent': 'architecture',
   'database-agent': 'data',
   'developer-agent': 'implementation',
+  'frontend-agent': 'frontend',
   'qa-agent': 'qa',
   'security-agent': 'security',
   'gitlab-agent': 'publish',
@@ -242,6 +247,7 @@ const AGENT_DISPLAY: Record<
   'architect-agent': { displayName: 'Architect', phase: 'architecture' },
   'database-agent': { displayName: 'Database', phase: 'data' },
   'developer-agent': { displayName: 'Developer', phase: 'implementation' },
+  'frontend-agent': { displayName: 'Frontend', phase: 'frontend' },
   'qa-agent': { displayName: 'QA', phase: 'qa' },
   'devops-agent': { displayName: 'DevOps', phase: 'deploy' },
   'gitlab-agent': { displayName: 'GitLab', phase: 'publish' },
@@ -268,6 +274,7 @@ const ONLINE_AGENTS = new Set<string>([
   'architect-agent',
   'database-agent',
   'developer-agent',
+  'frontend-agent',
   'gitlab-agent',
   'devops-agent',
 ]);
@@ -1510,6 +1517,7 @@ function artifactProducer(kind: ArtifactKind, relPath?: string): AgentName {
     const lower = relPath.toLowerCase();
     if (lower.includes('/db/') && (lower.endsWith('.sql') || lower.endsWith('handoff.md')))
       return 'database-agent';
+    if (lower.includes('/frontend/') || lower.includes('/ui/')) return 'frontend-agent';
   }
   switch (kind) {
     case 'prd':
@@ -1749,6 +1757,7 @@ async function phaseCompletion(slug: string, ctx: PipelineContextFile | null): P
     architecture: hasDesign,
     data: hasSql || (await handoffExists(slug, 'database-handoff.json')),
     implementation: await handoffExists(slug, 'developer-handoff.json'),
+    frontend: await fileExists(path.join(getBackendRoot(), 'target-apps', slug, 'frontend', 'package.json')),
     qa: await handoffExists(slug, 'qa-handoff.json'),
     security: await handoffExists(slug, 'security-handoff.json'),
     publish: await handoffExists(slug, 'gitlab-handoff.json'),
@@ -1789,6 +1798,11 @@ async function phaseCompletionForRun(
         has((r) => r.includes('/diagrams/') && (r.endsWith('.png') || r.endsWith('.svg'))),
       data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
       implementation: devSuccess || (!hasDevHandoff && hasAppCode),
+      frontend: has(
+        (r) =>
+          (r.includes('/frontend/') || r.includes(`${slug}/frontend/`)) &&
+          r.endsWith('package.json'),
+      ),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
       publish: gitlabSuccess,
@@ -1827,6 +1841,7 @@ async function phaseCompletionForRun(
         has((r) => r.includes('/diagrams/')),
       data: has((r) => r.includes('/db/sql/') && r.endsWith('.sql')),
       implementation: devSuccess || (!hasDevHandoff && hasAppCode),
+      frontend: has((r) => r.includes('/frontend/') && r.endsWith('package.json')),
       qa: has((r) => r.includes('qa-handoff')),
       security: has((r) => r.toLowerCase().includes('security-handoff')),
       publish: gitlabSuccess,
@@ -2411,7 +2426,7 @@ async function getDashboardSummaryUncached(): Promise<DashboardSummary> {
     activeRuns: 0,
     pendingApprovals: 0,
     agentsOnline: specialists.filter((a) => a.availability === 'online').length,
-    agentsTotal: 8,
+    agentsTotal: Math.max(specialists.length, 9),
     mcpHealthy: mcp.length,
     mcpTotal: mcp.length,
   };

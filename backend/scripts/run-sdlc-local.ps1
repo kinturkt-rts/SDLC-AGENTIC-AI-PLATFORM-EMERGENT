@@ -613,6 +613,19 @@ if (-not $SkipVerify) {
 
 # 5b) Frontend-agent -> React frontend from OpenAPI contract (runs by default; -SkipFrontend to disable).
 # Mirrors sdlc_pipeline _step_frontend (local transport): passes --full-regen for a clean from-scratch build.
+# Skip when deliveryProfile explicitly chose a non-React UI (e.g. Streamlit) or API-only -
+# mirrors sdlc_pipeline._frontend_required(); absent/unknown profile still defaults to required.
+$frontendRequired = $true
+if (Test-Path $ctxPath) {
+    try {
+        $dp = (Get-Content $ctxPath -Raw | ConvertFrom-Json).deliveryProfile
+        if ($null -ne $dp.requiresReact) { $frontendRequired = [bool]$dp.requiresReact }
+    } catch { }
+}
+if ($runFrontend -and -not $frontendRequired) {
+    Write-Host "`n=== 5b/6 frontend-agent skipped - deliveryProfile does not require a React frontend ===" -ForegroundColor Yellow
+    $runFrontend = $false
+}
 if ($runFrontend) {
     Write-Host "`n=== 5b/6 frontend-agent (React from OpenAPI contract) ===" -ForegroundColor Green
     $frontendArgs = @(

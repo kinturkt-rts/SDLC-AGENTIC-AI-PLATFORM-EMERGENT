@@ -50,7 +50,9 @@ from .pipeline_context import (
 logger = logging.getLogger(__name__)
 
 # Specialists that write artifacts directly to S3 (runId in context) — no local sync.
-_S3_DIRECT_WRITE_AGENTS = frozenset({"product-agent", "database-agent", "developer-agent"})
+_S3_DIRECT_WRITE_AGENTS = frozenset(
+    {"product-agent", "database-agent", "developer-agent", "frontend-agent"}
+)
 
 
 def _safe_print(text: str, *, file: Any = None) -> None:
@@ -107,18 +109,22 @@ WEB_CRAWLER_TASK = (
     "Scrape URLs from context scrapeUrls or requirements; persist markdown and Postgres rows."
 )
 
-# Canonical chain (orchestrator diagram): FE -> ORCH -> PROD -> ARCH -> DB -> DEV -> GL -.-> QA
+# Canonical chain (orchestrator diagram):
+# FE(UI) -> ORCH -> PROD -> ARCH -> DB -> DEV -> FRONTEND -> GL -.-> QA
+# frontend-agent is always-on (with_frontend default True); skip_frontend is the escape hatch.
 PIPELINE_STEPS: tuple[str, ...] = (
     "product-agent",
     "architect-agent",
     "database-agent",
     "developer-agent",
+    "frontend-agent",
     "gitlab-agent",
     "qa-agent",
 )
 
 DEFAULT_A2A_TIMEOUT_SEC = 600
 DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC = 2400
+DEFAULT_FRONTEND_A2A_TIMEOUT_SEC = 2400
 # Re-attempts after the first developer-agent failure (SDLC_DEVELOPER_RETRY_ATTEMPTS).
 DEFAULT_DEVELOPER_RETRY_ATTEMPTS = 1
 # Fallback model for developer retries (DEVELOPER_AGENT_FALLBACK_MODEL_ID).
@@ -146,7 +152,7 @@ class PipelineOptions:
     skip_gitlab: bool = False
     with_qa: bool = False
     skip_qa: bool = False
-    with_frontend: bool = False
+    with_frontend: bool = True
     skip_frontend: bool = False
     with_jira: bool = False
     jira_project: str = ""
@@ -299,7 +305,15 @@ class SdlcPipelineRunner:
                 self._step_verify()
             
             if _should_run_frontend(self.options):
-                self._step_frontend()
+                if self._frontend_required():
+                    self._step_frontend()
+                else:
+                    delivery = self.context.get("deliveryProfile") or {}
+                    print(
+                        f"[orchestrator] Skipping frontend-agent: deliveryProfile.uiPattern="
+                        f"{delivery.get('uiPattern')!r} does not require a React frontend.",
+                        file=sys.stderr,
+                    )
 
             gitlab_ran = False
             if _should_run_gitlab(self.options):
@@ -345,37 +359,45 @@ class SdlcPipelineRunner:
         return self.root / "agents" / "pipeline" / "runs" / self.run_id / "run.json"
 
     def _default_steps(self) -> list[dict[str, str]]:
-        """Frontend-compatible step skeleton (matches pipeline-run.ts run.json seed)."""
+        """Control-plane-compatible step skeleton (matches pipeline-run.ts run.json seed).
+
+        frontend-agent is queued when with_frontend (default True) and not skip_frontend.
+        """
         opts = self.options
         return [
             {
                 "name": "product-agent",
-                "label": "1/6 Product (PRD)",
+                "label": "1/7 Product (PRD)",
                 "status": "skipped" if opts.skip_product else "queued",
             },
             {
                 "name": "architect-agent",
-                "label": "2/6 Architect (design + diagram)",
+                "label": "2/7 Architect (design + diagram)",
                 "status": "skipped" if opts.skip_architect else "queued",
             },
             {
                 "name": "database-agent",
-                "label": "3/6 Database (SQL migrations)",
+                "label": "3/7 Database (SQL migrations)",
                 "status": "skipped" if opts.skip_db else "queued",
             },
             {
                 "name": "developer-agent",
-                "label": "4/6 Developer (FastAPI)",
+                "label": "4/7 Developer (FastAPI)",
                 "status": "skipped" if opts.skip_developer else "queued",
             },
             {
+                "name": "frontend-agent",
+                "label": "5/7 Frontend (React)",
+                "status": "queued" if _should_run_frontend(opts) else "skipped",
+            },
+            {
                 "name": "gitlab-agent",
-                "label": "5/6 GitLab publish",
+                "label": "6/7 GitLab publish",
                 "status": "queued" if _should_run_gitlab(opts) else "skipped",
             },
             {
                 "name": "qa-agent",
-                "label": "6/6 QA (optional)",
+                "label": "7/7 QA (optional)",
                 "status": "queued" if _should_run_qa(opts) else "skipped",
             },
         ]
@@ -621,22 +643,24 @@ class SdlcPipelineRunner:
         step: str,
         include_db_paths: bool = False,
         extra_context: dict[str, Any] | None = None,
-    ) -> None:
+        attach_context: bool = True,
+    ) -> str:
         self._update_run_json(current_step=step)
-        timeout = (
-            DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC
-            if agent_name == "developer-agent"
-            else DEFAULT_A2A_TIMEOUT_SEC
-        )
-        env_key = (
-            "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC"
-            if agent_name == "developer-agent"
-            else "SDLC_AGENT_TIMEOUT_SEC"
-        )
+        if agent_name == "developer-agent":
+            timeout = DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC
+            env_key = "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC"
+        elif agent_name == "frontend-agent":
+            timeout = DEFAULT_FRONTEND_A2A_TIMEOUT_SEC
+            env_key = "SDLC_FRONTEND_AGENT_TIMEOUT_SEC"
+        else:
+            timeout = DEFAULT_A2A_TIMEOUT_SEC
+            env_key = "SDLC_AGENT_TIMEOUT_SEC"
         timeout = int(os.getenv(env_key, str(timeout)))
-        context = self._context_for_agent(include_db_paths=include_db_paths)
-        if extra_context:
-            context.update(extra_context)
+        context: dict[str, Any] | None = None
+        if attach_context:
+            context = self._context_for_agent(include_db_paths=include_db_paths)
+            if extra_context:
+                context.update(extra_context)
         result = invoke_agent(
             agent_name,
             task,
@@ -650,6 +674,7 @@ class SdlcPipelineRunner:
             raise PipelineStepError(f"{step} A2A failed: {invoke_error}")
         if result.get("status") != "success":
             raise PipelineStepError(f"{step} A2A failed: {result.get('error')}")
+        return text
 
     def _step_product(self) -> None:
         if not self.options.input_file:
@@ -1147,7 +1172,7 @@ class SdlcPipelineRunner:
         fallback = RunTelemetry(
             "developer-agent",
             target_app=self.feature,
-            model_id=os.getenv("CODING_MODEL_ID", "us.anthropic.claude-opus-4-20250514-v1:0"),
+            model_id=os.getenv("CODING_MODEL_ID", "us.anthropic.claude-opus-4-6-v1"),
             run_id=self.run_id,
         )
         fallback.extra = {
@@ -1336,6 +1361,7 @@ class SdlcPipelineRunner:
         # legacy flat monorepo-mirror layout.
         apps_repo_env = os.getenv("GITLAB_APPS_REPO", "").strip().lower()
         apps_repo = apps_repo_env not in {"0", "false", "no", "off"}
+        gl_arn = ""
         if self.transport == "local":
             args = [
                 "agents/gitlab-agent/gitlab_agent.py",
@@ -1360,12 +1386,30 @@ class SdlcPipelineRunner:
             # receiving end (silently drops runId, which skips S3 materialization).
             branch_hint = f"sdlc/{self.feature}"
             task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
+            extra = {"gitlabPublishLayout": "apps" if apps_repo else "monorepo"}
+            try:
+                from .agentcore_invoke import load_runtime_arn
+
+                gl_arn = load_runtime_arn("gitlab-agent") or ""
+            except Exception:
+                gl_arn = ""
+            _safe_print(f"[gitlab-agent] resolved runtimeArn={gl_arn or '(none)'}")
             self._invoke_a2a(
                 "gitlab-agent",
                 task,
                 step="gitlab-agent",
-                extra_context={"gitlabPublishLayout": "apps" if apps_repo else "monorepo"},
+                extra_context=extra,
             )
+            handoff = self._read_gitlab_handoff()
+            publish_status = str((handoff or {}).get("status") or "").strip().lower()
+            if (not handoff or publish_status not in {"published", "already-published"}) and gl_arn:
+                _safe_print("[gitlab-agent] no publish handoff after first invoke; retrying once")
+                self._invoke_a2a(
+                    "gitlab-agent",
+                    task,
+                    step="gitlab-agent",
+                    extra_context=extra,
+                )
 
         handoff = self._read_gitlab_handoff()
         if handoff:
@@ -1386,6 +1430,8 @@ class SdlcPipelineRunner:
         publish_status = str((handoff or {}).get("status") or "").strip().lower()
         if not handoff or publish_status not in {"published", "already-published"}:
             detail = (handoff or {}).get("error") or "no gitlab handoff produced"
+            if not handoff and not gl_arn:
+                detail = f"{detail} (no gitlab-agent runtimeArn resolved)"
             raise PipelineStepError(f"gitlab-agent publish failed: {detail}")
 
         self.agents_run.append("gitlab-agent")
@@ -1413,6 +1459,148 @@ class SdlcPipelineRunner:
         self.artifacts["QA"] = qa_handoff_rel_for_app(self.feature)
         self._after_agent_step("qa-agent")
     
+    def _frontend_required(self) -> bool:
+        """False only when deliveryProfile explicitly says no React UI (e.g. Streamlit
+        or API-only was chosen) — absent/unknown profile defaults to required."""
+        delivery = self.context.get("deliveryProfile") or {}
+        required = delivery.get("requiresReact")
+        return True if required is None else bool(required)
+
+    def _frontend_a2a_handoff_payload(self) -> dict[str, Any]:
+        """Developer→frontend handoff JSON for AgentCore (snake_case contract)."""
+        delivery = self.context.get("deliveryProfile") or {}
+        frontend_required = self._frontend_required()
+        slug = self.feature
+        return {
+            "status": "ready",
+            "target_app": slug,
+            "run_id": self.run_id,
+            "runId": self.run_id,
+            "openapi_path": self.context.get("openApiPath") or openapi_rel_for_app(slug),
+            "backend_path": self.context.get("targetAppDir") or target_app_root_rel(slug),
+            "frontend_folder": f"{target_app_root_rel(slug)}/frontend",
+            "framework": "fastapi",
+            "auth": str(self.context.get("authMode") or "jwt").strip().lower(),
+            "ui_requirements": delivery,
+            "frontend_required": bool(frontend_required),
+        }
+
+    def _ensure_openapi_for_frontend(self) -> None:
+        """Block frontend until openapi.json is in S3 (developer used to upload after handoff)."""
+        if not self.run_id:
+            return
+        key = str(self.context.get("openApiPath") or f"{self.feature}/openapi.json").lstrip("/")
+        if not is_s3_store():
+            local = self.root / key.replace("/", os.sep)
+            alt = (
+                self.root
+                / target_app_root_rel(self.feature).replace("/", os.sep)
+                / "openapi.json"
+            )
+            if local.is_file() or alt.is_file():
+                self._update_context({"openApiPath": key if local.is_file() else openapi_rel_for_app(self.feature)})
+                return
+            raise PipelineStepError(
+                f"openapi.json missing on disk before frontend-agent ({key})"
+            )
+        from .artifact_store import run_artifact_exists, wait_for_run_artifact
+
+        timeout = float(os.getenv("SDLC_OPENAPI_WAIT_SEC", "180"))
+        candidates = [key]
+        default_key = f"{self.feature}/openapi.json"
+        if default_key not in candidates:
+            candidates.append(default_key)
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                wait_for_run_artifact(
+                    self.run_id,
+                    candidate,
+                    timeout_sec=timeout,
+                    poll_interval_sec=5.0,
+                )
+                self._update_context({"openApiPath": candidate})
+                return
+            except TimeoutError as exc:
+                last_error = exc
+                if run_artifact_exists(self.run_id, candidate):
+                    self._update_context({"openApiPath": candidate})
+                    return
+        raise PipelineStepError(
+            f"openapi.json missing in S3 before frontend-agent "
+            f"(runs/{self.run_id}/{key}) — developer-agent must upload it first"
+            + (f": {last_error}" if last_error else "")
+        )
+
+    @staticmethod
+    def _parse_frontend_a2a_payload(text: str) -> dict[str, Any]:
+        text = (text or "").strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start : end + 1])
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+    def _assert_frontend_a2a_ok(self, text: str) -> None:
+        payload = self._parse_frontend_a2a_payload(text)
+        if not payload:
+            raise PipelineStepError(
+                f"frontend-agent returned non-JSON response: {(text or '')[:500]}"
+            )
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {"error", "failed"}:
+            raise PipelineStepError(
+                f"frontend-agent failed: {payload.get('error') or payload}"
+            )
+        if status == "skipped":
+            return
+        if status not in {"success", "completed", "ok"}:
+            raise PipelineStepError(
+                f"frontend-agent unexpected status={status!r}: {payload}"
+            )
+
+    def _ensure_frontend_artifacts(self) -> None:
+        """Fail closed if AgentCore claimed success but uploaded nothing under frontend/."""
+        if not self.run_id or not is_s3_store():
+            return
+        from .artifact_store import wait_for_run_artifact
+
+        timeout = float(os.getenv("SDLC_FRONTEND_ARTIFACT_WAIT_SEC", "90"))
+        markers = [
+            f"{self.feature}/frontend/package.json",
+            f"target-apps/{self.feature}/frontend/package.json",
+        ]
+        last_error: Exception | None = None
+        for marker in markers:
+            try:
+                wait_for_run_artifact(
+                    self.run_id,
+                    marker,
+                    timeout_sec=timeout,
+                    poll_interval_sec=5.0,
+                )
+                return
+            except TimeoutError as exc:
+                last_error = exc
+        raise PipelineStepError(
+            f"frontend-agent reported success but no frontend artifacts in S3 under "
+            f"runs/{self.run_id}/{self.feature}/frontend/"
+            + (f" ({last_error})" if last_error else "")
+        )
+
     def _step_frontend(self) -> None:
         if self.transport == "local":
             self._run_python(
@@ -1427,13 +1615,18 @@ class SdlcPipelineRunner:
                 step="frontend-agent",
             )
         else:
-            # frontend-agent has no A2A/AgentCore handler today (not in
-            # config/agentcore/runtimes.json) — nothing to thread fullRegen into yet.
-            self._invoke_a2a(
+            # AgentCore expects bare handoff JSON (target_app + run_id), not prose +
+            # camelCase pipeline Context — see frontend_agent.parse_frontend_handoff.
+            self._ensure_openapi_for_frontend()
+            handoff = self._frontend_a2a_handoff_payload()
+            text = self._invoke_a2a(
                 "frontend-agent",
-                f"Generate the React frontend for {self.feature} from the OpenAPI spec.",
+                json.dumps(handoff),
                 step="frontend-agent",
+                attach_context=False,
             )
+            self._assert_frontend_a2a_ok(text)
+            self._ensure_frontend_artifacts()
         self.agents_run.append("frontend-agent")
         self.artifacts["Frontend"] = f"{target_app_root_rel(self.feature)}/frontend/"
         self._after_agent_step("frontend-agent")
@@ -1588,6 +1781,10 @@ def options_from_dict(data: dict[str, Any]) -> PipelineOptions:
                 break
     if "with_jira" not in filtered and data.get("withJira") is not None:
         filtered["with_jira"] = bool(data.get("withJira"))
+    if "with_frontend" not in filtered and data.get("withFrontend") is not None:
+        filtered["with_frontend"] = bool(data.get("withFrontend"))
+    if "skip_frontend" not in filtered and data.get("skipFrontend") is not None:
+        filtered["skip_frontend"] = bool(data.get("skipFrontend"))
     if "jira_project" not in filtered:
         for key in ("jiraProject", "jira_project", "jiraProjectKey"):
             value = data.get(key)

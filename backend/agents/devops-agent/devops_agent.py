@@ -34,6 +34,7 @@ from _shared.deploy_manifest import (
     build_deploy_manifest,
     database_url_from_env,
     ensure_deploy_dockerfiles,
+    stage_react_ui_for_deploy,
 )
 from _shared.env import load_repo_env
 from _shared.pipeline_context import (
@@ -159,6 +160,7 @@ module "app" {{
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
   enable_ui      = {enable_ui}
+  ui_framework   = "{ui_framework}"
   enable_bedrock = {enable_bedrock}
 {extra_env_block}{db_module_inputs}}}
 
@@ -232,8 +234,10 @@ app served at http://<alb>/<app>/).
   or any target-app code.
 - NEVER run terraform apply/destroy — the deploy script owns that.
 - Follow the CANONICAL TEMPLATE in the task message exactly; only the marked
-  app-shape inputs may vary (enable_ui, DB block). Keep the S3 backend block and
-  remote-state wiring byte-identical apart from the app slug.
+  app-shape inputs may vary (enable_ui, ui_framework, DB block). Keep the S3
+  backend block and remote-state wiring byte-identical apart from the app slug.
+- ``ui_framework`` is ``streamlit``, ``react``, or ``none`` (manifest.uiFramework).
+  React uses the same dual-container ECS task as Streamlit; nginx proxies the API.
 - Use the terraform MCP tools (search/get provider or module docs) ONLY if you must
   deviate from the template (e.g. an extra AWS resource the manifest demands).
 - GitLab publish is gitlab-agent's job; do not push code or open MRs.
@@ -246,7 +250,8 @@ app served at http://<alb>/<app>/).
 3. Write main.tf with devops_write_tf.
 4. Call devops_validate. If it fails, fix and re-validate (max 3 attempts).
 5. Reply with a short summary: files written, validation result, and the module
-   inputs chosen (enable_ui, db wiring) with one-line reasons tied to the manifest.
+   inputs chosen (enable_ui, ui_framework, db wiring) with one-line reasons tied
+   to the manifest.
 """
 
 
@@ -405,9 +410,14 @@ def render_tf_root(manifest: dict[str, Any]) -> str:
     else:
         extra_env_block = ""
 
+    ui_framework = str(manifest.get("uiFramework") or "none")
+    if ui_framework not in ("streamlit", "react", "none"):
+        ui_framework = "streamlit" if manifest.get("enableUi") else "none"
+
     return _TF_ROOT_TEMPLATE.format(
         app=app,
         enable_ui="true" if manifest.get("enableUi") else "false",
+        ui_framework=ui_framework,
         enable_bedrock="true" if manifest.get("usesBedrock") else "false",
         extra_env_block=extra_env_block,
         db_module_inputs=db_module_inputs,
@@ -476,6 +486,7 @@ def ensure_tf_root_without_llm(
     ctx = context if context is not None else {"targetApp": app}
     ctx.setdefault("targetApp", app)
     enrich_handoff_context(ctx, include_db_paths=False)
+    staged = stage_react_ui_for_deploy(app)
     copied = ensure_deploy_dockerfiles(app)
     manifest = build_deploy_manifest(app, ctx)
     content = render_tf_root(manifest)
@@ -498,6 +509,8 @@ def ensure_tf_root_without_llm(
         },
     )
     note = f"Wrote TF root from template (no LLM). {write_result}"
+    if staged:
+        note += f" Staged React UI: {staged}."
     if copied:
         note += f" Dockerfiles copied: {copied}"
     return note
@@ -510,6 +523,7 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
     enrich_handoff_context(ctx, include_db_paths=False)
 
     copied = ensure_deploy_dockerfiles(app)
+    staged = stage_react_ui_for_deploy(app)
     manifest = build_deploy_manifest(app, ctx)
 
     message = (
@@ -520,6 +534,8 @@ def run_task(task: str, context: dict[str, Any] | None = None, *, target_app: st
         "Write this root with devops_write_tf (adjust ONLY if the manifest demands it), "
         "then devops_validate. Remember the workflow in your system prompt."
     )
+    if staged:
+        message += f"\n\nNote: React UI staged from frontend/: {staged}"
     if copied:
         message += f"\n\nNote: Dockerfiles were auto-copied from the template: {copied}"
 
@@ -700,8 +716,9 @@ def main() -> None:
     if args.destroy:
         raise SystemExit(run_deploy(target, destroy=True))
 
-    # GitLab CI --deploy: skip Bedrock when possible. Existing roots are reused;
-    # missing roots are written from render_tf_root (same template the LLM gets).
+    # GitLab CI --deploy: skip Bedrock when possible. Always re-sync the TF root
+    # from the deploy manifest so enable_ui / ui_framework stay accurate when a
+    # React frontend appears after an earlier API-only deploy.
     # Set DEVOPS_FORCE_LLM=1 to keep the previous always-LLM behavior.
     force_llm = os.getenv("DEVOPS_FORCE_LLM", "").strip().lower() in {
         "1",
@@ -710,15 +727,8 @@ def main() -> None:
         "on",
     }
     if (args.deploy or args.plan_only) and not force_llm:
-        if _tf_root_complete(target):
-            summary = (
-                f"TF root already present for '{target}' — skipping LLM generation "
-                "(set DEVOPS_FORCE_LLM=1 to force)."
-            )
-            print(f"[{AGENT_NAME}] {summary}")
-        else:
-            summary = ensure_tf_root_without_llm(target, ctx)
-            print(f"[{AGENT_NAME}] {summary}")
+        summary = ensure_tf_root_without_llm(target, ctx)
+        print(f"[{AGENT_NAME}] {summary}")
     else:
         summary = run_task(args.task, ctx, target_app=target)
         print("\n" + "=" * 60)

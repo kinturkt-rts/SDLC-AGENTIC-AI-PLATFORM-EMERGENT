@@ -1,12 +1,12 @@
 ﻿# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
 # Prereqs: pip install bedrock-agentcore-starter-toolkit, AWS credentials, Bedrock model access.
+
 param(
     [string] $Region = "us-east-2",
     [string[]] $Agents = @(),
     [switch] $Configure,
     [switch] $ConfigureOnly,
     [switch] $SkipConfigure,
-    # Deploy isolated demo runtimes (product_agent_demo, …). Does not touch existing *_agent runtimes.
     [switch] $Demo
 )
 
@@ -176,14 +176,12 @@ $PipelineAgents = @(
     @{ awsName = "architect_agent"; bundle = "architect-agent"; node = $false; extra = @() },
     @{ awsName = "database_agent"; bundle = "database-agent"; node = $false; extra = @("AGENTCORE_DATABASE_USE_POSTGRES=true") },
     @{ awsName = "developer_agent"; bundle = "developer-agent"; node = $false; extra = @("SDLC_TEMPLATE_VERSION=v1.0.0") },
+    @{ awsName = "frontend_agent"; bundle = "frontend-agent"; node = $true; extra = @() },
     @{ awsName = "gitlab_agent"; bundle = "gitlab-agent"; node = $false; extra = $GitLabAgentMcpEnv },
     @{ awsName = "orchestrator_agent"; bundle = "orchestrator-agent"; node = $false; extra = @() }
 )
 
-# Isolated demo runtimes — same bundles (AGENTCORE_AGENT), new AWS names + ECR repos.
-# GitLab MCP HTTP server stays shared; gitlab_agent_demo uses the demo artifact bucket.
-# First-time: .\scripts\deploy-agentcore-agents.ps1 -Demo -Configure
-# Redeploy:   .\scripts\deploy-agentcore-agents.ps1 -Demo -SkipConfigure
+# Isolated demo runtimes - same bundles (AGENTCORE_DEMO_AGENTS), new AWS names + ECR repos.
 $DemoAgents = @(
     @{ awsName = "product_agent_demo"; bundle = "product-agent"; node = $true; extra = $ProductAgentExtra },
     @{ awsName = "architect_agent_demo"; bundle = "architect-agent"; node = $false; extra = @() },
@@ -196,24 +194,12 @@ $DemoAgents = @(
 # Deploy on demand via -Agents (not part of default pipeline batch).
 $OptionalAgents = @(
     @{ awsName = "qa_agent"; bundle = "qa-agent"; node = $false; extra = @() },
-    # VPC-mode orchestrator: network mode is immutable after creation; use when orchestrator
-    # must reach RDS in vpc-036155f359e2e940c. Example:
-    #   .\scripts\deploy-agentcore-agents.ps1 -Agents orchestrator_agent_vpc -SkipConfigure
     @{ awsName = "orchestrator_agent_vpc"; bundle = "orchestrator-agent"; node = $false; extra = @(); vpc = @{
         subnets = "subnet-0c0e7c749de659e32,subnet-07651619f77b51d7f,subnet-044c04012037ca457"
         securityGroups = "sg-077b416683295dd42"
     } },
     @{ awsName = "security_agent"; bundle = "security-agent"; node = $false; extra = @() },
-    # devops_agent: standalone runtime (not in the pipeline batch / no orchestrator peering).
-    # node=$true only to trigger the per-agent Dockerfile copy (INSTALL_TERRAFORM=true).
     @{ awsName = "devops_agent"; bundle = "devops-agent"; node = $true; extra = @() },
-    # frontend_agent: standalone runtime (not in the pipeline batch / no orchestrator
-    # peering yet — see bundles.py). node=$true triggers the per-agent Dockerfile copy
-    # with INSTALL_NODE=true (npm install / npm run build in _run_frontend_build()).
-    # No SDLC_TEMPLATE_VERSION extra: unlike developer_agent, frontend_agent's template
-    # is baked into the image (deploy/agentcore/Dockerfile COPY target-apps/_template),
-    # not fetched from S3 at runtime.
-    @{ awsName = "frontend_agent"; bundle = "frontend-agent"; node = $true; extra = @() },
     @{ awsName = "web_crawler_agent"; bundle = "web-crawler-agent"; node = $true; extra = @(
         "AGENTCORE_WEBCRAWLER_WITH_POSTGRES=false",
         "FIRECRAWL_MCP_COMMAND=firecrawl-mcp",
@@ -224,8 +210,6 @@ $OptionalAgents = @(
 $AllAgents = $PipelineAgents + $DemoAgents + $OptionalAgents
 
 $TargetAgents = if ($Agents.Count -gt 0) {
-    # Prefer exact awsName matches (product_agent_demo). Bundle names (product-agent)
-    # resolve to demo only with -Demo, otherwise to the non-demo runtime.
     $byAwsName = @($AllAgents | Where-Object { $Agents -contains $_.awsName })
     if ($byAwsName.Count -gt 0) {
         $byAwsName
@@ -275,7 +259,6 @@ if ($env:BEDROCK_READ_TIMEOUT) { $CommonEnv += "BEDROCK_READ_TIMEOUT=$($env:BEDR
 if ($env:SDLC_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_AGENT_TIMEOUT_SEC=$($env:SDLC_AGENT_TIMEOUT_SEC)" }
 if ($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC) { $CommonEnv += "SDLC_DEVELOPER_AGENT_TIMEOUT_SEC=$($env:SDLC_DEVELOPER_AGENT_TIMEOUT_SEC)" }
 if ($env:SDLC_DEVELOPER_RETRY_ATTEMPTS) { $CommonEnv += "SDLC_DEVELOPER_RETRY_ATTEMPTS=$($env:SDLC_DEVELOPER_RETRY_ATTEMPTS)" }
-# Default retry fallback matches product/architect MODEL_ID (Sonnet 4.6).
 if ($env:DEVELOPER_AGENT_FALLBACK_MODEL_ID) {
     $CommonEnv += "DEVELOPER_AGENT_FALLBACK_MODEL_ID=$($env:DEVELOPER_AGENT_FALLBACK_MODEL_ID)"
 } else {
@@ -306,8 +289,9 @@ $AgentSecretKeys = @{
     web_crawler_agent      = @("FIRECRAWL_API_KEY")
 }
 
-# Orchestrator runs apply_sql_to_rds after database-agent - pass RDS creds on orchestrator runtime only.
-$OrchestratorRdsKeys = @(
+# RDS creds: orchestrator applies SQL; developer schema_parity introspects the same DB.
+
+$RdsEnvKeys = @(
     "POSTGRES_MCP_DEPLOYMENT",
     "POSTGRES_MCP_CONNECTION_METHOD",
     "POSTGRES_MCP_INSTANCE_IDENTIFIER",
@@ -320,8 +304,14 @@ $OrchestratorRdsKeys = @(
     "POSTGRES_MCP_ALLOW_WRITE",
     "POSTGRES_MCP_SSLMODE"
 )
+$AgentsNeedingRdsEnv = @(
+    "orchestrator_agent",
+    "orchestrator_agent_vpc",
+    "orchestrator_agent_demo",
+    "developer_agent",
+    "developer_agent_demo"
+)
 
-# Default: skip configure on redeploy (configure shrinks source_path to deploy/agentcore only).
 $RunConfigure = ($Configure -or $ConfigureOnly) -and -not $SkipConfigure
 
 $DeployFailures = @()
@@ -385,7 +375,35 @@ foreach ($agent in $TargetAgents) {
         }
     }
 
-    # Demo orchestrator: pin specialist ARNs from runtimes.demo.json (includes gitlab_agent_demo).
+    # Pin specialist ARNs for orchestrators from runtimes*.json so sdlcPipeline peers
+    if (($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc") -and -not $ConfigureOnly) {
+        $devRuntimes = Join-Path $RepoRoot "config\agentcore\runtimes.json"
+        if (Test-Path $devRuntimes) {
+            $peerMap = python -c @"
+            
+import json
+from pathlib import Path
+data = json.loads(Path(r'$devRuntimes').read_text(encoding='utf-8'))
+agents = data.get('agents') or {}
+peers = {}
+for name in (data.get('sdlcPipeline') or data.get('mvpPipeline') or []):
+    if name == 'orchestrator-agent':
+        continue
+    arn = (agents.get(name) or {}).get('runtimeArn') or ''
+    if arn:
+        peers[name] = arn
+print(json.dumps(peers, separators=(',', ':')))
+"@
+            if ($peerMap -and $peerMap -ne "{}") {
+                $agent.extra = @($agent.extra) + @("AGENTCORE_PEER_RUNTIME_ARNS=$peerMap")
+                Write-Host "Orchestrator sdlcPipeline peers: $peerMap" -ForegroundColor DarkGray
+            } else {
+                Write-Warning "runtimes.json sdlcPipeline has no specialist ARNs — deploy specialists first, then re-run orchestrator_agent."
+            }
+        }
+    }
+
+    # Demo orchestrator
     if ($awsName -eq "orchestrator_agent_demo" -and -not $ConfigureOnly) {
         $syncDemo = Join-Path $PSScriptRoot "sync-runtimes-demo.py"
         if (Test-Path $syncDemo) {
@@ -395,6 +413,7 @@ foreach ($agent in $TargetAgents) {
         $demoRuntimes = Join-Path $RepoRoot "config\agentcore\runtimes.demo.json"
         if (Test-Path $demoRuntimes) {
             $peerMap = python -c @"
+
 import json, sys
 from pathlib import Path
 data = json.loads(Path(r'$demoRuntimes').read_text(encoding='utf-8'))
@@ -419,8 +438,8 @@ print(json.dumps(peers, separators=(',', ':')))
     if ($AgentSecretKeys.ContainsKey($awsName)) {
         $envBlock += Get-EnvPairsForKeys -Keys $AgentSecretKeys[$awsName]
     }
-    if ($awsName -eq "orchestrator_agent" -or $awsName -eq "orchestrator_agent_vpc" -or $awsName -eq "orchestrator_agent_demo") {
-        $envBlock += Get-EnvPairsForKeys -Keys $OrchestratorRdsKeys
+    if ($AgentsNeedingRdsEnv -contains $awsName) {
+        $envBlock += Get-EnvPairsForKeys -Keys $RdsEnvKeys
     }
     if (($awsName -eq "gitlab_agent" -or $awsName -eq "gitlab_agent_demo") -and $GitLabAgentMcpEnv.Count -gt 0) {
         $envBlock = @($envBlock | Where-Object {
@@ -444,12 +463,11 @@ print(json.dumps(peers, separators=(',', ':')))
         $DeployFailures += $awsName
         Write-Warning "Deploy failed for $awsName (exit $agentcoreExit)."
     } else {
-        # agentcore deploy pushes a versioned tag but AgentCore references :latest.
-        # Re-tag the most recent versioned image as :latest so the runtime pulls it.
         $ecrRepo = "bedrock-agentcore-$awsName"
         if (-not $env:AWS_PROFILE) {
             $env:AWS_PROFILE = "eks-admin-user"
         }
+
         python -c @"
 import os, boto3, sys
 profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
@@ -468,11 +486,10 @@ try:
 except ecr.exceptions.ImageAlreadyExistsException:
     print('  :latest already current in $ecrRepo')
 "@
-        # agentcore deploy resets lifecycleConfiguration to the 900s default idle
-        # timeout, which silently kills long developer/orchestrator sessions.
-        # Re-apply the 1h idle timeout after every deploy.
+
         python -c @"
-import os, boto3, sys
+import json, os, boto3, sys
+from pathlib import Path
 profile = os.environ.get('AWS_PROFILE') or 'eks-admin-user'
 cc = boto3.Session(profile_name=profile, region_name='$Region').client('bedrock-agentcore-control')
 rts = cc.list_agent_runtimes(maxResults=100)['agentRuntimes']
@@ -481,27 +498,53 @@ if rt is None:
     print('  WARNING: runtime $awsName not found; lifecycle not updated')
     sys.exit(0)
 full = cc.get_agent_runtime(agentRuntimeId=rt['agentRuntimeId'])
+env = dict(full.get('environmentVariables') or {})
+
+
+if '$awsName' in ('orchestrator_agent', 'orchestrator_agent_vpc'):
+    cfg = Path(r'$RepoRoot') / 'config' / 'agentcore' / 'runtimes.json'
+    if cfg.is_file():
+        data = json.loads(cfg.read_text(encoding='utf-8'))
+        agents = data.get('agents') or {}
+        peers = {}
+        for name in (data.get('sdlcPipeline') or data.get('mvpPipeline') or []):
+            if name == 'orchestrator-agent':
+                continue
+            arn = (agents.get(name) or {}).get('runtimeArn') or ''
+            if arn:
+                peers[name] = arn
+        if peers:
+            env['AGENTCORE_PEER_RUNTIME_ARNS'] = json.dumps(peers, separators=(',', ':'))
+            print('  Peer ARNs re-applied from runtimes.json sdlcPipeline (' + str(len(peers)) + ' peers)')
+
+if '$awsName' == 'orchestrator_agent_demo':
+    demo_cfg = Path(r'$RepoRoot') / 'config' / 'agentcore' / 'runtimes.demo.json'
+    if demo_cfg.is_file():
+        data = json.loads(demo_cfg.read_text(encoding='utf-8'))
+        peers = {}
+        for name, entry in (data.get('agents') or {}).items():
+            arn = (entry or {}).get('runtimeArn') or ''
+            if arn and name != 'orchestrator-agent':
+                peers[name] = arn
+        if peers:
+            env['AGENTCORE_PEER_RUNTIME_ARNS'] = json.dumps(peers, separators=(',', ':'))
+            env['AGENTCORE_RUNTIMES_CONFIG'] = 'config/agentcore/runtimes.demo.json'
+            print('  Peer ARNs re-applied from runtimes.demo.json (' + str(len(peers)) + ' peers)')
 kwargs = dict(
     agentRuntimeId=rt['agentRuntimeId'],
     agentRuntimeArtifact=full['agentRuntimeArtifact'],
     roleArn=full['roleArn'],
     networkConfiguration=full['networkConfiguration'],
     lifecycleConfiguration={'idleRuntimeSessionTimeout': 3600, 'maxLifetime': 28800},
+    environmentVariables=env,
 )
 if full.get('protocolConfiguration'):
     kwargs['protocolConfiguration'] = full['protocolConfiguration']
-if full.get('environmentVariables'):
-    kwargs['environmentVariables'] = full['environmentVariables']
 cc.update_agent_runtime(**kwargs)
 print('  Lifecycle re-applied: idle=3600s maxLifetime=28800s for $awsName')
 "@
     }
 
-    # Undo the root-Dockerfile copy (line ~319): CodeBuild only reads the ROOT
-    # Dockerfile, not source_path, so node-hack agents (product/web-crawler/devops)
-    # temporarily overwrite it. Restore orchestrator-agent default immediately so a
-    # crash mid-loop or an early exit never leaves Dockerfile pointing at the wrong
-    # bundle for the next `agentcore launch` / local build.
     if ($agent.node) {
         & (Join-Path $PSScriptRoot "sync-agentcore-dockerfiles.ps1") | Out-Null
     }

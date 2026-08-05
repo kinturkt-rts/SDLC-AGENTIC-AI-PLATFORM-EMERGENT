@@ -1,0 +1,72 @@
+# React UI + API reverse-proxy for shared ALB path /${APP_NAME}/.
+# API stays on localhost:8000 in the same ECS task (same as Streamlit dual-stack).
+# ${APP_NAME} is substituted at container start by react-ui-entrypoint.sh.
+
+server {
+    listen       ${UI_PORT};
+    server_name  _;
+
+    # Full-stack ALB health: nginx must be serving and FastAPI must answer.
+    location = /${APP_NAME}/healthz {
+        proxy_pass         http://127.0.0.1:8000/${APP_NAME}/health;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+    }
+
+    # FastAPI under the same public prefix (browser same-origin → no CORS).
+    location /${APP_NAME}/api/ {
+        # No URI suffix: preserve /<app>/... for serve_api.py to strip while
+        # setting FastAPI root_path. This also keeps generated docs URLs correct.
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Prefix /${APP_NAME};
+        proxy_read_timeout 60s;
+    }
+
+    location /${APP_NAME}/docs {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+    }
+
+    location /${APP_NAME}/redoc {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+    }
+
+    location = /${APP_NAME}/openapi.json {
+        proxy_pass         http://127.0.0.1:8000/${APP_NAME}/openapi.json;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+    }
+
+    location = /${APP_NAME}/health {
+        proxy_pass         http://127.0.0.1:8000/${APP_NAME}/health;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+    }
+
+    # Common root-level auth routes (JWT/login) used by generated FastAPI apps.
+    location ~ ^/${APP_NAME}/(token|auth|login|logout|refresh)(/|$) {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Prefix /${APP_NAME};
+    }
+
+    # Vite SPA (base = /${APP_NAME}/).
+    location /${APP_NAME}/ {
+        root   /usr/share/nginx/html;
+        try_files $uri $uri/ /${APP_NAME}/index.html;
+    }
+
+    location = /${APP_NAME} {
+        return 301 /${APP_NAME}/;
+    }
+}

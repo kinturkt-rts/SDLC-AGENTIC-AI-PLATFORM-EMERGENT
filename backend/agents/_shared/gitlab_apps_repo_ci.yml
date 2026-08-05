@@ -1,6 +1,7 @@
 # This repo (sdlc-agentic-ai-platform-apps) holds generated app output only —
 # devops-agent's own code (agents/, scripts/, infrastructure/) lives in the
 # main platform repo (sdlc-agentic-ai-platform) and is cloned in before_script.
+
 workflow:
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^sdlc\//'
@@ -9,7 +10,7 @@ workflow:
 # Verify the OIDC role your AWS admin created
 oidc:test:
   stage: test
-  tags: [juno-labs-3]
+  tags: [devops-agent-runner]
   image:
     name: amazon/aws-cli:2.17.62
     entrypoint: [""]
@@ -34,21 +35,16 @@ oidc:test:
 # Phase 2 (devops-agent GitLab integration, standalone from the AgentCore chain):
 # fires on branches gitlab-agent publishes here (sdlc/<app>). After publish the
 # orchestrator marks the run awaiting_deploy; this job writes devops.json/appUrl
-# and then flips the run to completed (or failed).
+# and then flips the run to completed or failed.
+
 target-app:deploy:
   stage: deploy
-  tags: [juno-labs-3]
+  tags: [devops-agent-runner]
   image:
     # name: 061836593297.dkr.ecr.us-east-2.amazonaws.com/sdlc-deploy-ci:1.10.5
     name: mcr.microsoft.com/powershell:7.4-debian-12
     entrypoint: [""]
-  # gitlab-agent publishes each app as several rapid commits (batch 1, batch
-  # 2, final) - each one independently triggers its own pipeline, and without
-  # this, they race on the runner and on the shared :latest ECR tag. The one
-  # that finishes last wins, regardless of which commit was actually correct
-  # - this is exactly what broke contacts-api (an earlier, incomplete commit's
-  # image silently overwrote the final, correct one). resource_group forces
-  # GitLab to queue deploys for the same app one at a time instead.
+
   resource_group: "deploy-$CI_COMMIT_REF_SLUG"
   variables:
     TF_VERSION: "1.10.5"
@@ -89,7 +85,9 @@ target-app:deploy:
     - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
     - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
     - |
-      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
+      # ARTIFACT_S3_BUCKET may come from the per-run marker (demo vs dev). Group CI/CD
+      # var remains the fallback so existing branches / old markers keep working.
+      for v in ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
         if [ -z "$(printenv "$v")" ]; then
           echo "Missing required CI/CD variable: $v — check group-level CI/CD variables under junolabs, or project variables on this repo."
           exit 1
@@ -107,12 +105,22 @@ target-app:deploy:
         echo "Missing .sdlc/pipeline-run.json — republish via gitlab-agent so the frontend can receive appUrl"
         exit 1
       fi
-      export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
+      export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8')).get('runId') or '')" "$MARKER")"
       if [ -z "$PIPELINE_RUN_ID" ]; then
         echo "pipeline-run.json has empty runId ($MARKER)"
         exit 1
       fi
       echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID (from $MARKER)"
+      MARKER_BUCKET="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); print((d.get('artifactS3Bucket') or d.get('ARTIFACT_S3_BUCKET') or '').strip())" "$MARKER")"
+      if [ -n "$MARKER_BUCKET" ]; then
+        export ARTIFACT_S3_BUCKET="$MARKER_BUCKET"
+        echo "ARTIFACT_S3_BUCKET=$ARTIFACT_S3_BUCKET (from pipeline-run marker)"
+      elif [ -n "${ARTIFACT_S3_BUCKET:-}" ]; then
+        echo "ARTIFACT_S3_BUCKET=$ARTIFACT_S3_BUCKET (from CI/CD variable)"
+      else
+        echo "Missing ARTIFACT_S3_BUCKET — set group CI/CD variable, or artifactS3Bucket in .sdlc/pipeline-run.json"
+        exit 1
+      fi
     - aws sts get-caller-identity || (echo "OIDC role assumption failed — see the comment above this job about trust policy scope, or re-run the oidc:test job." && exit 1)
     - |
       account=$(aws sts get-caller-identity --query Account --output text)

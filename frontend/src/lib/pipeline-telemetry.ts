@@ -418,8 +418,11 @@ async function loadDeployTiming(
   return computeDeployTiming(startMs, devops, Date.now());
 }
 
-async function loadPipelineTelemetryUncached(projectId: string): Promise<PipelineTelemetrySummary> {
-  const runId = await resolveTelemetryRunId(projectId);
+async function loadPipelineTelemetryUncached(
+  projectId: string,
+  knownRunId?: string | null,
+): Promise<PipelineTelemetrySummary> {
+  const runId = knownRunId !== undefined ? knownRunId : await resolveTelemetryRunId(projectId);
   const loaded = await Promise.all(
     AGENT_IDS.map((name) => loadAgentTelemetry(projectId, name, runId)),
   );
@@ -442,6 +445,11 @@ export interface TelemetryOverviewRow {
 export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
   const runs = await listRuns();
   const byProject = new Map<string, { runCount: number; lastRunAt: string }>();
+  // Latest UUID run id per project, derived from the run list already fetched above -
+  // avoids each project re-calling listRuns() via resolveTelemetryRunId (was O(projects)
+  // redundant heavy S3/DynamoDB scans, and serialized them one project at a time).
+  const latestUuidRunByProject = new Map<string, string>();
+  const latestUuidStartedAt = new Map<string, string>();
 
   for (const run of runs) {
     const cur = byProject.get(run.projectId);
@@ -451,22 +459,32 @@ export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
       cur.runCount += 1;
       if (run.startedAt > cur.lastRunAt) cur.lastRunAt = run.startedAt;
     }
+    if (isUserPipelineRun(run)) {
+      const prevStarted = latestUuidStartedAt.get(run.projectId);
+      if (!prevStarted || run.startedAt > prevStarted) {
+        latestUuidStartedAt.set(run.projectId, run.startedAt);
+        latestUuidRunByProject.set(run.projectId, run.id);
+      }
+    }
   }
 
-  const rows: TelemetryOverviewRow[] = [];
-  for (const [projectId, meta] of byProject) {
-    const telem = await loadPipelineTelemetryUncached(projectId);
-    rows.push({
-      projectId,
-      projectName: projectTitle(projectId),
-      runCount: meta.runCount,
-      lastRunAt: meta.lastRunAt,
-      totalTokens: telem.totals.totalTokens,
-      costUsd: telem.totals.costUsd,
-      agentsWithTelemetry: telem.agents.filter((a) => a.hasTelemetry).length,
-      updatedAt: telem.updatedAt,
-    });
-  }
+  const rows = await Promise.all(
+    Array.from(byProject.entries()).map(async ([projectId, meta]) => {
+      let runId = latestUuidRunByProject.get(projectId) ?? null;
+      if (!runId && isS3Store()) runId = await findLatestS3RunIdForApp(projectId);
+      const telem = await loadPipelineTelemetryUncached(projectId, runId);
+      return {
+        projectId,
+        projectName: projectTitle(projectId),
+        runCount: meta.runCount,
+        lastRunAt: meta.lastRunAt,
+        totalTokens: telem.totals.totalTokens,
+        costUsd: telem.totals.costUsd,
+        agentsWithTelemetry: telem.agents.filter((a) => a.hasTelemetry).length,
+        updatedAt: telem.updatedAt,
+      };
+    }),
+  );
 
   return rows.sort((a, b) => b.lastRunAt.localeCompare(a.lastRunAt));
 }

@@ -1,8 +1,6 @@
-# target-app-ecs — deploy one SDLC target-app (FastAPI api + optional Streamlit ui)
-# as a single Fargate task behind the shared ALB, routed at /<app_name>/.
-#
-# Containers share the task network namespace, so the UI reaches the API at
-# http://localhost:<api_port> — no service discovery needed.
+# target-app-ecs — deploy one SDLC target-app (FastAPI api + optional UI) as a
+# single Fargate task behind the shared ALB, routed at /<app_name>/.
+
 
 terraform {
   required_version = ">= 1.10"
@@ -15,12 +13,10 @@ terraform {
 }
 
 locals {
-  name       = "sdlc-${var.app_name}-${var.environment}"
-  # Plan-time literal (var.db_secret_arn is often an unknown resource ARN, which
-  # cannot drive count).
-  has_db     = var.has_database
-  # Streamlit serves under baseUrlPath = app_name so the shared ALB can path-route.
-  ui_health  = "/${var.app_name}/_stcore/health"
+  name   = "sdlc-${var.app_name}-${var.environment}"
+  has_db = var.has_database
+
+  ui_health  = var.ui_framework == "react" ? "/${var.app_name}/healthz" : "/${var.app_name}/_stcore/health"
   api_health = "/health"
 
   api_env = merge(
@@ -32,19 +28,21 @@ locals {
       AWS_REGION         = var.aws_region
       AWS_DEFAULT_REGION = var.aws_region
     },
-    # api-only apps face the ALB directly; serve_api.py strips this prefix
-    var.enable_ui ? {} : { API_PATH_PREFIX = "/${var.app_name}" },
+    # API-only apps face the ALB directly. React nginx preserves the same public
+    # prefix while proxying, so serve_api.py strips it and gives FastAPI the
+    # correct root_path (including working /docs and openapi.json URLs).
+    var.enable_ui && var.ui_framework != "react" ? {} : { API_PATH_PREFIX = "/${var.app_name}" },
     var.extra_env,
   )
 
   extra_secrets_list = [for k, v in var.extra_secrets : { name = k, valueFrom = v }]
 
   api_container = {
-    name      = "api"
-    image     = "${aws_ecr_repository.api.repository_url}:${var.image_tag}"
-    essential = true
+    name         = "api"
+    image        = "${aws_ecr_repository.api.repository_url}:${var.image_tag}"
+    essential    = true
     portMappings = [{ containerPort = var.api_port, protocol = "tcp" }]
-    environment = [for k, v in local.api_env : { name = k, value = v }]
+    environment  = [for k, v in local.api_env : { name = k, value = v }]
     secrets = concat(
       local.has_db ? [{ name = "DATABASE_URL", valueFrom = var.db_secret_arn }] : [],
       local.extra_secrets_list,
@@ -63,15 +61,18 @@ locals {
   ui_repo_url = one(aws_ecr_repository.ui[*].repository_url)
 
   ui_container = {
-    name      = "ui"
-    image     = "${coalesce(local.ui_repo_url, "disabled")}:${var.image_tag}"
-    essential = true
+    name         = "ui"
+    image        = "${coalesce(local.ui_repo_url, "disabled")}:${var.image_tag}"
+    essential    = true
     portMappings = [{ containerPort = var.ui_port, protocol = "tcp" }]
-    secrets = local.extra_secrets_list
+    secrets      = local.extra_secrets_list
     # extra_env goes to the UI too: shared secrets (e.g. API_KEY the UI sends as a
     # header) must match the API container.
+    # APP_NAME / UI_PORT: react nginx entrypoint. Streamlit vars are ignored by nginx.
     environment = concat(
       [
+        { name = "APP_NAME", value = var.app_name },
+        { name = "UI_PORT", value = tostring(var.ui_port) },
         { name = "API_BASE_URL", value = "http://localhost:${var.api_port}" },
         { name = "STREAMLIT_SERVER_BASE_URL_PATH", value = var.app_name },
         { name = "STREAMLIT_SERVER_PORT", value = tostring(var.ui_port) },

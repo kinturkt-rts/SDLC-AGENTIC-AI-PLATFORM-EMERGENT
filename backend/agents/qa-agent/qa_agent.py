@@ -467,7 +467,7 @@ class _QACallbackHandler:
 def _qa_model() -> BedrockModel:
     model_id = os.getenv(
         "QA_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
     )
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     return BedrockModel(

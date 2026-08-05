@@ -2,9 +2,10 @@
 
 import {
   Bar,
-  BarChart,
+  ComposedChart,
   CartesianGrid,
   Cell,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -32,7 +33,8 @@ function ChartTooltip({ active, payload }: ChartTooltipProps) {
       <p className="mt-1 text-muted-foreground">
         {formatTokenCount(row.input)} in · {formatTokenCount(row.output)} out
       </p>
-      <p className="text-muted-foreground">{formatTokenCount(row.tokens)} billed · ${row.cost.toFixed(2)}</p>
+      <p className="text-muted-foreground">{formatTokenCount(row.tokens)} billed</p>
+      <p className="text-emerald-400">${row.cost.toFixed(4)} spend</p>
     </div>
   );
 }
@@ -49,11 +51,11 @@ export function TokenUsageChart({ agents }: { agents: AgentTelemetryRow[] }) {
 
   return (
     <Card className="border-white/[0.06] bg-card/80 p-4">
-      <h2 className="text-sm font-semibold text-foreground">Tokens by agent</h2>
-      <p className="mt-0.5 text-[11px] text-muted-foreground">Billed tokens (input + output) per pipeline agent</p>
+      <h2 className="text-sm font-semibold text-foreground">Tokens &amp; cost by agent</h2>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">Billed tokens (bars) and spend USD (line) per pipeline agent</p>
       <div className="mt-4 h-[220px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 4, right: 4, left: -12, bottom: 0 }} barCategoryGap="20%">
+          <ComposedChart data={data} margin={{ top: 4, right: 4, left: -12, bottom: 0 }} barCategoryGap="20%">
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.06)" />
             <XAxis
               dataKey="name"
@@ -62,13 +64,22 @@ export function TokenUsageChart({ agents }: { agents: AgentTelemetryRow[] }) {
               tickLine={false}
             />
             <YAxis
+              yAxisId="tokens"
               tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
               axisLine={false}
               tickLine={false}
               tickFormatter={(v) => formatTokenCount(Number(v))}
             />
+            <YAxis
+              yAxisId="cost"
+              orientation="right"
+              tick={{ fill: 'rgb(52 211 153)', fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
+            />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-            <Bar dataKey="tokens" radius={[4, 4, 0, 0]} maxBarSize={48}>
+            <Bar yAxisId="tokens" dataKey="tokens" radius={[4, 4, 0, 0]} maxBarSize={48}>
               {data.map((entry) => (
                 <Cell
                   key={entry.agentId}
@@ -76,10 +87,19 @@ export function TokenUsageChart({ agents }: { agents: AgentTelemetryRow[] }) {
                 />
               ))}
             </Bar>
-          </BarChart>
+            <Line
+              yAxisId="cost"
+              type="monotone"
+              dataKey="cost"
+              stroke="rgb(52 211 153)"
+              strokeWidth={2}
+              dot={{ r: 3, fill: 'rgb(52 211 153)' }}
+              activeDot={{ r: 5 }}
+            />
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <div className="mt-3 flex flex-wrap gap-3">
+      <div className="mt-3 flex flex-wrap items-center gap-4">
         {data.map((entry) => (
           <span key={entry.agentId} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <span
@@ -89,6 +109,9 @@ export function TokenUsageChart({ agents }: { agents: AgentTelemetryRow[] }) {
             {entry.name}
           </span>
         ))}
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="h-0.5 w-3 rounded-sm bg-emerald-400" /> Spend USD (line)
+        </span>
       </div>
     </Card>
   );

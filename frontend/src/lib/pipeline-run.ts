@@ -314,12 +314,13 @@ export async function startPipeline(options: {
         inputFile: inputRel,
         error: null,
         steps: [
-          { name: 'product-agent', label: '1/6 Product (PRD)', status: 'running' },
-          { name: 'architect-agent', label: '2/6 Architect (design + diagram)', status: 'queued' },
-          { name: 'database-agent', label: '3/6 Database (SQL migrations)', status: 'queued' },
-          { name: 'developer-agent', label: '4/6 Developer (FastAPI)', status: 'queued' },
-          { name: 'gitlab-agent', label: '5/6 GitLab publish', status: 'queued' },
-          { name: 'qa-agent', label: '6/6 QA (optional)', status: 'skipped' },
+          { name: 'product-agent', label: '1/7 Product (PRD)', status: 'running' },
+          { name: 'architect-agent', label: '2/7 Architect (design + diagram)', status: 'queued' },
+          { name: 'database-agent', label: '3/7 Database (SQL migrations)', status: 'queued' },
+          { name: 'developer-agent', label: '4/7 Developer (FastAPI)', status: 'queued' },
+          { name: 'frontend-agent', label: '5/7 Frontend (React)', status: 'queued' },
+          { name: 'gitlab-agent', label: '6/7 GitLab publish', status: 'queued' },
+          { name: 'qa-agent', label: '7/7 QA (optional)', status: 'skipped' },
         ],
       },
       null,
@@ -351,6 +352,8 @@ export async function startPipeline(options: {
     skipDeveloper,
     skipGitlab,
     skipVerify,
+    withFrontend: true,
+    skipFrontend: false,
     withJira: options.withJira ?? false,
     jiraProject: options.withJira ? (options.jiraProject ?? '').trim() : '',
   };
@@ -398,6 +401,7 @@ export async function startPipeline(options: {
     ...(skipDeveloper ? ['--skip-developer'] : ['--no-skip-developer']),
     ...(skipGitlab ? ['--skip-gitlab'] : ['--no-skip-gitlab']),
     ...(skipVerify ? ['--skip-verify'] : ['--no-skip-verify']),
+    '--with-frontend',
   ];
 
   const child = spawn(python, args, {

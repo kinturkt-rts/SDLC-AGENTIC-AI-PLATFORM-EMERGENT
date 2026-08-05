@@ -5,6 +5,7 @@ Our departments currently request equipment and office purchases through emails,
 The application should use Streamlit for the user interface and FastAPI for business logic and persistence.
 
 Features
+
 Submit procurement requests
 Multiple request categories
 Estimated cost
@@ -26,7 +27,9 @@ Approved requests cannot be edited.
 Rejected requests remain in history.
 Employees can view only their own requests.
 Managers approve only requests from their department.
+
 Technical expectations
+
 FastAPI backend
 Streamlit frontend
 Persisted relational database
@@ -34,6 +37,7 @@ CRUD APIs
 Multiple related entities
 Seed data
 Health endpoint
+
 Success
 
 Employees submit requests, managers approve them, procurement processes large purchases, and dashboards provide visibility into departmental spending.

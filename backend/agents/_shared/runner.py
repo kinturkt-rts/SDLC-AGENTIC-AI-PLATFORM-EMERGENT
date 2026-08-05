@@ -47,7 +47,7 @@ def coding_model_id() -> str:
 
 def _bedrock_model() -> BedrockModel:
     region = os.getenv("AWS_REGION", "us-east-2")
-    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     return BedrockModel(
         model_id=model_id,

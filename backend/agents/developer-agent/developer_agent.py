@@ -316,7 +316,10 @@ Rules — apply to every FR regardless of domain:
 4c. README.md with these sections:
     **Local development** — assume users open terminals at **repo root** (folder containing
     `target-apps/`). Every `cd` must use the full path from repo root (e.g.
-    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. Split **Terminal 1 (API)**
+    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. When React UI
+    exists, Terminal 2 is `cd target-apps/<app>/frontend` (sibling of the API tree —
+    never nest under a backend folder). On the published apps repo the same trees are
+    `<app>/backend` + `<app>/frontend` (gitlab-agent rewrites paths). Split **Terminal 1 (API)**
     and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
     `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). README MUST use **separate**
     **PowerShell (Windows)** and **Bash** code blocks (not bash-only with a comment). Windows venv:
@@ -3774,9 +3777,10 @@ with TestClient(app, raise_server_exceptions=False) as client:
     if openapi.status_code == 200:
         spec = openapi.json()
         # --- ADDED: persist the spec so the frontend agent can read it ---
-        with open("openapi.json", "w", encoding="utf-8") as f:
+        _openapi_out = os.path.join(os.getcwd(), "openapi.json")
+        with open(_openapi_out, "w", encoding="utf-8") as f:
             json.dump(spec, f, indent=2)
-        print("OPENAPI_SAVED path=openapi.json")
+        print(f"OPENAPI_SAVED path={_openapi_out}")
         # --- end added ---
         for route_path, methods in spec.get("paths", {}).items():
             if route_path in ("/health", "/healthz", "/", "/openapi.json", "/docs", "/redoc"):
@@ -4018,7 +4022,7 @@ def _build_frontend_handoff_payload(
     frontend_required = delivery_profile.get("requiresReact")
     if frontend_required is None:
         frontend_required = True
-    return {
+    payload: dict[str, Any] = {
         "status": status,
         "target_app": slug,
         "openapi_path": ctx.get("openApiPath") or openapi_rel_for_app(slug),
@@ -4029,6 +4033,11 @@ def _build_frontend_handoff_payload(
         "ui_requirements": delivery_profile,
         "frontend_required": bool(frontend_required),
     }
+    run_id = str(ctx.get("runId") or ctx.get("run_id") or "").strip()
+    if run_id:
+        payload["run_id"] = run_id
+        payload["runId"] = run_id
+    return payload
 
 
 def _write_frontend_handoff(
@@ -4309,6 +4318,19 @@ def run_task(
         try:
             if written:
                 written = _ensure_delivery_files(app, written, context=ctx)
+            # Upload openapi.json BEFORE developer-handoff so the orchestrator's
+            # handoff gate cannot race ahead of frontend-agent's S3 openapi fetch.
+            run_id_early = resolve_run_id(ctx)
+            openapi_local = _service_dir(app) / "openapi.json"
+            if run_id_early and openapi_local.is_file():
+                ctx.setdefault("runId", run_id_early)
+                ctx["openApiPath"] = openapi_rel_for_app(app)
+                try:
+                    _upload_openapi_artifact_if_s3(app, run_id_early)
+                except Exception:
+                    logger.exception(
+                        "[developer-agent] early openapi S3 upload failed (will retry at end)"
+                    )
             handoff_status = "failed" if (agent_error or validation_failed) else "completed"
             handoff_error = (
                 str(agent_error) if agent_error

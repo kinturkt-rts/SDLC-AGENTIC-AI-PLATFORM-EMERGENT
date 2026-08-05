@@ -37,6 +37,7 @@ const LOG_AGENTS: { id: AgentName; label: string }[] = [
   { id: 'architect-agent', label: 'Architect' },
   { id: 'database-agent', label: 'Database' },
   { id: 'developer-agent', label: 'Developer' },
+  { id: 'frontend-agent', label: 'Frontend' },
   { id: 'gitlab-agent', label: 'GitLab' },
   { id: 'devops-agent', label: 'DevOps' },
 ];

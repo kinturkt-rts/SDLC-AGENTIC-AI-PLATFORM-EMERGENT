@@ -7,6 +7,10 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInputBrief } from '@/src/lib/queries';
 
+function basename(path: string): string {
+  return path.split('/').pop() || path;
+}
+
 export function InputBriefCard({ slug, runId }: { slug: string; runId?: string }) {
   const { data: brief, isLoading } = useInputBrief(slug, runId);
   const [open, setOpen] = React.useState(false);
@@ -30,8 +34,8 @@ export function InputBriefCard({ slug, runId }: { slug: string; runId?: string }
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold text-foreground">What was asked</span>
-          <span className="block truncate text-xs text-muted-foreground">
-            Original product brief · <span className="font-mono">{brief.path}</span>
+          <span className="block truncate text-xs text-muted-foreground" title={brief.path}>
+            Original product brief · <span className="font-mono">{basename(brief.path)}</span>
           </span>
         </span>
         <ChevronDown

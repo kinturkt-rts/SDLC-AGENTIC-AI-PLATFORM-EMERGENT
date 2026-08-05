@@ -1,0 +1,46 @@
+# React (Vite) UI container — same ECS dual-stack pattern as Streamlit:
+#   ALB → this nginx container; FastAPI is on localhost:8000 in the same task.
+
+ARG APP_NAME=app
+
+# build SPA
+FROM node:22-alpine AS build
+ARG APP_NAME
+
+ARG VITE_BASE=/${APP_NAME}/
+
+ARG VITE_API_URL=/${APP_NAME}
+
+WORKDIR /build
+
+# CI layout: frontend remapped to ui/. Local monorepo may still stage frontend/ → ui/.
+COPY ui/package.json ./
+COPY ui/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+COPY ui/ ./
+ENV VITE_API_URL=${VITE_API_URL}
+
+RUN node -e "const fs=require('fs'); const p='src/main.tsx'; let s=fs.readFileSync(p,'utf8'); if (!/BrowserRouter\\s+basename=/.test(s)) s=s.replace('<BrowserRouter>', '<BrowserRouter basename={import.meta.env.BASE_URL}>'); if (!/BrowserRouter\\s+basename=/.test(s)) throw new Error('main.tsx must configure BrowserRouter basename'); fs.writeFileSync(p,s)"
+RUN npm run build -- --base=${VITE_BASE}
+
+
+RUN mkdir -p /out/${APP_NAME} && cp -a dist/. /out/${APP_NAME}/
+
+# nginx runtime
+FROM nginx:1.27-alpine
+ARG APP_NAME
+ENV APP_NAME=${APP_NAME} \
+    UI_PORT=8501
+
+RUN apk add --no-cache gettext \
+ && rm -f /etc/nginx/conf.d/default.conf
+
+COPY deploy/nginx.react.conf.template /etc/nginx/templates/nginx.react.conf.template
+COPY deploy/react-ui-entrypoint.sh /react-ui-entrypoint.sh
+RUN chmod +x /react-ui-entrypoint.sh
+
+COPY --from=build /out/${APP_NAME} /usr/share/nginx/html/${APP_NAME}
+
+EXPOSE 8501
+ENTRYPOINT ["/react-ui-entrypoint.sh"]

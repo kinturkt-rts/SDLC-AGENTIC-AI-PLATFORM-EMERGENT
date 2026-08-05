@@ -20,13 +20,9 @@ _INSERT_INTO_RE = re.compile(
     r"INSERT\s+INTO\s+((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)\s*\(",
     re.IGNORECASE,
 )
-# Table-level constraint keywords to skip when classifying a CREATE TABLE body line as
-# a column (CREATE TABLE ... (col1 ..., CONSTRAINT ..., PRIMARY KEY (...), ...)).
+
 _SKIP_COLUMN_PREFIXES = ("CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "EXCLUDE")
-# Match on a word boundary, not an exact whitespace-split token — a table-level
-# constraint written without a space before its parenthesis (e.g. "UNIQUE(a, b)")
-# otherwise produces a first token of "UNIQUE(a," which is not "UNIQUE" and slips
-# past the skip check, getting misparsed as a literal column name.
+
 _SKIP_COLUMN_PREFIX_RE = re.compile(
     r"^(?:" + "|".join(_SKIP_COLUMN_PREFIXES) + r")\b", re.IGNORECASE
 )
@@ -425,6 +421,39 @@ def check_seed_conflict_on_ruled_tables(sql_dir: Path) -> list[str]:
     return errors
 
 
+_CREATE_SCHEMA_RE = re.compile(
+    r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"']?([a-zA-Z_]\w*)[\"']?",
+    re.IGNORECASE,
+)
+
+
+def check_no_custom_schema_creation(sql_dir: Path) -> list[str]:
+    """Reject migrations that CREATE SCHEMA their own (e.g. thematic) name.
+
+    apply_sql_to_rds.py already creates the app schema (derived from --target-app,
+    hyphens -> underscores) and sets search_path before running any *.sql file here -
+    migrations must use unqualified table/type names and let that search_path resolve
+    them. A migration that creates and qualifies against its own schema name instead
+    (an LLM picking something thematic like "museum" instead of "museum_api") applies
+    to RDS without error, but every downstream step that assumes the app-slug schema
+    (verify_seed_bcrypt.py, apply_sql_to_rds.py's own reconcile/drift checks) then
+    fails with a false "relation does not exist" - see run
+    4d6e642f-de01-4181-8483-fb1779e33211.
+    """
+    errors: list[str] = []
+    for path in sorted(sql_dir.glob("*.sql")):
+        text = _strip_sql_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for match in _CREATE_SCHEMA_RE.finditer(text):
+            errors.append(
+                f"{path.name}: CREATE SCHEMA {match.group(1)!r} — migrations must not create "
+                f"their own schema. apply_sql_to_rds.py already creates the app schema (from "
+                f"--target-app) and sets search_path before running these files; use unqualified "
+                f"table/type names instead, or downstream steps that assume the app-slug schema "
+                f"(e.g. verify_seed_bcrypt.py) will fail with a false 'table does not exist'."
+            )
+    return errors
+
+
 def check_bare_search_path(sql_dir: Path) -> list[str]:
     """Detect SET search_path = public (bare, no app schema) which breaks cross-file type lookups.
 
@@ -542,6 +571,7 @@ def validate_sql_dir(sql_dir: Path) -> list[str]:
 
     errors = check_seed_schema_nullability(sql_dir)
     errors.extend(check_uuid_literals(sql_dir))
+    errors.extend(check_no_custom_schema_creation(sql_dir))
     errors.extend(check_bare_search_path(sql_dir))
     errors.extend(check_vector_literal_format(sql_dir))
     errors.extend(validate_seed_sha256_api_keys(sql_dir))

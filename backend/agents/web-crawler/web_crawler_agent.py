@@ -487,7 +487,7 @@ def wc_scraped_content_ddl() -> str:
 def _coding_model() -> BedrockModel:
     model_id = os.getenv(
         "CODING_MODEL_ID",
-        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
     )
     return BedrockModel(
         model_id=model_id,

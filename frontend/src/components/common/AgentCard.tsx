@@ -13,6 +13,7 @@ const AGENT_ACCENTS: Record<string, { border: string; gradient: string; iconBg: 
   'architect-agent': { border: 'hover:border-violet-500/30', gradient: 'from-violet-500 to-violet-400', iconBg: 'bg-violet-500/10', iconColor: 'text-violet-400' },
   'database-agent':  { border: 'hover:border-emerald-500/30',gradient: 'from-emerald-500 to-emerald-400',iconBg: 'bg-emerald-500/10',iconColor: 'text-emerald-400' },
   'developer-agent': { border: 'hover:border-amber-500/30',  gradient: 'from-amber-500 to-amber-400',  iconBg: 'bg-amber-500/10',  iconColor: 'text-amber-400' },
+  'frontend-agent':  { border: 'hover:border-pink-500/30',   gradient: 'from-pink-500 to-pink-400',    iconBg: 'bg-pink-500/10',   iconColor: 'text-pink-400' },
   'gitlab-agent':    { border: 'hover:border-orange-500/30', gradient: 'from-orange-500 to-orange-400', iconBg: 'bg-orange-500/10', iconColor: 'text-orange-400' },
   'security-agent':  { border: 'hover:border-red-500/30',    gradient: 'from-red-500 to-red-400',      iconBg: 'bg-red-500/10',    iconColor: 'text-red-400' },
   'qa-agent':        { border: 'hover:border-cyan-500/30',   gradient: 'from-cyan-500 to-cyan-400',    iconBg: 'bg-cyan-500/10',   iconColor: 'text-cyan-400' },

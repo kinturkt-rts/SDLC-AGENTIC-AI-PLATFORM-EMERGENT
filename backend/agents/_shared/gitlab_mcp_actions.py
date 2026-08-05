@@ -290,7 +290,9 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
     if not normalized.startswith(prefix):
         return None
     tail = normalized[len(prefix) :]
-    if not tail or tail.startswith("telemetry/"):
+    if not tail or tail.startswith("telemetry/") or tail.startswith("events/"):
+        # Telemetry + agent activity events stay in S3 for the control plane —
+        # not part of the apps-repo deliverable.
         return None
 
     if tail.startswith("inputs/"):
@@ -302,6 +304,9 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
     if tail == "context.json":
         return f"agents/pipeline/{slug}.context.json"
 
+    if tail == "frontend-handoff.json":
+        return f"agents/pipeline/{slug}.frontend-handoff.json"
+
     if tail.startswith("handoffs/"):
         handoff_map = {
             "developer-handoff.json": f"agents/pipeline/{slug}.developer-handoff.json",
@@ -309,6 +314,7 @@ def cloud_workspace_to_gitlab_dest(slug: str, workspace_rel: str) -> str | None:
             "qa-handoff.json": f"agents/pipeline/{slug}.qa-handoff.json",
             "devops-handoff.json": f"agents/pipeline/{slug}.devops-handoff.json",
             "database-handoff.md": f"agents/pipeline/{slug}.database-handoff.md",
+            "frontend-handoff.json": f"agents/pipeline/{slug}.frontend-handoff.json",
         }
         return handoff_map.get(Path(tail).name)
 
@@ -423,6 +429,10 @@ def write_pipeline_run_marker(
 ) -> str | None:
     """Write ``.sdlc/pipeline-run.json`` so GitLab CI can export ``PIPELINE_RUN_ID``.
 
+    Also records ``artifactS3Bucket`` from ``ARTIFACT_S3_BUCKET`` when set so the
+    shared apps-repo CI can write devops handoffs back to the correct env bucket
+    (dev vs demo) without changing group-level CI/CD defaults.
+
     Returns the monorepo-relative path written, or ``None`` when skipped (no run id /
     no app tree). Works for local monorepo and cloud-materialized workspaces.
     """
@@ -431,11 +441,16 @@ def write_pipeline_run_marker(
         return None
     root = root or repo_root()
     slug = slugify_feature(feature)
-    payload = {
+    payload: dict[str, Any] = {
         "runId": rid,
         "targetApp": slug,
         "writtenBy": "gitlab-agent",
     }
+    # Optional: pin the artifact store for the async GitLab CI → devops step.
+    # Older markers omit this; CI falls back to the group ARTIFACT_S3_BUCKET var.
+    bucket = (os.getenv("ARTIFACT_S3_BUCKET") or "").strip()
+    if bucket:
+        payload["artifactS3Bucket"] = bucket
     text = json.dumps(payload, indent=2) + "\n"
 
     if is_cloud_materialized_workspace(root, slug):
@@ -457,9 +472,14 @@ def write_pipeline_run_marker(
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     """Map monorepo-relative paths to the apps-repo branch layout:
     ``<slug>/backend/**`` for the FastAPI/db source tree, ``<slug>/frontend/**``
-    for the UI, ``.sdlc/`` marker and ``inputs/*.txt`` unchanged at branch root.
+    for the UI (React ``frontend/`` or legacy Streamlit ``ui/``); ``docs/``,
+    ``agents/pipeline/``, ``.sdlc/`` marker, and ``inputs/*.txt`` are unchanged at
+    branch root (PRD/design/diagram docs and pipeline handoffs live alongside
+    backend/frontend, not nested under either).
     """
     if rel_path.startswith("inputs/") and rel_path.endswith(".txt"):
+        return rel_path
+    if rel_path.startswith("docs/") or rel_path.startswith("agents/pipeline/"):
         return rel_path
     prefix = f"target-apps/{slug}/"
     if not rel_path.startswith(prefix):
@@ -467,9 +487,54 @@ def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     tail = rel_path[len(prefix) :]
     if tail.startswith(".sdlc/"):
         return tail
+    # Operational / control-plane only — never nest under backend in apps repo.
+    if tail.startswith("events/") or tail.startswith("telemetry/"):
+        return None
+    if tail == "frontend-handoff.json":
+        return f"agents/pipeline/{slug}.frontend-handoff.json"
+    # React UI (sibling of backend) — must not fall through to backend/frontend/.
+    if tail.startswith("frontend/"):
+        return f"{slug}/frontend/{tail[len('frontend/') :]}"
+    # Legacy Streamlit UI folder → same apps-repo frontend/ destination.
     if tail.startswith("ui/"):
         return f"{slug}/frontend/{tail[len('ui/') :]}"
     return f"{slug}/backend/{tail}"
+
+
+def _apps_backend_readme_text(content: str, slug: str) -> str:
+    """Rewrite monorepo ``target-apps/<slug>`` paths for apps-repo sibling layout."""
+    body = content.replace(f"target-apps/{slug}", f"{slug}/backend")
+    banner = (
+        f"# {slug}\n\n"
+        f"Apps-repo layout on this branch:\n\n"
+        f"- `{slug}/backend/` — FastAPI API, DB SQL, tests (this folder)\n"
+        f"- `{slug}/frontend/` — Vite/React UI "
+        f"(see `{slug}/frontend/README.md`)\n\n"
+        f"Pipeline handoffs live under `agents/pipeline/` at the repo root.\n\n"
+        f"---\n\n"
+    )
+    if "Apps-repo layout on this branch" in body:
+        return body
+    lines = body.splitlines()
+    if lines and lines[0].startswith("# "):
+        body = "\n".join(lines[1:]).lstrip("\n")
+    return banner + body
+
+
+def _apps_frontend_readme_text(slug: str) -> str:
+    return (
+        f"# {slug} frontend\n\n"
+        f"Vite + React UI for `{slug}`.\n\n"
+        f"## Run locally\n\n"
+        f"```bash\n"
+        f"cd {slug}/frontend\n"
+        f"cp .env.example .env   # if present; set VITE_API_URL to the API base\n"
+        f"npm install\n"
+        f"npm run dev\n"
+        f"```\n\n"
+        f"API lives in the sibling folder `{slug}/backend/` "
+        f"(uvicorn — see that README).\n"
+    )
 
 
 def _input_brief_candidate_rels(slug: str, root: Path) -> list[str]:
@@ -716,9 +781,27 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
         publish_entries.append((source_rel, dest))
 
     files: list[dict[str, Any]] = []
+    has_frontend = False
     for source_rel, dest in publish_entries:
         src = root_path / source_rel
-        files.append(_build_publish_file(dest, src.read_bytes()))
+        data = src.read_bytes()
+        if dest == f"{slug}/backend/README.md":
+            text = _apps_backend_readme_text(data.decode("utf-8"), slug)
+            files.append(_build_publish_file(dest, text.encode("utf-8")))
+        else:
+            files.append(_build_publish_file(dest, data))
+        if dest.startswith(f"{slug}/frontend/"):
+            has_frontend = True
+
+    frontend_readme_dest = f"{slug}/frontend/README.md"
+    if has_frontend and frontend_readme_dest not in seen_dest:
+        seen_dest.add(frontend_readme_dest)
+        files.append(
+            _build_publish_file(
+                frontend_readme_dest,
+                _apps_frontend_readme_text(slug).encode("utf-8"),
+            )
+        )
 
     # ALWAYS overwrite .gitlab-ci.yml on the apps branch with the platform
     # temp-fix template (MCR image). Inheritance from default branch only

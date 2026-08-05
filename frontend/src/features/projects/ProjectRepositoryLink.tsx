@@ -9,6 +9,18 @@ export function ProjectRepositoryLink({ project }: { project: Project }) {
   const href = project.repoHref ?? null;
   const external = project.repoExternal ?? false;
 
+  // No GitLab publish resolved yet - the only place to look is the run driving this
+  if (href && !external) {
+    return (
+      <Link
+        href={href}
+        className="inline-flex items-center text-sm text-muted-foreground transition-colors hover:text-teal-400"
+      >
+        View pipeline run
+      </Link>
+    );
+  }
+
   const content = (
     <>
       <GitBranch className="h-4 w-4 shrink-0 text-teal-400" />
@@ -24,20 +36,16 @@ export function ProjectRepositoryLink({ project }: { project: Project }) {
     return <div className="flex flex-wrap items-center gap-2 text-sm">{content}</div>;
   }
 
-  const className =
-    'group inline-flex flex-wrap items-center gap-2 text-sm transition-colors hover:text-teal-400';
-
-  if (external) {
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
-        {content}
-      </a>
-    );
-  }
-
+  // Only remaining case once the run-fallback is handled above: a real, resolved
+  // GitLab repo/branch link, which always opens externally.
   return (
-    <Link href={href} className={className}>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group inline-flex flex-wrap items-center gap-2 text-sm transition-colors hover:text-teal-400"
+    >
       {content}
-    </Link>
+    </a>
   );
 }

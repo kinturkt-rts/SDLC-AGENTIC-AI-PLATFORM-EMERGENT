@@ -34,9 +34,11 @@ const FILTER_OPTIONS: { value: ArtifactKind | 'all'; label: string }[] = [
   ...ARTIFACT_FILTER_KINDS.map((k) => ({ value: k, label: artifactKindLabel(k) })),
 ];
 
-/** Storage path with the internal `runs/<runId>/` S3 prefix stripped for display. */
+/** Storage paths look like runs/<runId>/<slug>/docs/design/<slug>.md - the file name
+ * alone (already shown as the dialog title) is all a user needs; full path stays in
+ * a tooltip for anyone who wants the storage location. */
 function displayPath(path: string): string {
-  return path.replace(/^runs\/[0-9a-f-]{8,}\//i, '');
+  return path.split('/').pop() || path;
 }
 
 /** Final gate before a card can render - never trust a single filter path alone. */
@@ -162,8 +164,9 @@ export default function ArtifactsPage() {
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-mono text-sm font-medium text-foreground">{a.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{a.path}</p>
+                    <p className="truncate font-mono text-sm font-medium text-foreground" title={a.path}>
+                      {a.name}
+                    </p>
                     {!artifactsProjectId ? (
                       <p className="truncate text-[11px] text-muted-foreground/80">{a.projectName}</p>
                     ) : null}
@@ -196,8 +199,8 @@ export default function ArtifactsPage() {
         >
           <DialogHeader>
             <DialogTitle className="font-mono text-base">{preview?.name}</DialogTitle>
-            <DialogDescription className="truncate">
-              {preview ? displayPath(preview.path) : ''} &middot; produced by {preview?.producedBy}
+            <DialogDescription className="truncate" title={preview?.path}>
+              Produced by {preview?.producedBy}
             </DialogDescription>
           </DialogHeader>
           {preview?.imageUrl ? (

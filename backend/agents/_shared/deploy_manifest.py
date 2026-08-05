@@ -90,6 +90,27 @@ def derive_extra_env(app: str) -> dict[str, str]:
     return result
 
 
+def _detect_ui_framework(app_dir: Path, context: dict[str, Any] | None = None) -> str:
+    """Return ``streamlit``, ``react``, or ``none`` from on-disk UI artifacts.
+
+    Streamlit wins if both are present (legacy Pattern C). React is detected via
+    ``ui/package.json`` (GitLab CI remaps apps-repo ``frontend/`` → ``ui/``) or
+    ``frontend/package.json`` (local / S3 layout before remap).
+    """
+    if (app_dir / "ui" / "streamlit_app.py").is_file():
+        return "streamlit"
+    if (app_dir / "ui" / "package.json").is_file() or (
+        app_dir / "frontend" / "package.json"
+    ).is_file():
+        return "react"
+    # Profile hints alone never enable UI infra — that would create a UI ECS
+    # service with no image to build. Artifacts above are the ground truth.
+    profile = (context or {}).get("deliveryProfile") or {}
+    if isinstance(profile, dict) and profile.get("requiresStreamlit"):
+        return "streamlit" if (app_dir / "ui").is_dir() else "none"
+    return "none"
+
+
 def ensure_deploy_dockerfiles(app: str) -> list[str]:
     """Copy template Dockerfiles and serve_api.py into target-apps/<app>/ when missing."""
     app_dir = _TARGET_APPS / app
@@ -98,12 +119,24 @@ def ensure_deploy_dockerfiles(app: str) -> list[str]:
     if not app_dir.is_dir() or not _TEMPLATE_DEPLOY.is_dir():
         return copied
     deploy_dir.mkdir(exist_ok=True)
-    for name in ("Dockerfile.api", "Dockerfile.ui"):
+    names = (
+        "Dockerfile.api",
+        "Dockerfile.ui",
+        "Dockerfile.ui.react",
+        "nginx.react.conf.template",
+        "react-ui-entrypoint.sh",
+    )
+    for name in names:
         src = _TEMPLATE_DEPLOY / name
         dst = deploy_dir / name
         if src.is_file() and not dst.is_file():
             shutil.copyfile(src, dst)
             copied.append(f"target-apps/{app}/deploy/{name}")
+            if name.endswith(".sh"):
+                try:
+                    dst.chmod(dst.stat().st_mode | 0o111)
+                except OSError:
+                    pass
     # serve_api.py lives at the app root (same level as app/) so uvicorn can import it.
     # It reads API_PATH_PREFIX at runtime and strips the ALB path prefix from requests.
     serve_src = _TARGET_APPS / "_template" / "serve_api.py"
@@ -112,6 +145,29 @@ def ensure_deploy_dockerfiles(app: str) -> list[str]:
         shutil.copyfile(serve_src, serve_dst)
         copied.append(f"target-apps/{app}/serve_api.py")
     return copied
+
+
+def stage_react_ui_for_deploy(app: str) -> str | None:
+    """Ensure ``ui/`` holds the Vite app for ``Dockerfile.ui.react`` (COPY ui/...).
+
+    GitLab CI already remaps ``<slug>/frontend/`` → ``target-apps/<slug>/ui/``.
+    Local / S3 trees may still have ``frontend/`` only — copy once when needed.
+    """
+    app_dir = _TARGET_APPS / app
+    ui_pkg = app_dir / "ui" / "package.json"
+    fe_dir = app_dir / "frontend"
+    if ui_pkg.is_file():
+        return None
+    if not (fe_dir / "package.json").is_file():
+        return None
+    ui_dir = app_dir / "ui"
+    if ui_dir.exists():
+        # Avoid clobbering a Streamlit ui/ tree.
+        if (ui_dir / "streamlit_app.py").is_file():
+            return None
+        shutil.rmtree(ui_dir)
+    shutil.copytree(fe_dir, ui_dir)
+    return f"target-apps/{app}/ui (staged from frontend/)"
 
 
 def _uses_bedrock(app_dir: Path) -> bool:
@@ -133,17 +189,18 @@ def build_deploy_manifest(app: str, context: dict[str, Any] | None = None) -> di
     ctx = context or {}
     app_dir = _TARGET_APPS / app
 
-    has_ui = (app_dir / "ui" / "streamlit_app.py").is_file()
+    ui_framework = _detect_ui_framework(app_dir, ctx)
+    has_ui = ui_framework in ("streamlit", "react")
     sql_dir = app_dir / "db" / "sql"
     has_db = sql_dir.is_dir() and any(sql_dir.glob("*.sql"))
 
-    # deliveryProfile from product/developer context can force the UI flag on.
-    profile = ctx.get("deliveryProfile") or {}
-    if isinstance(profile, dict) and profile.get("requiresStreamlit"):
-        has_ui = has_ui or (app_dir / "ui").is_dir()
-
     gitlab_handoff = _read_json(_PIPELINE_DIR / f"{app}.gitlab-handoff.json") or {}
     developer_handoff = _read_json(_PIPELINE_DIR / f"{app}.developer-handoff.json") or {}
+
+    deploy_dir = app_dir / "deploy"
+    has_ui_dockerfile = (deploy_dir / "Dockerfile.ui").is_file() or (
+        deploy_dir / "Dockerfile.ui.react"
+    ).is_file()
 
     manifest: dict[str, Any] = {
         "targetApp": app,
@@ -152,13 +209,14 @@ def build_deploy_manifest(app: str, context: dict[str, Any] | None = None) -> di
         "appDir": f"target-apps/{app}",
         "tfRoot": f"infrastructure/environments/dev/{app}",
         "enableUi": has_ui,
+        "uiFramework": ui_framework,
         "hasDatabase": has_db,
         "usesBedrock": _uses_bedrock(app_dir),
         "dbInstanceIdentifier": db_instance_identifier_from_env() if has_db else None,
         "databaseUrlAvailable": bool(database_url_from_env()) if has_db else False,
         "dockerfiles": {
-            "api": (app_dir / "deploy" / "Dockerfile.api").is_file(),
-            "ui": (app_dir / "deploy" / "Dockerfile.ui").is_file(),
+            "api": (deploy_dir / "Dockerfile.api").is_file(),
+            "ui": has_ui_dockerfile,
         },
         "gitlab": {
             "branch": gitlab_handoff.get("branch"),

@@ -35,7 +35,6 @@ import { formatRelative, formatDuration } from '@/src/lib/format';
 import { TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import { InputBriefCard } from '@/src/features/runs/InputBriefCard';
-import { CostTrendCard } from '@/src/features/runs/CostTrendCard';
 import { AgentMessagesCard } from '@/src/features/runs/AgentMessagesCard';
 import { OpenLiveAppButton } from '@/src/features/runs/OpenLiveAppButton';
 import { RecentTracker } from '@/src/components/common/RecentTracker';
@@ -326,10 +325,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
 
           {handoffs ? <PipelineHandoffsCard handoffs={handoffs} /> : null}
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <CostTrendCard projectId={run.projectId} />
-            <AgentMessagesCard runId={run.id} live={isLive} />
-          </div>
+          <AgentMessagesCard runId={run.id} live={isLive} />
 
           <Card className="border-white/[0.06] bg-card/80">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">

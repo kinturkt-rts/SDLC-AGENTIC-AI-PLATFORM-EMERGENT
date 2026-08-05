@@ -481,7 +481,7 @@ def _bedrock_model() -> BedrockModel:
 
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     return BedrockModel(
-        model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+        model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
         region_name=os.getenv("AWS_REGION", "us-east-2"),
         streaming=True,
         cache_config=CacheConfig(strategy="auto"),
@@ -495,7 +495,7 @@ def _bedrock_model() -> BedrockModel:
 
 
 def _model_id() -> str:
-    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0").strip()
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
 
 
 def _build_prd_agent(*, telemetry: RunTelemetry | None = None) -> Agent:

@@ -2,12 +2,13 @@
   "description": "Deployed AgentCore runtimes (no secrets). Sync from .bedrock_agentcore.yaml after each launch.",
   "region": "us-east-2",
   "accountId": "061836593297",
-  "mvpPipeline": [
+  "sdlcPipeline": [
     "orchestrator-agent",
     "product-agent",
     "architect-agent",
     "database-agent",
     "developer-agent",
+    "frontend-agent",
     "gitlab-agent"
   ],
   "artifactStore": {
@@ -24,7 +25,7 @@
       "runtimeId": "orchestrator_agent-O0WIlYDDeX",
       "runtimeArn": "arn:aws:bedrock-agentcore:us-east-2:061836593297:runtime/orchestrator_agent-O0WIlYDDeX",
       "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Forchestrator_agent-O0WIlYDDeX/invocations",
-      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_A2A_PEER_URLS. Runs full pipeline including in-cloud RDS apply (orchestrator subprocess apply_sql_to_rds.py after database-agent). POSTGRES_MCP_* env required on orchestrator runtime (deploy from .env.local). Public RDS + SG 5432 from 0.0.0.0/0 is sufficient for MVP — no VPC orchestrator needed. Dashboard invokes via AgentCore SDK (skip_postgres=false always). CLI dev fallback only: invoke-orchestrator-smoke.py --skip-postgres --apply-rds-local.",
+      "notes": "Frontend / CLI entry point only. Peers via AGENTCORE_PEER_RUNTIME_ARNS (pinned from runtimes.json sdlcPipeline on deploy, includes frontend-agent) and/or baked runtimes.json. Runs full pipeline including in-cloud RDS apply (orchestrator subprocess apply_sql_to_rds.py after database-agent). POSTGRES_MCP_* env required on orchestrator runtime (deploy from .env.local). Public RDS + SG 5432 from 0.0.0.0/0 is sufficient for MVP — no VPC orchestrator needed. Dashboard invokes via AgentCore SDK (skip_postgres=false always). CLI/manual: scripts/invoke-orchestrator-smoke.py --with-frontend. frontend-agent runs when with_frontend=true (still opt-in until Step 5 default flip).",
       "vpcCandidateRuntime": {
         "awsName": "orchestrator_agent_vpc",
         "runtimeId": "orchestrator_agent_vpc-OjsXSo2v9h",
@@ -134,9 +135,9 @@
       "invokeUrl": "https://bedrock-agentcore.us-east-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-2%3A061836593297%3Aruntime%2Ffrontend_agent-EC7lGr7C6W/invocations",
       "env": {
         "ARTIFACT_S3_BUCKET": "sdlc-agentic-ai-app-artifacts",
-        "MODEL_ID": "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        "MODEL_ID": "us.anthropic.claude-sonnet-4-6"
       },
-      "notes": "STANDALONE runtime (deployed 2026-07-30) — deliberately NOT wired into the orchestrator MVP chain or AGENTCORE_A2A_PEER_URLS. Invoke handler consumes the Developer->Frontend handoff (target_app, runId, openapi_path); in s3 mode it fetches context.json/openapi.json from runs/<runId>/<slug>/ and uploads generated frontend output back to the same folder. target-apps/_template/ is baked into the image (Dockerfile COPY), not S3-fetched, so a fresh container can scaffold without depending on scripts/publish-template-to-s3.py having been run for this agent. openapi.json will only be found in S3 once developer-agent's own S3 upload (_upload_openapi_artifact_if_s3) has actually run for that app/run."
+      "notes": "SDLC chain step after developer-agent, before gitlab-agent (see sdlcPipeline). Cloud runs when PipelineOptions.with_frontend=true (default false until control-plane flip; test via invoke-orchestrator-smoke.py --with-frontend). Local A2A port 9111 (a2a/agent-registry.json). Invoke handler consumes Developer→Frontend handoff (target_app, runId, openapi_path); in s3 mode fetches context.json/openapi.json from runs/<runId>/<slug>/ and uploads generated frontend/ back. target-apps/_template/frontend is baked into the image (Dockerfile COPY). openapi.json appears in S3 only after developer-agent uploads it for that run. Orchestrator resolves this ARN via AGENTCORE_PEER_RUNTIME_ARNS (pinned from sdlcPipeline) or baked runtimes.json."
     }
   }
 }

@@ -2,8 +2,6 @@ default_agent: frontend_agent
 agents:
   product_agent:
     name: product_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -48,12 +46,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -62,8 +54,6 @@ agents:
     is_generated_by_agentcore_create: false
   architect_agent:
     name: architect_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -108,12 +98,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -122,8 +106,6 @@ agents:
     is_generated_by_agentcore_create: false
   database_agent:
     name: database_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -168,12 +150,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -182,8 +158,6 @@ agents:
     is_generated_by_agentcore_create: false
   developer_agent:
     name: developer_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -228,12 +202,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -242,8 +210,6 @@ agents:
     is_generated_by_agentcore_create: false
   gitlab_agent:
     name: gitlab_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -288,12 +254,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -302,8 +262,6 @@ agents:
     is_generated_by_agentcore_create: false
   orchestrator_agent:
     name: orchestrator_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -348,12 +306,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -362,8 +314,6 @@ agents:
     is_generated_by_agentcore_create: false
   web_crawler_agent:
     name: web_crawler_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -408,12 +358,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -422,8 +366,6 @@ agents:
     is_generated_by_agentcore_create: false
   devops_agent:
     name: devops_agent
-    language: python
-    node_version: null
     entrypoint: C:/Juno Projects/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -468,12 +410,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null
@@ -482,8 +418,6 @@ agents:
     is_generated_by_agentcore_create: false
   frontend_agent:
     name: frontend_agent
-    language: python
-    node_version: '20'
     entrypoint: C:/Users/AryanHirlekar/Desktop/project/sdlc-agentic-ai/sdlc-agentic-ai-platform/backend/deploy/agentcore/a2a_server.py
     deployment_type: container
     runtime_type: null
@@ -528,12 +462,6 @@ agents:
     identity:
       credential_providers: []
       workload: null
-    aws_jwt:
-      enabled: false
-      audiences: []
-      signing_algorithm: ES384
-      issuer_url: null
-      duration_seconds: 300
     authorizer_configuration: null
     request_header_configuration: null
     oauth_configuration: null

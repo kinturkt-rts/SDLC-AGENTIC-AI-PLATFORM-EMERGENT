@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -44,6 +45,7 @@ def test_pipeline_steps_match_diagram() -> None:
         "architect-agent",
         "database-agent",
         "developer-agent",
+        "frontend-agent",
         "gitlab-agent",
         "qa-agent",
     )
@@ -57,14 +59,59 @@ def test_planned_steps_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
         input_file="inputs/inventory-app.txt",
     )
     steps = planned_steps(options)
+    # with_frontend defaults True — frontend runs before gitlab.
     assert steps == [
         "product-agent",
         "architect-agent",
         "database-agent",
         "developer-agent",
+        "frontend-agent",
         "gitlab-agent",
     ]
     assert "verify" not in steps
+
+
+def test_planned_steps_with_frontend_before_gitlab(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("GITLAB_PROJECT_PATH", "group/project")
+    options = PipelineOptions(
+        target_app="inventory-app",
+        input_file="inputs/inventory-app.txt",
+        with_frontend=True,
+    )
+    steps = planned_steps(options)
+    assert steps == [
+        "product-agent",
+        "architect-agent",
+        "database-agent",
+        "developer-agent",
+        "frontend-agent",
+        "gitlab-agent",
+    ]
+
+
+def test_planned_steps_frontend_skipped_when_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("GITLAB_PROJECT_PATH", "group/project")
+    options = PipelineOptions(
+        target_app="inventory-app",
+        with_frontend=True,
+        skip_frontend=True,
+    )
+    assert "frontend-agent" not in planned_steps(options)
+
+
+def test_planned_steps_frontend_off_when_with_frontend_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("GITLAB_PROJECT_PATH", "group/project")
+    options = PipelineOptions(
+        target_app="inventory-app",
+        input_file="inputs/inventory-app.txt",
+        with_frontend=False,
+    )
+    assert "frontend-agent" not in planned_steps(options)
 
 
 def test_planned_steps_qa_after_gitlab(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -87,6 +134,7 @@ def test_planned_steps_skip_db_and_gitlab() -> None:
         skip_product=True,
         skip_architect=True,
         skip_verify=True,
+        with_frontend=False,
     )
     steps = planned_steps(options)
     assert steps == ["developer-agent"]
@@ -101,6 +149,7 @@ def test_planned_steps_gitlab_only_when_developer_skipped(monkeypatch: pytest.Mo
         skip_architect=True,
         skip_db=True,
         skip_developer=True,
+        skip_frontend=True,
         skip_gitlab=False,
         transport="a2a",
     )
@@ -852,3 +901,97 @@ def test_step_developer_handoff_timeout_triggers_retry(
 
     assert invoke_mock.call_count == 2
     assert "developer-agent" in runner.agents_run
+
+
+def test_frontend_required_false_when_delivery_profile_says_streamlit() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.context = {"deliveryProfile": {"requiresReact": False, "requiresStreamlit": True}}
+    assert runner._frontend_required() is False
+
+
+def test_frontend_required_defaults_true_when_profile_missing() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.context = {}
+    assert runner._frontend_required() is True
+
+
+def test_frontend_a2a_handoff_payload_includes_run_id_and_target_app(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.feature = "recipe-vault"
+    runner.run_id = "fe-test-1"
+    runner.context = {
+        "deliveryProfile": {"requiresReact": True},
+        "authMode": "jwt",
+        "openApiPath": "recipe-vault/openapi.json",
+        "targetAppDir": "recipe-vault",
+    }
+    payload = runner._frontend_a2a_handoff_payload()
+    assert payload["target_app"] == "recipe-vault"
+    assert payload["run_id"] == "fe-test-1"
+    assert payload["runId"] == "fe-test-1"
+    assert payload["frontend_required"] is True
+    assert payload["openapi_path"] == "recipe-vault/openapi.json"
+
+
+def test_assert_frontend_a2a_ok_raises_on_error_status() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    with pytest.raises(PipelineStepError, match="target_app is required"):
+        runner._assert_frontend_a2a_ok(
+            json.dumps({"status": "error", "error": "target_app is required"})
+        )
+
+
+def test_assert_frontend_a2a_ok_accepts_success() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner._assert_frontend_a2a_ok(json.dumps({"status": "success", "target_app": "x"}))
+
+
+def test_step_frontend_a2a_sends_json_handoff_not_prose(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.root = repo_root
+    runner.feature = "recipe-vault"
+    runner.run_id = "fe-test-2"
+    runner.transport = "a2a"
+    runner.agents_run = []
+    runner.artifacts = {}
+    runner.context = {
+        "deliveryProfile": {"requiresReact": True},
+        "openApiPath": "recipe-vault/openapi.json",
+    }
+    runner.context_file = "agents/pipeline/recipe-vault.context.json"
+
+    captured: dict[str, Any] = {}
+
+    def fake_invoke(agent_name, task, *, step, attach_context=True, **kwargs):
+        captured["agent_name"] = agent_name
+        captured["task"] = task
+        captured["attach_context"] = attach_context
+        captured["step"] = step
+        return json.dumps({"status": "success", "target_app": "recipe-vault"})
+
+    with (
+        patch.object(runner, "_ensure_openapi_for_frontend"),
+        patch.object(runner, "_invoke_a2a", side_effect=fake_invoke),
+        patch.object(runner, "_ensure_frontend_artifacts"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_frontend()
+
+    assert captured["agent_name"] == "frontend-agent"
+    assert captured["attach_context"] is False
+    body = json.loads(captured["task"])
+    assert body["target_app"] == "recipe-vault"
+    assert body["run_id"] == "fe-test-2"
+    assert "Generate the React frontend" not in captured["task"]
+    assert "frontend-agent" in runner.agents_run
