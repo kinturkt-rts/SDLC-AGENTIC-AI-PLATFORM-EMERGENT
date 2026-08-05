@@ -1460,11 +1460,18 @@ class SdlcPipelineRunner:
         self._after_agent_step("qa-agent")
     
     def _frontend_required(self) -> bool:
-        """False only when deliveryProfile explicitly says no React UI (e.g. Streamlit
-        or API-only was chosen) — absent/unknown profile defaults to required."""
+        """React frontend is the platform default - build it unless the brief explicitly
+        opted out (chose Streamlit instead, or explicitly said no-frontend/API-only).
+        A brief that's simply silent about UI tech (the common case) must still get the
+        default React frontend - scan_delivery_text() only sets requiresReact=True on a
+        positive signal, so treating "not detected" as "explicitly rejected" would skip
+        frontend-agent for most ordinary briefs, not just the ones that actually opted out."""
         delivery = self.context.get("deliveryProfile") or {}
-        required = delivery.get("requiresReact")
-        return True if required is None else bool(required)
+        if delivery.get("requiresStreamlit"):
+            return False
+        if delivery.get("noFrontendExplicit"):
+            return False
+        return True
 
     def _frontend_a2a_handoff_payload(self) -> dict[str, Any]:
         """Developer→frontend handoff JSON for AgentCore (snake_case contract)."""

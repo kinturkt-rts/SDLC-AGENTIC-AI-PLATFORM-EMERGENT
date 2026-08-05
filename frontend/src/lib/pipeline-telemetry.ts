@@ -442,6 +442,24 @@ export interface TelemetryOverviewRow {
   updatedAt: string | null;
 }
 
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const TERMINAL_TELEMETRY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** A finished run's telemetry (tokens/cost per agent) can never change again - cache it
+ * indefinitely instead of re-reading every agent's telemetry file on every overview load. */
+async function loadPipelineTelemetryCached(
+  projectId: string,
+  runId: string | null,
+  isTerminalRun: boolean,
+): Promise<PipelineTelemetrySummary> {
+  if (!isTerminalRun || !runId) {
+    return loadPipelineTelemetryUncached(projectId, runId);
+  }
+  return cachedAsync(`telemetryBuild:${runId}`, TERMINAL_TELEMETRY_CACHE_TTL_MS, () =>
+    loadPipelineTelemetryUncached(projectId, runId),
+  );
+}
+
 export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
   const runs = await listRuns();
   const byProject = new Map<string, { runCount: number; lastRunAt: string }>();
@@ -449,6 +467,7 @@ export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
   // avoids each project re-calling listRuns() via resolveTelemetryRunId (was O(projects)
   // redundant heavy S3/DynamoDB scans, and serialized them one project at a time).
   const latestUuidRunByProject = new Map<string, string>();
+  const latestUuidRunTerminalByProject = new Map<string, boolean>();
   const latestUuidStartedAt = new Map<string, string>();
 
   for (const run of runs) {
@@ -464,6 +483,7 @@ export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
       if (!prevStarted || run.startedAt > prevStarted) {
         latestUuidStartedAt.set(run.projectId, run.startedAt);
         latestUuidRunByProject.set(run.projectId, run.id);
+        latestUuidRunTerminalByProject.set(run.projectId, TERMINAL_RUN_STATUSES.has(run.status));
       }
     }
   }
@@ -471,8 +491,14 @@ export async function getTelemetryOverview(): Promise<TelemetryOverviewRow[]> {
   const rows = await Promise.all(
     Array.from(byProject.entries()).map(async ([projectId, meta]) => {
       let runId = latestUuidRunByProject.get(projectId) ?? null;
-      if (!runId && isS3Store()) runId = await findLatestS3RunIdForApp(projectId);
-      const telem = await loadPipelineTelemetryUncached(projectId, runId);
+      let isTerminalRun = latestUuidRunTerminalByProject.get(projectId) ?? false;
+      if (!runId && isS3Store()) {
+        runId = await findLatestS3RunIdForApp(projectId);
+        // No UUID run tracked locally (legacy/slug-only project) - assume terminal since
+        // there's no live status source to say otherwise; matches prior uncached behavior.
+        isTerminalRun = true;
+      }
+      const telem = await loadPipelineTelemetryCached(projectId, runId, isTerminalRun);
       return {
         projectId,
         projectName: projectTitle(projectId),
