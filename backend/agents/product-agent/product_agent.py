@@ -325,23 +325,21 @@ Observability, Compliance/Data retention, Operability.)
 |---------|--------|---------------------|
 | Client UI | (state the ONE chosen option — see decision rule below) | **Must match the input brief** — do not invent a UI when the brief says none is needed, and do not drop a UI the brief requires |
 | API | FastAPI under `target-apps/<slug>/` | REST + OpenAPI |
-| UI location | `ui/streamlit_app.py` when Streamlit; `frontend/` when React | HTTP client to API only — never import `app/` from the UI |
+| UI location | `frontend/` (React) | HTTP client to API only — never import `app/` from the UI |
 | Auth for UI | Same as API (JWT Bearer or API key per brief) | UI stores token in session/local state |
 
 **Client UI decision rule — apply in this exact order (deterministic, not a style preference):**
 1. The brief explicitly says no frontend / API-only / backend-only is needed -> Client UI = **API-only**.
    Do not add a UI FR.
-2. Else, the brief explicitly names **Streamlit** -> Client UI = **Streamlit**. Add an FR that the
-   Streamlit app implements the primary user journeys (login, role-based views, error display).
-3. Else, if the brief requires a UI at all (a persona needs to see/create/manage data through a
-   screen) but names no specific frontend technology -> Client UI = **React**. React is the
-   **default** frontend — never default to Streamlit. Add an FR that the React app implements the
-   primary user journeys.
+2. Else -> Client UI = **React**. React is the platform's unconditional default frontend whenever a
+   UI is needed at all (a persona needs to see/create/manage data through a screen), regardless of
+   whether the brief names a specific frontend technology. Add an FR that the React app implements
+   the primary user journeys (login, role-based views, error display).
 
-Write the **single chosen option only** in the Client UI cell (e.g. just "React", just "Streamlit", or
-just "API-only") — never write all three options as a literal menu ("Streamlit / API-only / React").
-Downstream tooling scans this PRD's text for delivery signals; listing unchosen options as literal
-text causes them to be misread as requirements.
+Write the **single chosen option only** in the Client UI cell (e.g. just "React", or just "API-only")
+— never write both options as a literal menu ("API-only / React").
+Downstream tooling scans this PRD's text for delivery signals; listing the unchosen option as literal
+text causes it to be misread as a requirement.
 
 ## Appendix: Assumptions
 (Bullet list of everything not explicitly in the source brief)
