@@ -8,7 +8,7 @@
 // App.tsx wires this up as: `<Shell onNavigate={navigate} ...>` (navigate
 // from useNavigate() — its (to: string) => void signature matches directly,
 // no wrapper needed).
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useTheme } from "next-themes";
 import { LogOut, Moon, Sun } from "lucide-react";
@@ -21,18 +21,38 @@ export interface ShellNavItem {
   icon?: ReactNode;
 }
 
+// The 5 accent palettes defined in src/index.css. App.tsx picks exactly one
+// per app (see the frontend-agent system prompt's ACCENT PALETTE rules) and
+// passes it here; Shell applies it as a data-palette attribute on <html>,
+// which index.css's :root[data-palette="X"] / .dark[data-palette="X"] rules
+// key off of. Defaults to "teal" (the original single-accent theme) so an
+// app that omits the prop renders unchanged.
+export type ShellAccentPalette = "teal" | "blue" | "violet" | "emerald" | "rose";
+
 export interface ShellProps {
   brandName: string;
   navItems: ShellNavItem[];
   onNavigate: (to: string) => void;
   onLogout: () => void;
+  accentPalette?: ShellAccentPalette;
   children: ReactNode;
 }
 
-export function Shell({ brandName, navItems, onNavigate, onLogout, children }: ShellProps) {
+export function Shell({
+  brandName,
+  navItems,
+  onNavigate,
+  onLogout,
+  accentPalette = "teal",
+  children,
+}: ShellProps) {
   const location = useLocation();
   const { resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme !== "light";
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-palette", accentPalette);
+  }, [accentPalette]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">

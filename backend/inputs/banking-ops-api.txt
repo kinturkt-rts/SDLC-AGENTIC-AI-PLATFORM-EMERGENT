@@ -1,0 +1,109 @@
+We’re looking to build a backend application that helps a regional banking network manage customers, accounts, beneficiaries, transfers, service requests, branch operations, and transaction reviews from one central platform.
+The application should be built with FastAPI and should expose a well-structured API that can later support web, mobile, and internal operations tools.
+ 
+Scenario
+The bank currently uses separate systems for customer onboarding, account servicing, beneficiary management, fund transfers, and branch requests. This creates duplicate records, inconsistent validation, and limited visibility into the full customer journey.
+The new system should provide a unified banking operations layer while preserving complete history for financial and audit purposes.
+ 
+Features
+Maintain customer profiles with personal details, contact information, identity references, risk level, and customer status
+Support individual and business customers
+Maintain multiple addresses and contact methods for each customer
+Create and manage bank branches
+Open and manage savings, checking, and business accounts
+Track account status, available balance, ledger balance, currency, and branch ownership
+Support joint account holders and account ownership percentages
+Freeze, unfreeze, close, or reactivate accounts through controlled workflows
+Maintain beneficiaries for domestic transfers
+Verify and activate new beneficiaries before they can be used
+Initiate transfers between a customer’s own accounts
+Initiate transfers to registered beneficiaries
+Support scheduled and recurring transfers
+Track transfer states such as Draft, Pending Review, Processing, Completed, Rejected, Cancelled, and Failed
+Record transaction history, reference numbers, amounts, fees, timestamps, and descriptions
+Support deposits, withdrawals, transfers, fees, reversals, and adjustments
+Allow authorized operations users to place transactions under review
+Record review notes, approval decisions, and rejection reasons
+Handle transaction reversals without deleting the original transaction
+Maintain daily transfer limits by customer type and risk level
+Maintain account-level restrictions and blocked transaction types
+Create service requests for address changes, account statements, cheque books, card replacement, and account closure
+Assign service requests to branches or operations teams
+Track request status, priority, owner, comments, and resolution details
+Search and filter customers, accounts, transactions, transfers, beneficiaries, and service requests
+Provide account statements for selected date ranges
+Provide summary information for customer balances, recent transactions, pending transfers, and open service requests
+Provide operational summaries for branch activity, failed transactions, pending reviews, and high-value transfers
+Maintain complete audit history for important actions and state changes
+Seed realistic sample customers, accounts, beneficiaries, transfers, transactions, branches, and service requests
+Important Business Rules
+Customer identifiers and verified email addresses must be unique where applicable.
+Closed customers cannot open new accounts.
+Closed or frozen accounts cannot initiate outgoing transfers.
+Account balances must never become negative unless the account explicitly supports an overdraft facility.
+Available balance and ledger balance must be tracked separately.
+Joint account ownership percentages must total 100 percent.
+A beneficiary must be verified and active before receiving a transfer.
+A customer cannot register the same beneficiary account more than once.
+Transfer amounts must be positive and within the customer’s remaining daily limit.
+High-value transfers may require additional review before processing.
+Scheduled transfers cannot use dates in the past.
+Recurring transfers must include a valid frequency and end condition.
+A completed financial transaction cannot be edited or deleted.
+Corrections must be handled through reversals or adjustment entries.
+Reversing a transaction must create linked financial records and preserve the original entry.
+Duplicate transfer submissions with the same idempotency reference must not create duplicate transactions.
+Account closure must be rejected when the account has a non-zero balance, pending transfer, active restriction, or unresolved service request.
+Rejected and cancelled transfers must remain available in history.
+Service requests must follow valid status transitions.
+Closed service requests cannot be modified unless reopened by an authorized user.
+Sensitive customer and transaction data must only be available to authorized roles.
+Every change to customer status, account status, limits, restrictions, transfers, and financial records must be auditable.
+Expected Roles
+Customer service representative
+Branch operations user
+Transaction reviewer
+Compliance user
+Banking administrator
+Read-only auditor
+The Product and Architecture Agents should determine the final permission model and role boundaries.
+ 
+Expected Data Areas
+The application will likely need to manage related information for:
+Customers
+Business profiles
+Addresses and contacts
+Branches
+Accounts
+Account holders
+Beneficiaries
+Transfers
+Transfer schedules
+Financial transactions
+Transaction reviews
+Account restrictions
+Daily limits
+Service requests
+Comments
+Audit events
+The Database Agent should determine the final schema, relationships, constraints, and indexing strategy.
+ 
+Technical Expectations
+FastAPI backend
+Persisted relational database
+Clear request and response models
+Strong validation and structured error handling
+Pagination, sorting, and filtering for large result sets
+Idempotency for sensitive financial operations
+Transaction-safe balance updates
+Role-aware access control
+OpenAPI documentation
+Health and readiness checks
+Database migrations
+Seed data
+Structured logging and correlation identifiers
+Unit, API, and workflow tests
+Secrets and credentials stored outside source code
+No customer-facing frontend is required for the first version
+Success
+The system is successful when staff can onboard customers, open and manage accounts, register and verify beneficiaries, initiate and review transfers, generate transaction history and statements, manage branch service requests, process reversals safely, and retrieve operational summaries without losing financial or audit history.

@@ -1,0 +1,59 @@
+We manage residential rental properties on behalf of the people who own them, and we need one system to run the whole operation. Today we juggle tenants, rent, repairs, and owner payouts across spreadsheets and email, and things slip: rent goes uncollected, repairs get forgotten, leases expire without anyone noticing, and owners don't get clear statements. We want a single system that handles all of it.
+
+About our business
+
+We look after buildings owned by different landlords. Each building has multiple units that get rented out to tenants on leases. We collect rent, handle maintenance and repairs, deal with move-ins and move-outs, and pass the money on to the owners after taking our management fee. We also work with outside contractors for repairs and keep track of what we owe them.
+
+What the system needs to handle
+
+Owners. We manage properties for many different owners. We need each owner's contact and payout details, which properties they own, the management fee we've agreed with them, and a running record of what we've collected on their behalf and what we've paid out to them.
+
+Properties and units. Each property is a building at an address, belonging to one owner. A property has many units (apartments), and each unit has details like its number, size, number of bedrooms, and its current state: available to rent, occupied, under maintenance, or off the market. A unit that is under maintenance or off the market cannot be rented out.
+
+Tenants and applications. People apply to rent a unit. An application has the applicant's details, the unit they want, and a status from submitted through approved or rejected. We screen applicants and only approved applicants can be put on a lease. We keep tenant records with contact details and their history with us.
+
+Leases. A lease ties a tenant to a unit for a period of time, with a monthly rent, a security deposit, a start and end date, and a status such as active, ended, or broken. A unit can only have one active lease at a time. When a lease is active the unit is occupied; when it ends the unit becomes available again. We need to know which leases are expiring soon so we can renew them.
+
+Rent and payments. Rent is due each month for every active lease. We need to track each rent charge, whether it's been paid, partially paid, or is overdue, and record the payments tenants make. Late rent past a grace period incurs a late fee. We need to see, at any time, who owes what and how overdue they are. A tenant who is badly behind can be flagged for eviction proceedings.
+
+Security deposits. We hold each tenant's deposit. When they move out we inspect the unit, deduct for any damage beyond normal wear, and return the rest. We need to track the deposit, any deductions with reasons, and what was returned.
+
+Maintenance and repairs. Tenants report problems with their unit. Each maintenance request has the unit, what's wrong, how urgent it is, and a status from reported through assigned, in progress, and completed. Urgent issues like no heat or a leak must be prioritized. We assign requests to contractors, track the cost, and mark them done. Some repairs are the owner's expense and some are ours, and this affects the owner's statement.
+
+Contractors. We work with outside contractors for repairs. We keep their details, their trade, whether they're currently approved to work for us, and a record of the jobs they've done and what we owe or have paid them. A contractor who is not approved cannot be assigned new work.
+
+Inspections. We inspect units at move-in, move-out, and periodically. Each inspection records the unit, the date, who did it, the condition found, and any issues that need follow-up. Move-out inspections feed into deposit deductions.
+
+Owner statements and payouts. Each month, for every owner, we produce a statement: the rent we collected on their properties, minus our management fee, minus any repairs that were their expense, giving the amount we owe them. We track when we've paid owners out and flag any statement that hasn't been settled.
+
+Reports our managers need. Managers want to see: which units are vacant and losing money, which leases are expiring in the next 60 days, who is behind on rent and by how much, which maintenance requests are open and how long they've been waiting, how each property is performing, and which owners are owed money. Different staff should see different things, and a property manager should only see the properties they're responsible for.
+
+Important rules we must never break
+
+A unit that is under maintenance or off the market cannot be put on a new lease.
+A unit can never have two active leases at the same time.
+Only an approved applicant can be placed on a lease.
+Rent charges and payment history must never be quietly deleted or edited; corrections have to be tracked.
+Late rent past the grace period gets a late fee.
+A contractor who is not approved cannot be assigned new maintenance work.
+A move-out deposit return must be based on a completed move-out inspection.
+Ended, broken, and rejected records must stay in history and never disappear.
+An owner statement must correctly reflect collected rent minus fees minus owner-expense repairs.
+Every important change, who did it and when, must be recorded so we can always trace what happened for disputes and audits.
+
+Who uses the system
+
+Property managers who oversee their assigned properties, leases, and maintenance.
+Leasing staff who handle applications, screening, and new leases.
+Maintenance coordinators who take repair requests and assign contractors.
+Accounting staff who handle rent, deposits, owner statements, and payouts.
+Administrators who oversee everything across all properties and owners.
+Read-only auditors who can review everything but change nothing.
+
+Each role should only be able to do what its job requires, and the system should decide sensible permissions for each.
+
+What success looks like
+
+The company runs the entire property operation from one system: onboarding owners and their properties, listing and leasing units, screening applicants, collecting rent and chasing arrears, holding and returning deposits, handling maintenance from report to completed repair, working with contractors, inspecting units, and producing accurate monthly owner statements, all while keeping a complete and trustworthy history that managers can report on and auditors can review.
+
+We want a working web application for our staff to use, along with the system that runs behind it. A mobile app isn't needed yet, but it should be possible to add one later.

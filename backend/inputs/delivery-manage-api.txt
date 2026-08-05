@@ -1,0 +1,61 @@
+We run a regional delivery and courier company and we need one system to manage our whole operation. Right now everything is spread across spreadsheets, phone calls, and paper slips, and we keep losing track of packages, double-booking drivers, and missing delivery deadlines. We want one place that runs the entire business.
+
+About our business
+
+We deliver packages across a region for lots of different customers. Some customers are individuals sending the occasional parcel, and some are large business accounts that ship hundreds of packages a week and have agreed rates and monthly billing. We have our own drivers and our own fleet of vehicles, and we run daily delivery routes out of several depots.
+
+What we need the system to handle
+
+Customers. We need to keep track of every customer: their contact details, their pickup and billing addresses, and whether they are a regular individual or a contracted business account. Business accounts have agreed pricing and credit terms, so the system needs to know their rate agreement and how much they currently owe.
+
+Drivers. We need records for every driver: their license details and expiry, which depot they work out of, their working hours and days off, and their current status such as available, on a route, off duty, or on leave. A driver with an expired license or who is off duty must never be given deliveries.
+
+Vehicles. We need to track our fleet: each vehicle's type and size, how much it can carry by weight and by volume, which depot it belongs to, its service and inspection due dates, and whether it is available, in use, or in the shop for maintenance. A vehicle that is out of service or overdue for inspection cannot be used.
+
+Depots. We operate several depots in different areas. Drivers, vehicles, and routes belong to depots, and each package starts and passes through depots on its way to the recipient.
+
+Packages and shipments. Customers book shipments. Each shipment has a sender and a recipient with their addresses, the package details like weight, size, and how fragile or valuable it is, a service level such as same-day, next-day, or standard, and a promised delivery date. Fragile and high-value packages need special handling and can only go on certain vehicles. Some shipments are a single package, and some are large orders of many packages that must be tracked together but can be split across vehicles.
+
+Pricing and billing. The price of a shipment depends on its weight, size, distance, and service level. Business accounts get their agreed rates; individuals pay standard rates. We need to track what each shipment costs, what has been invoiced, and what business accounts still owe.
+
+Routes and assignment. Every day we build delivery routes: a route is a set of shipments assigned to one driver and one vehicle out of a depot, in a planned order of stops. When we assign shipments to a route we must not overload the vehicle beyond its weight and volume limits, and we must not assign a driver more work than fits in their working hours. Same-day and urgent shipments must be prioritized ahead of standard ones.
+
+Tracking and delivery. As a package moves we need to record every step: picked up, at a depot, out for delivery, delivered, and so on, each with a time and location and the driver responsible. When a driver delivers a package they capture proof of delivery such as a signature or photo reference and any notes. If a delivery fails they must record the reason, such as nobody home or wrong address, and failed deliveries get rescheduled for another attempt. There is a limit on how many attempts a shipment gets before it is returned to sender.
+
+Exceptions and problems. Things go wrong: packages get delayed, damaged, lost, or returned. We need to log these problems against a shipment, track who is handling them, and record how they were resolved. Customers can raise complaints or claims for lost or damaged goods, and we need to manage those from raised to resolved.
+
+Money owed and settlements. For business accounts we generate monthly statements of everything they shipped and what they owe, track their payments, and flag accounts that are overdue or over their credit limit. An account that is over its credit limit should be stopped from booking new shipments until it settles.
+
+Reports our managers need. Managers want to see at a glance: how many active shipments are in progress, which deliveries are running late against their promised date, which delivery attempts failed and why, how each driver and vehicle is being utilized, which routes completed on time, and which business accounts are the biggest and which are overdue. Each depot manager should only see their own depot's activity, while head office sees everything.
+
+Important rules we must never break
+
+A shipment can only be assigned to a driver who is on duty with a valid license, and to a vehicle that is available and not overdue for inspection.
+A vehicle must never be loaded beyond its weight or volume capacity.
+Fragile or high-value packages can only be assigned to vehicles equipped to carry them.
+A package cannot be marked delivered unless it was picked up first, and it must follow the proper sequence of steps in order.
+A delivered package can no longer be changed.
+A failed delivery must always have a reason, and after too many failed attempts the shipment is returned to sender.
+Cancelled, failed, and returned shipments must stay in the history and never be deleted.
+Same-day and urgent shipments must be handled before standard ones when building routes.
+A business account that is over its credit limit or badly overdue cannot book new shipments until it is settled.
+Money records and delivery history must never be quietly edited or erased; corrections have to be tracked.
+Every important change, who did it and when, must be recorded so we can always see the full history for audits and disputes.
+
+Who uses the system
+
+Depot managers who plan routes and manage their local drivers and vehicles.
+Dispatchers who assign shipments and handle day-to-day problems.
+Drivers who see their assigned deliveries and update package status from the road.
+Customer service staff who handle customer questions, complaints, and claims.
+Billing staff who manage business account statements and payments.
+Head office administrators who oversee everything across all depots.
+Read-only auditors who can review history but change nothing.
+
+Different people should only be able to do what their job allows, and the system should decide sensible permissions for each of these roles.
+
+What success looks like
+
+The company runs its entire delivery operation from this one system: booking shipments, planning routes without overloading drivers or vehicles, tracking every package from pickup to delivery, handling failed attempts and returns, managing customer complaints and claims, billing business accounts correctly, and giving managers clear summaries of what is on track and what is going wrong, all while keeping a complete and trustworthy history of everything.
+
+We want both a working web application that our staff can use and the underlying system behind it. We do not need a mobile app yet, but the system should be built so one could be added later.

@@ -1,0 +1,38 @@
+We're looking to build a web application that helps users manage their personal movie collection. Users should be able to keep track of movies they've watched, maintain a watchlist, rate movies, and search their collection.
+
+The application should provide an easy way to organize movies and quickly find information about them.
+
+Features
+- Add and manage movies
+- Create a watchlist
+- Mark movies as watched
+- Rate and review movies
+- Search by title, genre, or year
+- Filter watched and unwatched movies
+- View recently added movies
+- Dashboard with basic movie statistics
+
+Who uses it
+- Signed-in collectors manage their own movie library
+- Only authenticated users can access movie data; health checks for ops can stay open
+
+Must have for v1
+- Persisted data in Postgres with sensible seed users for demo
+- Sign in with username and password (JWT)
+- FastAPI backend with Swagger
+- A working React + TypeScript browser UI (Vite) for staff/demo use — this is required, not optional
+
+UI / styling requirements
+- Build the frontend with React, TypeScript, and Vite
+- Use Tailwind CSS for all styling (utility classes)
+- Use shadcn/ui components for forms, tables, buttons, dialogs, and layout
+- Do NOT use hand-written CSS files, CSS modules, styled-components, or inline style objects for layout/theming
+- Dark navy theme with teal accent, matching the shared frontend template
+
+Stack expected
+- FastAPI + Postgres + pytest for the API
+- React + TypeScript + Vite + Tailwind CSS + shadcn/ui for the web UI
+- No LLM features in MVP
+
+Success
+Users can sign in, maintain their movie collection, track what they've watched, and easily search or organize their movies from the Tailwind-styled React UI.

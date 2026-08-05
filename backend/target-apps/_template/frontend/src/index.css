@@ -121,6 +121,117 @@
   --ring: #2dd4bf;
 }
 
+/* =====================================================================
+   Accent palettes — ONLY --primary/--primary-hover/--primary-dim/
+   --primary-foreground/--ring are overridden here. Every other token
+   (background, card, foreground, muted, border, destructive/warning/
+   success) stays exactly as defined in :root/.dark above, in every
+   palette, in both modes — surfaces are untouched by design.
+
+   --ring and --primary-dim aren't named in the 5-palette brief, but both
+   are DERIVED from --primary in the existing (teal) theme above (ring
+   reuses the exact primary color; primary-dim is primary at low alpha,
+   consumed by --shadow-glow and bg-primary/10 tints) — leaving them
+   pinned to teal while --primary changed per palette would mismatch the
+   focus ring/glow color against the button color. Included them so the
+   whole accent, not just the button fill, tracks the chosen palette.
+
+   Switching mechanism: set data-palette="teal|blue|violet|emerald|rose" on
+   <html> (Shell.tsx does this from its accentPalette prop — see
+   src/Shell.tsx). No attribute (or data-palette="teal") = the unchanged
+   default above; existing apps/tests that never set the attribute are
+   byte-identical to before this system existed. Composes independently
+   with the dark-mode class next-themes already manages:
+     :root[data-palette="X"]      -> light-mode accent for palette X
+     .dark[data-palette="X"]      -> dark-mode accent for palette X
+   Each selector has higher specificity than the plain :root/.dark rules
+   above, so it overrides them regardless of source order.
+
+   Contrast (WCAG relative-luminance ratio, primary vs primary-foreground,
+   >=4.5:1 required for AA text): teal light 5.23:1 / dark 8.90:1 (existing,
+   unchanged) — blue light 4.94:1 / dark 7.34:1 — violet light 5.45:1 /
+   dark 6.93:1 — emerald light 4.80:1 / dark 9.41:1 (emerald's light accent
+   is too pale for white text at AA, so — per "adjust the foreground, not
+   the accent" — its foreground is dark in BOTH modes, unlike the other 4
+   palettes which flip light-text/dark-text between modes) — rose light
+   4.70:1 / dark 6.89:1 (rose needed pure #ffffff in light mode; the
+   #f8fafc used by the other palettes measures 4.489:1, just under 4.5).
+   ===================================================================== */
+:root[data-palette="teal"] {
+  --primary: #0f766e;
+  --primary-hover: #0d9488;
+  --primary-dim: rgba(15, 118, 110, 0.1);
+  --primary-foreground: #f8fafc;
+  --ring: #0f766e;
+}
+.dark[data-palette="teal"] {
+  --primary: #2dd4bf;
+  --primary-hover: #14b8a6;
+  --primary-dim: rgba(45, 212, 191, 0.12);
+  --primary-foreground: #06231f;
+  --ring: #2dd4bf;
+}
+
+:root[data-palette="blue"] {
+  --primary: #2563eb;
+  --primary-hover: #3b82f6;
+  --primary-dim: rgba(37, 99, 235, 0.1);
+  --primary-foreground: #f8fafc;
+  --ring: #2563eb;
+}
+.dark[data-palette="blue"] {
+  --primary: #60a5fa;
+  --primary-hover: #3b82f6;
+  --primary-dim: rgba(96, 165, 250, 0.12);
+  --primary-foreground: #05112e;
+  --ring: #60a5fa;
+}
+
+:root[data-palette="violet"] {
+  --primary: #7c3aed;
+  --primary-hover: #8b5cf6;
+  --primary-dim: rgba(124, 58, 237, 0.1);
+  --primary-foreground: #f8fafc;
+  --ring: #7c3aed;
+}
+.dark[data-palette="violet"] {
+  --primary: #a78bfa;
+  --primary-hover: #8b5cf6;
+  --primary-dim: rgba(167, 139, 250, 0.12);
+  --primary-foreground: #1a0533;
+  --ring: #a78bfa;
+}
+
+:root[data-palette="emerald"] {
+  --primary: #059669;
+  --primary-hover: #10b981;
+  --primary-dim: rgba(5, 150, 105, 0.1);
+  --primary-foreground: #031a12;
+  --ring: #059669;
+}
+.dark[data-palette="emerald"] {
+  --primary: #34d399;
+  --primary-hover: #10b981;
+  --primary-dim: rgba(52, 211, 153, 0.12);
+  --primary-foreground: #031a12;
+  --ring: #34d399;
+}
+
+:root[data-palette="rose"] {
+  --primary: #e11d48;
+  --primary-hover: #f43f5e;
+  --primary-dim: rgba(225, 29, 72, 0.1);
+  --primary-foreground: #ffffff;
+  --ring: #e11d48;
+}
+.dark[data-palette="rose"] {
+  --primary: #fb7185;
+  --primary-hover: #f43f5e;
+  --primary-dim: rgba(251, 113, 133, 0.12);
+  --primary-foreground: #2b0510;
+  --ring: #fb7185;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

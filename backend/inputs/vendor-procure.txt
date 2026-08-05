@@ -1,0 +1,33 @@
+We're looking to build a small staff web app for a company vendor help desk: track vendors, open support tickets against them, and review a simple activity log.
+
+Keep the scope intentionally small for v1 — a few tables and screens only. Prefer a lean FastAPI service over a full procurement ERP.
+
+Features (keep it small)
+- Vendors: name, contact email, category, status (active / inactive). Only active vendors can get new tickets.
+- Tickets: title, multi-line notes/description, priority (low/medium/high), status (open / in_progress / resolved / closed), linked vendor, created_by user.
+- Ticket status updates with a required multi-line resolution_notes field when moving to resolved or closed.
+- Activity log: append-only list of important changes (vendor status changes, ticket creates/status changes) with actor, action, timestamp — read-only in the UI with filters by action type and date-ish query params.
+- Dashboard: counts of vendors, open tickets, high-priority open tickets, recent activity rows.
+- Search/filter tickets by status and vendor; list vendors with status filter.
+
+Who uses it
+- agent — create/update tickets, view vendors
+- admin — manage vendors, view activity log, everything agents can do
+- viewer — read-only
+
+Must have for v1
+- Postgres persistence + seed users and sample vendors/tickets/activity
+- JWT username/password login
+- FastAPI + OpenAPI + pytest
+- React + TypeScript + Vite staff UI (required)
+- Tailwind CSS + shadcn/ui (Button, Input, Textarea, Select, Table, Card, Dialog, Badge, Alert)
+- Multi-line ticket notes and resolution notes MUST use Textarea (not a single-line Input)
+- Activity log screen MUST call GET /api/v1/activity with optional query filters (so list + filter wiring is exercised)
+- App shell with Dashboard first, then Vendors, Tickets, Activity
+
+Explicit non-goals (do not build)
+- Purchase orders, invoices, budgets, receiving, three-way match, catalog items, cost centers
+- Streamlit, mobile apps, LLM features
+
+Success
+Staff can sign in, manage a short vendor list, open/update tickets with real notes fields, see a dashboard, and filter the activity log — all from the Tailwind React UI — without a large schema.

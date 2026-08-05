@@ -1,0 +1,43 @@
+We're looking to build a staff web application for a small wellness clinic front desk: manage clients, schedule visits, log multi-line clinical notes, and review an activity feed.
+
+The Product / Architecture / Database / Developer agents should keep scope focused but COMPLETE — prefer a correct, working system over cutting corners. Time and token cost are not constraints; correctness is.
+
+Domain (important for UI accent)
+This is a health / wellness clinic app — NOT banking, insurance, or logistics. The React shell accent palette should reflect health/wellness (teal or emerald), not finance-blue.
+
+Features
+Clients
+- Client profiles: full name, email, phone, status (active / inactive), intake notes (multi-line)
+- Only active clients can be booked for new visits
+
+Visits
+- Schedule visits linked to a client: scheduled_at, visit_type, status (scheduled / checked_in / completed / cancelled), multi-line visit_notes
+- Status transitions with validation; completing a visit requires non-empty visit_notes (multi-line)
+
+Dashboard (required backend endpoint)
+- The API MUST expose GET /api/v1/dashboard returning summary counts (e.g. clients, open/scheduled visits, completed this week, recent activity count) and optionally a small recent-visits list
+- The React Dashboard screen MUST call this GET /api/v1/dashboard endpoint and render from that response — do not rely only on client-side list .length counts while this route exists
+
+Activity log
+- Append-only activity entries for important actions (client created/updated, visit created/status changed)
+- GET /api/v1/activity must support optional query filters (e.g. action, entity_type, or limit/offset)
+- React Activity screen must call that filtered list endpoint and allow filtering in the UI
+
+Auth and roles (JWT)
+- username/password login
+- Roles: front_desk (manage clients/visits), clinician (update visit notes/status), admin (everything + activity log), viewer (read-only)
+- Role-gate admin-only screens (at least Activity) in the UI
+
+Must have for v1
+- Postgres + seed users/clients/visits/activity with demo passwords
+- FastAPI + OpenAPI + pytest
+- Working React + TypeScript + Vite staff UI (required)
+- Tailwind CSS + shadcn/ui including Textarea for all multi-line note fields (intake notes, visit notes) — never use single-line Input for those
+- Shell with Dashboard first at "/", then Clients, Visits, Activity
+- JWT session gate via isSessionValid(); call useNavigate() with other hooks BEFORE any auth early return in App.tsx
+
+Explicit non-goals
+- No billing, insurance claims, prescriptions, EHR integrations, Streamlit, mobile, or LLM features
+
+Success
+Staff can sign in, see a dashboard driven by GET /api/v1/dashboard, manage clients and visits with real multi-line notes, filter the activity log, and use a health-appropriate accent palette — all from the Tailwind React UI with a clean production build.

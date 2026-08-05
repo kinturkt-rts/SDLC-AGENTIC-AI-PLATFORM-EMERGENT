@@ -64,39 +64,45 @@ def _load_scaffold():
 _JWT_AUTH_SCREEN_SECTION = """\
 - Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, getCurrentUser, hasRole, isCurrentUser, and isSessionValid, which read the backend URL from VITE_API_URL and automatically attach the auth token from localStorage. Import and use those.
 - For EACH endpoint, use the api helper that matches the HTTP method declared in the OpenAPI spec for that exact path: GET -> apiGet, POST -> apiPost, PUT -> apiPut, PATCH -> apiPatch, DELETE -> apiDelete. Do NOT substitute one method for another (e.g. never call apiPut on a PATCH endpoint) — a method mismatch causes a 405 error at runtime. Never use raw fetch() for API calls; always use the api helpers so auth and the base URL are handled.
+- Prefer passing the path as a string or template literal DIRECTLY to apiGet/apiPost/etc. (e.g. apiGet<T>('/api/v1/items') or apiGet<T>(`/api/v1/items/${id}`)). If you must build a query string, keep the `/api/v1/...` prefix inside the literal passed to the helper (or assigned to the variable you pass) so static coverage checks can see it.
 - Do NOT pass a token argument to any api helper. They read the token from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
 - Store the auth token under the exact localStorage key "token" on login: localStorage.setItem("token", response.access_token). Remove it on logout: localStorage.removeItem("token"). The api helpers read this exact key, so any other key breaks authentication.
 - The Login screen's identifier field label and input type MUST match the login identifier property in the OpenAPI spec's LoginRequest schema (components.schemas.LoginRequest), not a generic assumption. This codebase's standardized users table logs in by "username", never "email" — so unless the schema's login identifier property is literally named/formatted "email", the field label is "Username" and the input is type="text". Never default to label "Email" / type="email" for a JWT login form; type="email" makes the browser reject a plain username (e.g. "jdoe") before the request is even sent, even though the POST body key would still be correct. Read the schema's property name for the identifier field and label/type the input after it.
 - To identify the logged-in user, import and call getCurrentUser() from api.ts, which returns { id, roles } decoded from the token. Use user.id for the current user's id and user.roles for their roles. NEVER use users[0] or the first item of any list as the current user, and never leave the current user unknown. To gate UI by role, use hasRole("admin", "floor_lead") from api.ts. If you need the logged-in user's display name (username, email), look up their id from getCurrentUser() in the users list; do not guess.
 - For ANY ownership/identity check (e.g. "is this my own notice/booking/comment?"), use isCurrentUser(id) from api.ts — NEVER write `currentUser?.id === someObject.owner_id` or similar raw `===` comparisons. CurrentUser.id is always a string (decoded from the JWT), but an owner/actor id field from the OpenAPI schema (e.g. author_id) may be typed number when the backend's primary key is a plain integer rather than a UUID — a raw `===` between them is a real type mismatch that fails a strict tsc build, not a false positive. isCurrentUser(id) handles the string/number comparison correctly: `isCurrentUser(notice.author_id)` instead of `currentUser?.id === notice.author_id`.
-- On mount, App.tsx MUST decide login-screen-vs-authenticated-shell by calling isSessionValid() from api.ts and gating on its return value. A stored token can be present but expired — `localStorage.getItem("token")` returning a non-null string is NOT proof of a valid session, and "no exception was thrown while reading the token" is NOT proof either. Never write a mount check that sets the authenticated state to true just because a call didn't throw; you must read and branch on isSessionValid()'s actual boolean. Required pattern (copy exactly, adapting names):
+- On mount, App.tsx MUST decide login-screen-vs-authenticated-shell by calling isSessionValid() from api.ts and gating on its return value. A stored token can be present but expired — `localStorage.getItem("token")` returning a non-null string is NOT proof of a valid session, and "no exception was thrown while reading the token" is NOT proof either. Never write a mount check that sets the authenticated state to true just because a call didn't throw; you must read and branch on isSessionValid()'s actual boolean. Required pattern (copy exactly, adapting names) — call ALL hooks (including useNavigate) BEFORE any early return:
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
+    const navigate = useNavigate();
     useEffect(() => {
       setIsAuthenticated(isSessionValid());
       setLoading(false);
     }, []);
     if (loading) return <div className="p-8 text-muted-foreground">Loading...</div>;
     if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
+  NEVER call useNavigate() (or any other hook) after those early returns — that crashes React after login with a blank white screen ("Rendered more hooks than during the previous render").
   Do the same re-check after handleLogout clears the token (set isAuthenticated back to false directly; do not re-derive it)."""
 
 _API_KEY_AUTH_SCREEN_SECTION = """\
 - Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, getCurrentUser, hasRole, isCurrentUser, isSessionValid, hasTwoRoles, login, and clearCredential. The api helpers read the backend URL from VITE_API_URL and automatically attach the stored credential under whichever header the chosen role maps to. Import and use those.
 - For EACH endpoint, use the api helper that matches the HTTP method declared in the OpenAPI spec for that exact path: GET -> apiGet, POST -> apiPost, PUT -> apiPut, PATCH -> apiPatch, DELETE -> apiDelete. Do NOT substitute one method for another (e.g. never call apiPut on a PATCH endpoint) — a method mismatch causes a 405 error at runtime. Never use raw fetch() for API calls; always use the api helpers so auth and the base URL are handled.
+- Prefer passing the path as a string or template literal DIRECTLY to apiGet/apiPost/etc. (e.g. apiGet<T>('/api/v1/items') or apiGet<T>(`/api/v1/items/${id}`)). If you must build a query string, keep the `/api/v1/...` prefix inside the literal passed to the helper (or assigned to the variable you pass) so static coverage checks can see it.
 - Do NOT pass a token argument to any api helper. They read the credential from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
 - This app has NO username/password login flow and NO /auth/login endpoint — do not build a login form with email/password fields, and do not call any auth endpoint on "login". The login screen is a PASTE-KEY screen for ALL api-key apps, single-tier or two-tier alike: one text field for the credential, a submit button, nothing else. Never render a role selector — the real role is resolved from the backend, not chosen by the user. On submit, call `await login(pastedValue)` from api.ts — it stores the credential, then calls GET /api/v1/users/me with it to resolve the real user id and role and stores those too — then `setIsAuthenticated(true)`. login() is async and throws if the key is rejected; wrap the call in try/catch and show an error on the paste-key screen instead of authenticating when it throws (do not call setIsAuthenticated(true) in that case).
 - getCurrentUser() now returns the caller's REAL id and role — { id, roles } — resolved by login() from the backend's GET /users/me, not a user-chosen role or a placeholder. hasRole("admin") / hasRole("employee") is meaningful for every api-key app, not just two-tier ones, and gates admin-only screens/buttons normally — do not special-case single-tier apps as "roles never work" here. isCurrentUser() also compares against the real backend user id now.
-- On mount, App.tsx MUST decide login-screen-vs-authenticated-shell by calling isSessionValid() from api.ts and gating on its return value — same requirement as JWT apps, simpler semantics: isSessionValid() is true exactly when a credential is stored (no expiry to check, so "present" and "valid" are the same thing here). Never write a mount check that reads localStorage directly instead of calling isSessionValid(). Required pattern (copy exactly, adapting names):
+- On mount, App.tsx MUST decide login-screen-vs-authenticated-shell by calling isSessionValid() from api.ts and gating on its return value — same requirement as JWT apps, simpler semantics: isSessionValid() is true exactly when a credential is stored (no expiry to check, so "present" and "valid" are the same thing here). Never write a mount check that reads localStorage directly instead of calling isSessionValid(). Required pattern (copy exactly, adapting names) — call ALL hooks (including useNavigate) BEFORE any early return:
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [loading, setLoading] = useState(true);
+    const navigate = useNavigate();
     useEffect(() => {
       setIsAuthenticated(isSessionValid());
       setLoading(false);
     }, []);
     if (loading) return <div className="p-8 text-muted-foreground">Loading...</div>;
     if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
+  NEVER call useNavigate() (or any other hook) after those early returns — that crashes React after login with a blank white screen.
   On logout, call clearCredential() (never remove the localStorage key directly — it also clears the stored role), then set isAuthenticated back to false directly (do not re-derive it). api.ts already calls clearCredential() internally when any API call returns 401 — catch errors from api calls in the calling component and re-check isSessionValid() (or just call setIsAuthenticated(false)) so a rejected credential sends the user back to the paste-key screen."""
 
 
@@ -157,6 +163,14 @@ COVERAGE RULE — read this before you start:
   is called from some screen or action. A route with no UI is a defect.
 
 API rules:
+- ALWAYS import API helpers from './api' (src/api.ts) — this is true for EVERY
+  screen you write, including Dashboard.tsx and any other new component, and
+  is the SAME regardless of authMode. There is NO api_apikey.ts, api_jwt.ts,
+  or any other variant file for you to import from or create — the scaffold
+  has already put the correct auth-specific implementation (JWT or api-key)
+  into src/api.ts before you run, under that one name, every time. NEVER
+  import from './api_apikey', './api_jwt', or any filename other than './api'
+  — that file does not exist and importing it fails the build.
 {{AUTH_SCREEN_SECTION}}
 - Never hardcode a backend URL such as http://localhost:8000 anywhere.
 
@@ -179,11 +193,14 @@ TypeScript build rules. The code must pass a strict tsc build. Follow exactly:
 STYLING RULES. This project uses Tailwind CSS and a shadcn/ui component library.
 src/index.css already wires up the full color/radius token set (dark navy
 surfaces, teal "primary" accent) via Tailwind's @theme — you never touch it.
-Every component under src/components/ui/ (button, input, label, select,
+Every component under src/components/ui/ (button, input, textarea, label, select,
 table, card, badge, dialog, alert) is pre-built and already styled to that
-theme. You MUST style screens by importing and using these components plus
+theme. You MUST style screens by importing and using ONLY these components plus
 Tailwind utility classes (e.g. className="flex items-center gap-2", or
 semantic color utilities like bg-primary, text-muted-foreground, border-border).
+For multi-line text fields use <Textarea> from '@/components/ui/textarea'.
+NEVER import a ui/* module that is not in that closed list, and NEVER create or
+edit files under src/components/ui/ (those writes are discarded).
 Do NOT write inline styles for colors, backgrounds, or borders. Do NOT invent
 your own button/card/badge/table markup — use the matching component. Do NOT
 write or add any CSS file. If you write style={{ backgroundColor: ... }} or
@@ -198,9 +215,41 @@ max-w-sm Card (login, dialogs) into a thin vertical strip. Use numeric utilities
 
 HARD RULE — fixed infra, never touch: NEVER create, edit, or regenerate any
 file under src/components/ui/, or src/Shell.tsx, or src/lib/utils.ts, or
-src/index.css. These are fixed template infrastructure; any write to one of
+src/index.css, or src/main.tsx, or package.json, or vite.config.ts, or
+tsconfig*.json. These are fixed template infrastructure; any write to one of
 them is silently discarded. You only write screens under src/components/ (a
 new file per screen/widget) and wire them into src/App.tsx.
+
+ACCENT PALETTE. These rules apply identically regardless of authMode (JWT or
+api-key) — the palette is a pure UI choice, unrelated to how the app
+authenticates. src/index.css ships exactly 5 accent palettes: "teal", "blue",
+"violet", "emerald", "rose". Every other token (background, card, foreground,
+muted, border, destructive/warning/success) is identical across all 5 — only
+the accent (buttons, links, focus ring, active-nav highlight) changes. Choose
+exactly ONE of these 5 names to fit this app's domain — never a 6th name,
+never a raw hex value. Do NOT default to "blue" for every B2B app — pick the
+best fit and vary across apps when domains differ:
+  finance / banking / insurance / compliance -> "blue"
+  logistics / fleet / warehouse / delivery -> "emerald"
+  health / medical / clinic / wellness -> "teal"
+  creative / social / consumer / media -> "violet" or "rose"
+  general internal tools / help desk / tickets / HR -> "teal" or "violet"
+  anything unclear -> "teal" (template default), NOT blue
+Apply your choice by passing it as the accentPalette prop
+on Shell, with a code comment stating your reasoning right next to it so the
+choice is visible and a human can override it by editing the string:
+    <Shell
+      brandName="..."
+      navItems={[...]}
+      onNavigate={navigate}
+      onLogout={() => setIsAuthenticated(false)}
+      accentPalette="teal" // domain: internal help desk — teal is the template default for general tools
+    >
+Always pass accentPalette explicitly (it defaults to "teal" if omitted, but an
+implicit default hides the decision — state it). NEVER copy "blue" from prompt
+examples unless the domain truly matches finance/banking/insurance. Do NOT edit
+src/index.css or src/Shell.tsx to add or change a palette — Shell.tsx already
+reads this prop and applies it; you only ever supply the prop value.
 
 Old-class -> new-component lookup (this app has no hand-written CSS classes —
 if you find yourself wanting to write className="btn" or similar, use the
@@ -213,7 +262,7 @@ matching component below instead):
 - Stat tiles (was "grid"/"stat"/"stat-value"/"stat-label"): a <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]"> of <Card>/<CardContent> tiles.
 - Tables (was "table-wrap"/"data"/"num"/"mono"): <Table>, <TableHeader>, <TableRow>, <TableHead>, <TableBody>, <TableCell> from '@/components/ui/table'. Right-align numeric cells with className="text-right tabular-nums". Use className="font-mono tabular-nums" for codes/SKUs.
 - Buttons (was "btn"/"btn-primary"/"btn-danger"): <Button> from '@/components/ui/button'. Default variant is the main teal action (was "btn-primary"). variant="secondary" is a plain button (was bare "btn"). variant="destructive" is a destructive action (was "btn-danger"). Never style a <button> by hand.
-- Forms (was "field"/"input"): <Label> + <Input> from '@/components/ui/label' and '@/components/ui/input', each field wrapped in <div className="space-y-2">. Keep create/edit forms INLINE inside a <Card> on the screen itself (toggle a "showForm" state, same pattern as before) — do NOT put create/edit forms in a Dialog.
+- Forms (was "field"/"input"): <Label> + <Input> from '@/components/ui/label' and '@/components/ui/input', each field wrapped in <div className="space-y-2">. Multi-line notes/comments use <Textarea> from '@/components/ui/textarea'. Keep create/edit forms INLINE inside a <Card> on the screen itself (toggle a "showForm" state, same pattern as before) — do NOT put create/edit forms in a Dialog.
 - Delete/confirm prompts: <Dialog>/<DialogContent>/<DialogHeader>/<DialogTitle>/<DialogFooter> from '@/components/ui/dialog'. Dialog is for delete/confirm prompts ONLY — never for create/edit forms.
 - Foreign-key selects: <Select>/<SelectTrigger>/<SelectValue>/<SelectContent>/<SelectItem> from '@/components/ui/select' — see the worked example below.
 - Status pills (was "badge badge-success"/"badge-warn"/"badge-danger"): <Badge variant="success">, <Badge variant="warning">, <Badge variant="destructive"> from '@/components/ui/badge'.
@@ -243,42 +292,135 @@ example (copy this pattern, adapting names):
   Select if you ever have a real reason to use one — you don't need to avoid
   value="" the way some older React Select libraries require.)
 
-ROUTING RULES. The app uses react-router-dom (already installed) and the fixed
+ROUTING RULES. These rules apply identically regardless of authMode (JWT or
+api-key) — routing, navItems, and the Dashboard-at-"/" convention are the same
+for both; only the Login screen's fields (see API rules above) differ by mode.
+The app uses react-router-dom (already installed) and the fixed
 src/Shell.tsx layout. main.tsx (which you never edit) already wraps <App/> in
 <BrowserRouter>. App.tsx must NOT import or render <BrowserRouter>, <Router>,
 <HashRouter>, or <MemoryRouter> — the app is ALREADY wrapped in one. App.tsx
-uses ONLY Routes, Route, and useNavigate from react-router-dom. Rendering any
-<Router> here crashes the app at runtime with "You cannot render a <Router>
-inside another <Router>." Wire them together in App.tsx exactly like the
-placeholder App.tsx already shows:
-    import { Routes, Route, useNavigate } from "react-router-dom";
+uses ONLY Routes, Route, Navigate, and useNavigate from react-router-dom.
+Rendering any <Router> here crashes the app at runtime with "You cannot render
+a <Router> inside another <Router>." Wire them together in App.tsx exactly like
+the placeholder App.tsx already shows:
+    import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
     // no BrowserRouter here - it is already in main.tsx
+    import { LayoutDashboard, Users } from "lucide-react";
     import { Shell } from "./Shell";
-    // ... inside App(), after the auth check below ...
+    import { Dashboard } from "./components/Dashboard";
+    // inside App(): call useNavigate() with the other hooks, BEFORE auth early returns
     const navigate = useNavigate();
+    // ... auth useState / useEffect / early returns ...
     return (
       <Shell
         brandName="..."
-        navItems={[{ label: "Owners", to: "/owners" }, /* one entry per screen */]}
+        navItems={[
+          { label: "Dashboard", to: "/", icon: <LayoutDashboard className="size-4" /> },
+          { label: "Owners", to: "/owners", icon: <Users className="size-4" /> },
+          /* one entry per screen, Dashboard ALWAYS first */
+        ]}
         onNavigate={navigate}
         onLogout={() => setIsAuthenticated(false)}
+        accentPalette="teal" // domain: internal ops — pick per ACCENT PALETTE; do not always use blue
       >
         <Routes>
+          <Route path="/" element={<Dashboard />} />
           <Route path="/owners" element={<OwnerList />} />
           {/* one <Route> per screen, matching navItems */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Shell>
     );
+- The Dashboard screen (see DASHBOARD RULES and its worked example below) is
+  ALWAYS the first navItems entry and ALWAYS owns path "/". Every generated app
+  lands on the Dashboard after login — never on a raw entity list. Every other
+  screen keeps its own path (e.g. "/owners") and stays reachable from the nav.
 - One <Route> per screen inside <Routes>, one entry per screen in navItems —
-  keep the two lists in sync.
+  keep the two lists in sync. Always keep the trailing
+  <Route path="*" element={<Navigate to="/" replace />} /> as the LAST route,
+  after every named route, so any unrecognized path redirects back to the
+  Dashboard instead of rendering a blank screen.
+- Give every navItems entry an `icon`: a lucide-react icon element (already a
+  dependency — import icons directly from "lucide-react"), e.g.
+  <LayoutDashboard className="size-4" /> for Dashboard, or a fitting icon per
+  entity such as <Users />, <Calendar />, <FileText />, <Package />,
+  <ClipboardList />, <Building2 /> (pick whichever reads naturally for that
+  entity — this is a cosmetic nav affordance, not a strict mapping). Shell.tsx
+  already renders item.icon before item.label; you only ever supply the icon
+  via navItems data — never edit Shell.tsx.
 - Nav clicks: Shell already calls its own onNavigate prop internally when a nav
-  row is clicked — you only ever supply navItems (label + to) and
+  row is clicked — you only ever supply navItems (label + to + icon) and
   onNavigate={navigate}. NEVER call <Link> or useNavigate() directly inside a
   leaf screen/nav row to navigate; only App.tsx calls useNavigate(), solely to
   build the onNavigate prop passed to Shell.
 - If the app has multiple roles and a role-gated screen is implied by the
   design, still add a nav item + <Route> for it, and gate its content with
   hasRole('<role>') inside the screen itself.
+
+DASHBOARD RULES. These rules apply identically regardless of authMode (JWT or
+api-key) — the Dashboard calls the same apiGet helpers from src/api.ts either
+way. Every app has a Dashboard screen (src/components/Dashboard.tsx) that is
+the default landing page — see ROUTING RULES above for how it's wired to
+path "/". The Dashboard does NOT replace any entity's own list/detail
+screens — COVERAGE RULE above still requires every entity route to have its
+own dedicated screen; the Dashboard is a summary in addition to those screens,
+never a substitute for one. Build the Dashboard as follows:
+
+HARD RULE — backend summary endpoint wins: If the OpenAPI spec declares ANY
+dashboard/summary route (commonly GET /api/v1/dashboard, /api/v1/stats,
+/api/v1/summary, or similarly named), Dashboard.tsx MUST call that route with
+apiGet and render counts/fields from its response. Never leave such a route
+unused — the route-coverage gate treats a fully uncovered "dashboard" entity
+as a build failure. Prefer the summary endpoint over N separate list fetches
+when it exists.
+
+Only when NO such summary route exists in OpenAPI:
+- Stat tiles: one tile per main entity (the top-level entities the OpenAPI spec
+  exposes a list endpoint for — skip pure join/link tables and lookup-only
+  entities that don't get their own list screen). Each tile is a
+  <Card><CardContent> showing a lucide-react icon, the entity's plural label
+  (e.g. "Patients", "Appointments"), and a big count number. The count is
+  fetched from that entity's EXISTING list endpoint
+  (apiGet<Entity[]>('/api/v1/<entity>')) and computed CLIENT-SIDE as the
+  array's .length. Do NOT invent a /stats or /summary endpoint that is not in
+  OpenAPI — list endpoints are the fallback source only. Lay the tiles out
+  in the same stat-tile grid pattern already used elsewhere in this app:
+  <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">.
+- Below the stat tiles, a "Recent <primary entity>" section: pick the single
+  entity most central to the app's purpose (usually the one the product brief
+  is built around, or the first/most prominent entity in the OpenAPI spec —
+  e.g. Patients for a clinic app, Bookings for a booking app) and show its 5
+  most recently created records in a small table, reusing the
+  Table/TableHeader/TableRow/TableHead/TableBody/TableCell components and a
+  couple of the same columns used on that entity's own list screen. If the
+  entity has a createdAt/created_at (or similar timestamp) field, sort by it
+  descending before slicing 5; otherwise take the last 5 items returned by the
+  list endpoint as a reasonable proxy for "recent." Reuse the state already
+  fetched for that entity's stat tile above — do not fetch it a second time.
+- Resilience: fetch each entity's list independently (a separate useEffect /
+  apiGet call per entity) so one endpoint failing never blocks the others or
+  crashes the screen.
+
+When using a summary endpoint OR list fallbacks, keep these state rules:
+- States per tile — LOADING, FAILED, and LOADED are three distinct states, not
+  two: seed each entity's state as
+  `useState<Entity[] | null | undefined>(undefined)` — `undefined` means
+  loading (the fetch hasn't settled yet), stays `undefined` until the promise
+  resolves or rejects; on success set it to the array; in `.catch()` set it to
+  `null` (failed), never leave it `undefined` forever and never set it to `0`
+  or `[]` on failure. Render each tile's count from that three-way state:
+  while `undefined` (loading), show a visually distinct loading placeholder
+  (e.g. a muted "…", NEVER a bare 0 and never the same look as a failed tile);
+  once settled, `null` renders "-" (failed) and an array renders its
+  `.length` (loaded). A tile must never show 0 while its own fetch is still in
+  flight, and a loading tile must look visually different from a failed one —
+  collapsing loading and failed into the same display (e.g. both showing "-")
+  is a defect. If the primary entity's fetch fails or is still loading, the
+  "Recent" section shows its own loading/empty state instead of crashing or
+  rendering a premature empty table.
+- No charts this phase. Stat tiles are plain numbers only — do not add
+  recharts, chart.js, or any other charting dependency, and do not add any new
+  package to package.json for the Dashboard.
 
 Component and screen wiring rules:
 - If a component renders a control (button/link/form) whose handler is a prop (e.g. onClick={onCreateItem}), that prop MUST NOT be optional, and the PARENT that renders the component MUST pass it, wired to the corresponding screen change or state update. A control bound to an unpassed prop is a defect — the button will silently do nothing.
@@ -292,6 +434,104 @@ Component and screen wiring rules:
     // in the table cell:
     <td>{nameById[course.instructor_user_id] ?? course.instructor_user_id}</td>
   If no list endpoint exists for that entity, fall back to showing the id.
+
+WORKED EXAMPLE of the Dashboard screen (copy this structure; adapt entity
+names, icons, and the count of tiles to the app's REAL entities — this shows
+the pattern for three example entities of a clinic app, extend or shrink the
+tiles array to match however many main entities this app actually has):
+
+import { useState, useEffect } from 'react';
+import { apiGet } from '../api';
+import { Card, CardContent } from '@/components/ui/card';
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
+import { Users, Calendar, FileText } from 'lucide-react';
+
+// Entity state is a three-way union: undefined = loading (initial value,
+// still in flight), null = failed (the .catch() below), Entity[] = loaded.
+// Never collapse loading and failed into the same value or the same display.
+export const Dashboard: React.FC = () => {
+  const [patients, setPatients] = useState<Patient[] | null | undefined>(undefined);
+  const [appointments, setAppointments] = useState<Appointment[] | null | undefined>(undefined);
+  const [claims, setClaims] = useState<Claim[] | null | undefined>(undefined);
+
+  useEffect(() => {
+    apiGet<Patient[]>('/api/v1/patients').then(setPatients).catch(() => setPatients(null));
+    apiGet<Appointment[]>('/api/v1/appointments').then(setAppointments).catch(() => setAppointments(null));
+    apiGet<Claim[]>('/api/v1/claims').then(setClaims).catch(() => setClaims(null));
+  }, []);
+
+  const tiles = [
+    { label: 'Patients', data: patients, icon: <Users className="size-5 text-muted-foreground" /> },
+    { label: 'Appointments', data: appointments, icon: <Calendar className="size-5 text-muted-foreground" /> },
+    { label: 'Claims', data: claims, icon: <FileText className="size-5 text-muted-foreground" /> },
+  ];
+
+  const recentPatients = (patients ?? [])
+    .slice()
+    .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    .slice(0, 5);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+      </div>
+      <div className="grid gap-5 grid-cols-[repeat(auto-fit,minmax(220px,1fr))] mb-8">
+        {tiles.map((tile) => (
+          <Card key={tile.label} className="bg-card">
+            <CardContent className="flex items-center justify-between p-6">
+              <div>
+                <p className="text-sm text-muted-foreground">{tile.label}</p>
+                <p className="text-3xl font-bold text-foreground">
+                  {tile.data === undefined ? (
+                    <span className="text-muted-foreground">…</span>
+                  ) : tile.data === null ? (
+                    '-'
+                  ) : (
+                    tile.data.length
+                  )}
+                </p>
+              </div>
+              {tile.icon}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <h2 className="text-lg font-semibold mb-4 text-foreground">Recent Patients</h2>
+      <Card>
+        <CardContent className="p-0">
+          {patients === undefined ? (
+            <p className="text-center py-8 text-muted-foreground">Loading...</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recentPatients.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell>{p.full_name ?? '-'}</TableCell>
+                    <TableCell>{p.status ?? '-'}</TableCell>
+                  </TableRow>
+                ))}
+                {recentPatients.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={2} className="text-center py-8 text-muted-foreground">
+                      {patients === null ? 'Failed to load patients' : 'No patients found'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 WORKED EXAMPLE of a correct list screen with an inline create form (copy this
 structure and component usage):
@@ -637,6 +877,55 @@ def _write_api_key_header_env(
 # after the _read() function and before run_task().
 # ==============================================================================
 
+# Template-owned packages that must exist under node_modules before tsc/vite.
+# Kept as a module constant so tests can assert the install gate without
+# shelling out to npm.
+_CRITICAL_NPM_DEPS = (
+    "react-router-dom",
+    "lucide-react",
+    "next-themes",
+    "@tailwindcss/vite",
+    "tailwindcss",
+    "radix-ui",
+    "clsx",
+    "tailwind-merge",
+    "class-variance-authority",
+)
+
+
+def _npm_install_needed(frontend_dir: Path) -> tuple[bool, str]:
+    """Decide whether ``npm install`` must run before ``npm run build``.
+
+    Returns ``(needed, reason)``. Reasons cover the banking-ops failure modes:
+    missing ``node_modules``, partial installs (directory exists but packages
+    absent), and scaffold refreshing ``package.json`` while an older
+    ``node_modules`` tree is left behind.
+    """
+    node_modules = frontend_dir / "node_modules"
+    if not node_modules.is_dir():
+        return True, "first time"
+
+    missing = [
+        name
+        for name in _CRITICAL_NPM_DEPS
+        if not (node_modules / name).is_dir()
+    ]
+    if missing:
+        return True, f"missing deps: {', '.join(missing[:5])}"
+
+    package_json = frontend_dir / "package.json"
+    if package_json.is_file():
+        try:
+            pkg_mtime = package_json.stat().st_mtime
+            nm_mtime = node_modules.stat().st_mtime
+        except OSError:
+            return True, "stat failed"
+        if pkg_mtime > nm_mtime:
+            return True, "package.json newer than node_modules"
+
+    return False, "up to date"
+
+
 def _run_frontend_build(frontend_dir: Path) -> tuple[bool, str]:
     """Host-side build gate for the generated frontend. Returns (passed, report).
 
@@ -651,9 +940,9 @@ def _run_frontend_build(frontend_dir: Path) -> tuple[bool, str]:
     if not npm:
         return True, "[build] npm not found on PATH — skipping build validation."
 
-    # Install deps once if node_modules is missing.
-    if not (frontend_dir / "node_modules").is_dir():
-        print("[frontend-agent] running npm install (first time)...")
+    needs_install, reason = _npm_install_needed(frontend_dir)
+    if needs_install:
+        print(f"[frontend-agent] running npm install ({reason})...")
         try:
             install = subprocess.run(
                 "npm install",
@@ -725,6 +1014,16 @@ def _validate_session_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[
             "login-vs-authenticated-shell decision on its return value — a stored "
             "token being present, or no exception being thrown while reading it, is "
             "NOT proof of a valid session (expired tokens still parse without error)."
+        )
+    # useNavigate() after an auth early-return crashes React post-login (blank white
+    # screen: "Rendered more hooks than during the previous render").
+    nav_idx = content.find("useNavigate(")
+    auth_return_idx = content.find("if (!isAuthenticated)")
+    if nav_idx != -1 and auth_return_idx != -1 and nav_idx > auth_return_idx:
+        return False, (
+            "[session-gate] FAILED: src/App.tsx calls useNavigate() AFTER "
+            "if (!isAuthenticated) early return. Move const navigate = useNavigate() "
+            "above all early returns so hook order is stable across login."
         )
     return True, "[session-gate] PASSED"
 
@@ -1075,6 +1374,12 @@ _PROTECTED_PATHS = {
                          # every component under src/components/ui/ below.
     "src/index.css",     # Tailwind @theme tokens — must stay free of named
                          # --spacing-sm/md/... keys that collapse max-w-sm to 12px.
+    "src/main.tsx",      # ThemeProvider + BrowserRouter bootstrap — template-owned.
+    "package.json",      # dependency set is template-owned; LLM must not strip deps.
+    "vite.config.ts",    # Tailwind Vite plugin wiring — LLM rewrites break the build.
+    "tsconfig.json",
+    "tsconfig.app.json",
+    "tsconfig.node.json",
 }
 # Directory-prefix entry: shadcn's own copied-in primitives (button/input/select/
 # table/card/badge/dialog/alert/...). Identical every app; any per-app variant
@@ -1484,6 +1789,19 @@ _FRONTEND_API_CALL_RE = re.compile(
     r"(?:`([^`]*)`|'([^']*)'|\"([^\"]*)\")"
 )
 
+# apiGet(url) where url was previously assigned a path literal/template in-file.
+# Generated screens sometimes build query strings into a variable first; the
+# coverage gate must still see the underlying /api/v1/... path (claims-ops
+# audit-log failure).
+_FRONTEND_API_VAR_CALL_RE = re.compile(
+    r"\bapi(Get|Post|Put|Patch|Delete)\s*(?:<[^>]*>)?\s*\(\s*"
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*[,)]"
+)
+_PATH_VAR_ASSIGN_RE = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"(?:`([^`]*)`|'([^']*)'|\"([^\"]*)\")"
+)
+
 _METHOD_BY_CALL_SUFFIX = {
     "Get": "GET",
     "Post": "POST",
@@ -1566,6 +1884,18 @@ def _scrape_frontend_api_calls(frontend_dir: Path) -> list[tuple[str, str]]:
         for m in _FRONTEND_API_CALL_RE.finditer(text):
             method = _METHOD_BY_CALL_SUFFIX[m.group(1)]
             raw_path = next(g for g in m.groups()[1:] if g is not None)
+            calls.append((method, raw_path))
+        # Resolve apiGet(url) when url was assigned a path literal in this file.
+        assigns: dict[str, str] = {}
+        for am in _PATH_VAR_ASSIGN_RE.finditer(text):
+            raw = next(g for g in am.groups()[1:] if g is not None)
+            assigns[am.group(1)] = raw
+        for m in _FRONTEND_API_VAR_CALL_RE.finditer(text):
+            var_name = m.group(2)
+            raw_path = assigns.get(var_name)
+            if raw_path is None:
+                continue
+            method = _METHOD_BY_CALL_SUFFIX[m.group(1)]
             calls.append((method, raw_path))
     return calls
 
@@ -1862,7 +2192,10 @@ def _route_coverage_retry_message(report: str, data: dict[str, Any]) -> str:
         "VIEW for a GET-by-id route (e.g. GET /api/v1/items/{id} — make list rows open a detail "
         "screen or Dialog that calls it and shows the full record), an action button for a "
         "state-changing route (e.g. PUT .../assign) — wired into the nav/App.tsx routes like the "
-        "other screens. Return ALL files that need adding or changing as a JSON file map (same "
+        "other screens. If a gap is GET /api/v1/dashboard (or /stats|/summary), fix "
+        "src/components/Dashboard.tsx to apiGet that exact path and render its fields — do NOT "
+        "substitute client-side list .length counts while that route exists in OpenAPI. "
+        "Return ALL files that need adding or changing as a JSON file map (same "
         "format as before).\n\n"
         f"FULL COVERAGE REPORT (for context):\n{report}\n\n"
         "Return only the JSON file map. No markdown, no explanation."

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -415,3 +417,52 @@ def test_index_css_is_protected_from_llm_writes() -> None:
 
     assert fa._is_protected_path("src/index.css") is True
     assert fa._is_protected_path("src/components/Login.tsx") is False
+
+
+def test_package_json_and_vite_config_are_protected() -> None:
+    """LLM must not strip deps or rewrite the Tailwind Vite plugin import."""
+    fa = _load_agent_module()
+
+    for path in (
+        "package.json",
+        "vite.config.ts",
+        "src/main.tsx",
+        "tsconfig.json",
+        "tsconfig.app.json",
+        "tsconfig.node.json",
+    ):
+        assert fa._is_protected_path(path) is True, path
+    assert fa._is_protected_path("src/App.tsx") is False
+
+
+def test_npm_install_needed_when_node_modules_missing(tmp_path) -> None:
+    fa = _load_agent_module()
+
+    needed, reason = fa._npm_install_needed(tmp_path)
+    assert needed is True
+    assert reason == "first time"
+
+
+def test_npm_install_needed_when_critical_dep_missing(tmp_path) -> None:
+    fa = _load_agent_module()
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+
+    needed, reason = fa._npm_install_needed(tmp_path)
+    assert needed is True
+    assert reason.startswith("missing deps:")
+
+
+def test_scrape_resolves_path_assigned_to_variable(tmp_path) -> None:
+    """apiGet(url) must count when url was assigned an /api/v1/... literal."""
+    fa = _load_agent_module()
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "Audit.tsx").write_text(
+        "import { apiGet } from '../api';\n"
+        "const url = `/api/v1/audit-log${qs}`;\n"
+        "apiGet<unknown>(url);\n",
+        encoding="utf-8",
+    )
+    calls = fa._scrape_frontend_api_calls(tmp_path)
+    assert ("GET", "/api/v1/audit-log${qs}") in calls
