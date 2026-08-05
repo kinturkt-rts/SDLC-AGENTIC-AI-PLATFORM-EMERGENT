@@ -14,6 +14,7 @@ const AGENT_LABEL: Record<string, string> = {
   'architect-agent': 'Architect',
   'database-agent': 'Database',
   'developer-agent': 'Developer',
+  'frontend-agent': 'Frontend',
   'gitlab-agent': 'GitLab',
   'qa-agent': 'QA',
   'security-agent': 'Security',

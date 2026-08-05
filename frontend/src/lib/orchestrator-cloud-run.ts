@@ -37,6 +37,9 @@ export interface PipelineTaskOptions {
   skipDeveloper?: boolean;
   skipGitlab?: boolean;
   skipVerify?: boolean;
+  /** Always-on React UI generation (default true). Set false only for operator escape hatch. */
+  withFrontend?: boolean;
+  skipFrontend?: boolean;
   withJira?: boolean;
   jiraProject?: string;
 }
@@ -54,6 +57,8 @@ export function buildOrchestratorTask(options: PipelineTaskOptions): string {
     skip_developer: options.skipDeveloper ?? false,
     skip_gitlab: options.skipGitlab ?? false,
     skip_verify: options.skipVerify ?? true,
+    with_frontend: options.withFrontend ?? true,
+    skip_frontend: options.skipFrontend ?? false,
     with_jira: options.withJira ?? false,
     jira_project: options.withJira ? (options.jiraProject ?? '').trim() : '',
   };

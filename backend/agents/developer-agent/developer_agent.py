@@ -316,7 +316,10 @@ Rules — apply to every FR regardless of domain:
 4c. README.md with these sections:
     **Local development** — assume users open terminals at **repo root** (folder containing
     `target-apps/`). Every `cd` must use the full path from repo root (e.g.
-    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. Split **Terminal 1 (API)**
+    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. When React UI
+    exists, Terminal 2 is `cd target-apps/<app>/frontend` (sibling of the API tree —
+    never nest under a backend folder). On the published apps repo the same trees are
+    `<app>/backend` + `<app>/frontend` (gitlab-agent rewrites paths). Split **Terminal 1 (API)**
     and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
     `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). README MUST use **separate**
     **PowerShell (Windows)** and **Bash** code blocks (not bash-only with a comment). Windows venv:

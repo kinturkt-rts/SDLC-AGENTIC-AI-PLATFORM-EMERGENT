@@ -11,6 +11,7 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.validate_sql_artifacts import (  # noqa: E402
     _parse_create_table_columns,
     check_ddl_column_drift,
+    check_no_custom_schema_creation,
     check_seed_conflict_on_ruled_tables,
     check_seed_schema_nullability,
     check_uuid_literals,
@@ -125,6 +126,36 @@ INSERT INTO t (id, name) VALUES
         encoding="utf-8",
     )
     assert check_uuid_literals(sql_dir) == []
+
+
+def test_check_no_custom_schema_creation_rejects_thematic_schema(tmp_path: Path) -> None:
+    """Regression for run 4d6e642f-de01-4181-8483-fb1779e33211 (museum-api): database-agent
+    created its own "museum" schema instead of relying on apply_sql_to_rds.py's app-slug
+    schema ("museum_api") - RDS apply succeeded, but verify_seed_bcrypt.py then failed with
+    a false 'relation "museum_api.users" does not exist'."""
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_schemas.sql").write_text(
+        """\
+CREATE SCHEMA IF NOT EXISTS museum;
+CREATE SCHEMA IF NOT EXISTS audit;
+""",
+        encoding="utf-8",
+    )
+    errors = check_no_custom_schema_creation(sql_dir)
+    assert len(errors) == 2
+    assert any("'museum'" in e for e in errors)
+    assert any("'audit'" in e for e in errors)
+
+
+def test_check_no_custom_schema_creation_passes_when_absent(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "002_users.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY);\n",
+        encoding="utf-8",
+    )
+    assert check_no_custom_schema_creation(sql_dir) == []
 
 
 def test_check_vector_literal_format_rejects_array_to_string(tmp_path: Path) -> None:

@@ -120,6 +120,24 @@ def test_dest_path_for_apps_repo() -> None:
         == "notice-board-ui/frontend/streamlit_app.py"
     )
     assert (
+        dest_path_for_apps_repo(
+            "target-apps/recipe-vault/frontend/package.json", "recipe-vault"
+        )
+        == "recipe-vault/frontend/package.json"
+    )
+    assert (
+        dest_path_for_apps_repo(
+            "target-apps/recipe-vault/events/architect-agent.json", "recipe-vault"
+        )
+        is None
+    )
+    assert (
+        dest_path_for_apps_repo(
+            "target-apps/recipe-vault/frontend-handoff.json", "recipe-vault"
+        )
+        == "agents/pipeline/recipe-vault.frontend-handoff.json"
+    )
+    assert (
         dest_path_for_apps_repo("target-apps/notice-board-ui/.sdlc/pipeline-run.json", "notice-board-ui")
         == ".sdlc/pipeline-run.json"
     )
@@ -134,6 +152,31 @@ def test_dest_path_for_apps_repo() -> None:
         == "agents/pipeline/notice-board-ui.developer-handoff.json"
     )
     assert dest_path_for_apps_repo("inputs/notice-board-ui.txt", "notice-board-ui") == "inputs/notice-board-ui.txt"
+
+
+def test_cloud_workspace_skips_events_and_maps_frontend_handoff() -> None:
+    from agents._shared.gitlab_mcp_actions import cloud_workspace_to_gitlab_dest
+
+    assert cloud_workspace_to_gitlab_dest("recipe-vault", "recipe-vault/events/architect-agent.json") is None
+    assert (
+        cloud_workspace_to_gitlab_dest("recipe-vault", "recipe-vault/frontend-handoff.json")
+        == "agents/pipeline/recipe-vault.frontend-handoff.json"
+    )
+    assert (
+        cloud_workspace_to_gitlab_dest("recipe-vault", "recipe-vault/frontend/package.json")
+        == "target-apps/recipe-vault/frontend/package.json"
+    )
+
+
+def test_apps_backend_readme_rewrites_sibling_paths() -> None:
+    from agents._shared.gitlab_mcp_actions import _apps_backend_readme_text
+
+    raw = "# Recipe Vault\n\ncd target-apps/recipe-vault\nuvicorn app.main:app\n"
+    out = _apps_backend_readme_text(raw, "recipe-vault")
+    assert "recipe-vault/backend/" in out
+    assert "recipe-vault/frontend/" in out
+    assert "target-apps/recipe-vault" not in out
+    assert "cd recipe-vault/backend" in out
 
 
 def test_cloud_workspace_maps_input_brief_for_apps_repo() -> None:
@@ -343,10 +386,11 @@ def test_sanitize_publish_content_for_waf_only_on_cloudfront(
     assert sanitize_publish_content_for_waf(text) == "curl http://127.0.0.1:8000/health"
 
 
-def test_write_pipeline_run_marker_monorepo(tmp_path: Path) -> None:
+def test_write_pipeline_run_marker_monorepo(tmp_path: Path, monkeypatch) -> None:
     feature = "expense-tracker"
     (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
     (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# x", encoding="utf-8")
+    monkeypatch.delenv("ARTIFACT_S3_BUCKET", raising=False)
 
     rel = write_pipeline_run_marker(feature, "run-abc-123", root=tmp_path)
     assert rel == pipeline_run_marker_repo_rel(feature)
@@ -355,6 +399,7 @@ def test_write_pipeline_run_marker_monorepo(tmp_path: Path) -> None:
     data = json.loads(marker.read_text(encoding="utf-8"))
     assert data["runId"] == "run-abc-123"
     assert data["targetApp"] == feature
+    assert "artifactS3Bucket" not in data
 
     paths = collect_feature_artifact_paths(feature, root=tmp_path)
     assert rel in paths
@@ -362,6 +407,18 @@ def test_write_pipeline_run_marker_monorepo(tmp_path: Path) -> None:
     apps_files = _collect_apps_repo_publish_files(feature, root=tmp_path)
     apps_paths = {item["path"] for item in apps_files}
     assert ".sdlc/pipeline-run.json" in apps_paths
+
+
+def test_write_pipeline_run_marker_includes_artifact_bucket(tmp_path: Path, monkeypatch) -> None:
+    feature = "expense-tracker"
+    (tmp_path / "target-apps" / feature / "app").mkdir(parents=True)
+    (tmp_path / "target-apps" / feature / "app" / "main.py").write_text("# x", encoding="utf-8")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "sdlc-agentic-ai-app-artifacts-demo")
+
+    rel = write_pipeline_run_marker(feature, "run-demo-1", root=tmp_path)
+    data = json.loads((tmp_path / rel).read_text(encoding="utf-8"))
+    assert data["runId"] == "run-demo-1"
+    assert data["artifactS3Bucket"] == "sdlc-agentic-ai-app-artifacts-demo"
 
 
 def test_write_pipeline_run_marker_cloud_workspace(tmp_path: Path) -> None:

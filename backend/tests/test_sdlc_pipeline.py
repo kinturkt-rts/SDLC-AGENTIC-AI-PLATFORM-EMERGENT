@@ -59,15 +59,15 @@ def test_planned_steps_full_chain(monkeypatch: pytest.MonkeyPatch) -> None:
         input_file="inputs/inventory-app.txt",
     )
     steps = planned_steps(options)
-    # with_frontend defaults False — existing Dashboard/cloud path unchanged.
+    # with_frontend defaults True — frontend runs before gitlab.
     assert steps == [
         "product-agent",
         "architect-agent",
         "database-agent",
         "developer-agent",
+        "frontend-agent",
         "gitlab-agent",
     ]
-    assert "frontend-agent" not in steps
     assert "verify" not in steps
 
 
@@ -101,6 +101,19 @@ def test_planned_steps_frontend_skipped_when_flag_set(monkeypatch: pytest.Monkey
     assert "frontend-agent" not in planned_steps(options)
 
 
+def test_planned_steps_frontend_off_when_with_frontend_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("GITLAB_PROJECT_PATH", "group/project")
+    options = PipelineOptions(
+        target_app="inventory-app",
+        input_file="inputs/inventory-app.txt",
+        with_frontend=False,
+    )
+    assert "frontend-agent" not in planned_steps(options)
+
+
 def test_planned_steps_qa_after_gitlab(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITLAB_PERSONAL_ACCESS_TOKEN", "test-token")
     monkeypatch.setenv("GITLAB_PROJECT_PATH", "group/project")
@@ -121,6 +134,7 @@ def test_planned_steps_skip_db_and_gitlab() -> None:
         skip_product=True,
         skip_architect=True,
         skip_verify=True,
+        with_frontend=False,
     )
     steps = planned_steps(options)
     assert steps == ["developer-agent"]
@@ -135,6 +149,7 @@ def test_planned_steps_gitlab_only_when_developer_skipped(monkeypatch: pytest.Mo
         skip_architect=True,
         skip_db=True,
         skip_developer=True,
+        skip_frontend=True,
         skip_gitlab=False,
         transport="a2a",
     )
@@ -886,6 +901,18 @@ def test_step_developer_handoff_timeout_triggers_retry(
 
     assert invoke_mock.call_count == 2
     assert "developer-agent" in runner.agents_run
+
+
+def test_frontend_required_false_when_delivery_profile_says_streamlit() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.context = {"deliveryProfile": {"requiresReact": False, "requiresStreamlit": True}}
+    assert runner._frontend_required() is False
+
+
+def test_frontend_required_defaults_true_when_profile_missing() -> None:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.context = {}
+    assert runner._frontend_required() is True
 
 
 def test_frontend_a2a_handoff_payload_includes_run_id_and_target_app(

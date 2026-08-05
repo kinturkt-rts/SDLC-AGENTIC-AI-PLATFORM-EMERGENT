@@ -85,7 +85,9 @@ target-app:deploy:
     - curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
     - unzip -q /tmp/tf.zip -d /usr/local/bin && rm /tmp/tf.zip
     - |
-      for v in ARTIFACT_S3_BUCKET ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
+      # ARTIFACT_S3_BUCKET may come from the per-run marker (demo vs dev). Group CI/CD
+      # var remains the fallback so existing branches / old markers keep working.
+      for v in ARTIFACT_DYNAMODB_TABLE GITLAB_PERSONAL_ACCESS_TOKEN; do
         if [ -z "$(printenv "$v")" ]; then
           echo "Missing required CI/CD variable: $v — check group-level CI/CD variables under junolabs, or project variables on this repo."
           exit 1
@@ -103,12 +105,22 @@ target-app:deploy:
         echo "Missing .sdlc/pipeline-run.json — republish via gitlab-agent so the frontend can receive appUrl"
         exit 1
       fi
-      export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8'))['runId'])" "$MARKER")"
+      export PIPELINE_RUN_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8')).get('runId') or '')" "$MARKER")"
       if [ -z "$PIPELINE_RUN_ID" ]; then
         echo "pipeline-run.json has empty runId ($MARKER)"
         exit 1
       fi
       echo "PIPELINE_RUN_ID=$PIPELINE_RUN_ID (from $MARKER)"
+      MARKER_BUCKET="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1], encoding='utf-8')); print((d.get('artifactS3Bucket') or d.get('ARTIFACT_S3_BUCKET') or '').strip())" "$MARKER")"
+      if [ -n "$MARKER_BUCKET" ]; then
+        export ARTIFACT_S3_BUCKET="$MARKER_BUCKET"
+        echo "ARTIFACT_S3_BUCKET=$ARTIFACT_S3_BUCKET (from pipeline-run marker)"
+      elif [ -n "${ARTIFACT_S3_BUCKET:-}" ]; then
+        echo "ARTIFACT_S3_BUCKET=$ARTIFACT_S3_BUCKET (from CI/CD variable)"
+      else
+        echo "Missing ARTIFACT_S3_BUCKET — set group CI/CD variable, or artifactS3Bucket in .sdlc/pipeline-run.json"
+        exit 1
+      fi
     - aws sts get-caller-identity || (echo "OIDC role assumption failed — see the comment above this job about trust policy scope, or re-run the oidc:test job." && exit 1)
     - |
       account=$(aws sts get-caller-identity --query Account --output text)

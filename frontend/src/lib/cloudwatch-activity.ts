@@ -6,6 +6,7 @@ const KNOWN_AGENTS = new Set<string>([
   'architect-agent',
   'database-agent',
   'developer-agent',
+  'frontend-agent',
   'gitlab-agent',
   'qa-agent',
 ]);

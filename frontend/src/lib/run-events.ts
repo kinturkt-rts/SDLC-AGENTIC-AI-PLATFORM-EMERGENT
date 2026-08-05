@@ -34,6 +34,7 @@ const AGENT_LABEL: Record<string, string> = {
   'architect-agent': 'Architect Agent',
   'database-agent': 'Database Agent',
   'developer-agent': 'Developer Agent',
+  'frontend-agent': 'Frontend Agent',
   'gitlab-agent': 'GitLab Agent',
   'devops-agent': 'DevOps Agent',
   'qa-agent': 'QA Agent',
@@ -45,6 +46,7 @@ export const AGENT_ACTIVITY_ACCENT: Record<string, string> = {
   'architect-agent': 'text-violet-400',
   'database-agent': 'text-emerald-400',
   'developer-agent': 'text-amber-400',
+  'frontend-agent': 'text-pink-400',
   'gitlab-agent': 'text-orange-400',
   'devops-agent': 'text-sky-400',
   'qa-agent': 'text-slate-400',
@@ -57,7 +59,16 @@ function artifactKindForRel(relPath: string): ArtifactKind {
   if (lower.includes('/diagrams/') && (lower.endsWith('.png') || lower.endsWith('.svg'))) return 'diagram';
   if (lower.includes('/db/sql/') && lower.endsWith('.sql')) return 'migration';
   if (lower.includes('gitlab-handoff')) return 'doc';
-  if (lower.endsWith('.py') || lower.endsWith('requirements.txt')) return 'code';
+  if (
+    lower.includes('/frontend/') ||
+    lower.endsWith('.tsx') ||
+    lower.endsWith('.ts') ||
+    lower.endsWith('.py') ||
+    lower.endsWith('requirements.txt') ||
+    lower.endsWith('package.json')
+  ) {
+    return 'code';
+  }
   return 'doc';
 }
 
@@ -66,6 +77,7 @@ function producerForKind(kind: ArtifactKind, relPath: string): AgentName {
   if (kind === 'migration' || lower.includes('/db/')) return 'database-agent';
   if (kind === 'prd') return 'product-agent';
   if (kind === 'architecture' || kind === 'diagram') return 'architect-agent';
+  if (lower.includes('/frontend/') || lower.includes('/ui/')) return 'frontend-agent';
   if (kind === 'code') return 'developer-agent';
   if (lower.includes('gitlab-handoff')) return 'gitlab-agent';
   return 'product-agent';
@@ -78,6 +90,7 @@ function phaseForRel(relPath: string): SdlcPhase | null {
     return 'architecture';
   }
   if (lower.includes('/db/sql/') && lower.endsWith('.sql')) return 'data';
+  if (lower.includes('/frontend/') || lower.includes('/ui/')) return 'frontend';
   if (lower.endsWith('.py') || lower.endsWith('requirements.txt') || lower.includes('/app/')) {
     return 'implementation';
   }

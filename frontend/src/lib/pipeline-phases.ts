@@ -7,6 +7,7 @@ export const PHASE_AGENT: Record<SdlcPhase, AgentName> = {
   architecture: 'architect-agent',
   data: 'database-agent',
   implementation: 'developer-agent',
+  frontend: 'frontend-agent',
   qa: 'qa-agent',
   security: 'security-agent',
   publish: 'gitlab-agent',
@@ -20,6 +21,7 @@ export const LOG_AGENT_NAMES: AgentName[] = [
   'architect-agent',
   'database-agent',
   'developer-agent',
+  'frontend-agent',
   'gitlab-agent',
   'qa-agent',
   'devops-agent',
@@ -38,6 +40,7 @@ export const PHASE_DISPLAY_LABEL: Record<SdlcPhase, string> = {
   architecture: 'Architecture Diagram',
   data: 'Database',
   implementation: 'Application Code',
+  frontend: 'Frontend UI',
   qa: 'QA',
   security: 'Security',
   publish: 'Publish',
@@ -49,6 +52,7 @@ export const ORCHESTRATED_PIPELINE_AGENTS: AgentName[] = [
   'architect-agent',
   'database-agent',
   'developer-agent',
+  'frontend-agent',
   'gitlab-agent',
 ];
 
@@ -59,6 +63,7 @@ export const COMPLETION_PHASES: SdlcPhase[] = [
   'architecture',
   'data',
   'implementation',
+  'frontend',
   'publish',
 ];
 

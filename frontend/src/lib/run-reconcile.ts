@@ -40,6 +40,7 @@ const AGENT_PROGRESS_ORDER = [
   'architect-agent',
   'database-agent',
   'developer-agent',
+  'frontend-agent',
   'gitlab-agent',
   'qa-agent',
   'security-agent',
@@ -161,6 +162,7 @@ export function parseLogSkipFlags(
       architecture: parsed.skip_architect === true,
       data: parsed.skip_db === true,
       implementation: parsed.skip_developer === true,
+      frontend: parsed.skip_frontend === true || parsed.with_frontend === false,
       publish: parsed.skip_gitlab === true,
       deploy: parsed.skip_devops === true,
       qa: parsed.skip_verify === true,
@@ -226,6 +228,9 @@ function partialCompletionFailure(missing: SdlcPhase): ReconcileRunResult {
   if (missing === 'implementation') {
     error =
       'Developer-agent did not complete successfully. Open the run and check the developer handoff for the concrete error.';
+  } else if (missing === 'frontend') {
+    error =
+      'Frontend-agent did not complete successfully. Check S3 frontend/ artifacts and the frontend-agent response.';
   } else if (missing === 'publish') {
     error =
       'GitLab publish did not complete successfully. Open the run and check the GitLab handoff for the concrete error.';

@@ -111,7 +111,7 @@ WEB_CRAWLER_TASK = (
 
 # Canonical chain (orchestrator diagram):
 # FE(UI) -> ORCH -> PROD -> ARCH -> DB -> DEV -> FRONTEND -> GL -.-> QA
-# frontend-agent is opt-in (with_frontend); still listed here for docs / run.json skeleton.
+# frontend-agent is always-on (with_frontend default True); skip_frontend is the escape hatch.
 PIPELINE_STEPS: tuple[str, ...] = (
     "product-agent",
     "architect-agent",
@@ -152,7 +152,7 @@ class PipelineOptions:
     skip_gitlab: bool = False
     with_qa: bool = False
     skip_qa: bool = False
-    with_frontend: bool = False
+    with_frontend: bool = True
     skip_frontend: bool = False
     with_jira: bool = False
     jira_project: str = ""
@@ -305,7 +305,15 @@ class SdlcPipelineRunner:
                 self._step_verify()
             
             if _should_run_frontend(self.options):
-                self._step_frontend()
+                if self._frontend_required():
+                    self._step_frontend()
+                else:
+                    delivery = self.context.get("deliveryProfile") or {}
+                    print(
+                        f"[orchestrator] Skipping frontend-agent: deliveryProfile.uiPattern="
+                        f"{delivery.get('uiPattern')!r} does not require a React frontend.",
+                        file=sys.stderr,
+                    )
 
             gitlab_ran = False
             if _should_run_gitlab(self.options):
@@ -353,8 +361,7 @@ class SdlcPipelineRunner:
     def _default_steps(self) -> list[dict[str, str]]:
         """Control-plane-compatible step skeleton (matches pipeline-run.ts run.json seed).
 
-        frontend-agent is queued only when with_frontend and not skip_frontend; otherwise
-        skipped so default Dashboard runs stay product→…→developer→gitlab.
+        frontend-agent is queued when with_frontend (default True) and not skip_frontend.
         """
         opts = self.options
         return [
@@ -1452,12 +1459,17 @@ class SdlcPipelineRunner:
         self.artifacts["QA"] = qa_handoff_rel_for_app(self.feature)
         self._after_agent_step("qa-agent")
     
+    def _frontend_required(self) -> bool:
+        """False only when deliveryProfile explicitly says no React UI (e.g. Streamlit
+        or API-only was chosen) — absent/unknown profile defaults to required."""
+        delivery = self.context.get("deliveryProfile") or {}
+        required = delivery.get("requiresReact")
+        return True if required is None else bool(required)
+
     def _frontend_a2a_handoff_payload(self) -> dict[str, Any]:
         """Developer→frontend handoff JSON for AgentCore (snake_case contract)."""
         delivery = self.context.get("deliveryProfile") or {}
-        frontend_required = delivery.get("requiresReact")
-        if frontend_required is None:
-            frontend_required = True
+        frontend_required = self._frontend_required()
         slug = self.feature
         return {
             "status": "ready",
@@ -1769,6 +1781,10 @@ def options_from_dict(data: dict[str, Any]) -> PipelineOptions:
                 break
     if "with_jira" not in filtered and data.get("withJira") is not None:
         filtered["with_jira"] = bool(data.get("withJira"))
+    if "with_frontend" not in filtered and data.get("withFrontend") is not None:
+        filtered["with_frontend"] = bool(data.get("withFrontend"))
+    if "skip_frontend" not in filtered and data.get("skipFrontend") is not None:
+        filtered["skip_frontend"] = bool(data.get("skipFrontend"))
     if "jira_project" not in filtered:
         for key in ("jiraProject", "jira_project", "jiraProjectKey"):
             value = data.get(key)
