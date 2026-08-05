@@ -189,7 +189,7 @@ Prereqs: `aws sso login --profile eks-admin-user` and Docker Desktop running.
 | AgentCore deploy / invoke | `test_agentcore_deploy.py`, `test_agentcore_invoke.py`, `test_agentcore_dockerfile.py` |
 | CloudWatch log parsing | `test_cloudwatch_logs.py` |
 | DB schema validation | `test_validate_sql_artifacts.py`, `test_validate_conftest.py`, `test_database_agent_postgres_context.py` |
-| UI / API parity | `test_validate_ui_parity.py`, `test_pipeline_telemetry_ui.py` |
+| UI / API parity | `test_pipeline_telemetry_ui.py` |
 | Seed credentials | `test_seed_credentials.py`, `test_verify_seed_bcrypt.py`, `test_db_handoff_seed_credentials.py` |
 | Agent modules | `test_developer_agent.py`, `test_qa_agent.py`, `test_web_crawler_agent.py` |
 | Shared helpers | `test_pipeline_context.py`, `test_telemetry.py`, `test_async_pipeline.py`, `test_delivery_profile.py`, `test_diagram_tools.py` |
