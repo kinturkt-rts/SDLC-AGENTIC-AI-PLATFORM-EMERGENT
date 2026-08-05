@@ -82,6 +82,7 @@ module "app" {{
   alb_security_group_id = data.terraform_remote_state.shared.outputs.alb_security_group_id
 
   enable_ui      = {enable_ui}
+  ui_framework   = "{ui_framework}"
   enable_bedrock = {enable_bedrock}
 {db_block}}}
 
@@ -186,11 +187,12 @@ def _load_state(app: str, region: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def _infer_flags(state: dict) -> tuple[bool, bool, bool, str]:
+def _infer_flags(state: dict) -> tuple[bool, bool, bool, str, str | None]:
     enable_ui = False
     has_database = False
     enable_bedrock = False
     db_instance = DEFAULT_DB_INSTANCE
+    health_path: str | None = None
 
     for res in state.get("resources", []):
         rtype = res.get("type") or ""
@@ -209,15 +211,42 @@ def _infer_flags(state: dict) -> tuple[bool, bool, bool, str]:
                 ident = attrs.get("db_instance_identifier")
                 if ident:
                     db_instance = ident
+        if rtype == "aws_lb_target_group" and name == "app":
+            for inst in res.get("instances") or []:
+                attrs = inst.get("attributes") or {}
+                path = attrs.get("health_check") or []
+                if isinstance(path, list) and path:
+                    health = path[0] if isinstance(path[0], dict) else {}
+                    health_path = health.get("path") or health_path
+                elif isinstance(attrs.get("health_check.0.path"), str):
+                    health_path = attrs["health_check.0.path"]
 
         # Bedrock policy may live under module.app
         if module == "module.app" and rtype == "aws_iam_role_policy" and "bedrock" in name:
             enable_bedrock = True
 
-    return enable_ui, has_database, enable_bedrock, db_instance
+    return enable_ui, has_database, enable_bedrock, db_instance, health_path
 
 
-def _render(app: str, region: str, enable_ui: bool, has_database: bool, enable_bedrock: bool, db_instance: str) -> str:
+def _infer_ui_framework(app: str, enable_ui: bool, health_path: str | None) -> str:
+    """Prefer on-disk React/Streamlit artifacts; fall back to TG health path."""
+    if not enable_ui:
+        return "none"
+    app_dir = BACKEND / "target-apps" / app
+    if (app_dir / "ui" / "streamlit_app.py").is_file():
+        return "streamlit"
+    if (app_dir / "ui" / "package.json").is_file() or (
+        app_dir / "frontend" / "package.json"
+    ).is_file():
+        return "react"
+    if health_path and "/healthz" in health_path:
+        return "react"
+    if health_path and "_stcore" in health_path:
+        return "streamlit"
+    return "streamlit"
+
+
+def _render(app: str, region: str, enable_ui: bool, has_database: bool, enable_bedrock: bool, db_instance: str, ui_framework: str = "streamlit") -> str:
     if has_database:
         db_block = _DB_BLOCK
         db_resources = _DB_RESOURCES.format(app=app, db_instance=db_instance)
@@ -225,11 +254,17 @@ def _render(app: str, region: str, enable_ui: bool, has_database: bool, enable_b
         db_block = _DB_BLOCK_NONE
         db_resources = ""
 
+    if not enable_ui:
+        ui_framework = "none"
+    elif ui_framework not in ("streamlit", "react"):
+        ui_framework = "streamlit"
+
     return _TEMPLATE.format(
         app=app,
         bucket=TF_BUCKET,
         region=region,
         enable_ui="true" if enable_ui else "false",
+        ui_framework=ui_framework,
         enable_bedrock="true" if enable_bedrock else "false",
         db_block=db_block,
         db_resources=db_resources,
@@ -263,14 +298,24 @@ def main() -> int:
         return 2
 
     state = _load_state(app, args.region)
-    enable_ui, has_database, enable_bedrock, db_instance = _infer_flags(state)
-    content = _render(app, args.region, enable_ui, has_database, enable_bedrock, db_instance)
+    enable_ui, has_database, enable_bedrock, db_instance, health_path = _infer_flags(state)
+    ui_framework = _infer_ui_framework(app, enable_ui, health_path)
+    content = _render(
+        app,
+        args.region,
+        enable_ui,
+        has_database,
+        enable_bedrock,
+        db_instance,
+        ui_framework=ui_framework,
+    )
 
     root.mkdir(parents=True, exist_ok=True)
     main_tf.write_text(content, encoding="utf-8", newline="\n")
     print(
         f"WROTE {main_tf.relative_to(BACKEND)} "
-        f"(enable_ui={enable_ui}, has_database={has_database}, enable_bedrock={enable_bedrock})"
+        f"(enable_ui={enable_ui}, ui_framework={ui_framework}, "
+        f"has_database={has_database}, enable_bedrock={enable_bedrock})"
     )
     return 0
 

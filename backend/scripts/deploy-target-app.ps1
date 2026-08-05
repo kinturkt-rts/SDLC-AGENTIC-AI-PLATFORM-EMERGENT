@@ -239,17 +239,52 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "docker login to ECR failed." }
 
         $apiImage = "${Registry}/sdlc/$Feature/api:$ImageTag"
-        Invoke-Native "docker" @("build", "-f", (Join-Path $AppDir "deploy\Dockerfile.api"), "-t", $apiImage, $AppDir) "docker build api"
+        $apiDockerfile = Join-Path (Join-Path $AppDir "deploy") "Dockerfile.api"
+        Invoke-Native "docker" @("build", "-f", $apiDockerfile, "-t", $apiImage, $AppDir) "docker build api"
         Invoke-Native "docker" @("push", $apiImage) "docker push api"
 
-        $uiDockerfile = Join-Path $AppDir "deploy\Dockerfile.ui"
-        $streamlitApp = Join-Path (Join-Path $AppDir "ui") "streamlit_app.py"
-        if ((Test-Path $uiDockerfile) -and (Test-Path $streamlitApp)) {
-            $uiImage = "${Registry}/sdlc/$Feature/ui:$ImageTag"
-            Invoke-Native "docker" @("build", "-f", $uiDockerfile, "-t", $uiImage, $AppDir) "docker build ui"
+        $uiDir = Join-Path $AppDir "ui"
+        $streamlitApp = Join-Path $uiDir "streamlit_app.py"
+        $reactPkg = Join-Path $uiDir "package.json"
+        $frontendPkg = Join-Path (Join-Path $AppDir "frontend") "package.json"
+        # Local/S3 layout may still have frontend/; CI remaps to ui/. Stage before React build.
+        if (-not (Test-Path $reactPkg) -and (Test-Path $frontendPkg) -and -not (Test-Path $streamlitApp)) {
+            if (Test-Path $uiDir) { Remove-Item -Recurse -Force $uiDir }
+            Copy-Item -Recurse (Join-Path $AppDir "frontend") $uiDir
+            $reactPkg = Join-Path $uiDir "package.json"
+            Write-Host "Staged frontend/ -> ui/ for React image build." -ForegroundColor DarkGray
+        }
+
+        $uiImage = "${Registry}/sdlc/$Feature/ui:$ImageTag"
+        if ((Test-Path $streamlitApp)) {
+            $uiDockerfile = Join-Path (Join-Path $AppDir "deploy") "Dockerfile.ui"
+            if (-not (Test-Path $uiDockerfile)) { throw "Missing Streamlit Dockerfile: $uiDockerfile" }
+            Invoke-Native "docker" @("build", "-f", $uiDockerfile, "-t", $uiImage, $AppDir) "docker build ui (streamlit)"
+            Invoke-Native "docker" @("push", $uiImage) "docker push ui"
+        } elseif ((Test-Path $reactPkg)) {
+            $uiDockerfile = Join-Path (Join-Path $AppDir "deploy") "Dockerfile.ui.react"
+            if (-not (Test-Path $uiDockerfile)) {
+                # Platform template (CI clones platform repo; overlay may omit deploy/).
+                $templateDeploy = Join-Path (Join-Path (Join-Path $RepoRoot "target-apps") "_template") "deploy"
+                $templateUi = Join-Path $templateDeploy "Dockerfile.ui.react"
+                if (-not (Test-Path $templateUi)) { throw "Missing React Dockerfile: $uiDockerfile" }
+                $deployDir = Join-Path $AppDir "deploy"
+                New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
+                Copy-Item $templateUi $uiDockerfile
+                foreach ($extra in @("nginx.react.conf.template", "react-ui-entrypoint.sh")) {
+                    $src = Join-Path $templateDeploy $extra
+                    $dst = Join-Path $deployDir $extra
+                    if ((Test-Path $src) -and -not (Test-Path $dst)) { Copy-Item $src $dst }
+                }
+            }
+            Invoke-Native "docker" @(
+                "build", "-f", $uiDockerfile,
+                "--build-arg", "APP_NAME=$Feature",
+                "-t", $uiImage, $AppDir
+            ) "docker build ui (react)"
             Invoke-Native "docker" @("push", $uiImage) "docker push ui"
         } else {
-            Write-Host "No UI Dockerfile/streamlit app - api-only deploy." -ForegroundColor DarkGray
+            Write-Host "No Streamlit/React UI - api-only deploy." -ForegroundColor DarkGray
         }
     }
 
@@ -261,8 +296,10 @@ try {
     $Service = (& $Terraform output -raw service_name)
     $Cluster = (& $Terraform output -raw cluster_name)
 
-    $hasStreamlitUi = Test-Path (Join-Path (Join-Path $AppDir "ui") "streamlit_app.py")
-    $LiveUrl = if ($hasStreamlitUi) {
+    $uiDir = Join-Path $AppDir "ui"
+    $hasStreamlitUi = Test-Path (Join-Path $uiDir "streamlit_app.py")
+    $hasReactUi = (Test-Path (Join-Path $uiDir "package.json")) -or (Test-Path (Join-Path (Join-Path $AppDir "frontend") "package.json"))
+    $LiveUrl = if ($hasStreamlitUi -or $hasReactUi) {
         $AppUrl.TrimEnd('/')
     } else {
         "$($AppUrl.TrimEnd('/'))/docs"
@@ -279,12 +316,12 @@ try {
         Write-Warning "Service did not stabilize in time. Check: CloudWatch /ecs/sdlc/dev/$Feature and target group health."
     }
 
-    # Smoke test through the ALB (Streamlit health first, /health for api-only apps)
+    # Smoke test through the ALB (React healthz, Streamlit health, /health for api-only)
     $healthy = $false
     $healthUrl = ""
     $diagnostics = $null
     foreach ($attempt in 1..10) {
-        foreach ($suffix in @("_stcore/health", "health")) {
+        foreach ($suffix in @("healthz", "_stcore/health", "health")) {
             $candidate = "$($AppUrl.TrimEnd('/'))/$suffix"
             try {
                 $resp = Invoke-WebRequest -Uri $candidate -UseBasicParsing -TimeoutSec 10
@@ -302,6 +339,20 @@ try {
             }
         }
         Start-Sleep -Seconds 15
+    }
+
+    # React dual-stack: healthz proves API+nginx, but also require the SPA shell.
+    if ($healthy -and $hasReactUi) {
+        try {
+            $spa = Invoke-WebRequest -Uri "$($AppUrl.TrimEnd('/'))/" -UseBasicParsing -TimeoutSec 10
+            if ($spa.StatusCode -ne 200 -or ($spa.Content -notmatch 'id="root"|id=.root.')) {
+                $healthy = $false
+                Write-Warning "React healthz passed but SPA root HTML looks wrong - not reporting live."
+            }
+        } catch {
+            $healthy = $false
+            Write-Warning "React healthz passed but SPA root request failed - not reporting live."
+        }
     }
     if (-not $healthUrl) { $healthUrl = "$($AppUrl.TrimEnd('/'))/_stcore/health" }
     if (-not $healthy -and -not $diagnostics) {

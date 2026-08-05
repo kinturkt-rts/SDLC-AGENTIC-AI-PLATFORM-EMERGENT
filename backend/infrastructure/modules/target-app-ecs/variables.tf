@@ -18,7 +18,7 @@ variable "aws_region" {
   default = "us-east-2"
 }
 
-# ── Shared platform inputs (from environments/dev/_shared outputs) ────────────
+# Shared platform inputs (from environments/dev/_shared outputs)
 variable "vpc_id" {
   type = string
 }
@@ -42,11 +42,22 @@ variable "alb_security_group_id" {
   type        = string
 }
 
-# ── App shape (devops-agent derives these from pipeline context) ──────────────
+# App shape (devops-agent derives these from pipeline context)
 variable "enable_ui" {
-  description = "true: Streamlit UI container is the ALB target; false: the FastAPI container is."
+  description = "true: UI container is the ALB target; false: the FastAPI container is."
   type        = bool
   default     = true
+}
+
+variable "ui_framework" {
+  type        = string
+  description = "UI container kind when enable_ui is true: streamlit, react, or none. Controls ALB health-check path."
+  default     = "streamlit"
+
+  validation {
+    condition     = contains(["streamlit", "react", "none"], var.ui_framework)
+    error_message = "ui_framework must be streamlit, react, or none."
+  }
 }
 
 variable "api_port" {
