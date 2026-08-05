@@ -13,9 +13,11 @@ export function isDeployStale(input: {
   isTerminalForDeploy: boolean;
   deploySucceeded: boolean;
   s3MtimeMs: number;
+  ciInFlight?: boolean;
   now?: number;
 }): boolean {
   if (!input.isTerminalForDeploy || input.deploySucceeded) return false;
+  if (input.ciInFlight) return false;
   if (!input.s3MtimeMs) return false;
   return (input.now ?? Date.now()) - input.s3MtimeMs > DEPLOY_STALE_MS;
 }

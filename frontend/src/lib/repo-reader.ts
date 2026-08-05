@@ -30,6 +30,7 @@ import {
   devopsDeployFailedForRun,
   devopsDeploySucceededForRun,
   devopsHandoffExistsForRun,
+  frontendNotRequiredForRun,
   getRunHandoffs,
   gitlabPublishSucceededForRun,
   resolveProjectRepositoryLink,
@@ -988,6 +989,9 @@ async function buildPipelineRunFromLive(
   }
 
   const skipFlags = parseLogSkipFlags(log);
+  if (shouldLoadPhases && !phaseDone.frontend && (await frontendNotRequiredForRun(runId, slug))) {
+    skipFlags.frontend = true;
+  }
   for (const key of Object.keys(skipFlags) as SdlcPhase[]) {
     if (skipFlags[key] && !phaseDone[key]) {
       phaseDone = { ...phaseDone, [key]: true };
@@ -1074,14 +1078,9 @@ async function buildPipelineRunFromLive(
     reconciled.status === 'failed' ||
     reconciled.status === 'cancelled';
 
-  const deployIsStale = isDeployStale({
-    isTerminalForDeploy,
-    deploySucceeded: phaseDone.deploy,
-    s3MtimeMs,
-  });
-
   let deployCiFailed = false;
   let deployCiFailedDetail: string | null = null;
+  let deployCiInFlight = false;
   if (isTerminalForDeploy && phaseDone.publish && !phaseDone.deploy) {
     const handoffs = await getRunHandoffs(runId, slug).catch(() => null);
     const branch = handoffs?.gitlab?.branch?.trim() || null;
@@ -1093,6 +1092,7 @@ async function buildPipelineRunFromLive(
 
     if (ci.inFlight || ci.status === 'running') {
       deployCiFailed = false;
+      deployCiInFlight = true;
     } else if (await devopsDeployFailedForRun(runId, slug)) {
       deployCiFailed = true;
       deployCiFailedDetail = 'Deploy health check failed (devops handoff).';
@@ -1103,6 +1103,13 @@ async function buildPipelineRunFromLive(
         : 'GitLab deploy pipeline failed.';
     }
   }
+
+  const deployIsStale = isDeployStale({
+    isTerminalForDeploy,
+    deploySucceeded: phaseDone.deploy,
+    ciInFlight: deployCiInFlight,
+    s3MtimeMs,
+  });
 
   if (!phaseDone.deploy) {
     const hasDevopsHandoff = await devopsHandoffExistsForRun(runId, slug);

@@ -430,6 +430,42 @@ export async function devopsHandoffExistsForRun(runId: string, slug: string): Pr
   return (await loadFirstDevopsHandoff(runId, slug.trim().toLowerCase())) !== null;
 }
 
+async function loadFirstFrontendHandoff(
+  runId: string,
+  slug: string,
+): Promise<HandoffRecord | null> {
+  const candidates: Array<{ loader: () => Promise<HandoffRecord | null> }> = [
+    { loader: () => getRunArtifactJson(runId, `${slug}/frontend-handoff.json`) },
+  ];
+  if (!isS3Store()) {
+    candidates.push({
+      loader: () => readLocalPipelineJson(`agents/pipeline/${slug}.frontend-handoff.json`),
+    });
+  }
+  for (const candidate of candidates) {
+    const data = await candidate.loader();
+    if (data) return data;
+  }
+  return null;
+}
+
+/**
+ * True when frontend-agent finished and determined this brief never asked for a
+ * UI (backend-only app). phaseCompletionForRun's `frontend` signal is artifact-based
+ * (looks for a generated frontend/package.json), so a legitimately UI-less app can
+ * never satisfy it - without this, the timeline step sits stuck on "queued" forever
+ * even though the run finished successfully.
+ */
+export async function frontendNotRequiredForRun(runId: string, slug: string): Promise<boolean> {
+  const data = await loadFirstFrontendHandoff(runId, slug.trim().toLowerCase());
+  if (!data) return false;
+  const status = String(data.status ?? '').toLowerCase();
+  if (status !== 'completed') return false;
+  if (data.frontend_required === false) return true;
+  const uiRequirements = data.ui_requirements as Record<string, unknown> | undefined;
+  return uiRequirements?.uiRequired === false;
+}
+
 export async function getRunHandoffs(runId: string, projectSlug: string): Promise<RunHandoffs> {
   const slug = projectSlug.trim().toLowerCase();
   const [gitlab, developer, devops, ctx] = await Promise.all([

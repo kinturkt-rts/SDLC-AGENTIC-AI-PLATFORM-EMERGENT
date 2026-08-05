@@ -247,6 +247,33 @@ describe('isDeployStale', () => {
       false,
     );
   });
+
+  it('regression: a queued GitLab deploy job past the window is not stale', () => {
+
+    assert.equal(
+      isDeployStale({
+        isTerminalForDeploy: true,
+        deploySucceeded: false,
+        ciInFlight: true,
+        s3MtimeMs: old,
+        now,
+      }),
+      false,
+    );
+  });
+
+  it('still ages out once GitLab is no longer running anything', () => {
+    assert.equal(
+      isDeployStale({
+        isTerminalForDeploy: true,
+        deploySucceeded: false,
+        ciInFlight: false,
+        s3MtimeMs: old,
+        now,
+      }),
+      true,
+    );
+  });
 });
 
 describe('resolveDisplayStatus', () => {
