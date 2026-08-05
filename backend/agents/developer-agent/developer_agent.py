@@ -862,6 +862,7 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
 | README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
 | FK columns on ORM | Every FK column on a SQLAlchemy model MUST declare `ForeignKey("<table>.<col>")` as an argument to `mapped_column` / `Column`. Having `REFERENCES users(id)` in the SQL DDL is **not enough** — SQLAlchemy reads only the ORM declaration when resolving `relationship(...)`. Without it, every `relationship` raises `NoForeignKeysError: Could not determine join condition`. Example: `assigned_to: Mapped[str] = mapped_column(pg_uuid_column(), ForeignKey("users.id"), nullable=False)`. |
+| M2M / junction `secondary=` | Define the association `Table("book_authors", Base.metadata, ...)` **once** (usually in one of the two model files). BOTH sides MUST use the **same Table object**: `relationship("Book", secondary=book_authors, back_populates="authors")` — NEVER `secondary="book_authors"` (string). String secondary fails mapper init when the other file loads first (`InvalidRequestError: mappers failed to initialize` / `name 'book_authors' is not defined`), and list/CRUD routes 500 while `/health` still looks green. Import the Table into the other model file if needed (`from app.models.book import book_authors`). |
 | Conditional aggregates | `case` is a top-level SQLAlchemy construct, NOT a `func` member. `func.case((cond, 1), else_=0)` raises `OperationalError: no such function: case` at runtime. Correct: `from sqlalchemy import case` then `case((cond, 1), else_=0)`. Same for `cast`, `null`, `true`, `false` — all top-level imports, not `func` members. |
 | `ARRAY(PG_UUID(...))` column assigned a request's `list[str]` | Postgres allows an implicit `varchar → uuid` cast for a single scalar, but refuses it for arrays — binding a plain `list[str]` into a `uuid[]` column raises `DatatypeMismatch: column "..." is of type uuid[] but expression is of type character varying[]`. SQLite tests pass anyway (no type enforcement), so this only surfaces on real RDS, exactly like the other rows in this table. Always convert to `uuid.UUID` objects at the router before assigning: `[uuid.UUID(x) for x in body.some_ids] if body.some_ids else None`. |
 
@@ -1498,6 +1499,7 @@ App code rules (container-ready without refactors):
 18. URL path cross-check: for every `@router.get/post/...` decorator, mentally compute `include_router(prefix=) + route_path` and confirm the test calls that exact URL. `/health/health` is a real bug that has shipped before — never double-prefix.
 19. Test fixtures must replicate route side-effects: if `POST /findings` creates both a `Finding` AND an initial `status_history` row, then a `sample_finding` fixture that constructs `Finding` via the ORM **must also** insert the matching `status_history` row. Otherwise tests that read the side-effect (`GET /findings/{id}/history`) see an empty list and fail. Rule of thumb: every `db.add(SecondaryModel(...))` call inside a route handler needs a mirror line in the corresponding test fixture, OR the fixture should call the route via the TestClient instead of constructing models directly.
 20. ORM models referencing other tables: every `mapped_column(... pg_uuid_column())` that points at another table MUST include `ForeignKey("other_table.id")` as a positional argument. SQL DDL constraints don't propagate to the ORM. Missing FK declaration = `relationship()` raises `NoForeignKeysError` at app startup.
+21. Many-to-many / junction tables: never use `relationship(..., secondary="table_name")` strings. Define `Table(...)` once and pass that object on both `relationship(..., secondary=junction_table, back_populates=...)` sides. Host validation runs `configure_mappers()` and will fail the step if string secondary or broken M2M wiring is present.
 """
 
 # Backwards-compat alias: legacy "all patterns" prompt. Prefer _build_system_prompt(ctx).
@@ -3563,6 +3565,18 @@ def _run_validation_steps(
         _warn(warn)
     for warn in validate_rds_parity_warnings(service_dir):
         _warn(f"rds_parity: {warn}")
+
+    from _shared.validate_orm_relationships import validate_orm_relationships
+
+    orm_rel_errors = validate_orm_relationships(
+        service_dir, python_cmd=python_cmd, run_mapper_check=True
+    )
+    if orm_rel_errors:
+        detail = "ORM_RELATIONSHIPS FAILED (M2M / mapper init — list/CRUD would 500):\n" + "\n".join(
+            f"  - {e}" for e in orm_rel_errors
+        )
+        return _fail("orm_relationships", detail)
+    _ok("orm_relationships")
 
     from _shared.validate_ui_parity import (
         autofix_streamlit_api_path_slashes,
