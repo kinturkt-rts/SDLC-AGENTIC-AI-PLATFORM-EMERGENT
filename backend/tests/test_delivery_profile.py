@@ -21,10 +21,13 @@ from _shared.delivery_profile import (  # noqa: E402
 )
 
 
-def test_scan_detects_streamlit() -> None:
+def test_scan_streamlit_mention_resolves_to_react() -> None:
+    """Streamlit is retired as a deliverable — a mention still means "UI required"
+    but the classifier must always route it to React, never requiresStreamlit=True."""
     profile = scan_delivery_text("MVP with Streamlit UI on port 8501")
-    assert profile["requiresStreamlit"] is True
-    assert profile["uiPattern"] == "streamlit"
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiPattern"] == "react"
 
 
 def test_scan_ignores_negated_streamlit() -> None:
@@ -53,13 +56,15 @@ def test_scan_ignores_negated_streamlit_in_comma_list() -> None:
 
 
 def test_scan_streamlit_not_killed_by_http_client_to_api_only() -> None:
-    """PRD architecture rows often say 'HTTP client to API only' while requiring Streamlit."""
+    """PRD architecture rows often say 'HTTP client to API only' while requiring a UI —
+    that must still resolve to React now that Streamlit is retired as a deliverable."""
     profile = scan_delivery_text(
         "| UI location | `ui/streamlit_app.py` | http client to api only — "
         "never import `app/` from streamlit; enforced by ci lint check |"
     )
-    assert profile["requiresStreamlit"] is True
-    assert profile["uiPattern"] == "streamlit"
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiPattern"] == "react"
 
 
 def test_scan_api_only_app_still_false() -> None:
@@ -74,7 +79,9 @@ def test_merge_profiles_or_flags() -> None:
         {"uiRequired": False, "requiresStreamlit": False, "requiresReact": False, "uiPattern": None},
         scan_delivery_text("needs streamlit dashboard"),
     )
-    assert merged["requiresStreamlit"] is True
+    assert merged["requiresStreamlit"] is False
+    assert merged["requiresReact"] is True
+    assert merged["uiPattern"] == "react"
 
 
 def test_verify_design_doc_fails_when_streamlit_omitted(tmp_path: Path) -> None:
@@ -118,7 +125,8 @@ def test_build_delivery_profile_from_input_file(tmp_path: Path) -> None:
     brief.parent.mkdir(parents=True)
     brief.write_text("Stack: FastAPI + Streamlit UI for client portal\n", encoding="utf-8")
     profile = build_delivery_profile_from_paths(tmp_path, input_path=str(brief))
-    assert profile["requiresStreamlit"] is True
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
 
 
 def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
@@ -137,7 +145,8 @@ def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     profile = sync_context_delivery_profile(tmp_path, ctx_path)
-    assert profile["requiresStreamlit"] is True
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
     synced = __import__("json").loads(ctx_path.read_text(encoding="utf-8"))
     assert synced["inputPath"] == "inputs/prior-auth.txt"
 

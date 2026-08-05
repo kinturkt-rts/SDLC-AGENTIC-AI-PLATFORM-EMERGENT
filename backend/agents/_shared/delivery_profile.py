@@ -84,12 +84,12 @@ def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pat
 def scan_delivery_text(text: str) -> dict[str, Any]:
     """Infer delivery profile flags from PRD, input brief, or design markdown.
 
-    Decision order (PART 1 fix — highest priority first):
+    Decision order (highest priority first):
       1. Explicit "no frontend" / API-only / backend-only -> no UI at all, full stop.
-      2. Explicit Streamlit mention (and not negated) -> Streamlit.
-      3. Explicit React mention (and not negated), OR a UI is required (e.g. a generic
-         "web UI" phrase) but no specific frontend technology was named -> React.
-         React — not Streamlit — is the default frontend; Streamlit is opt-in only.
+      2. A UI is required — Streamlit mention, explicit React mention, or a generic
+         "web UI" phrase, none negated — -> React. Streamlit has been retired as a
+         deliverable: mentioning it still means "a UI is required" but always
+         resolves to React, never to requiresStreamlit=True.
     """
     lower = text.lower()
     no_frontend_explicit = bool(
@@ -99,6 +99,10 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
     generic_ui_required = _feature_required(lower, _GENERIC_UI_MARKERS, _GENERIC_UI_NEGATED)
     ui_required = requires_streamlit or requires_react or generic_ui_required
+    # Streamlit is retired as a target framework. A brief mentioning it still counts
+    # toward ui_required above (a UI was asked for), but the classifier must never
+    # report requiresStreamlit true again — the elif below routes that signal to React.
+    requires_streamlit = False
 
     if no_frontend_explicit:
         # Explicit "no frontend" wins over any UI marker found in this same text.
