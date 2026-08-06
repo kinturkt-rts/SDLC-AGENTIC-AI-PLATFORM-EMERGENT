@@ -154,3 +154,69 @@ def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
 def test_design_doc_includes_streamlit() -> None:
     assert design_doc_includes_streamlit("| UI | Streamlit |")
     assert not design_doc_includes_streamlit("| API | FastAPI |")
+
+
+# --- Fix C: non-literal backend-only self-description (Kintur-authorized, not a
+# Streamlit change) ---------------------------------------------------------------
+
+
+def test_scan_just_a_backend_service_suppresses_frontend() -> None:
+    profile = scan_delivery_text(
+        "This project needs just a backend service exposing REST endpoints."
+    )
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+    assert profile["requiresReact"] is False
+
+
+def test_scan_backend_api_nothing_else_needed_suppresses_frontend() -> None:
+    profile = scan_delivery_text("We need a backend API, nothing else needed for v1.")
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+
+
+def test_scan_rest_api_only_suppresses_frontend() -> None:
+    profile = scan_delivery_text("Deliver a REST API only.")
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+
+
+def test_scan_silent_brief_does_not_set_no_frontend_explicit() -> None:
+    """A brief that says nothing about UI at all must NOT be treated as an explicit
+    no-frontend signal — the frontend-required gate (outside this module) is what
+    defaults silent briefs to React, and it only skips frontend-agent when
+    noFrontendExplicit is true."""
+    profile = scan_delivery_text(
+        "Manage inventory counts across three warehouses with reorder alerts."
+    )
+    assert profile["noFrontendExplicit"] is False
+    assert profile["uiRequired"] is False
+
+
+def test_scan_backend_feeding_frontend_dashboard_not_suppressed() -> None:
+    """False positive #1: mentions 'backend service' but clearly has a UI — must
+    not be caught by the broadened backend-only detection."""
+    profile = scan_delivery_text("The backend service feeds the frontend dashboard.")
+    assert profile["noFrontendExplicit"] is False
+
+
+def test_scan_just_backend_today_react_next_sprint_not_suppressed() -> None:
+    """False positive #2: 'just backend' phrasing in one clause, but a React
+    frontend is named later in the same document — the document-wide UI-marker
+    gate must catch this even though the two mentions are in different clauses."""
+    profile = scan_delivery_text(
+        "It's just backend work today; the React frontend ships next sprint."
+    )
+    assert profile["noFrontendExplicit"] is False
+
+
+def test_scan_api_only_when_offline_web_dashboard_not_suppressed() -> None:
+    """False positive #3: 'API only' immediately followed by a conditional clause
+    (blocked by the continuation-word lookahead) AND the same document separately
+    mentions a web dashboard (now a tracked _GENERIC_UI_MARKERS entry, giving this
+    case a second line of defense independent of the continuation-word list)."""
+    profile = scan_delivery_text(
+        "Users interact with the backend API only when offline; otherwise they "
+        "use the web dashboard."
+    )
+    assert profile["noFrontendExplicit"] is False

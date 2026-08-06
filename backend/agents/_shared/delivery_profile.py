@@ -46,12 +46,19 @@ _REACT_NEGATED = re.compile(
     r"streamlit/react\s+ui",
     re.IGNORECASE,
 )
-_GENERIC_UI_MARKERS = ("web ui", "browser ui", "client-facing portal")
+_GENERIC_UI_MARKERS = (
+    "web ui",
+    "browser ui",
+    "client-facing portal",
+    "dashboard",
+    "portal",
+    "web app",
+)
 # Same clause-gap negation as Streamlit/React — "no ... web UI ..." lists hit this too
 # (e.g. "No customer-facing web UI, Streamlit, chatbots, or SSO for this version").
 _GENERIC_UI_NEGATED = re.compile(
     r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP
-    + r"\b(?:web ui|browser ui|client-facing portal)\b",
+    + r"\b(?:web ui|browser ui|client-facing portal|dashboard|portal|web app)\b",
     re.IGNORECASE,
 )
 _API_ONLY_DELIVERY = re.compile(
@@ -68,6 +75,21 @@ _NO_FRONTEND_EXPLICIT = re.compile(
     r"\bwithout\s+(?:a\s+)?frontend\b|"
     r"\bbackend[- ]only\b|"
     r"\bno\s+(?:ui|user\s+interface|client\s+ui|web\s+ui)\b",
+    re.IGNORECASE,
+)
+
+# Self-description as backend/API-only in non-literal wording ("just a backend
+# service", "backend API, nothing else needed", "REST API only"). Each alternative
+# requires an exclusivity word (just/only/nothing else) bound directly to
+# backend/api - this means "this app has no frontend", not merely "backend/api is
+# mentioned". Gated in scan_delivery_text() by a document-wide check for any
+# positive UI marker (react/streamlit/web ui/dashboard/etc. appearing ANYWHERE in
+# the text, not just nearby) - a brief that uses backend-only phrasing in one
+# clause but names a frontend elsewhere must not be suppressed.
+_BACKEND_ONLY_SELF_DESCRIBED = re.compile(
+    r"\bjust\s+(?:a\s+|an\s+)?(?:rest\s+)?(?:backend|api)(?:\s+service)?\b|"
+    r"\b(?:rest\s+)?api\s+only\b(?!\s+(?:when|if|unless|during|except|for|until))|"
+    r"\bbackend\s+api\s*,?\s*nothing\s+else\s+needed\b",
     re.IGNORECASE,
 )
 
@@ -92,8 +114,15 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
          resolves to React, never to requiresStreamlit=True.
     """
     lower = text.lower()
+    backend_only_described = bool(_BACKEND_ONLY_SELF_DESCRIBED.search(lower))
+    has_any_ui_marker = any(
+        marker in lower
+        for marker in (*_STREAMLIT_MARKERS, *_REACT_MARKERS, *_GENERIC_UI_MARKERS)
+    )
     no_frontend_explicit = bool(
-        _NO_FRONTEND_EXPLICIT.search(lower) or _API_ONLY_DELIVERY.search(lower)
+        _NO_FRONTEND_EXPLICIT.search(lower)
+        or _API_ONLY_DELIVERY.search(lower)
+        or (backend_only_described and not has_any_ui_marker)
     )
     requires_streamlit = _feature_required(lower, _STREAMLIT_MARKERS, _STREAMLIT_NEGATED)
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
