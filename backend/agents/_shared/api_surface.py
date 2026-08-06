@@ -1,4 +1,4 @@
-"""Parse design API surface and collect FastAPI / Streamlit HTTP usage."""
+"""Parse design API surface and collect FastAPI route usage."""
 
 from __future__ import annotations
 
@@ -23,15 +23,6 @@ _INCLUDE_ROUTER = re.compile(
 )
 _INCLUDE_ROUTER_BARE = re.compile(
     r"include_router\(\s*(\w+)\.router\s*\)",
-    re.IGNORECASE,
-)
-_STREAMLIT_HTTP = re.compile(
-    r"_(?:get|post|patch|delete)\(\s*[\"']([^\"']+)[\"']",
-    re.IGNORECASE,
-)
-_RAW_UUID_INPUT = re.compile(
-    r"st\.text_input\(\s*[\"'][^\"']*"
-    r"(?:\bID\b|_id\b|site_id|location_id|assignee|work_order)",
     re.IGNORECASE,
 )
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
@@ -81,16 +72,6 @@ def is_collection_list_route(method: str, path: str) -> bool:
     return "{" not in path
 
 
-def is_streamlit_ui_route(method: str, path: str) -> bool:
-    """GET routes Streamlit should consume when Pattern C is required."""
-    if not is_collection_list_route(method, path):
-        return False
-    # Detail/nested comment threads are optional in MVP Streamlit — wired per-work-order later.
-    if "/comments" in path:
-        return False
-    return True
-
-
 def collect_implemented_routes(app_dir: Path) -> set[tuple[str, str]]:
     """Scan routers + main.py prefixes into (METHOD, full_path)."""
     main_path = app_dir / "app" / "main.py"
@@ -131,14 +112,6 @@ def collect_implemented_routes(app_dir: Path) -> set[tuple[str, str]]:
     return routes
 
 
-def collect_streamlit_api_calls(app_dir: Path) -> set[str]:
-    ui = app_dir / "ui" / "streamlit_app.py"
-    if not ui.is_file():
-        return set()
-    text = ui.read_text(encoding="utf-8", errors="replace")
-    return {_normalize_path(p) for p in _STREAMLIT_HTTP.findall(text)}
-
-
 def collection_prefix_for_post(method: str, path: str) -> str | None:
     """POST `/api/v1/sites` -> `/api/v1/sites` collection prefix needing GET list."""
     if method.upper() != "POST":
@@ -156,21 +129,6 @@ def has_get_list_for_prefix(routes: set[tuple[str, str]], prefix: str) -> bool:
         if method == "GET" and paths_match(target, path):
             return True
     return False
-
-
-def streamlit_calls_path(calls: set[str], path: str) -> bool:
-    target = _normalize_path(path)
-    for call in calls:
-        if paths_match(target, call):
-            return True
-    return False
-
-
-def find_raw_uuid_inputs(streamlit_path: Path) -> list[str]:
-    if not streamlit_path.is_file():
-        return []
-    text = streamlit_path.read_text(encoding="utf-8", errors="replace")
-    return [m.group(0) for m in _RAW_UUID_INPUT.finditer(text)]
 
 
 def design_doc_for_app(app_slug: str, repo_root: Path) -> Path | None:
