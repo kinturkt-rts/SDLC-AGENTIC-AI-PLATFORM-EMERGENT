@@ -198,6 +198,44 @@ def test_nginx_react_redirects_stay_relative_to_alb_port() -> None:
     assert nginx.index("absolute_redirect off;") < nginx.index("location")
 
 
+def test_api_ts_token_key_is_namespaced_per_app() -> None:
+    """Regression: all target apps share one ALB origin (path-routed per app),
+    and localStorage is scoped by origin, not path. A bare TOKEN_KEY = "token"
+    let one app's leftover session get picked up by a different app on the
+    same origin, skipping its login screen and then 401ing every API call
+    against a token signed with the wrong app's JWT_SECRET_KEY."""
+    api_ts = (
+        _REPO_ROOT / "target-apps" / "_template" / "frontend" / "src" / "api.ts"
+    ).read_text(encoding="utf-8")
+    assert 'const TOKEN_KEY = "token"' not in api_ts
+    assert "API_BASE_URL" in api_ts.split("TOKEN_KEY =", 1)[1].splitlines()[0]
+    assert "localStorage.removeItem(TOKEN_KEY)" in api_ts.split("async function handle")[1]
+
+
+def test_api_apikey_ts_storage_keys_are_namespaced_per_app() -> None:
+    """Same origin-collision regression as api.ts, for all four keys the
+    api-key auth variant stores (token, role, userId, userRole)."""
+    api_ts = (
+        _REPO_ROOT / "target-apps" / "_template" / "frontend" / "src" / "api_apikey.ts"
+    ).read_text(encoding="utf-8")
+    for literal in ('"token"', '"authRole"', '"userId"', '"userRole"'):
+        assert f"= {literal}" not in api_ts, f"{literal} must be namespaced by API_BASE_URL"
+
+
+def test_frontend_agent_prompt_uses_token_key_not_literal() -> None:
+    """Regression: the JWT auth-screen prompt told the LLM to hardcode
+    localStorage.setItem("token", ...) directly, bypassing the TOKEN_KEY
+    constant api.ts actually reads from (which is namespaced per app) —
+    new apps would write to "token" and read from "token:/app-name" and
+    break authentication immediately after generation."""
+    frontend_agent_src = (
+        _REPO_ROOT / "agents" / "frontend-agent" / "frontend_agent.py"
+    ).read_text(encoding="utf-8")
+    assert 'localStorage.setItem("token"' not in frontend_agent_src
+    assert 'localStorage.removeItem("token")' not in frontend_agent_src
+    assert "import { TOKEN_KEY }" in frontend_agent_src
+
+
 def test_react_template_keeps_router_under_alb_app_path() -> None:
     template = (
         _REPO_ROOT / "target-apps" / "_template" / "frontend" / "src" / "main.tsx"
