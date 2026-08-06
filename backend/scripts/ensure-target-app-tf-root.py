@@ -228,8 +228,20 @@ def _infer_flags(state: dict) -> tuple[bool, bool, bool, str, str | None]:
     return enable_ui, has_database, enable_bedrock, db_instance, health_path
 
 
-def _infer_ui_framework(app: str, enable_ui: bool, health_path: str | None) -> str:
-    """Prefer on-disk React/Streamlit artifacts; fall back to TG health path."""
+def _infer_ui_framework(app: str, enable_ui: bool, health_path: str | None) -> str | None:
+    """Prefer on-disk React/Streamlit artifacts; fall back to the remote-state health path.
+
+    Returns "none" when the app has no UI, "streamlit"/"react" when determined, or
+    None when enable_ui is true but nothing determines the framework - callers must
+    not guess in that case (see --ui-framework on the CLI).
+
+    The health-path fallback is exhaustive, not a heuristic: target-app-ecs/main.tf's
+    local.ui_health ternary only ever writes one of two literal ALB health-check paths
+    for var.ui_framework - "/<app>/healthz" (react) or "/<app>/_stcore/health" (anything
+    else) - so a successfully parsed health_path fully determines the framework. A
+    missing health_path means state parsing found no health check at all, which is a
+    different situation from "state confirms streamlit" and must not be conflated with it.
+    """
     if not enable_ui:
         return "none"
     app_dir = BACKEND / "target-apps" / app
@@ -239,14 +251,12 @@ def _infer_ui_framework(app: str, enable_ui: bool, health_path: str | None) -> s
         app_dir / "frontend" / "package.json"
     ).is_file():
         return "react"
-    if health_path and "/healthz" in health_path:
-        return "react"
-    if health_path and "_stcore" in health_path:
-        return "streamlit"
-    return "streamlit"
+    if health_path:
+        return "react" if "/healthz" in health_path else "streamlit"
+    return None
 
 
-def _render(app: str, region: str, enable_ui: bool, has_database: bool, enable_bedrock: bool, db_instance: str, ui_framework: str = "streamlit") -> str:
+def _render(app: str, region: str, enable_ui: bool, has_database: bool, enable_bedrock: bool, db_instance: str, ui_framework: str) -> str:
     if has_database:
         db_block = _DB_BLOCK
         db_resources = _DB_RESOURCES.format(app=app, db_instance=db_instance)
@@ -257,7 +267,9 @@ def _render(app: str, region: str, enable_ui: bool, has_database: bool, enable_b
     if not enable_ui:
         ui_framework = "none"
     elif ui_framework not in ("streamlit", "react"):
-        ui_framework = "streamlit"
+        raise ValueError(
+            f"ui_framework must be 'streamlit' or 'react' when enable_ui is true, got {ui_framework!r}"
+        )
 
     return _TEMPLATE.format(
         app=app,
@@ -280,6 +292,16 @@ def main() -> int:
         action="store_true",
         help="Overwrite main.tf even if a complete root already exists",
     )
+    parser.add_argument(
+        "--ui-framework",
+        choices=("streamlit", "react", "none"),
+        default=None,
+        help=(
+            "Override/supply the UI framework. Required when enable_ui is true in "
+            "remote state but neither on-disk artifacts (target-apps/<app>/ui or "
+            "frontend/) nor the ALB health-check path in state can determine it."
+        ),
+    )
     args = parser.parse_args()
     app = _slug(args.app)
     root = _tf_root(app)
@@ -299,7 +321,21 @@ def main() -> int:
 
     state = _load_state(app, args.region)
     enable_ui, has_database, enable_bedrock, db_instance, health_path = _infer_flags(state)
-    ui_framework = _infer_ui_framework(app, enable_ui, health_path)
+    ui_framework = (
+        args.ui_framework
+        if args.ui_framework is not None
+        else _infer_ui_framework(app, enable_ui, health_path)
+    )
+    if ui_framework is None:
+        print(
+            f"ERROR: cannot determine ui_framework for '{app}': enable_ui is true in "
+            f"remote state but target-apps/{app}/ui, target-apps/{app}/frontend, and the "
+            "ALB target group's health-check path (state) are all unavailable. "
+            "Re-run with an explicit --ui-framework {streamlit|react|none} instead of "
+            "guessing - this may be one of the pre-existing Streamlit apps.",
+            file=sys.stderr,
+        )
+        return 3
     content = _render(
         app,
         args.region,
