@@ -433,6 +433,33 @@ def test_check_ddl_column_drift_ignores_multiline_exclude_constraint(tmp_path: P
     assert drift == []
 
 
+def test_check_ddl_column_drift_ignores_trailing_inline_comment(tmp_path: Path) -> None:
+    """Regression: project-pf-management's `head_user_id UUID,  -- FK added after
+    users table exists` trails a comment after real code on the same line.
+    _strip_sql_comments only dropped whole-line comments, so the comment text
+    merged with the next clause (created_at ...) when whitespace collapsed,
+    producing a bogus "--" column and silently losing the real created_at
+    column — reporting drift against a live table that actually matched."""
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_departments.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS departments (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name TEXT NOT NULL UNIQUE,
+            head_user_id UUID,  -- FK added after users table exists
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+        encoding="utf-8",
+    )
+    cur = _FakeCursor(
+        {("project_pf_management", "departments"): ["id", "name", "head_user_id", "created_at"]}
+    )
+    drift = check_ddl_column_drift(cur, app_schema="project_pf_management", sql_dir=sql_dir)
+    assert drift == []
+
+
 def test_check_ddl_column_drift_clean_when_columns_match(tmp_path: Path) -> None:
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()

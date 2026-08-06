@@ -45,12 +45,35 @@ class InsertRow:
     values: tuple[str | None, ...]
 
 
+def _strip_trailing_line_comment(line: str) -> str:
+    """Drop a `-- comment` that trails real code on the line (quote-aware)."""
+    in_single = False
+    i = 0
+    while i < len(line) - 1:
+        ch = line[i]
+        if ch == "'" and not in_single:
+            in_single = True
+        elif ch == "'" and in_single:
+            if line[i + 1] == "'":
+                i += 1
+            else:
+                in_single = False
+        elif not in_single and ch == "-" and line[i + 1] == "-":
+            return line[:i]
+        i += 1
+    return line
+
+
 def _strip_sql_comments(sql: str) -> str:
     lines: list[str] = []
     for line in sql.splitlines():
         if line.strip().startswith("--"):
             continue
-        lines.append(line)
+        # A trailing "-- ..." after real code (e.g. "col UUID,  -- note") isn't
+        # caught by the full-line check above — left alone, the comment text
+        # merges with the NEXT clause when whitespace gets collapsed downstream,
+        # producing a bogus column named "--" and silently dropping the real one.
+        lines.append(_strip_trailing_line_comment(line))
     return "\n".join(lines)
 
 
