@@ -55,7 +55,7 @@ def database_url_from_env() -> str | None:
     return f"postgresql+psycopg://{user}:{password}@{endpoint}:{port}/{database}?sslmode=require"
 
 
-_PLACEHOLDER_HINTS = ("change-me", "change_me", "your_", "your-", "example", "placeholder", "strong-secret")
+_PLACEHOLDER_HINTS = ("change-me", "change_me", "change-this", "change_this", "your_", "your-", "example", "placeholder", "strong-secret")
 _SECRET_KEY_RE = re.compile(r"(SECRET|TOKEN|PASSWORD|API_KEY)", re.IGNORECASE)
 
 

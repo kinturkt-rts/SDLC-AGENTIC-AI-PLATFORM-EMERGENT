@@ -154,6 +154,20 @@ def test_ensure_tf_root_infers_react_from_disk(tmp_path: Path, monkeypatch: pyte
     assert "enable_ui      = true" in text
 
 
+def test_derive_extra_env_detects_change_this_placeholder(app_dir: Path) -> None:
+    """Regression: developer-agent's ".env.example" phrases the JWT placeholder as
+    "change-this-to-a-random-secret", which didn't match any _PLACEHOLDER_HINTS
+    substring — no secret got generated, JWT_SECRET_KEY shipped empty, and every
+    login 500'd with "HMAC key must not be empty" despite correct credentials."""
+    (app_dir / ".env.example").write_text(
+        "DATABASE_URL=postgresql://x\nJWT_SECRET_KEY=change-this-to-a-random-secret\n",
+        encoding="utf-8",
+    )
+    extra = dm.derive_extra_env("demo-app")
+    assert extra.get("JWT_SECRET_KEY")
+    assert extra["JWT_SECRET_KEY"] != "change-this-to-a-random-secret"
+
+
 def test_nginx_react_proxies_docs_assets() -> None:
     nginx = (
         _REPO_ROOT
