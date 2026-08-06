@@ -52,7 +52,7 @@ variable "enable_ui" {
 variable "ui_framework" {
   type        = string
   description = "UI container kind when enable_ui is true: streamlit, react, or none. Controls ALB health-check path."
-  default     = "streamlit"
+  default     = "react"
 
   validation {
     condition     = contains(["streamlit", "react", "none"], var.ui_framework)
