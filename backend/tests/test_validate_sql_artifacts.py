@@ -13,6 +13,7 @@ from _shared.validate_sql_artifacts import (  # noqa: E402
     check_ddl_column_drift,
     check_no_custom_schema_creation,
     check_seed_conflict_on_ruled_tables,
+    check_seed_fk_integrity,
     check_seed_schema_nullability,
     check_uuid_literals,
     check_vector_literal_format,
@@ -66,6 +67,79 @@ def test_detects_null_in_not_null_column(tmp_path: Path) -> None:
     assert len(errors) == 1
     assert "ends_at" in errors[0]
     assert "NOT NULL" in errors[0]
+
+
+def test_check_seed_fk_integrity_catches_hand_typed_placeholder_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Regression: inventory-replishment-app's seed data referenced warehouse id
+    'b1b2c3d4-0002-...-000000000001' — a hand-typed placeholder that mixes one
+    warehouse's id prefix with another's suffix and matches neither real seeded
+    row. Artifact existence (the SQL files got written fine) can't catch this;
+    only cross-checking FK literals against what was actually seeded can."""
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_schema.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS warehouses (
+            id UUID PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS inventory_records (
+            id UUID PRIMARY KEY,
+            warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+            quantity INT NOT NULL
+        );
+        """,
+        encoding="utf-8",
+    )
+    (sql_dir / "002_seed.sql").write_text(
+        """
+        INSERT INTO warehouses (id, name) VALUES
+            ('b1b2c3d4-0001-4000-8000-000000000001', 'WH-East'),
+            ('b1b2c3d4-0002-4000-8000-000000000002', 'WH-West');
+
+        INSERT INTO inventory_records (id, warehouse_id, quantity) VALUES
+            ('e1b2c3d4-0004-4000-8000-000000000004', 'b1b2c3d4-0002-4000-8000-000000000001', 150);
+        """,
+        encoding="utf-8",
+    )
+    errors = check_seed_fk_integrity(sql_dir)
+    assert len(errors) == 1
+    assert "warehouse_id" in errors[0]
+    assert "b1b2c3d4-0002-4000-8000-000000000001" in errors[0]
+    assert "warehouses" in errors[0]
+
+
+def test_check_seed_fk_integrity_passes_when_ids_match(tmp_path: Path) -> None:
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_schema.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS warehouses (
+            id UUID PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS inventory_records (
+            id UUID PRIMARY KEY,
+            warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+            quantity INT NOT NULL
+        );
+        """,
+        encoding="utf-8",
+    )
+    (sql_dir / "002_seed.sql").write_text(
+        """
+        INSERT INTO warehouses (id, name) VALUES
+            ('b1b2c3d4-0001-4000-8000-000000000001', 'WH-East');
+
+        INSERT INTO inventory_records (id, warehouse_id, quantity) VALUES
+            ('e1b2c3d4-0004-4000-8000-000000000004', 'b1b2c3d4-0001-4000-8000-000000000001', 150);
+        """,
+        encoding="utf-8",
+    )
+    assert check_seed_fk_integrity(sql_dir) == []
+    assert validate_sql_dir(sql_dir) == []
 
 
 def test_parses_multiline_insert_with_null(tmp_path: Path) -> None:

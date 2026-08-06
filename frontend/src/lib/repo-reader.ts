@@ -989,6 +989,18 @@ async function buildPipelineRunFromLive(
       ? ((await getS3RunContext(runId)) as PipelineContextFile | null)
       : await readContextFile(slug);
     phaseDone = await phaseCompletionForRun(runId, slug, ctx);
+    // Artifact existence only proves an agent wrote output, not that its phase
+    // succeeded — e.g. database-agent's SQL files land in S3 before the separate
+    // rds-apply step runs, so they're present even when rds-apply fails. When the
+    // backend's own step list already reports a phase as failed, that's the
+    // authoritative signal: don't let artifact evidence mark it done, or every
+    // downstream consumer (missingRequired, step-status rendering) walks past the
+    // real failure and blames whichever phase queued up next instead.
+    for (const step of enriched.steps ?? []) {
+      if (step.status !== 'failed') continue;
+      const phase = agentPhase[step.name];
+      if (phase) phaseDone = { ...phaseDone, [phase]: false };
+    }
     if (isS3Store()) {
       s3MtimeMs = await getS3RunLastModifiedMs(runId);
       s3EarliestMs = await getS3RunEarliestModifiedMs(runId);

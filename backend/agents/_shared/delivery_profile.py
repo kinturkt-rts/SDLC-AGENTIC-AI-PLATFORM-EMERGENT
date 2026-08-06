@@ -8,12 +8,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# This module is always invoked as a standalone subprocess script
-# (python agents/_shared/delivery_profile.py ...), which runs it as __main__ with no
-# parent package - a bare `from .artifact_store import ...` inside _read_optional would
-# raise "attempted relative import with no known parent package". Put agents/ on sys.path
-# so `from _shared.artifact_store import ...` resolves the same way whether this file is
-# run directly or imported normally as part of the _shared package.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT / "agents") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "agents"))
@@ -25,13 +19,6 @@ _STREAMLIT_MARKERS = (
 )
 _REACT_MARKERS = ("react", "next.js", "nextjs", "vite", "frontend/")
 
-# Explicit Streamlit omissions only. Do NOT treat bare "api only" as a negation —
-# PRDs routinely say "HTTP client to API only" while still requiring Streamlit UI.
-#
-# The "no/without/not/omit ... streamlit" clause allows any run of words up to the
-# next clause boundary (., ;, newline, em/en dash) rather than a fixed 0-2 word gap —
-# briefs commonly phrase this as a list ("no web UI, Streamlit, chatbots, or SSO"),
-# where hyphenated words and multiple list items push "streamlit" past a 2-word cap.
 _CLAUSE_GAP = r"[^.;\n–—]{0,80}?"
 _STREAMLIT_NEGATED = re.compile(
     r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP + r"\bstreamlit\b|"
@@ -54,8 +41,7 @@ _GENERIC_UI_MARKERS = (
     "portal",
     "web app",
 )
-# Same clause-gap negation as Streamlit/React — "no ... web UI ..." lists hit this too
-# (e.g. "No customer-facing web UI, Streamlit, chatbots, or SSO for this version").
+
 _GENERIC_UI_NEGATED = re.compile(
     r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP
     + r"\b(?:web ui|browser ui|client-facing portal|dashboard|portal|web app)\b",
@@ -67,25 +53,16 @@ _API_ONLY_DELIVERY = re.compile(
     re.IGNORECASE,
 )
 
-# PART 1 fix: explicit "no frontend at all" statements. Distinct from _API_ONLY_DELIVERY
-# (which needs "api-only" + app/delivery/service/backend/mode) because briefs commonly
-# phrase this more plainly ("no frontend needed", "backend-only", "no UI").
+
 _NO_FRONTEND_EXPLICIT = re.compile(
     r"\bno\s+frontend\b|"
     r"\bwithout\s+(?:a\s+)?frontend\b|"
-    r"\bbackend[- ]only\b|"
+    r"\bbackend[- ]only\b(?!\s+(?:via|through|by)\b)|"
     r"\bno\s+(?:ui|user\s+interface|client\s+ui|web\s+ui)\b",
     re.IGNORECASE,
 )
 
-# Self-description as backend/API-only in non-literal wording ("just a backend
-# service", "backend API, nothing else needed", "REST API only"). Each alternative
-# requires an exclusivity word (just/only/nothing else) bound directly to
-# backend/api - this means "this app has no frontend", not merely "backend/api is
-# mentioned". Gated in scan_delivery_text() by a document-wide check for any
-# positive UI marker (react/streamlit/web ui/dashboard/etc. appearing ANYWHERE in
-# the text, not just nearby) - a brief that uses backend-only phrasing in one
-# clause but names a frontend elsewhere must not be suppressed.
+
 _BACKEND_ONLY_SELF_DESCRIBED = re.compile(
     r"\bjust\s+(?:a\s+|an\s+)?(?:rest\s+)?(?:backend|api)(?:\s+service)?\b|"
     r"\b(?:rest\s+)?api\s+only\b(?!\s+(?:when|if|unless|during|except|for|until))|"
@@ -128,18 +105,16 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
     generic_ui_required = _feature_required(lower, _GENERIC_UI_MARKERS, _GENERIC_UI_NEGATED)
     ui_required = requires_streamlit or requires_react or generic_ui_required
-    # Streamlit is retired as a target framework. A brief mentioning it still counts
-    # toward ui_required above (a UI was asked for), but the classifier must never
-    # report requiresStreamlit true again — the elif below routes that signal to React.
+
     requires_streamlit = False
 
     if no_frontend_explicit:
-        # Explicit "no frontend" wins over any UI marker found in this same text.
+
         ui_required = False
         requires_streamlit = False
         requires_react = False
     elif ui_required and not requires_streamlit and not requires_react:
-        # UI needed, no specific tech named -> default to React (never Streamlit).
+
         requires_react = True
 
     ui_pattern: str | None = None
@@ -206,7 +181,6 @@ def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
         merged["uiRequired"] or merged["requiresStreamlit"] or merged["requiresReact"]
     )
     if merged["uiRequired"] and not merged["requiresStreamlit"] and not merged["requiresReact"]:
-        # UI needed, no specific tech named by any profile -> default to React.
         merged["requiresReact"] = True
         merged["uiPattern"] = "react"
     return merged
@@ -238,7 +212,6 @@ def _read_optional(repo_root: Path, rel_or_abs: str | None, *, run_id: str | Non
         return ""
     rel = str(rel_or_abs).strip().lstrip("/").replace("\\", "/")
 
-    # S3-aware read when run_id is available (cloud containers don't have local artifacts)
     if run_id:
         try:
             from _shared.artifact_store import get_artifact
@@ -246,7 +219,6 @@ def _read_optional(repo_root: Path, rel_or_abs: str | None, *, run_id: str | Non
         except Exception:
             pass
 
-    # Local filesystem fallback
     path = Path(rel_or_abs.strip())
     if not path.is_absolute():
         path = (repo_root / path).resolve()

@@ -31,6 +31,24 @@ def test_scan_streamlit_mention_resolves_to_react() -> None:
     assert profile["uiPattern"] == "react"
 
 
+def test_scan_backend_only_via_is_not_no_frontend() -> None:
+    """Regression: "the Streamlit app talks to the FastAPI backend only via HTTP
+    REST calls" describes a communication constraint, not a no-frontend
+    declaration - it previously matched \\bbackend[- ]only\\b and set
+    noFrontendExplicit=True, silently dropping a UI the brief explicitly required."""
+    profile = scan_delivery_text(
+        "The Streamlit application communicates with the FastAPI backend only via "
+        "HTTP REST calls; it does not share Python modules or a database session."
+    )
+    assert profile["noFrontendExplicit"] is False
+    assert profile["requiresReact"] is True
+
+
+def test_scan_genuine_backend_only_still_detected() -> None:
+    profile = scan_delivery_text("This is a backend-only service, no UI needed.")
+    assert profile["noFrontendExplicit"] is True
+
+
 def test_scan_ignores_negated_streamlit() -> None:
     profile = scan_delivery_text(
         "Pattern B: FastAPI + Postgres. No Streamlit, no JWT. Out of scope: Streamlit/React UI."

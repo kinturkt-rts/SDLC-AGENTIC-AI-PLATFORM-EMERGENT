@@ -360,6 +360,100 @@ def check_seed_schema_nullability(sql_dir: Path) -> list[str]:
     return errors
 
 
+_INLINE_REFERENCES_RE = re.compile(
+    r"\bREFERENCES\s+((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)", re.IGNORECASE
+)
+_FOREIGN_KEY_CONSTRAINT_RE = re.compile(
+    r"FOREIGN\s+KEY\s*\(\s*([a-zA-Z_][\w]*)\s*\)\s*REFERENCES\s+"
+    r"((?:[a-zA-Z_][\w]*\.)?[a-zA-Z_][\w]*)",
+    re.IGNORECASE,
+)
+
+
+def parse_foreign_keys(sql_dir: Path) -> dict[tuple[str | None, str, str], str]:
+    """Map (schema, table, column) -> referenced table name for all declared FKs."""
+    fks: dict[tuple[str | None, str, str], str] = {}
+    for path in sorted(sql_dir.glob("*.sql")):
+        if "seed" in path.name.lower():
+            continue
+        cleaned = _strip_sql_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for match in _CREATE_TABLE_RE.finditer(cleaned):
+            table_ref = match.group(1)
+            schema, table = _split_qualified_name(table_ref)
+            open_paren = match.end() - 1
+            close_paren = _find_matching_paren(cleaned, open_paren)
+            body = cleaned[open_paren + 1 : close_paren]
+            for raw_clause in _split_csv_outside_quotes(body):
+                line = " ".join(raw_clause.split())
+                if not line:
+                    continue
+                fk_constraint = _FOREIGN_KEY_CONSTRAINT_RE.search(line)
+                if fk_constraint:
+                    col, target = fk_constraint.groups()
+                    _, target_table = _split_qualified_name(target)
+                    fks[(schema, table, col)] = target_table
+                    continue
+                if _SKIP_COLUMN_PREFIX_RE.match(line):
+                    continue
+                inline = _INLINE_REFERENCES_RE.search(line)
+                if inline:
+                    col_name = line.split()[0].strip('"')
+                    _, target_table = _split_qualified_name(inline.group(1))
+                    fks[(schema, table, col_name)] = target_table
+    return fks
+
+
+def check_seed_fk_integrity(sql_dir: Path) -> list[str]:
+    """Fail when a seed INSERT's FK column value was never inserted into the
+    referenced table's own seed rows — e.g. a hand-typed placeholder UUID that
+    doesn't match any row actually seeded for that table. Artifact existence
+    (the SQL files got written) proves nothing about referential correctness;
+    this is what actually blows up as a live FK violation during rds-apply,
+    well after schema reset, with no chance to fix it before touching RDS.
+    """
+    if not sql_dir.is_dir():
+        return []
+
+    fks = parse_foreign_keys(sql_dir)
+    if not fks:
+        return []
+
+    inserts = parse_seed_inserts(sql_dir)
+    inserted_ids: dict[str, set[str]] = {}
+    for insert in inserts:
+        if "id" not in insert.columns:
+            continue
+        id_val = insert.values[insert.columns.index("id")]
+        if id_val is None:
+            continue
+        inserted_ids.setdefault(insert.table, set()).add(id_val.strip("'"))
+
+    errors: list[str] = []
+    for insert in inserts:
+        for col, val in zip(insert.columns, insert.values, strict=True):
+            if val is None:
+                continue
+            key = (insert.schema, insert.table, col)
+            alt_key = (None, insert.table, col)
+            target_table = fks.get(key) or fks.get(alt_key)
+            if not target_table:
+                continue
+            known_ids = inserted_ids.get(target_table)
+            if known_ids is None:
+                # Referenced table has no seed rows of its own to check against —
+                # likely resolved via a pre-existing/system row, not a seed mistake.
+                continue
+            literal = val.strip("'")
+            if literal not in known_ids:
+                qual = f"{insert.schema}.{insert.table}" if insert.schema else insert.table
+                errors.append(
+                    f"{insert.source_file}: INSERT INTO {qual} sets {col}={val} but no row "
+                    f"with id={val} was seeded into {target_table!r} — fix the referenced id "
+                    f"(FK: {qual}.{col} -> {target_table})"
+                )
+    return errors
+
+
 _UUID_LITERAL_RE = re.compile(
     r"'([0-9a-zA-Z]{8}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{4}-[0-9a-zA-Z]{12})'"
 )
@@ -575,6 +669,7 @@ def validate_sql_dir(sql_dir: Path) -> list[str]:
     from _shared.sha256_api_keys import validate_seed_sha256_api_keys
 
     errors = check_seed_schema_nullability(sql_dir)
+    errors.extend(check_seed_fk_integrity(sql_dir))
     errors.extend(check_uuid_literals(sql_dir))
     errors.extend(check_no_custom_schema_creation(sql_dir))
     errors.extend(check_bare_search_path(sql_dir))
