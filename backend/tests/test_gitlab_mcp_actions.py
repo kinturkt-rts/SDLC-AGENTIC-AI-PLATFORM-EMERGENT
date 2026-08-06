@@ -116,6 +116,10 @@ def test_dest_path_for_apps_repo() -> None:
         == "notice-board-ui/backend/app/main.py"
     )
     assert (
+        dest_path_for_apps_repo("target-apps/notice-board-ui/README.md", "notice-board-ui")
+        == "notice-board-ui/README.md"
+    )
+    assert (
         dest_path_for_apps_repo("target-apps/notice-board-ui/ui/streamlit_app.py", "notice-board-ui")
         == "notice-board-ui/frontend/streamlit_app.py"
     )
@@ -168,11 +172,11 @@ def test_cloud_workspace_skips_events_and_maps_frontend_handoff() -> None:
     )
 
 
-def test_apps_backend_readme_rewrites_sibling_paths() -> None:
-    from agents._shared.gitlab_mcp_actions import _apps_backend_readme_text
+def test_apps_root_readme_rewrites_sibling_paths() -> None:
+    from agents._shared.gitlab_mcp_actions import _apps_root_readme_text
 
     raw = "# Recipe Vault\n\ncd target-apps/recipe-vault\nuvicorn app.main:app\n"
-    out = _apps_backend_readme_text(raw, "recipe-vault")
+    out = _apps_root_readme_text(raw, "recipe-vault")
     assert "recipe-vault/backend/" in out
     assert "recipe-vault/frontend/" in out
     assert "target-apps/recipe-vault" not in out
