@@ -255,8 +255,8 @@ def test_sync_delivery_profile_survives_hydrate_run_context(
 ) -> None:
     """Regression: deliveryProfile computed by _sync_delivery_profile() must not be
     wiped by a later _hydrate_run_context() call (as _step_architect/_step_developer
-    do for a2a/S3 runs) — otherwise requiresStreamlit never reaches architect/developer
-    and the Streamlit UI silently gets dropped from cloud pipeline runs."""
+    do for a2a/S3 runs) — otherwise requiresReact never reaches architect/developer
+    and the React UI silently gets dropped from cloud pipeline runs."""
     from agents._shared.artifact_store import put_context
     from agents._shared.delivery_profile import sync_context_delivery_profile
     from agents._shared.sdlc_pipeline import PipelineOptions, SdlcPipelineRunner
@@ -296,12 +296,14 @@ def test_sync_delivery_profile_survives_hydrate_run_context(
     monkeypatch.setattr(runner, "_run_python", fake_run_python)
     runner._sync_delivery_profile("inputs/fitness-tracker.txt")
 
-    assert runner.context["deliveryProfile"]["requiresStreamlit"] is True
+    assert runner.context["deliveryProfile"]["requiresStreamlit"] is False
+    assert runner.context["deliveryProfile"]["requiresReact"] is True
 
     # Simulate what _step_architect() does immediately afterward.
     runner._hydrate_run_context()
 
-    assert runner.context["deliveryProfile"]["requiresStreamlit"] is True
+    assert runner.context["deliveryProfile"]["requiresStreamlit"] is False
+    assert runner.context["deliveryProfile"]["requiresReact"] is True
 
 
 def test_step_product_uses_prd_path_from_s3_context(
@@ -479,6 +481,35 @@ def test_update_run_json_preserves_triggered_by_seeded_in_s3(
     runner._update_run_json(status="running", current_step="product-agent")
 
     assert captured["data"]["triggeredBy"] == "kintur.shah@resolvetech.com"
+
+
+def test_update_run_json_mark_step_skipped_survives_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression: _default_steps() seeds frontend-agent "queued" from CLI flags alone
+    (with_frontend defaults True) before deliveryProfile is resolved. When the real,
+    deliveryProfile-based decision (_frontend_required) turns out to be "skip", run()
+    calls _update_run_json(mark_step_skipped="frontend-agent") — that must stick through
+    the final completed-run pass, not get blanket-flipped to "completed" for a frontend
+    build that never happened."""
+    monkeypatch.setenv("ARTIFACT_STORE", "local")
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr("agents._shared.sdlc_pipeline.load_repo_env", lambda: None)
+    (tmp_path / "agents" / "pipeline").mkdir(parents=True)
+
+    run_id = "no-frontend-run"
+    options = PipelineOptions(target_app="expense-tracker", run_id=run_id, transport="local")
+    runner = SdlcPipelineRunner(options)
+    runner.context = {"deliveryProfile": {"noFrontendExplicit": True}}
+
+    runner._update_run_json(status="running")
+    runner._update_run_json(mark_step_skipped="frontend-agent")
+    runner._update_run_json(status="completed", finished=True)
+
+    data = json.loads(runner._run_json_path().read_text(encoding="utf-8"))
+    frontend_step = next(s for s in data["steps"] if s["name"] == "frontend-agent")
+    assert frontend_step["status"] == "skipped"
 
 
 def test_parse_pipeline_request_from_a2a_message() -> None:
@@ -903,10 +934,13 @@ def test_step_developer_handoff_timeout_triggers_retry(
     assert "developer-agent" in runner.agents_run
 
 
-def test_frontend_required_false_when_delivery_profile_says_streamlit() -> None:
+def test_frontend_required_ignores_requires_streamlit_after_consolidation() -> None:
+    """requiresStreamlit can never be true from the classifier anymore (see
+    delivery_profile.py's scan_delivery_text), and _frontend_required() no longer
+    special-cases it — only noFrontendExplicit can skip frontend-agent now."""
     runner = object.__new__(SdlcPipelineRunner)
     runner.context = {"deliveryProfile": {"requiresReact": False, "requiresStreamlit": True}}
-    assert runner._frontend_required() is False
+    assert runner._frontend_required() is True
 
 
 def test_frontend_required_defaults_true_when_profile_missing() -> None:

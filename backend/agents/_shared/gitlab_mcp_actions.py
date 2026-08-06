@@ -471,6 +471,7 @@ def write_pipeline_run_marker(
 
 def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     """Map monorepo-relative paths to the apps-repo branch layout:
+    ``<slug>/README.md`` (combined backend+frontend docs) at branch root,
     ``<slug>/backend/**`` for the FastAPI/db source tree, ``<slug>/frontend/**``
     for the UI (React ``frontend/`` or legacy Streamlit ``ui/``); ``docs/``,
     ``agents/pipeline/``, ``.sdlc/`` marker, and ``inputs/*.txt`` are unchanged at
@@ -492,6 +493,10 @@ def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
         return None
     if tail == "frontend-handoff.json":
         return f"agents/pipeline/{slug}.frontend-handoff.json"
+    # Combined README (covers backend + frontend) lives at branch root, sibling
+    # to both folders — must not fall through to the backend catch-all below.
+    if tail == "README.md":
+        return f"{slug}/README.md"
     # React UI (sibling of backend) — must not fall through to backend/frontend/.
     if tail.startswith("frontend/"):
         return f"{slug}/frontend/{tail[len('frontend/') :]}"
@@ -501,15 +506,24 @@ def dest_path_for_apps_repo(rel_path: str, slug: str) -> str | None:
     return f"{slug}/backend/{tail}"
 
 
-def _apps_backend_readme_text(content: str, slug: str) -> str:
-    """Rewrite monorepo ``target-apps/<slug>`` paths for apps-repo sibling layout."""
+def _apps_root_readme_text(content: str, slug: str) -> str:
+    """Rewrite monorepo ``target-apps/<slug>`` paths for apps-repo sibling layout.
+
+    The README itself now lives at ``<slug>/README.md`` (branch root, sibling to
+    both folders) — developer-agent's generated content already documents both
+    the backend setup and, when React is present, a "Frontend (React UI)"
+    section, so this is the single combined README. The FastAPI code still
+    physically lives under ``<slug>/backend/``, so the path rewrite below stays
+    exactly as before (``target-apps/<slug>`` -> ``<slug>/backend``) — only the
+    banner and this file's own destination change to reflect it now sitting
+    above both folders instead of inside backend/.
+    """
     body = content.replace(f"target-apps/{slug}", f"{slug}/backend")
     banner = (
         f"# {slug}\n\n"
         f"Apps-repo layout on this branch:\n\n"
-        f"- `{slug}/backend/` — FastAPI API, DB SQL, tests (this folder)\n"
-        f"- `{slug}/frontend/` — Vite/React UI "
-        f"(see `{slug}/frontend/README.md`)\n\n"
+        f"- `{slug}/backend/` — FastAPI API, DB SQL, tests\n"
+        f"- `{slug}/frontend/` — Vite/React UI (see the Frontend section below, when present)\n\n"
         f"Pipeline handoffs live under `agents/pipeline/` at the repo root.\n\n"
         f"---\n\n"
     )
@@ -519,22 +533,6 @@ def _apps_backend_readme_text(content: str, slug: str) -> str:
     if lines and lines[0].startswith("# "):
         body = "\n".join(lines[1:]).lstrip("\n")
     return banner + body
-
-
-def _apps_frontend_readme_text(slug: str) -> str:
-    return (
-        f"# {slug} frontend\n\n"
-        f"Vite + React UI for `{slug}`.\n\n"
-        f"## Run locally\n\n"
-        f"```bash\n"
-        f"cd {slug}/frontend\n"
-        f"cp .env.example .env   # if present; set VITE_API_URL to the API base\n"
-        f"npm install\n"
-        f"npm run dev\n"
-        f"```\n\n"
-        f"API lives in the sibling folder `{slug}/backend/` "
-        f"(uvicorn — see that README).\n"
-    )
 
 
 def _input_brief_candidate_rels(slug: str, root: Path) -> list[str]:
@@ -781,27 +779,14 @@ def _collect_apps_repo_publish_files(feature: str, *, root: Any | None = None) -
         publish_entries.append((source_rel, dest))
 
     files: list[dict[str, Any]] = []
-    has_frontend = False
     for source_rel, dest in publish_entries:
         src = root_path / source_rel
         data = src.read_bytes()
-        if dest == f"{slug}/backend/README.md":
-            text = _apps_backend_readme_text(data.decode("utf-8"), slug)
+        if dest == f"{slug}/README.md":
+            text = _apps_root_readme_text(data.decode("utf-8"), slug)
             files.append(_build_publish_file(dest, text.encode("utf-8")))
         else:
             files.append(_build_publish_file(dest, data))
-        if dest.startswith(f"{slug}/frontend/"):
-            has_frontend = True
-
-    frontend_readme_dest = f"{slug}/frontend/README.md"
-    if has_frontend and frontend_readme_dest not in seen_dest:
-        seen_dest.add(frontend_readme_dest)
-        files.append(
-            _build_publish_file(
-                frontend_readme_dest,
-                _apps_frontend_readme_text(slug).encode("utf-8"),
-            )
-        )
 
     # ALWAYS overwrite .gitlab-ci.yml on the apps branch with the platform
     # temp-fix template (MCR image). Inheritance from default branch only

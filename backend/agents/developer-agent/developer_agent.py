@@ -77,17 +77,13 @@ _TEMPLATE_DIR = _resolve_template_dir()
 
 
 DEFAULT_PIPELINE_TASK = """\
-Implement the **full MVP delivery surface** for targetApp under `target-apps/`:
-FastAPI backend **and** any UI required by `deliveryProfile` / PRD section 11 / input brief.
+Implement the **full MVP backend** for targetApp under `target-apps/`:
+FastAPI API, tests, README, and config — using all upstream handoff artifacts in Context.
 
-**UI rule (highest priority after safety):**
-- If `deliveryProfile.requiresStreamlit` is true in Context, you MUST deliver **Pattern C**:
-  `app/` API + `ui/streamlit_app.py` + `ui/requirements.txt`, even if design.md omitted Streamlit.
-- If PRD/brief mentions Streamlit but design omitted it, follow PRD + deliveryProfile and note the gap.
-- Do NOT defer Streamlit to Phase 2 when deliveryProfile or PRD requires it.
-- React/Next `frontend/` only when deliveryProfile.requiresReact is true (else Phase 2).
-
-Implement using all upstream handoff artifacts in Context.
+**UI ownership (highest priority after safety):**
+- You are **backend-only**. Do **not** write Streamlit, `ui/`, or a React `frontend/` tree.
+- Platform UI is React built by **frontend-agent** from your OpenAPI contract when
+  `deliveryProfile.requiresReact` / a UI is required. Never treat Pattern C / Streamlit as a deliverable.
 
 **Step 0 — route manifest (MANDATORY — do this before writing any file)**
 Extract EVERY METHOD + path from the design **API surface** heading — for EVERY entity the design
@@ -113,36 +109,18 @@ drop it from the manifest silently. Mark it `# NOT IMPLEMENTED: <method> <path> 
 in the manifest AND repeat that exact line in the `### not_implemented` section of your final handoff
 summary (Step 5b). A route that is simply absent, with no NOT IMPLEMENTED line anywhere, is a bug.
 
-**Step 0b — UI manifest (Pattern C / requiresStreamlit ONLY — skip for API-only apps)**
-When `deliveryProfile.requiresStreamlit` is true, build a second manifest from design §4 + PRD roles:
-  # UI manifest (Streamlit calls API over HTTP — never import app/):
-  # - Auth gate: login_form() shown when st.session_state.token absent → ALL other content hidden
-  # - GET  /api/v1/work-orders     → requester "My Orders" table + admin triage table
-  # - GET  /api/v1/sites           → admin Sites table + requester create-WO selectbox
-  # - GET  /api/v1/dashboard/sla   → leadership dashboard
-  # - Role tabs: viewer=[A,B]; editor=[A,B,C]; admin=[A,B,C,D]
-The auth gate line is REQUIRED when the PRD or design Rules specify any auth/RBAC requirement.
-"Unauthenticated users see only the login screen" is a UI requirement, NOT just an API 401 — API guards
-alone do NOT satisfy it; the Streamlit app itself must enforce it.
-Every **collection GET** in design §4 (paths without `{id}`) MUST have a Streamlit `_get()` in at least one role view.
-Every **POST create** on a collection (`POST /api/v1/sites`) MUST have matching **GET list** in the API (paginated) — do not ship create-only.
-Forms MUST use `st.selectbox` / `st.multiselect` fed from list GETs — never `st.text_input("Site ID")` when `GET /api/v1/sites` exists.
-After POST/PATCH success call `st.rerun()` so tables refresh.
-**API-only apps** (`requiresStreamlit` false): implement FastAPI + tests only — do NOT create `ui/streamlit_app.py`.
-
 **Step 0c — FR acceptance checklist (MANDATORY when prdPath is set)**
 After Step 1a (reading the PRD), produce a numbered checklist mapping EVERY FR and NFR to its
 implementation before writing any file. This is the FR equivalent of the route manifest:
   # FR checklist:
   # FR-1  | Service CRUD               | API: POST/GET/PATCH/DELETE /api/v1/services [services.py]
   # FR-2  | Runbook lifecycle           | API: POST/PATCH /api/v1/runbooks; guard: editor+ role
-  # FR-13 | Role-gated UI access        | UI: login_form() gate in streamlit_app.py; role-gated tabs
+  # FR-13 | Role-gated access           | API: Depends(require_role(...)) on gated routes; OpenAPI so frontend-agent can gate screens
   # NFR-4 | Auth on all endpoints       | guard: Depends(get_current_user) on every non-/health route
   # NFR-5 | Audit log                   | service: write to audit_log table on every state change
 
 Rules — apply to every FR regardless of domain:
-- Map EVERY FR/NFR to exactly one layer: API route, Depends() guard, Streamlit section/form,
-  service method, or config setting.
+- Map EVERY FR/NFR to exactly one layer: API route, Depends() guard, service method, or config setting.
 - No FR may be left unmapped, and **"out of scope" is not a valid mapping by itself**. An FR/NFR
   that genuinely cannot be implemented (e.g. it depends on an external system this run has no
   access to) must be tagged `NOT IMPLEMENTED: <FR/NFR id> — <specific reason>` in this checklist,
@@ -150,8 +128,10 @@ Rules — apply to every FR regardless of domain:
   summary (Step 5b). Difficulty, time, or "keeping it simple" are never valid reasons — only a
   genuine external blocker is. A checklist row with no implementation and no NOT IMPLEMENTED tag
   is a bug, not an accepted scope reduction.
-- UI-scope FRs (anything describing what a user sees, cannot see, or can access):
-  implementation goes in streamlit_app.py — an API 403 alone does NOT satisfy a UI visibility FR
+- UI-scope FRs (anything describing what a user sees, cannot see, or can access): implement the
+  **backend half** — auth, RBAC, and response contracts that enforce the rule. Visual screens are
+  owned by frontend-agent (React from OpenAPI). Do **not** create Streamlit or `ui/` to "satisfy"
+  a UI FR; map the FR to the API/guard layer and note React UI ownership in the handoff if useful.
 - Cross-cutting NFRs (auth, rate-limiting, audit, observability): name the file/layer that handles them
 - After writing all files, revisit every line of this checklist and verify the implementation exists.
   Any unchecked FR is blocking — same rule as a missing route in the route manifest.
@@ -185,14 +165,14 @@ Rules — apply to every FR regardless of domain:
        - Postgres CRUD, no LLM     → postgres      (app/ + db models)      (legacy: B)
        - Postgres + Bedrock/LLM    → postgres-llm  (postgres + services/)  (legacy: B+)
        - Postgres + pgvector + RAG → rag           (postgres-llm + retriever) (legacy: B++)
-       - Any above + "streamlit"   → streamlit     (backend + ui/streamlit_app.py) (legacy: C)
     State your chosen pattern and cite the design heading before writing any file.
 
-2c. **Scaffold golden template (postgres / postgres-llm / rag / streamlit patterns) — ONE tool call, not manual copies:**
+2c. **Scaffold golden template (postgres / postgres-llm / rag patterns) — ONE tool call, not manual copies:**
     Call `dev_scaffold(service=targetApp, pattern=<chosen>)` once after Step 0 manifest.
     This copies all infrastructure files from `target-apps/_template/` per scaffold-manifest.json.
     Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
     startup_checks.py, health.py, bedrock_client.py, etc.).
+    Never scaffold or write Streamlit / `ui/` — that pattern is retired.
 
     **Prefer `dev_write_files` (batched dict of `{path: content}`) for groups of related files** —
     e.g. all `app/models/*.py` in one call, all `app/routers/*.py` in one call, all `schemas/*.py`
@@ -205,7 +185,6 @@ Rules — apply to every FR regardless of domain:
     - `app/main.py` — add domain router imports + include_router calls
     - `tests/conftest.py` — replace SCHEMA_NAME, match auth mode, add seed fixtures
     - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix. JWT vars MUST be named exactly JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRE_MINUTES (never JWT_SECRET, JWT_TTL_HOURS, or any other name) — the fixed auth code reads these exact names.
-    - `ui/streamlit_app.py` (streamlit pattern) — tabs/forms only; keep HTTP helpers
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
@@ -316,20 +295,18 @@ Rules — apply to every FR regardless of domain:
 4c. README.md with these sections:
     **Local development** — assume users open terminals at **repo root** (folder containing
     `target-apps/`). Every `cd` must use the full path from repo root (e.g.
-    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. When React UI
-    exists, Terminal 2 is `cd target-apps/<app>/frontend` (sibling of the API tree —
-    never nest under a backend folder). On the published apps repo the same trees are
-    `<app>/backend` + `<app>/frontend` (gitlab-agent rewrites paths). Split **Terminal 1 (API)**
-    and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
-    `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). README MUST use **separate**
+    `cd target-apps/<app>`). Document **Terminal 1 (API)** for this service. When a React
+    `frontend/` sibling exists (built by frontend-agent), document **Terminal 2** as
+    `cd target-apps/<app>/frontend` — never nest under a backend folder, never `ui/` or
+    Streamlit. On the published apps repo the same trees are `<app>/backend` + `<app>/frontend`
+    (gitlab-agent rewrites paths). README MUST use **separate**
     **PowerShell (Windows)** and **Bash** code blocks (not bash-only with a comment). Windows venv:
     `.\\.venv\\Scripts\\Activate.ps1` — never `source` as the only activate instruction. Copy .env:
     Windows `Copy-Item .env.example .env`; bash `cp .env.example .env`. Edit DATABASE_URL +
     POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
     **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or
-    run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
-    streamlit pattern: document UI URL (http://localhost:8501) and `streamlit run` in
-    Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
+    run without `--reload` — otherwise pip install triggers endless reload and API client timeouts.
+    Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
   passwords (# → %23). Include a pytest command if tests exist; do **not** explain that tests use
     SQLite / in-memory DB — that is an implementation detail, not user docs.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
@@ -361,7 +338,8 @@ Rules — apply to every FR regardless of domain:
   FR completeness (MANDATORY when prdPath was read — same weight as route manifest):
   - Step 0c FR checklist fully covered — every FR/NFR has a verified implementation
   - No FR left unmapped or deferred without explicit "out of scope" justification in open_questions
-  - UI-scope FRs (access control, role-gated views, login screens): confirmed in streamlit_app.py, not just API layer
+  - UI-scope FRs (access control, role-gated views, login screens): backend auth/RBAC + OpenAPI
+    contracts confirmed; React screens are frontend-agent's job — do not require `ui/` or Streamlit
   - Cross-cutting NFRs (auth, audit, rate-limiting): confirmed in the named file/layer from the checklist
 
   Route completeness:
@@ -400,9 +378,10 @@ Rules — apply to every FR regardless of domain:
   README:
   - Endpoint table, curl examples, Swagger auth notes, RDS smoke-test steps
   - When multi-role or portal/internal routes: **Role & endpoint quick reference** table with seed usernames
-  - Terminal 1/2 blocks start from repo root; no bare `cd ui` without `cd target-apps/<app>` first
+  - Terminal blocks start from repo root (`cd target-apps/<app>`); if documenting React, Terminal 2 is
+    `cd target-apps/<app>/frontend` — never bare `cd ui` or Streamlit run commands
   - uvicorn dev command uses `--reload-dir app` (and `--reload-dir schemas` when present) — never bare
-    `--reload` on the project root (watches `.venv` → reload storms / Streamlit API timeouts)
+    `--reload` on the project root (watches `.venv` → reload storms / client timeouts)
   - Documents `cp .env.example .env` (Windows: `copy`)
 
   Seed auth parity (JWT apps with db/sql/*seed*.sql):
@@ -410,17 +389,14 @@ Rules — apply to every FR regardless of domain:
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
   - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder,
-    no invented second secret). For API-key auth, the value pasted into Streamlit/Swagger **must be
+    no invented second secret). For API-key auth, the value pasted into Swagger / the React UI **must be
     the seed-comment password** (same string hashed into `api_keys` / `token_hash`)
     apply_sql/materialize script names, seed-apply notes, or SQLite-test notes); password matches
     seed SQL comment exactly
 
-  UI parity (Pattern C / requiresStreamlit only — skip when API-only):
+  UI parity (dev_validate_app always checks this, including API-only apps):
   - `dev_validate_app` must report `UI_PARITY OK`
-  - Every design §4 collection GET implemented in FastAPI AND called from `ui/streamlit_app.py`
   - Every POST-on-collection has matching GET list (e.g. POST+GET `/api/v1/sites`)
-  - No raw UUID `st.text_input` when a list GET exists for that entity
-  - API-only: no `ui/` directory unless deliveryProfile requires Streamlit
 
 **Step 5b — VALIDATE (mandatory — do NOT skip or declare success early)**
 After all files are written and the checklist above is done:
@@ -453,8 +429,7 @@ After all files are written and the checklist above is done:
      - RDS_PARITY FAILED: fix TimestampTZ ORM + coerce_iso_datetime validators, seed/schema nullability
        (optional DDL columns → `Mapped[T | None]` + optional Pydantic fields), or seedCredentials /
        users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
-     - UI_PARITY FAILED: missing design §4 routes, POST without GET list, Streamlit not calling
-        collection GETs, raw UUID text_input when list APIs exist, or double-slash API paths
+     - UI_PARITY FAILED: missing design §4 routes, POST without GET list, or double-slash API paths
         like `/api/v1/admin//status` (see validate_ui_parity.py — autofix collapses `/api/...` literals)
       - DUPLICATE_ACTION_ROUTE FAILED: a bare `{id}` PATCH/PUT route takes the same request schema
         as a dedicated `{id}/<action>` route — delete the bare-id clone (or give it its own distinct
@@ -489,13 +464,12 @@ _BLOCKED_PATH_PARTS = frozenset({".venv", "node_modules", "__pycache__", ".pytes
 _written_files: list[str] = []
 _run_context: dict[str, Any] | None = None
 
-# Descriptive pattern names. Legacy A/B/B+/B++/C codes still accepted via _PATTERN_ALIASES.
+# Descriptive pattern names. Legacy A/B/B+/B++ codes still accepted via _PATTERN_ALIASES.
 _PATTERN_KEYS: tuple[str, ...] = (
     "in-memory",
     "postgres",
     "postgres-llm",
     "rag",
-    "streamlit",
 )
 
 # Map legacy codes to current names so existing briefs and docs still resolve.
@@ -504,7 +478,6 @@ _PATTERN_ALIASES: dict[str, str] = {
     "B": "postgres",
     "B+": "postgres-llm",
     "B++": "rag",
-    "C": "streamlit",
 }
 
 _PATTERN_LAYOUTS: dict[str, str] = {
@@ -582,51 +555,11 @@ requirements.txt adds: pypdf, python-docx, pgvector, boto3.
                     CHUNK_OVERLAP=50, RETRIEVAL_TOP_K=5, CONFIDENCE_THRESHOLD=0.7,
                     PDF_STORAGE_DIR=./uploaded_pdfs.
 """,
-    "streamlit": """\
-**Pattern: streamlit (legacy: C) — any backend pattern + Streamlit UI:**
-When tech stack includes `streamlit`:
-```
-app/  (postgres or postgres-llm backend, unchanged — golden template files)
-ui/
-  streamlit_app.py   [SCAFFOLD — then add app-specific tabs/forms]
-  requirements.txt   [SCAFFOLD — add app-specific packages if needed]
-```
-The Streamlit template includes:
-- `_get`, `_post`, `_patch`, `_delete` helpers with `follow_redirects=True` (prevents FastAPI 307 errors)
-- `_ensure_api_reachable()` startup check (clear error when API is down or unhealthy)
-- API_KEY + API_BASE_URL config from .env
-ADAPT: Replace SERVICE_NAME, add your tabs/forms per design. NEVER remove the HTTP helpers or the
-startup check. NEVER import from `app/` — Streamlit calls the API over HTTP only.
-**UI parity:** For each design §4 collection GET, add `_get()` in a role view; use selectboxes from
-list APIs; call `st.rerun()` after mutations. Fetch catalog lists once per tab/view — never `_get()`
-inside a `for row in items` loop (causes API timeouts). `dev_validate_app` enforces UI_PARITY when Streamlit is required.
-**Streamlit API paths (CRITICAL — live ALB 404s):** Paths passed to `_get`/`_post`/`_patch`/`_delete`
-MUST be exact FastAPI routes with **single** slashes — never concatenate a trailing `/` on a prefix
-with a leading `/` on a segment. Wrong: `"/api/v1/admin//status"`, `"/api/v1//query"`.
-Right: `"/api/v1/admin/status"`, `"/api/v1/query"`. FastAPI returns `{"detail":"Not Found"}` for `//`
-paths while login/`/health` still work — looks like ALB breakage but is a UI path bug.
-Keep the scaffold `_api_url()` helper (collapses accidental `//` at runtime); do not remove it.
-`dev_validate_app` auto-fixes `/api/...` string literals with `//` and fails UI_PARITY if any remain.
-**Streamlit width API:** Never `use_container_width=True/False` (deprecated/removed). Never
-`width=0` / `width=False` (StreamlitInvalidWidthError on Streamlit 1.41+). Use only
-`width="stretch"` for full-width dataframes/buttons, or `width="content"` to fit content.
-**Streamlit string literals:** Never put a raw newline inside `"..."` / `f"..."` quotes.
-Use `"line1\\nline2"` escapes or adjacent string concatenation on one logical statement.
-Broken multiline f-strings pass some editors but crash live UI (`SyntaxError: unterminated f-string`)
-while `_stcore/health` can still return 200 — CI looks green, browser shows Script execution error / 502.
-**Arrow-safe dataframes:** In `st.dataframe`/`st.table` data, never mix string placeholders
-("—", "N/A", "") into numeric columns — pass `None` for missing values (Arrow rejects mixed-type
-columns). Placeholders belong in display formatting (`st.column_config.NumberColumn(format=...)`)
-or single-value widgets like `st.metric`, never in the DataFrame itself.
-README: **Terminal 2** — separate **PowerShell (Windows)** and **Bash** blocks: `cd target-apps/<app>`,
-`.\\.venv\\Scripts\\Activate.ps1` (Windows) or `source .venv/bin/activate` (bash), `cd ui`, then
-`streamlit run streamlit_app.py --server.port 8501` (do not assume Terminal 1 cwd).
-""",
 }
 
 
 def _canonical_pattern(name: str | None) -> str | None:
-    """Resolve a pattern name. Accepts both new names and legacy A/B/B+/B++/C codes."""
+    """Resolve a pattern name. Accepts both new names and legacy A/B/B+/B++ codes."""
     if not name:
         return None
     if name in _PATTERN_LAYOUTS:
@@ -635,7 +568,7 @@ def _canonical_pattern(name: str | None) -> str | None:
 
 
 def _compose_pattern_section(included: tuple[str, ...] | None = None) -> str:
-    """Render the Project layout patterns block. None = all 5 (legacy behavior)."""
+    """Render the Project layout patterns block. None = all 4 (legacy behavior)."""
     canonical = tuple(filter(None, (_canonical_pattern(k) for k in (included or _PATTERN_KEYS))))
     if not canonical:
         canonical = _PATTERN_KEYS
@@ -658,7 +591,6 @@ def _infer_pattern_from_context(ctx: dict[str, Any] | None) -> str | None:
                 text = path.read_text(encoding="utf-8", errors="replace").lower()
             except OSError:
                 text = ""
-    has_streamlit = "streamlit" in text
     has_rag = ("pgvector" in text) or ("retrieval" in text and "embed" in text)
     has_llm = any(token in text for token in ("bedrock", "claude", "/chat"))
     has_postgres = (
@@ -667,8 +599,6 @@ def _infer_pattern_from_context(ctx: dict[str, Any] | None) -> str | None:
         or "postgres" in text
         or "sqlalchemy" in text
     )
-    if has_streamlit:
-        return "streamlit"
     if has_rag and has_postgres:
         return "rag"
     if has_llm and has_postgres:
@@ -761,10 +691,13 @@ def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
 
 _DEVELOPER_SYS_PROMPT_TEMPLATE = """\
 You are the Developer Agent for the SDLC Agentic AI Platform. You are the fifth agent in a
-sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU.
+sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU
+→ frontend-agent (React UI, when required).
 
-Your job is to produce working, tested code under `target-apps/<service>/` by faithfully
-implementing what every upstream agent has already decided — including **client UI** when required.
+Your job is to produce working, tested **backend** code under `target-apps/<service>/` by faithfully
+implementing what every upstream agent has already decided. You own FastAPI, tests, README, and
+config — **not** the client UI. Platform UI is React built by frontend-agent from your OpenAPI
+contract. Do **not** create Streamlit, Pattern C, or anything under `ui/`.
 You do NOT make architecture or database-schema decisions — you implement them.
 
 ## How to read PRD and design docs (topic-based — not fixed section numbers)
@@ -795,26 +728,19 @@ Section numbers vary per feature. Locate content by heading text:
 ## MVP phase scope
 
 - **In scope:** Python 3.12 + FastAPI + Pydantic v2 under `target-apps/<service>/`.
-- **Streamlit UI (Pattern C):** REQUIRED when `deliveryProfile.requiresStreamlit` is true in Context,
-  or PRD section 11 / input brief requires Streamlit — even if design.md Stack omitted it.
-  Place at `ui/streamlit_app.py`; call API over HTTP; add `streamlit` to `ui/requirements.txt`;
-  README documents Terminal 1 (uvicorn) + Terminal 2 (`streamlit run ui/streamlit_app.py`).
-  Streamlit widgets: use `width="stretch"` / `width="content"` — never `use_container_width`
-  and never `width=0` (crashes live UI on Streamlit 1.41+).
-  **UI scope:** Wire Streamlit to design §4 **collection GET** routes and role-specific views — NOT every
-  internal/admin route needs a screen, but browse/create flows from the PRD MUST be usable without pasting UUIDs.
-- **API-only (Pattern B/B+/B++ without Streamlit):** FastAPI routes + pytest only — no `ui/` folder.
-  `dev_validate_app` skips Streamlit checks when `requiresStreamlit` is false.
-- **JWT vs API key:** Match design **Rules** and PRD — Streamlit must use the same auth mode
+- **Backend-only:** FastAPI routes + pytest + README/config — never write `ui/` or Streamlit
+  (Pattern C is retired). React `frontend/` is owned by **frontend-agent**, not this agent.
+- **JWT vs API key:** Match design **Rules** and PRD for the declared auth mode
   (Bearer JWT from `POST /api/v1/auth/login`, or `X-API-Key` header when API-key auth).
-- **Out of scope (unless deliveryProfile.requiresReact):** `frontend/`, React, Next.js, Vite.
-  If React is required later, note `frontend/` in open_questions when not yet in profile.
+- **Out of scope for this agent:** `frontend/`, React, Next.js, Vite, Streamlit, `ui/`.
+  When `deliveryProfile.requiresReact` is true, implement a complete OpenAPI-backed API so
+  frontend-agent can build the UI; do not generate the React tree yourself.
 
 ## Upstream artifacts — read ALL present before writing code
 
 | Context key | Read how | Contents |
 |-------------|----------|----------|
-| `deliveryProfile` | Context JSON | `requiresStreamlit`, `uiPattern` — **UI mandate** |
+| `deliveryProfile` | Context JSON | `requiresReact`, `uiPattern` — **UI mandate** |
 | `prdPath` | `dev_read_file` | Goals, stories, acceptance criteria, NFRs, **§11 Delivery** |
 | `designDocPath` | `dev_read_file` | Tech stack, API surface, Rules (find by heading) |
 | `databaseHandoffPath` | `dev_read_file` | Schema summary, SQL list, DSN, ORM notes |
@@ -869,13 +795,13 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Engine | Dialect-guarded: skip pool_size/max_overflow on `sqlite://` |
 | search_path | Set via POSTGRES_SCHEMA in database.py connect hook |
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
-| README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
+| README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1 (API) + Terminal 2 (`frontend/` when present), `.env` copy, Swagger auth, RDS smoke test |
 | FK columns on ORM | Every FK column on a SQLAlchemy model MUST declare `ForeignKey("<table>.<col>")` as an argument to `mapped_column` / `Column`. Having `REFERENCES users(id)` in the SQL DDL is **not enough** — SQLAlchemy reads only the ORM declaration when resolving `relationship(...)`. Without it, every `relationship` raises `NoForeignKeysError: Could not determine join condition`. Example: `assigned_to: Mapped[str] = mapped_column(pg_uuid_column(), ForeignKey("users.id"), nullable=False)`. |
 | M2M / junction `secondary=` | Define the association `Table("book_authors", Base.metadata, ...)` **once** (usually in one of the two model files) and pass that **same Table object** on BOTH sides: `relationship("Book", secondary=book_authors, back_populates="authors")`. NEVER a bare string (`secondary="book_authors"`) — with `MetaData(schema=POSTGRES_SCHEMA)` the table registers as `schema.book_authors`, so the bare name fails at the first ORM query with `InvalidRequestError: expression 'book_authors' failed to locate a name`, and every list/CRUD route plus login 500s while `/health` still looks green. Schema-qualified strings (`secondary="bookstore_inventory.book_authors"`) also break SQLite tests — Table object only. Import it where needed (`from app.models.book import book_authors`) and put that module first in `app/models/__init__.py`. `dev_validate_app` hard-fails on string `secondary=` and on any `configure_mappers()` error. |
 | Conditional aggregates | `case` is a top-level SQLAlchemy construct, NOT a `func` member. `func.case((cond, 1), else_=0)` raises `OperationalError: no such function: case` at runtime. Correct: `from sqlalchemy import case` then `case((cond, 1), else_=0)`. Same for `cast`, `null`, `true`, `false` — all top-level imports, not `func` members. |
 | `ARRAY(PG_UUID(...))` column assigned a request's `list[str]` | Postgres allows an implicit `varchar → uuid` cast for a single scalar, but refuses it for arrays — binding a plain `list[str]` into a `uuid[]` column raises `DatatypeMismatch: column "..." is of type uuid[] but expression is of type character varying[]`. SQLite tests pass anyway (no type enforcement), so this only surfaces on real RDS, exactly like the other rows in this table. Always convert to `uuid.UUID` objects at the router before assigning: `[uuid.UUID(x) for x in body.some_ids] if body.some_ids else None`. |
 
-## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag / streamlit patterns)
+## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag patterns)
 
 These files are COPIED VERBATIM from golden templates in Step 2c — do NOT regenerate them:
 - `app/startup_checks.py` ← copied from `_template/app/startup_checks.py`
@@ -892,7 +818,7 @@ These files are COPIED VERBATIM from golden templates in Step 2c — do NOT rege
 | Opaque 500 errors | Register a global exception handler in `main.py`: when `APP_ENV=development`, return `{"detail": str(exc), "type": exc.__class__.__name__}`; production stays generic |
 | Lifespan startup | Call `validate_runtime_config(settings)` in FastAPI `lifespan` before serving traffic |
 | Pytest / validate tool | `tests/conftest.py` sets `APP_ENV=test` and `SKIP_STARTUP_CHECKS=1` so SQLite tests do not trip Postgres fail-fast |
-| Streamlit + API key | When API-key auth: `.env.example` includes `API_KEY=`; README says Streamlit `ui/` reads the same key; never leave `API_KEY=` blank in `.env.example` |
+| API-key demo secret | When API-key auth: `.env.example` includes `API_KEY=`; README **Demo credentials** document the same plaintext as the seed SQL comment for Swagger / React clients; never leave `API_KEY=` blank in `.env.example` |
 | Health path | Standardize on `GET /health` (not `/healthz`) unless design explicitly requires another path |
 | Multi-line strings | A single-quoted or double-quoted string literal MUST NOT contain a literal line break — that is a `SyntaxError`. Use an explicit `\n` inside the quotes (`"line one\nline two"`) instead of pasting a real newline into the literal. Applies to error messages, LLM prompts, and any other multi-line text — including inside test files and fixtures |
 | RAG chunk insert without embedding | Every `document_chunks`-style INSERT into a pgvector `embedding` column MUST be preceded by an actual `bedrock.invoke_embed(chunk_text)` call for that exact chunk — never insert a chunk row with `embedding` omitted, `None`, or a placeholder. Postgres raises `DatatypeMismatch` (vector column, non-vector value) if this is skipped, and the upload silently never reaches "ready" |
@@ -914,9 +840,8 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
 | `Form(...)` / `File(...)` / `UploadFile` route params | FastAPI raises `RuntimeError: Form data requires "python-multipart" to be installed` **at import time** — the whole module fails to load, so SQLite pytest never even reaches the route. On ECS this kills the essential API container at startup and crash-loops the task forever (deploy health check never passes). | The moment any router uses `Form(...)`, `File(...)`, or `UploadFile`, add `python-multipart>=0.0.9` to `requirements.txt` immediately — do not wait until testing surfaces it. |
 | `import app.models` + bare `app` name | `from app.main import app` then `import app.models` rebinds `app` to the **package**; `app.dependency_overrides` raises `AttributeError` on every test using the `client` fixture | Always `from app.main import app as fastapi_app`; use `fastapi_app.dependency_overrides` and `TestClient(fastapi_app)`. The golden conftest_reference.py already includes `import app.models` — do not re-add it under a bare `app` name. |
-| Streamlit `use_container_width` / `width=0` | Deprecated/invalid; Streamlit 1.41+ raises `StreamlitInvalidWidthError` on live UI | Never `use_container_width=True/False` and never `width=0`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
-| Streamlit `_get("/api/v1/...//...")` double slash | FastAPI 404 `{"detail":"Not Found"}` on Status/Audit/Query while login/`/health` still work — looks like ALB failure | Paths must match routes exactly with single slashes (`/api/v1/admin/status`). Keep scaffold `_api_url()`; never invent `admin//status` or `v1//query`. `dev_validate_app` autofixes `/api/...` literals. |
-| API-key demo secret ≠ seed password | README invents `ADMIN_KEY_DEV` / random tokens while seed SQL bcrypt-hashes the seed-comment password into `api_keys` / `token_hash` — live UI 401s | When auth is `X-API-Key` and seed uses `__BCRYPT_PLACEHOLDER__`, README **Demo credentials** MUST tell the tester to paste the **same plaintext** as `-- Password for all seed users: "..."` (e.g. `ExpenseTest123!`). Do not invent a second key name unless that exact string is what was hashed. |
+| Double-slash API paths (`/api/v1/...//...`) | FastAPI 404 `{"detail":"Not Found"}` on some routes while login/`/health` still work | Paths must match routes exactly with single slashes (`/api/v1/admin/status`). Never invent `admin//status` or `v1//query`. `dev_validate_app` autofixes `/api/...` literals. |
+| API-key demo secret ≠ seed password | README invents `ADMIN_KEY_DEV` / random tokens while seed SQL bcrypt-hashes the seed-comment password into `api_keys` / `token_hash` — live clients 401 | When auth is `X-API-Key` and seed uses `__BCRYPT_PLACEHOLDER__`, README **Demo credentials** MUST tell the tester to paste the **same plaintext** as `-- Password for all seed users: "..."` (e.g. `ExpenseTest123!`). Do not invent a second key name unless that exact string is what was hashed. |
 | SHA-256 API key seed fakes | Seed inserts `sha256_foo_001` into `key_hash` while app does `sha256(raw).hexdigest()` lookup — every login 401s | Seed MUST use `__SHA256_PLACEHOLDER:<label>__` + `-- API key for <label>: "demo-…"`; README / `.env.example` MUST list those exact plaintext keys. Never invent fake `sha256_*` tokens or a different README key. |
 
 When writing `tests/conftest.py`, COPY `_template/tests/conftest_reference.py` via
@@ -1673,6 +1598,13 @@ def _validate_dev_write_path(file_path: Path) -> str | None:
             "Error: cannot write .env or .env.* secret files — "
             "write .env.example with placeholders; users copy to .env locally"
         )
+    if "ui" in parts:
+        return (
+            "Error: Streamlit is retired on this platform — developer-agent owns nothing "
+            "under ui/. This platform's UI is a React frontend built by frontend-agent from "
+            "the OpenAPI contract, not by developer-agent. If the design doc's Stack table "
+            "says anything other than React, stop and flag it instead of hand-writing a UI."
+        )
     if (
         _current_auth_mode() == "api-key"
         and name == "auth.py"
@@ -1808,8 +1740,8 @@ def _resolve_scaffold_pattern_for_auth_mode(pattern: str, auth_mode: str) -> str
     """Swap base pattern "B" for "B-api-key" when authMode is api-key.
 
     jwt (default) is byte-identical to today: "B" resolves to "B" exactly.
-    B+/B++/C (which extend "B") are not branched yet — an api-key app needing
-    Bedrock/Streamlit is a follow-up, not handled here.
+    B+/B++ (which extend "B") are not branched yet — an api-key app needing
+    Bedrock is a follow-up, not handled here.
     """
     if pattern == "B" and auth_mode == "api-key":
         return "B-api-key"
@@ -1820,14 +1752,14 @@ def _resolve_scaffold_pattern_for_auth_mode(pattern: str, auth_mode: str) -> str
 def dev_scaffold(service: str, pattern: str, force: bool = False) -> str:
     """Copy golden template infrastructure into target-apps/<service>/.
 
-    Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++, C.
+    Call once per app (Step 2c) before writing domain code. Patterns: B, B+, B++.
     Manifest: target-apps/_template/scaffold-manifest.json
     Pattern "B" automatically resolves to the api-key file set instead of the JWT
     trio when the run's authMode context is "api-key" — callers still just pass "B".
 
     Args:
         service: target app slug (e.g. standup-tracker)
-        pattern: B | B+ | B++ | C
+        pattern: B | B+ | B++
         force: when True, overwrite existing scaffold files from _template/
     """
     resolved_pattern = _resolve_scaffold_pattern_for_auth_mode(pattern, _current_auth_mode())
@@ -3651,24 +3583,11 @@ def _run_validation_steps(
         return _fail("orm_mappers", detail)
     _ok("orm_mappers")
 
-    from _shared.validate_ui_parity import (
-        autofix_streamlit_api_path_slashes,
-        autofix_streamlit_width_api,
-        validate_ui_parity,
-        validate_ui_parity_blocking,
-    )
-
-    width_fixes = autofix_streamlit_width_api(service_dir)
-    for fix in width_fixes:
-        _warn(f"ui_parity: auto-fixed deprecated Streamlit width API: {fix}")
-
-    slash_fixes = autofix_streamlit_api_path_slashes(service_dir)
-    for fix in slash_fixes:
-        _warn(f"ui_parity: auto-fixed double-slash Streamlit API path: {fix}")
+    from _shared.validate_ui_parity import validate_ui_parity, validate_ui_parity_blocking
 
     ui_errors = validate_ui_parity_blocking(service_dir, _REPO_ROOT)
     if ui_errors:
-        detail = "UI_PARITY FAILED (API vs design / Streamlit coverage):\n" + "\n".join(
+        detail = "UI_PARITY FAILED (API vs design):\n" + "\n".join(
             f"  - {e}" for e in ui_errors
         )
         return _fail("ui_parity", detail)
@@ -4238,8 +4157,8 @@ def _build_agent(
         description=(
             "Implements backend API code under target-apps/ from PRD, design doc, "
             "database-agent handoff, and scraped research. "
-            "Patterns: in-memory, postgres, postgres-llm, rag, streamlit "
-            "(legacy aliases: A, B, B+, B++, C)."
+            "Patterns: in-memory, postgres, postgres-llm, rag "
+            "(legacy aliases: A, B, B+, B++)."
         ),
         model=_coding_model(ctx),
         system_prompt=_build_system_prompt(ctx),
@@ -4708,10 +4627,10 @@ def serve_a2a(host: str = "127.0.0.1", port: int = A2A_PORT) -> None:
             id="implement_feature",
             name="implement_feature",
             description=(
-                "Implement backend API + optional Streamlit UI under target-apps/. "
-                "Patterns A/B/B+/B++/C. Stack driven by design doc tech stack section."
+                "Implement backend API under target-apps/. "
+                "Patterns A/B/B+/B++. Stack driven by design doc tech stack section."
             ),
-            tags=["development", "fastapi", "python", "streamlit", "rag", "bedrock"],
+            tags=["development", "fastapi", "python", "rag", "bedrock"],
         )
     ]
     agent = _build_agent()

@@ -46,12 +46,19 @@ _REACT_NEGATED = re.compile(
     r"streamlit/react\s+ui",
     re.IGNORECASE,
 )
-_GENERIC_UI_MARKERS = ("web ui", "browser ui", "client-facing portal")
+_GENERIC_UI_MARKERS = (
+    "web ui",
+    "browser ui",
+    "client-facing portal",
+    "dashboard",
+    "portal",
+    "web app",
+)
 # Same clause-gap negation as Streamlit/React — "no ... web UI ..." lists hit this too
 # (e.g. "No customer-facing web UI, Streamlit, chatbots, or SSO for this version").
 _GENERIC_UI_NEGATED = re.compile(
     r"\b(?:no|without|not|omit)\b" + _CLAUSE_GAP
-    + r"\b(?:web ui|browser ui|client-facing portal)\b",
+    + r"\b(?:web ui|browser ui|client-facing portal|dashboard|portal|web app)\b",
     re.IGNORECASE,
 )
 _API_ONLY_DELIVERY = re.compile(
@@ -71,6 +78,21 @@ _NO_FRONTEND_EXPLICIT = re.compile(
     re.IGNORECASE,
 )
 
+# Self-description as backend/API-only in non-literal wording ("just a backend
+# service", "backend API, nothing else needed", "REST API only"). Each alternative
+# requires an exclusivity word (just/only/nothing else) bound directly to
+# backend/api - this means "this app has no frontend", not merely "backend/api is
+# mentioned". Gated in scan_delivery_text() by a document-wide check for any
+# positive UI marker (react/streamlit/web ui/dashboard/etc. appearing ANYWHERE in
+# the text, not just nearby) - a brief that uses backend-only phrasing in one
+# clause but names a frontend elsewhere must not be suppressed.
+_BACKEND_ONLY_SELF_DESCRIBED = re.compile(
+    r"\bjust\s+(?:a\s+|an\s+)?(?:rest\s+)?(?:backend|api)(?:\s+service)?\b|"
+    r"\b(?:rest\s+)?api\s+only\b(?!\s+(?:when|if|unless|during|except|for|until))|"
+    r"\bbackend\s+api\s*,?\s*nothing\s+else\s+needed\b",
+    re.IGNORECASE,
+)
+
 
 def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pattern[str]) -> bool:
     has_marker = any(marker in text_lower for marker in markers)
@@ -84,21 +106,32 @@ def _feature_required(text_lower: str, markers: tuple[str, ...], negated: re.Pat
 def scan_delivery_text(text: str) -> dict[str, Any]:
     """Infer delivery profile flags from PRD, input brief, or design markdown.
 
-    Decision order (PART 1 fix — highest priority first):
+    Decision order (highest priority first):
       1. Explicit "no frontend" / API-only / backend-only -> no UI at all, full stop.
-      2. Explicit Streamlit mention (and not negated) -> Streamlit.
-      3. Explicit React mention (and not negated), OR a UI is required (e.g. a generic
-         "web UI" phrase) but no specific frontend technology was named -> React.
-         React — not Streamlit — is the default frontend; Streamlit is opt-in only.
+      2. A UI is required — Streamlit mention, explicit React mention, or a generic
+         "web UI" phrase, none negated — -> React. Streamlit has been retired as a
+         deliverable: mentioning it still means "a UI is required" but always
+         resolves to React, never to requiresStreamlit=True.
     """
     lower = text.lower()
+    backend_only_described = bool(_BACKEND_ONLY_SELF_DESCRIBED.search(lower))
+    has_any_ui_marker = any(
+        marker in lower
+        for marker in (*_STREAMLIT_MARKERS, *_REACT_MARKERS, *_GENERIC_UI_MARKERS)
+    )
     no_frontend_explicit = bool(
-        _NO_FRONTEND_EXPLICIT.search(lower) or _API_ONLY_DELIVERY.search(lower)
+        _NO_FRONTEND_EXPLICIT.search(lower)
+        or _API_ONLY_DELIVERY.search(lower)
+        or (backend_only_described and not has_any_ui_marker)
     )
     requires_streamlit = _feature_required(lower, _STREAMLIT_MARKERS, _STREAMLIT_NEGATED)
     requires_react = _feature_required(lower, _REACT_MARKERS, _REACT_NEGATED)
     generic_ui_required = _feature_required(lower, _GENERIC_UI_MARKERS, _GENERIC_UI_NEGATED)
     ui_required = requires_streamlit or requires_react or generic_ui_required
+    # Streamlit is retired as a target framework. A brief mentioning it still counts
+    # toward ui_required above (a UI was asked for), but the classifier must never
+    # report requiresStreamlit true again — the elif below routes that signal to React.
+    requires_streamlit = False
 
     if no_frontend_explicit:
         # Explicit "no frontend" wins over any UI marker found in this same text.
@@ -182,8 +215,12 @@ def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
 def frontend_required_from_delivery_profile(delivery: dict[str, Any] | None) -> bool:
     """Single source of truth for whether the React frontend-agent should run.
 
-    Platform default is React. Skip only when the brief explicitly chose Streamlit
-    or said no-frontend / API-only / backend-only (noFrontendExplicit).
+    Platform default is React. Streamlit is retired (scan_delivery_text() can never
+    produce requiresStreamlit=True anymore — see its own docstring), so the only way
+    to skip frontend-agent is an explicit no-frontend / API-only / backend-only brief
+    (noFrontendExplicit). A stale requiresStreamlit=True surviving in an old/cached
+    delivery profile must NOT skip frontend-agent either — Streamlit is no longer a
+    valid destination for that signal, so it is ignored rather than honored.
 
     A silent brief (requiresReact=False because no positive React marker was found)
     must still return True — treating "not detected" as "opted out" was the bug that
@@ -191,8 +228,6 @@ def frontend_required_from_delivery_profile(delivery: dict[str, Any] | None) -> 
     still invoked frontend-agent.
     """
     delivery = delivery or {}
-    if delivery.get("requiresStreamlit"):
-        return False
     if delivery.get("noFrontendExplicit"):
         return False
     return True

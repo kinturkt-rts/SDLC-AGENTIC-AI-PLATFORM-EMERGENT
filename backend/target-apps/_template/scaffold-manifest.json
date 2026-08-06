@@ -77,13 +77,6 @@
         "app/services/prompts.py"
       ]
     },
-    "C": {
-      "extends": "B+",
-      "copy_verbatim": [
-        "ui/streamlit_app.py",
-        "ui/requirements.txt"
-      ]
-    },
     "F": {
       "copy_verbatim": [
         "frontend/index.html",
@@ -153,7 +146,6 @@
     "tests/conftest.py",
     ".env.example",
     "README.md",
-    "requirements.txt",
-    "ui/streamlit_app.py"
+    "requirements.txt"
   ]
 }

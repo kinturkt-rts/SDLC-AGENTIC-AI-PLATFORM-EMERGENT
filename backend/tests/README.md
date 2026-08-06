@@ -17,7 +17,6 @@ python -m pytest tests/ -q
 | CloudWatch log parsing | `test_cloudwatch_logs.py` |
 | RDS SQL apply | `test_apply_sql_to_rds.py` |
 | RDS / ORM parity checks | `test_validate_rds_parity.py` |
-| UI / API surface parity | `test_validate_ui_parity.py` |
 | Seed credential parsing | `test_seed_credentials.py`, `test_verify_seed_bcrypt.py` |
 | Developer / database / product / QA agents | `test_*_agent*.py` |
 | Other `_shared` helpers | `test_pipeline_context.py`, `test_db_handoff.py`, `test_telemetry.py`, … |

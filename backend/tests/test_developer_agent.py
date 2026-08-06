@@ -215,6 +215,35 @@ def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> 
     assert mod._validate_dev_write_path(service / ".venv" / "pyvenv.cfg") is not None
 
 
+def test_validate_dev_write_path_blocks_ui_directory_broadly(tmp_path: Path) -> None:
+    """Streamlit is retired — developer-agent must never write anything under ui/.
+
+    The block is broad (any "ui" path segment), not just the two known Streamlit
+    filenames, so an LLM inventing a different Streamlit file (e.g. a multipage-app
+    page under ui/pages/) is caught too. Normal writes elsewhere are unaffected —
+    React lives under frontend/, built by frontend-agent, never by developer-agent."""
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-svc"
+    (service / "app").mkdir(parents=True)
+    (service / "schemas").mkdir(parents=True)
+    (service / "tests").mkdir(parents=True)
+
+    blocked_streamlit = mod._validate_dev_write_path(service / "ui" / "streamlit_app.py")
+    assert blocked_streamlit is not None
+    assert "retired" in blocked_streamlit.lower()
+    assert "frontend-agent" in blocked_streamlit
+
+    blocked_variant = mod._validate_dev_write_path(
+        service / "ui" / "pages" / "dashboard.py"
+    )
+    assert blocked_variant is not None
+
+    assert mod._validate_dev_write_path(service / "app" / "main.py") is None
+    assert mod._validate_dev_write_path(service / "schemas" / "items.py") is None
+    assert mod._validate_dev_write_path(service / "tests" / "test_items.py") is None
+    assert mod._validate_dev_write_path(service / "requirements.txt") is None
+
+
 def test_validate_dev_write_path_blocks_verbatim_scaffold_files(tmp_path: Path) -> None:
     """Golden template files must come from dev_scaffold, not hand-written content —
     regression for a hand-rewritten app/startup_checks.py that shipped a syntax error."""
@@ -643,3 +672,82 @@ def test_db_column_category_array_matches_orm_array() -> None:
     assert mod._db_column_category("ARRAY", "_text") == "array"
     assert mod._orm_column_category("ARRAY(String)") == mod._db_column_category("ARRAY", "_text")
     assert mod._orm_column_category("PG_ARRAY(String)") == mod._db_column_category("ARRAY", "_text")
+
+
+# ── Streamlit removal step 3: pattern C / streamlit retired from the generation layer ──
+
+
+def test_pattern_registries_no_longer_expose_streamlit() -> None:
+    """Streamlit (legacy Pattern C) is retired as a developer-agent scaffold target —
+    the descriptive pattern set and its legacy-code aliases must no longer expose it,
+    while in-memory/postgres/postgres-llm/rag and their A/B/B+/B++ aliases stay intact."""
+    mod = _load_agent_module()
+    assert mod._PATTERN_KEYS == ("in-memory", "postgres", "postgres-llm", "rag")
+    assert "streamlit" not in mod._PATTERN_LAYOUTS
+    assert mod._PATTERN_ALIASES == {
+        "A": "in-memory",
+        "B": "postgres",
+        "B+": "postgres-llm",
+        "B++": "rag",
+    }
+
+
+def test_compose_pattern_section_excludes_streamlit() -> None:
+    mod = _load_agent_module()
+    section = mod._compose_pattern_section()
+    assert "streamlit" not in section.lower()
+    for expected in ("in-memory", "postgres", "postgres-llm", "rag"):
+        assert expected in section
+
+
+def test_infer_pattern_from_context_never_returns_streamlit(tmp_path: Path) -> None:
+    """A design doc that still mentions Streamlit (stale PRD language) must fall through
+    to the postgres/llm/rag inference instead of short-circuiting to a pattern
+    developer-agent can no longer scaffold."""
+    mod = _load_agent_module()
+    design = tmp_path / "design.md"
+    design.write_text(
+        "Tech stack: FastAPI, Postgres, Streamlit UI at ui/streamlit_app.py.",
+        encoding="utf-8",
+    )
+    assert mod._infer_pattern_from_context({"designDocPath": str(design)}) == "postgres"
+
+
+def test_infer_pattern_from_context_streamlit_plus_rag_still_infers_rag(
+    tmp_path: Path,
+) -> None:
+    mod = _load_agent_module()
+    design = tmp_path / "design.md"
+    design.write_text(
+        "Tech stack: FastAPI, Postgres, pgvector retrieval with embeddings, "
+        "Streamlit UI at ui/streamlit_app.py.",
+        encoding="utf-8",
+    )
+    assert mod._infer_pattern_from_context({"designDocPath": str(design)}) == "rag"
+
+
+def test_default_pipeline_task_drops_step_0b_and_pattern_c_bullet() -> None:
+    mod = _load_agent_module()
+    assert "Step 0b" not in mod.DEFAULT_PIPELINE_TASK
+    assert "legacy: C" not in mod.DEFAULT_PIPELINE_TASK
+
+
+def test_scaffold_manifest_and_valid_patterns_drop_pattern_c() -> None:
+    """The 'C' scaffold-manifest entry (ui/streamlit_app.py + ui/requirements.txt) and its
+    entry in scaffold.py's _VALID_PATTERNS must both be gone together — leaving one
+    without the other would either dead-end dev_scaffold(pattern="C") on a manifest
+    lookup failure instead of a clean ValueError, or accept a pattern the manifest no
+    longer defines. React frontend patterns (owned by frontend-agent) stay untouched."""
+    _load_agent_module()  # puts agents/ on sys.path so `import scaffold` resolves
+    import scaffold
+
+    assert "C" not in scaffold._VALID_PATTERNS
+    manifest = scaffold.load_manifest(
+        _REPO_ROOT / "target-apps" / "_template" / "scaffold-manifest.json"
+    )
+    assert "C" not in manifest["patterns"]
+    assert "ui/streamlit_app.py" not in manifest.get("customize_after_scaffold", [])
+    assert "F" in scaffold._VALID_PATTERNS
+    assert "F-api-key" in scaffold._VALID_PATTERNS
+    assert "F" in manifest["patterns"]
+    assert "F-api-key" in manifest["patterns"]

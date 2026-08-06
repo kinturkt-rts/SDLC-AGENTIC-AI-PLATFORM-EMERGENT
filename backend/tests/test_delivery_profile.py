@@ -22,10 +22,13 @@ from _shared.delivery_profile import (  # noqa: E402
 )
 
 
-def test_scan_detects_streamlit() -> None:
+def test_scan_streamlit_mention_resolves_to_react() -> None:
+    """Streamlit is retired as a deliverable — a mention still means "UI required"
+    but the classifier must always route it to React, never requiresStreamlit=True."""
     profile = scan_delivery_text("MVP with Streamlit UI on port 8501")
-    assert profile["requiresStreamlit"] is True
-    assert profile["uiPattern"] == "streamlit"
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiPattern"] == "react"
 
 
 def test_scan_ignores_negated_streamlit() -> None:
@@ -54,13 +57,15 @@ def test_scan_ignores_negated_streamlit_in_comma_list() -> None:
 
 
 def test_scan_streamlit_not_killed_by_http_client_to_api_only() -> None:
-    """PRD architecture rows often say 'HTTP client to API only' while requiring Streamlit."""
+    """PRD architecture rows often say 'HTTP client to API only' while requiring a UI —
+    that must still resolve to React now that Streamlit is retired as a deliverable."""
     profile = scan_delivery_text(
         "| UI location | `ui/streamlit_app.py` | http client to api only — "
         "never import `app/` from streamlit; enforced by ci lint check |"
     )
-    assert profile["requiresStreamlit"] is True
-    assert profile["uiPattern"] == "streamlit"
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiPattern"] == "react"
 
 
 def test_scan_api_only_app_still_false() -> None:
@@ -75,7 +80,9 @@ def test_merge_profiles_or_flags() -> None:
         {"uiRequired": False, "requiresStreamlit": False, "requiresReact": False, "uiPattern": None},
         scan_delivery_text("needs streamlit dashboard"),
     )
-    assert merged["requiresStreamlit"] is True
+    assert merged["requiresStreamlit"] is False
+    assert merged["requiresReact"] is True
+    assert merged["uiPattern"] == "react"
 
 
 def test_verify_design_doc_fails_when_streamlit_omitted(tmp_path: Path) -> None:
@@ -119,7 +126,8 @@ def test_build_delivery_profile_from_input_file(tmp_path: Path) -> None:
     brief.parent.mkdir(parents=True)
     brief.write_text("Stack: FastAPI + Streamlit UI for client portal\n", encoding="utf-8")
     profile = build_delivery_profile_from_paths(tmp_path, input_path=str(brief))
-    assert profile["requiresStreamlit"] is True
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
 
 
 def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
@@ -138,7 +146,8 @@ def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     profile = sync_context_delivery_profile(tmp_path, ctx_path)
-    assert profile["requiresStreamlit"] is True
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
     synced = __import__("json").loads(ctx_path.read_text(encoding="utf-8"))
     assert synced["inputPath"] == "inputs/prior-auth.txt"
 
@@ -168,29 +177,6 @@ def test_prd_only_streamlit_downgraded_when_brief_silent(tmp_path: Path) -> None
     assert profile["requiresStreamlit"] is False
     assert profile["requiresReact"] is True
     assert profile["uiPattern"] == "react"
-
-
-def test_prd_streamlit_kept_when_brief_confirms_it(tmp_path: Path) -> None:
-    brief = tmp_path / "inputs" / "app.txt"
-    brief.parent.mkdir(parents=True)
-    brief.write_text("Build a Streamlit dashboard for reception staff.\n", encoding="utf-8")
-    prd = tmp_path / "docs" / "PRD" / "app.md"
-    prd.parent.mkdir(parents=True)
-    prd.write_text("| Client UI | **Streamlit** |\n", encoding="utf-8")
-
-    profile = build_delivery_profile_from_paths(tmp_path, prd_path=str(prd), input_path=str(brief))
-    assert profile["requiresStreamlit"] is True
-
-
-def test_prd_streamlit_trusted_when_brief_unavailable(tmp_path: Path) -> None:
-    """No brief to cross-check against (e.g. never propagated into context) - fall back
-    to trusting the PRD, same as before this guard existed."""
-    prd = tmp_path / "docs" / "PRD" / "app.md"
-    prd.parent.mkdir(parents=True)
-    prd.write_text("| Client UI | **Streamlit** |\n", encoding="utf-8")
-
-    profile = build_delivery_profile_from_paths(tmp_path, prd_path=str(prd))
-    assert profile["requiresStreamlit"] is True
 
 
 def test_sync_falls_back_to_input_rel_for_app_when_context_missing_inputpath(
@@ -237,10 +223,6 @@ def test_frontend_required_from_delivery_profile_silent_brief_defaults_react() -
     )
 
 
-def test_frontend_required_from_delivery_profile_streamlit_skips() -> None:
-    assert frontend_required_from_delivery_profile({"requiresStreamlit": True}) is False
-
-
 def test_frontend_required_from_delivery_profile_explicit_no_frontend_skips() -> None:
     assert (
         frontend_required_from_delivery_profile(
@@ -248,3 +230,69 @@ def test_frontend_required_from_delivery_profile_explicit_no_frontend_skips() ->
         )
         is False
     )
+
+
+# --- Fix C: non-literal backend-only self-description (Kintur-authorized, not a
+# Streamlit change) ---------------------------------------------------------------
+
+
+def test_scan_just_a_backend_service_suppresses_frontend() -> None:
+    profile = scan_delivery_text(
+        "This project needs just a backend service exposing REST endpoints."
+    )
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+    assert profile["requiresReact"] is False
+
+
+def test_scan_backend_api_nothing_else_needed_suppresses_frontend() -> None:
+    profile = scan_delivery_text("We need a backend API, nothing else needed for v1.")
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+
+
+def test_scan_rest_api_only_suppresses_frontend() -> None:
+    profile = scan_delivery_text("Deliver a REST API only.")
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+
+
+def test_scan_silent_brief_does_not_set_no_frontend_explicit() -> None:
+    """A brief that says nothing about UI at all must NOT be treated as an explicit
+    no-frontend signal — the frontend-required gate (outside this module) is what
+    defaults silent briefs to React, and it only skips frontend-agent when
+    noFrontendExplicit is true."""
+    profile = scan_delivery_text(
+        "Manage inventory counts across three warehouses with reorder alerts."
+    )
+    assert profile["noFrontendExplicit"] is False
+    assert profile["uiRequired"] is False
+
+
+def test_scan_backend_feeding_frontend_dashboard_not_suppressed() -> None:
+    """False positive #1: mentions 'backend service' but clearly has a UI — must
+    not be caught by the broadened backend-only detection."""
+    profile = scan_delivery_text("The backend service feeds the frontend dashboard.")
+    assert profile["noFrontendExplicit"] is False
+
+
+def test_scan_just_backend_today_react_next_sprint_not_suppressed() -> None:
+    """False positive #2: 'just backend' phrasing in one clause, but a React
+    frontend is named later in the same document — the document-wide UI-marker
+    gate must catch this even though the two mentions are in different clauses."""
+    profile = scan_delivery_text(
+        "It's just backend work today; the React frontend ships next sprint."
+    )
+    assert profile["noFrontendExplicit"] is False
+
+
+def test_scan_api_only_when_offline_web_dashboard_not_suppressed() -> None:
+    """False positive #3: 'API only' immediately followed by a conditional clause
+    (blocked by the continuation-word lookahead) AND the same document separately
+    mentions a web dashboard (now a tracked _GENERIC_UI_MARKERS entry, giving this
+    case a second line of defense independent of the continuation-word list)."""
+    profile = scan_delivery_text(
+        "Users interact with the backend API only when offline; otherwise they "
+        "use the web dashboard."
+    )
+    assert profile["noFrontendExplicit"] is False

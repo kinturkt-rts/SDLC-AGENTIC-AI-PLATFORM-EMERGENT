@@ -293,7 +293,6 @@ function Get-DeveloperStepLabel {
     if (Test-Path $ContextPath) {
         try {
             $dp = (Get-Content $ContextPath -Raw | ConvertFrom-Json).deliveryProfile
-            if ($dp.requiresStreamlit) { $stack += "Streamlit" }
             if ($dp.requiresReact) { $stack += "React" }
         }
         catch { }
@@ -450,15 +449,6 @@ function Write-RunInstructions {
     }
     Write-Host "  uvicorn app.main:app --reload --port 8000"
     Write-Host "  Open http://127.0.0.1:8000/docs  - auth per README (JWT Bearer or API key per app)"
-    if (Test-Path $ctxPath) {
-        try {
-            $ctxObj = Get-Content $ctxPath -Raw | ConvertFrom-Json
-            if ($ctxObj.deliveryProfile.requiresStreamlit) {
-                Write-Host "  pip install -r ui/requirements.txt"
-                Write-Host "  streamlit run ui/streamlit_app.py --server.port 8501   # Terminal 2"
-            }
-        } catch { }
-    }
 }
 
 $devTaskDb = @"
@@ -467,8 +457,6 @@ Postgres parity (mandatory): psycopg[binary] + postgresql+psycopg:// in .env.exa
 ENUM columns use sqlalchemy.Enum(create_type=False, native_enum=True) with sqlite String variant;
 uuid columns use PG_UUID(as_uuid=False).with_variant(String(36), sqlite); Pydantic response schemas coerce UUID to str.
 Auth per design Rules only (API-key and/or JWT+bcrypt  - not both unless design requires).
-If deliveryProfile.requiresStreamlit is true: Pattern C mandatory - ui/streamlit_app.py + ui/requirements.txt;
-login via API; JWT in st.session_state or API_KEY header per auth mode; role-based tabs per PRD; README Terminal 1+2.
 tests/conftest.py: SQLite with schema ATTACH when models use POSTGRES_SCHEMA.
 When db/sql/*seed*.sql has JWT users: add tests/test_seed_bcrypt.py (from _template/tests/test_seed_bcrypt_reference.py); conftest password must match seed SQL comment.
 README: Windows+bash setup, .env copy, uvicorn, Swagger auth header, seed UUIDs, RDS smoke-test steps (GET /health + one DB list route).

@@ -80,8 +80,6 @@ Postgres parity (mandatory): psycopg[binary] + postgresql+psycopg:// in .env.exa
 ENUM columns use sqlalchemy.Enum(create_type=False, native_enum=True) with sqlite String variant;
 uuid columns use PG_UUID(as_uuid=False).with_variant(String(36), sqlite); Pydantic response schemas coerce UUID to str.
 Auth per design Rules only (API-key and/or JWT+bcrypt  - not both unless design requires).
-If deliveryProfile.requiresStreamlit is true: Pattern C mandatory - ui/streamlit_app.py + ui/requirements.txt;
-login via API; JWT in st.session_state or API_KEY header per auth mode; role-based tabs per PRD; README Terminal 1+2.
 tests/conftest.py: SQLite with schema ATTACH when models use POSTGRES_SCHEMA.
 When db/sql/*seed*.sql has JWT users: add tests/test_seed_bcrypt.py (from _template/tests/test_seed_bcrypt_reference.py); conftest password must match seed SQL comment.
 README: Windows+bash setup, .env copy, uvicorn, Swagger auth header, seed UUIDs, RDS smoke-test steps (GET /health + one DB list route).
@@ -314,6 +312,11 @@ class SdlcPipelineRunner:
                         f"{delivery.get('uiPattern')!r} does not require a React frontend.",
                         file=sys.stderr,
                     )
+                    # _default_steps() seeded this step "queued" from the CLI flags alone
+                    # (deliveryProfile wasn't resolved yet at run start) — flip it now that
+                    # the real decision is in, so the final completed-run pass doesn't
+                    # blanket-mark it "completed" for a build that never happened.
+                    self._update_run_json(mark_step_skipped="frontend-agent")
 
             gitlab_ran = False
             if _should_run_gitlab(self.options):
@@ -428,8 +431,17 @@ class SdlcPipelineRunner:
         current_step: str | None = None,
         error: str | None = None,
         finished: bool = False,
+        mark_step_skipped: str | None = None,
     ) -> None:
-        """Update local run.json (and its S3 mirror) so the frontend can track progress."""
+        """Update local run.json (and its S3 mirror) so the frontend can track progress.
+
+        mark_step_skipped: the frontend-agent step is seeded "queued" at run start from
+        the CLI flags alone (_should_run_frontend), before deliveryProfile is resolved —
+        the real run/skip decision (_frontend_required) isn't known yet. When that later
+        decision turns out to be "skip", the step must be flipped to "skipped" here,
+        otherwise the unconditional "finished and status == completed" pass below marks
+        every non-skipped step completed, falsely reporting a frontend build that never ran.
+        """
         rj = self._run_json_path()
         if not rj:
             return
@@ -455,6 +467,10 @@ class SdlcPipelineRunner:
             data.setdefault("status", "running")
             if not data.get("steps"):
                 data["steps"] = self._default_steps()
+            if mark_step_skipped:
+                for step in data["steps"]:
+                    if step.get("name") == mark_step_skipped:
+                        step["status"] = "skipped"
             if status:
                 data["status"] = status
             if error is not None:

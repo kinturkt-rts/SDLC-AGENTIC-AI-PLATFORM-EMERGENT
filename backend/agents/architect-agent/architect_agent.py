@@ -162,12 +162,13 @@ and developer-agent. The AWS diagram PNG is separate; do not repeat long narrati
 - Reference PRD as `FR-x` / `NFR-x` instead of copying PRD text.
 - No open-questions table (unknowns → one line under Summary as "TBD: ...").
 - No CI/CD or CDK sections.
-- **Do not omit client UI** when PRD section 11 or `deliveryProfile.requiresStreamlit` is true.
+- **Do not omit client UI** when PRD section 11 or `deliveryProfile.uiRequired` is true.
 
-## UI in Stack (mandatory when PRD/brief requires it)
-When the PRD or `deliveryProfile` requires Streamlit, section **2. Stack** MUST include:
-`| UI | Streamlit | ui/streamlit_app.py calls FastAPI over HTTP (port 8501) |`
-When React/Next is required (Phase 2), note `frontend/` in Stack — developer implements only when explicitly in profile.
+## UI in Stack (mandatory when PRD/brief requires a UI)
+When the PRD or `deliveryProfile.uiRequired` is true, section **2. Stack** MUST include:
+`| UI | React (Vite + TypeScript) | frontend/ calls FastAPI over HTTP |`
+React is the platform's unconditional default UI — never a deferred/Phase-2 item. frontend-agent
+(not developer-agent) implements it from this design doc and the OpenAPI surface.
 
 ## Output rules
 1. Output **ONLY** Markdown starting with `# <Feature> — Solution Design`.
@@ -219,21 +220,21 @@ treat this table as authoritative; adding Cognito here adds a `cognito_sub` colu
 |--------|------|---------|----------|-------|
 
 (Max **10** MVP endpoints; Pydantic field names.)
-When `deliveryProfile.requiresStreamlit` is true or the PRD describes browse/catalog/admin tables:
+When `deliveryProfile.uiRequired` is true or the PRD describes browse/catalog/admin tables:
 - Every entity users **create or pick in the UI** MUST include **GET list** on the collection path
-  (e.g. `GET /api/v1/sites` alongside `POST /api/v1/sites`) — create-only POST breaks Streamlit dropdowns.
-- Include `GET` list routes for work orders, sites, categories, or any entity shown in a table/selectbox.
+  (e.g. `GET /api/v1/sites` alongside `POST /api/v1/sites`) — create-only POST breaks list views/dropdowns.
+- Include `GET` list routes for work orders, sites, categories, or any entity shown in a table/dropdown.
 
 ## 5. Rules
 Each bullet MUST cite the FR/NFR ID it satisfies AND name the implementation layer.
 "Wrong role → 403" is incomplete. Write instead:
 "RBAC (FR-13, NFR-5): viewer/editor/admin; API: Depends(require_role) on protected routes;
- Streamlit: login_form() gates ALL views when token absent; tabs scoped per role"
+ UI: unauthenticated users see only the login screen; views scoped per role"
 
 Pattern for every rule:
-  - <Rule name> (FR-N, NFR-N): <what it enforces>; API: <route/guard>; [Streamlit: <UI gate>] if UI present
-  - Auth / RBAC (FR-N, NFR-N): roles + protected routes; if Streamlit in Stack → explicitly add
-    "Streamlit: gate on st.session_state.token; role-gated tabs: viewer=X, editor=Y, admin=Z"
+  - <Rule name> (FR-N, NFR-N): <what it enforces>; API: <route/guard>; [UI: <UI gate>] if UI present
+  - Auth / RBAC (FR-N, NFR-N): roles + protected routes; if a UI is required → explicitly add
+    "UI: gate on the stored auth token; role-scoped views: viewer=X, editor=Y, admin=Z"
     Auth scheme MUST match the Stack table's Auth row (JWT default when brief is silent on auth —
     never introduce an API-key/X-API-Key/token-header scheme here that wasn't explicitly requested).
   - Audit (FR-N): events to log, table/service, immutable rules
@@ -470,10 +471,10 @@ def _generate_design_markdown(
             "## Delivery profile (MANDATORY — do not drop UI)\n"
             f"{json.dumps(delivery_profile, indent=2)}\n\n"
         )
-        if delivery_profile.get("requiresStreamlit"):
+        if delivery_profile.get("uiRequired"):
             user_message += (
-                "When requiresStreamlit is true, section 2 Stack MUST list Streamlit and "
-                "`ui/streamlit_app.py`. Do not specify API-only.\n\n"
+                "When uiRequired is true, section 2 Stack MUST list React and "
+                "`frontend/`. Do not specify API-only.\n\n"
             )
     target = context.get("targetApp") or context.get("target_app")
     if target:
