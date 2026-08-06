@@ -1,7 +1,7 @@
 """Verify dev seed SQL bcrypt hashes and (optionally) hashes stored on RDS.
 
 Catches the #1 false-green: pytest passes via conftest hash_password() while RDS seed SQL
-has a placeholder bcrypt string — Swagger/Streamlit login returns 401.
+has a placeholder bcrypt string — Swagger login returns 401.
 """
 
 from __future__ import annotations

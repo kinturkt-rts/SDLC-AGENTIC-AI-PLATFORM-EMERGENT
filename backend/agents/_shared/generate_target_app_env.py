@@ -9,8 +9,8 @@ materialize_seed_passwords.py already trust:
                      scheme swapped to postgresql+psycopg:// for SQLAlchemy.
   - POSTGRES_SCHEMA <- _shared.rds_env.schema_for_app(target_app)
   - CORS_ORIGINS <- always the local dev frontends, never whatever developer-agent
-    guessed into .env.example (it has been wrong before — e.g. Streamlit-only ports
-    that CORS-block a React dev server on 5173).
+    guessed into .env.example (it has been wrong before — e.g. a UI port that
+    CORS-blocks a React dev server on 5173).
   - Any placeholder-looking secret (value containing "change-me") gets a fresh
     secrets.token_urlsafe(32).
 Every other line in .env.example (JWT_ALGORITHM, SERVICE_NAME, Bedrock/RAG vars,
