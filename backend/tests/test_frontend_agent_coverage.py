@@ -667,3 +667,16 @@ def test_scrape_resolves_path_assigned_to_variable(tmp_path) -> None:
     )
     calls = fa._scrape_frontend_api_calls(tmp_path)
     assert ("GET", "/api/v1/audit-log${qs}") in calls
+
+
+def test_parse_frontend_file_map_json_extracts_object_from_prose() -> None:
+    fa = _load_agent_module()
+    raw = 'Looking at OpenAPI...\n{"src/App.tsx": "export default function App() { return null }"}'
+    parsed = fa._parse_frontend_file_map_json(raw)
+    assert parsed is not None
+    assert "src/App.tsx" in parsed
+
+
+def test_parse_frontend_file_map_json_returns_none_for_pure_prose() -> None:
+    fa = _load_agent_module()
+    assert fa._parse_frontend_file_map_json("Looking at the OpenAPI spec, I need to cover:") is None

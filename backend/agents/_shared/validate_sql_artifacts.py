@@ -159,8 +159,13 @@ def _parse_create_table_columns(sql: str, *, source: str) -> list[ColumnSpec]:
         open_paren = match.end() - 1
         close_paren = _find_matching_paren(cleaned, open_paren)
         body = cleaned[open_paren + 1 : close_paren]
-        for raw_line in body.splitlines():
-            line = raw_line.strip().rstrip(",")
+        # Split on top-level commas (paren/quote-aware), not physical newlines: a
+        # multi-line CONSTRAINT/EXCLUDE clause (e.g. EXCLUDE USING gist (...) WHERE
+        # (...)) only has its first line matched by _SKIP_COLUMN_PREFIX_RE — splitting
+        # by line instead of by clause misreads its continuation lines
+        # (e.g. "daterange(reserved_from, reserved_to) WITH &&") as bogus columns.
+        for raw_clause in _split_csv_outside_quotes(body):
+            line = " ".join(raw_clause.split())
             if not line:
                 continue
             if _SKIP_COLUMN_PREFIX_RE.match(line):

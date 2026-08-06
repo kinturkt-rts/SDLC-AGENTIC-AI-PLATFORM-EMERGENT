@@ -1460,18 +1460,10 @@ class SdlcPipelineRunner:
         self._after_agent_step("qa-agent")
     
     def _frontend_required(self) -> bool:
-        """React frontend is the platform default - build it unless the brief explicitly
-        opted out (chose Streamlit instead, or explicitly said no-frontend/API-only).
-        A brief that's simply silent about UI tech (the common case) must still get the
-        default React frontend - scan_delivery_text() only sets requiresReact=True on a
-        positive signal, so treating "not detected" as "explicitly rejected" would skip
-        frontend-agent for most ordinary briefs, not just the ones that actually opted out."""
-        delivery = self.context.get("deliveryProfile") or {}
-        if delivery.get("requiresStreamlit"):
-            return False
-        if delivery.get("noFrontendExplicit"):
-            return False
-        return True
+        """React frontend is the platform default — see frontend_required_from_delivery_profile."""
+        from .delivery_profile import frontend_required_from_delivery_profile
+
+        return frontend_required_from_delivery_profile(self.context.get("deliveryProfile") or {})
 
     def _frontend_a2a_handoff_payload(self) -> dict[str, Any]:
         """Developer→frontend handoff JSON for AgentCore (snake_case contract)."""
@@ -1496,6 +1488,28 @@ class SdlcPipelineRunner:
         """Block frontend until openapi.json is in S3 (developer used to upload after handoff)."""
         if not self.run_id:
             return
+        # Prefer the real developer failure over a 180s openapi timeout when
+        # validation never reached health-smoke (no openapi was ever written).
+        if is_s3_store():
+            try:
+                from .artifact_store import get_artifact_text
+                from .pipeline_context import developer_handoff_rel_for_app
+
+                raw = get_artifact_text(self.run_id, developer_handoff_rel_for_app(self.feature))
+                handoff = json.loads(raw) if raw else {}
+                if isinstance(handoff, dict):
+                    status = str(handoff.get("status") or "").strip().lower()
+                    if status in {"failed", "error"}:
+                        detail = str(
+                            handoff.get("error") or "developer-agent reported failure"
+                        )
+                        raise PipelineStepError(
+                            f"developer-agent failed before frontend-agent (no openapi.json): {detail}"
+                        )
+            except PipelineStepError:
+                raise
+            except Exception:
+                pass
         key = str(self.context.get("openApiPath") or f"{self.feature}/openapi.json").lstrip("/")
         if not is_s3_store():
             local = self.root / key.replace("/", os.sep)
@@ -1561,7 +1575,10 @@ class SdlcPipelineRunner:
                 return {}
         return {}
 
-    def _assert_frontend_a2a_ok(self, text: str) -> None:
+    def _assert_frontend_a2a_ok(self, text: str) -> str:
+        """Returns the normalized status ("skipped" or a success status); raises on
+        error/failed or an unrecognized status. Callers must branch on "skipped" -
+        no frontend/ artifacts were ever written in that case."""
         payload = self._parse_frontend_a2a_payload(text)
         if not payload:
             raise PipelineStepError(
@@ -1573,11 +1590,12 @@ class SdlcPipelineRunner:
                 f"frontend-agent failed: {payload.get('error') or payload}"
             )
         if status == "skipped":
-            return
+            return status
         if status not in {"success", "completed", "ok"}:
             raise PipelineStepError(
                 f"frontend-agent unexpected status={status!r}: {payload}"
             )
+        return status
 
     def _ensure_frontend_artifacts(self) -> None:
         """Fail closed if AgentCore claimed success but uploaded nothing under frontend/."""
@@ -1609,6 +1627,7 @@ class SdlcPipelineRunner:
         )
 
     def _step_frontend(self) -> None:
+        skipped = False
         if self.transport == "local":
             self._run_python(
                 [
@@ -1632,10 +1651,17 @@ class SdlcPipelineRunner:
                 step="frontend-agent",
                 attach_context=False,
             )
-            self._assert_frontend_a2a_ok(text)
-            self._ensure_frontend_artifacts()
-        self.agents_run.append("frontend-agent")
-        self.artifacts["Frontend"] = f"{target_app_root_rel(self.feature)}/frontend/"
+            status = self._assert_frontend_a2a_ok(text)
+            skipped = status == "skipped"
+            if not skipped:
+                self._ensure_frontend_artifacts()
+        # A legitimate skip (deliveryProfile chose Streamlit / no frontend) must not be
+        # recorded as if frontend-agent ran — it never wrote a frontend/ folder, so
+        # marking this "completed" both lies to the run timeline and points
+        # self.artifacts["Frontend"] at a directory that doesn't exist.
+        if not skipped:
+            self.agents_run.append("frontend-agent")
+            self.artifacts["Frontend"] = f"{target_app_root_rel(self.feature)}/frontend/"
         self._after_agent_step("frontend-agent")
 
     def _sync_delivery_profile(self, input_file: str = "") -> None:

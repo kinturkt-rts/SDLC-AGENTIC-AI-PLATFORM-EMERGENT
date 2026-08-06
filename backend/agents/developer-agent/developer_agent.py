@@ -377,6 +377,15 @@ Rules — apply to every FR regardless of domain:
 
   Code quality:
   - Postgres: psycopg[binary] in requirements; ENUM + uuid ORM parity per HANDOFF §ORM parity
+  - **Postgres ARRAY columns (mandatory when db/sql uses `TYPE[]`):**
+    - DDL `col TEXT[]` / `UUID[]` / `INTEGER[]` → ORM MUST be
+      `mapped_column(ARRAY(String)|ARRAY(PG_UUID())|ARRAY(Integer), ...)` (import
+      `ARRAY` from `sqlalchemy.dialects.postgresql`, or `ARRAY as PG_ARRAY`) with
+      `Mapped[list[str]]` / `Mapped[list[uuid.UUID]]` — **never** `String`/`Text`/
+      `Mapped[str]` for an array column. `dev_validate_app` schema_parity fails
+      DB=`array` vs ORM=`string` and blocks openapi/health-smoke until fixed.
+    - Prefer matching database-agent's JSONB lists with `JSONB().with_variant(JSON(), "sqlite")`
+      when the handoff says the column is JSONB instead of `TYPE[]`.
   - **TIMESTAMPTZ parity (mandatory when db/sql uses TIMESTAMPTZ):**
     - ORM: `TimestampTZ` from `app.models.pg_types` for every `*_at` column — never `mapped_column(Text)`
     - Pydantic: `schemas/common.py` with `coerce_iso_datetime`; every `*_at: str` response field needs
@@ -2750,6 +2759,7 @@ _DB_COLUMN_CATEGORY_MAP: dict[str, str] = {
 }
 
 _ORM_TYPE_CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("PG_ARRAY", "array"),  # `ARRAY as PG_ARRAY` alias — check before bare String
     ("ARRAY", "array"),
     ("pg_uuid_column", "string"),  # folded into string — see _DB_COLUMN_CATEGORY_MAP note
     ("PG_UUID", "string"),
@@ -3041,9 +3051,21 @@ def validate_schema_parity(service_dir: Path) -> tuple[list[str], list[str]]:
             db_category, db_nullable = db_cols[col]
             orm_category, orm_nullable = orm_cols[col]
             if db_category != orm_category:
+                hint = ""
+                if db_category == "array" and orm_category == "string":
+                    hint = (
+                        " — fix: use mapped_column(ARRAY(String), ...) "
+                        "(from sqlalchemy.dialects.postgresql import ARRAY) with "
+                        "Mapped[list[str]], never String/Text for a Postgres TYPE[] column"
+                    )
+                elif db_category == "json" and orm_category == "string":
+                    hint = (
+                        " — fix: use JSONB().with_variant(JSON(), \"sqlite\") "
+                        "for JSONB columns, not String/Text"
+                    )
                 errors.append(
                     f"schema_parity: {table}.{col} type category mismatch — DB is "
-                    f"'{db_category}' but ORM maps to '{orm_category}'"
+                    f"'{db_category}' but ORM maps to '{orm_category}'{hint}"
                 )
             if db_nullable != orm_nullable:
                 errors.append(
@@ -4084,9 +4106,11 @@ def _build_frontend_handoff_payload(
     """
     slug = slugify(app)
     delivery_profile = ctx.get("deliveryProfile") or {}
-    frontend_required = delivery_profile.get("requiresReact")
-    if frontend_required is None:
-        frontend_required = True
+    # Same rule as orchestrator _frontend_required() — do NOT use raw requiresReact
+    # (silent briefs scan to requiresReact=False but still get the default React UI).
+    from _shared.delivery_profile import frontend_required_from_delivery_profile
+
+    frontend_required = frontend_required_from_delivery_profile(delivery_profile)
     payload: dict[str, Any] = {
         "status": status,
         "target_app": slug,

@@ -179,6 +179,25 @@ def merge_delivery_profiles(*profiles: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def frontend_required_from_delivery_profile(delivery: dict[str, Any] | None) -> bool:
+    """Single source of truth for whether the React frontend-agent should run.
+
+    Platform default is React. Skip only when the brief explicitly chose Streamlit
+    or said no-frontend / API-only / backend-only (noFrontendExplicit).
+
+    A silent brief (requiresReact=False because no positive React marker was found)
+    must still return True — treating "not detected" as "opted out" was the bug that
+    made developer handoffs write frontend_required=false while the orchestrator
+    still invoked frontend-agent.
+    """
+    delivery = delivery or {}
+    if delivery.get("requiresStreamlit"):
+        return False
+    if delivery.get("noFrontendExplicit"):
+        return False
+    return True
+
+
 def _read_optional(repo_root: Path, rel_or_abs: str | None, *, run_id: str | None = None) -> str:
     if not rel_or_abs or not str(rel_or_abs).strip():
         return ""

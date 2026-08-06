@@ -96,6 +96,13 @@ AWS architecture PNG using the AWS Diagram MCP tools.
 - Start with `with Diagram(` — no imports, no other top-level code.
 - `show=False` always.
 - Map PRD components only; do not add Redshift/SageMaker/Kinesis unless the task or PRD requires them.
+- **Client UI node — use `deliveryProfile.uiPattern` from Context, not the PRD's own Client UI
+  text.** The PRD can be stale or wrong about which frontend was chosen (e.g. it names Streamlit
+  even when `deliveryProfile.requiresStreamlit` is false); `deliveryProfile` is the corrected,
+  authoritative signal and MUST match what you write in the design doc's Stack section (§2).
+  `uiPattern: "react"` → draw the frontend as a React/Vite client (e.g. `ECS("React UI")` or
+  `CloudFront`+`S3` for a static build — never a Streamlit node). `uiPattern: "streamlit"` → draw
+  a Streamlit node. `uiPattern: null`/absent → API-only, no client-UI node at all.
 
 Example skeleton:
 ```python

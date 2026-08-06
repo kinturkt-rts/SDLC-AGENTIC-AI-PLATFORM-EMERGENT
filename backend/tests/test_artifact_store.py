@@ -504,9 +504,52 @@ def test_classify_developer_readiness_failed() -> None:
     assert (handoff or {}).get("error") == "boom"
 
 
-def test_classify_developer_readiness_partial_when_stalled_with_artifacts() -> None:
-    """A stalled in_progress handoff with delivered app files publishes best-effort."""
+def test_classify_developer_readiness_in_progress_waits_for_terminal() -> None:
+    """in_progress handoff must NOT early-exit as PARTIAL on a stable file count.
+
+    Developer validate/fix loops often write zero new files for many minutes;
+    racing PARTIAL let frontend wait for openapi while developer later wrote failed.
+    """
+    from _shared.artifact_store import DEV_READY_FAILED, classify_developer_readiness
+
+    reads = [
+        '{"status": "in_progress", "writtenFiles": ["target-apps/demo-app/app/main.py"]}',
+        '{"status": "in_progress", "writtenFiles": ["target-apps/demo-app/app/main.py"]}',
+        '{"status": "in_progress", "writtenFiles": ["target-apps/demo-app/app/main.py"]}',
+        '{"status": "failed", "error": "schema_parity: gates.x DB array vs ORM string", '
+        '"writtenFiles": ["target-apps/demo-app/app/main.py"]}',
+    ]
+
+    with (
+        patch(
+            "_shared.artifact_store.get_artifact_text",
+            side_effect=reads,
+        ),
+        patch(
+            "_shared.artifact_store.list_run_artifact_keys",
+            return_value=["demo-app/app/main.py", "demo-app/requirements.txt"],
+        ),
+        patch("time.sleep"),
+    ):
+        decision, handoff = classify_developer_readiness(
+            "run-3", "demo-app", timeout_sec=5.0, poll_interval_sec=0.01, stall_polls=2
+        )
+    assert decision == DEV_READY_FAILED
+    assert "schema_parity" in str((handoff or {}).get("error") or "")
+
+
+def test_classify_developer_readiness_partial_at_timeout_with_artifacts() -> None:
+    """Only after the full wait window may in_progress + artifacts resolve to PARTIAL."""
     from _shared.artifact_store import DEV_READY_PARTIAL, classify_developer_readiness
+
+    ticks = {"n": 0}
+
+    def _mono() -> float:
+        ticks["n"] += 1
+        # 1st call: deadline = 0 + 5 = 5; later calls stay under 5 briefly, then expire.
+        if ticks["n"] <= 4:
+            return float(ticks["n"] - 1)  # 0,1,2,3
+        return 10.0
 
     with (
         patch(
@@ -518,17 +561,26 @@ def test_classify_developer_readiness_partial_when_stalled_with_artifacts() -> N
             return_value=["demo-app/app/main.py", "demo-app/requirements.txt"],
         ),
         patch("time.sleep"),
+        patch("time.monotonic", side_effect=_mono),
     ):
         decision, handoff = classify_developer_readiness(
-            "run-3", "demo-app", timeout_sec=5.0, poll_interval_sec=0.01, stall_polls=2
+            "run-3b", "demo-app", timeout_sec=5.0, poll_interval_sec=0.01, stall_polls=2
         )
     assert decision == DEV_READY_PARTIAL
     assert (handoff or {}).get("status") == "in_progress"
 
 
 def test_classify_developer_readiness_missing_without_artifacts() -> None:
-    """In_progress handoff but no publishable app files blocks publish."""
+    """In_progress handoff but no publishable app files blocks publish after timeout."""
     from _shared.artifact_store import DEV_READY_MISSING, classify_developer_readiness
+
+    ticks = {"n": 0}
+
+    def _mono() -> float:
+        ticks["n"] += 1
+        if ticks["n"] <= 3:
+            return float(ticks["n"] - 1)
+        return 10.0
 
     with (
         patch(
@@ -537,6 +589,7 @@ def test_classify_developer_readiness_missing_without_artifacts() -> None:
         ),
         patch("_shared.artifact_store.list_run_artifact_keys", return_value=["demo-app/db/HANDOFF.md"]),
         patch("time.sleep"),
+        patch("time.monotonic", side_effect=_mono),
     ):
         decision, _ = classify_developer_readiness(
             "run-4", "demo-app", timeout_sec=5.0, poll_interval_sec=0.01, stall_polls=2

@@ -1575,20 +1575,43 @@ def _generate_and_write(agent, user_message: str, frontend_dir: Path) -> list[st
     """Call the model, parse the JSON file map, write files (honoring
     _is_protected_path). Returns the list of files written.
     """
-    response = agent(user_message)
-    text = str(response).strip()
+    text = ""
+    files: dict[str, Any] | None = None
+    for attempt in range(2):
+        prompt = user_message
+        if attempt == 1:
+            prompt = (
+                user_message
+                + "\n\nCRITICAL RETRY: Your previous reply was not valid JSON. "
+                "Respond with ONLY a single JSON object mapping relative file paths "
+                "to file contents. No markdown, no commentary, no OpenAPI analysis."
+            )
+        response = agent(prompt)
+        text = str(response).strip()
 
-    # Strip markdown fences if the model added them.
-    if text.startswith("```"):
-        text = text.split("```", 2)[1]
-        if text.startswith("json"):
-            text = text[4:]
-    text = text.strip()
+        # Strip markdown fences if the model added them.
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip()
 
-    try:
-        files = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"[frontend-agent] model did not return valid JSON: {e}\n{text[:500]}")
+        files = _parse_frontend_file_map_json(text)
+        if isinstance(files, dict) and files:
+            break
+        print(
+            f"[frontend-agent] attempt {attempt + 1}: could not parse JSON file map "
+            f"(len={len(text)}); retrying…"
+            if attempt == 0
+            else f"[frontend-agent] attempt {attempt + 1}: still no JSON file map",
+            file=sys.stderr,
+        )
+
+    if not isinstance(files, dict) or not files:
+        raise SystemExit(
+            "[frontend-agent] model did not return a non-empty JSON file map "
+            f"after retry. First 500 chars:\n{text[:500]}"
+        )
 
     written: list[str] = []
     skipped: list[str] = []
@@ -1596,6 +1619,8 @@ def _generate_and_write(agent, user_message: str, frontend_dir: Path) -> list[st
         if _is_protected_path(rel_path):
             skipped.append(rel_path)
             continue
+        if not isinstance(content, str):
+            content = str(content)
         dest = frontend_dir / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
@@ -1604,6 +1629,32 @@ def _generate_and_write(agent, user_message: str, frontend_dir: Path) -> list[st
     if skipped:
         print(f"[frontend-agent] skipped protected file(s): {skipped}")
     return written
+
+
+def _parse_frontend_file_map_json(text: str) -> dict[str, Any] | None:
+    """Parse the LLM file-map JSON, tolerating prose wrappers the model sometimes adds.
+
+    Returns None when nothing parseable as an object was found (caller fails closed).
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            parsed = json.loads(text[start : end + 1])
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 def _clear_frontend_generated(frontend_dir: Path) -> None:

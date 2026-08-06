@@ -13,6 +13,7 @@ sys.path.insert(0, str(_REPO_ROOT / "agents"))
 from _shared.delivery_profile import (  # noqa: E402
     build_delivery_profile_from_paths,
     design_doc_includes_streamlit,
+    frontend_required_from_delivery_profile,
     merge_delivery_profiles,
     scan_delivery_text,
     sync_context_delivery_profile,
@@ -145,3 +146,105 @@ def test_sync_reads_input_file_when_input_path_missing(tmp_path: Path) -> None:
 def test_design_doc_includes_streamlit() -> None:
     assert design_doc_includes_streamlit("| UI | Streamlit |")
     assert not design_doc_includes_streamlit("| API | FastAPI |")
+
+
+def test_prd_only_streamlit_downgraded_when_brief_silent(tmp_path: Path) -> None:
+    """Regression: product-agent's PRD picked Streamlit for a brief that names no
+    frontend tech at all (violating its own "never default to Streamlit" rule). The
+    brief is the source of truth for tech CHOICE - an unconfirmed PRD claim must not
+    silently override the platform's React default."""
+    brief = tmp_path / "inputs" / "visitor-managemtn.txt"
+    brief.parent.mkdir(parents=True)
+    brief.write_text(
+        "Organizations need a better way to manage visitors entering their offices.\n"
+        "Register visitors, schedule visits, record check-in/check-out.\n",
+        encoding="utf-8",
+    )
+    prd = tmp_path / "docs" / "PRD" / "app.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text("| Client UI | **Streamlit** | Primary UI for reception staff |\n", encoding="utf-8")
+
+    profile = build_delivery_profile_from_paths(tmp_path, prd_path=str(prd), input_path=str(brief))
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiPattern"] == "react"
+
+
+def test_prd_streamlit_kept_when_brief_confirms_it(tmp_path: Path) -> None:
+    brief = tmp_path / "inputs" / "app.txt"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("Build a Streamlit dashboard for reception staff.\n", encoding="utf-8")
+    prd = tmp_path / "docs" / "PRD" / "app.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text("| Client UI | **Streamlit** |\n", encoding="utf-8")
+
+    profile = build_delivery_profile_from_paths(tmp_path, prd_path=str(prd), input_path=str(brief))
+    assert profile["requiresStreamlit"] is True
+
+
+def test_prd_streamlit_trusted_when_brief_unavailable(tmp_path: Path) -> None:
+    """No brief to cross-check against (e.g. never propagated into context) - fall back
+    to trusting the PRD, same as before this guard existed."""
+    prd = tmp_path / "docs" / "PRD" / "app.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text("| Client UI | **Streamlit** |\n", encoding="utf-8")
+
+    profile = build_delivery_profile_from_paths(tmp_path, prd_path=str(prd))
+    assert profile["requiresStreamlit"] is True
+
+
+def test_sync_falls_back_to_input_rel_for_app_when_context_missing_inputpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: AgentCore/orchestrator-driven cloud runs don't always propagate
+    inputPath into context.json even though the brief exists at the conventional
+    <slug>/inputs/<slug>.txt path - without a fallback there, the brief-vs-PRD guard
+    has nothing to check and a wrong PRD Streamlit choice goes uncaught."""
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")  # cloud layout: <slug>/inputs/<slug>.txt
+    slug = "visitor-managemtn"
+    brief = tmp_path / slug / "inputs" / f"{slug}.txt"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("Organizations need a better way to manage visitors.\n", encoding="utf-8")
+    prd = tmp_path / slug / "docs" / "PRD" / f"{slug}.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text("| Client UI | **Streamlit** |\n", encoding="utf-8")
+
+    ctx_path = tmp_path / "context.json"
+    ctx_path.write_text(
+        __import__("json").dumps({"targetApp": slug, "prdPath": f"{slug}/docs/PRD/{slug}.md"}),
+        encoding="utf-8",
+    )
+
+    profile = sync_context_delivery_profile(tmp_path, ctx_path)
+    assert profile["requiresStreamlit"] is False
+    assert profile["requiresReact"] is True
+    synced = __import__("json").loads(ctx_path.read_text(encoding="utf-8"))
+    assert synced["inputPath"] == f"{slug}/inputs/{slug}.txt"
+
+
+def test_frontend_required_from_delivery_profile_silent_brief_defaults_react() -> None:
+    """Silent brief scans to requiresReact=False — still require React frontend."""
+    assert (
+        frontend_required_from_delivery_profile(
+            {
+                "uiRequired": False,
+                "requiresReact": False,
+                "requiresStreamlit": False,
+                "noFrontendExplicit": False,
+            }
+        )
+        is True
+    )
+
+
+def test_frontend_required_from_delivery_profile_streamlit_skips() -> None:
+    assert frontend_required_from_delivery_profile({"requiresStreamlit": True}) is False
+
+
+def test_frontend_required_from_delivery_profile_explicit_no_frontend_skips() -> None:
+    assert (
+        frontend_required_from_delivery_profile(
+            {"requiresReact": False, "noFrontendExplicit": True}
+        )
+        is False
+    )

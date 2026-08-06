@@ -238,6 +238,15 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
   or seed uses `NULL` for it, DDL must **omit** `NOT NULL`. Call `db_validate_sql` before finishing —
   it blocks NULL inserts into NOT NULL columns. `CREATE TABLE IF NOT EXISTS` does not change nullability
   on existing RDS tables; the host apply script reconciles drift, but your schema files must match design.
+- **Multi-value string fields (tags, type lists, codes) — prefer JSONB, not TEXT[]:**
+  Developer-agent schema_parity fails when DDL is `TEXT[]` / `UUID[]` but the ORM lands as
+  `String`/`Text` (a common LLM slip). Prefer `JSONB NOT NULL DEFAULT '[]'::jsonb` for
+  unordered string lists (compatible aircraft types, tags, labels). Developer maps that to
+  `mapped_column(JSONB().with_variant(JSON(), "sqlite"), ...)` — already a hard-taught pattern.
+  Use native `TYPE[]` only when the design explicitly needs array operators (`ANY`, `@>`, GIN
+  on arrays). If you do use `col TEXT[]` / `UUID[]`, list every array column in
+  `### handoff_for_developer` as `ARRAY: table.col → ORM ARRAY(String)|ARRAY(PG_UUID)` so
+  developer cannot miss it.
 {{AUTH_TABLE_SECTION}}
 - `nosql/` — **only** when design §3/§6 explicitly requires MongoDB collections
 

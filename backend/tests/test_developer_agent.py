@@ -631,6 +631,7 @@ def test_orm_column_category_array_of_string_is_array_not_string() -> None:
     assert mod._orm_column_category("ARRAY(Text)") == "array"
     assert mod._orm_column_category("ARRAY(Integer)") == "array"
     assert mod._orm_column_category("ARRAY(pg_uuid_column())") == "array"
+    assert mod._orm_column_category("PG_ARRAY(String)") == "array"
     # Non-array usages of the same inner keywords still resolve as before.
     assert mod._orm_column_category("String") == "string"
     assert mod._orm_column_category("Text") == "string"
@@ -641,3 +642,4 @@ def test_db_column_category_array_matches_orm_array() -> None:
     mod = _load_agent_module()
     assert mod._db_column_category("ARRAY", "_text") == "array"
     assert mod._orm_column_category("ARRAY(String)") == mod._db_column_category("ARRAY", "_text")
+    assert mod._orm_column_category("PG_ARRAY(String)") == mod._db_column_category("ARRAY", "_text")

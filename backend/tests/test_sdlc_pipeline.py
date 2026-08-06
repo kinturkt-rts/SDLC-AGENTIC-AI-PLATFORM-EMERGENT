@@ -1019,3 +1019,49 @@ def test_step_frontend_a2a_sends_json_handoff_not_prose(
     assert body["run_id"] == "fe-test-2"
     assert "Generate the React frontend" not in captured["task"]
     assert "frontend-agent" in runner.agents_run
+
+
+def test_step_frontend_a2a_skip_does_not_mark_agent_run_or_fake_artifacts(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a legitimate frontend-agent skip (deliveryProfile chose Streamlit)
+    was recorded as if it ran - agents_run.append + a Frontend artifact path pointing
+    at a frontend/ folder that was never created, making the run timeline lie."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.root = repo_root
+    runner.feature = "recipe-vault"
+    runner.run_id = "fe-test-3"
+    runner.transport = "a2a"
+    runner.agents_run = []
+    runner.artifacts = {}
+    runner.context = {
+        "deliveryProfile": {"requiresStreamlit": True, "requiresReact": False},
+        "openApiPath": "recipe-vault/openapi.json",
+    }
+    runner.context_file = "agents/pipeline/recipe-vault.context.json"
+
+    ensure_artifacts_called = False
+
+    def fake_invoke(agent_name, task, *, step, attach_context=True, **kwargs):
+        return json.dumps({"status": "skipped", "target_app": "recipe-vault"})
+
+    def fake_ensure_artifacts():
+        nonlocal ensure_artifacts_called
+        ensure_artifacts_called = True
+
+    with (
+        patch.object(runner, "_ensure_openapi_for_frontend"),
+        patch.object(runner, "_invoke_a2a", side_effect=fake_invoke),
+        patch.object(runner, "_ensure_frontend_artifacts", side_effect=fake_ensure_artifacts),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_frontend()
+
+    assert "frontend-agent" not in runner.agents_run
+    assert "Frontend" not in runner.artifacts
+    assert ensure_artifacts_called is False

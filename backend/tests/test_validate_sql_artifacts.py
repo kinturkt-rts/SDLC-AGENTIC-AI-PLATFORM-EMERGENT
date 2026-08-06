@@ -320,6 +320,45 @@ def test_check_ddl_column_drift_detects_renamed_column(tmp_path: Path) -> None:
     assert "--reset-schema" in drift[0]
 
 
+def test_check_ddl_column_drift_ignores_multiline_exclude_constraint(tmp_path: Path) -> None:
+    """Regression: equipment-rental-app's EXCLUDE USING gist (...) WHERE (...) spans
+    3 lines; only the first is prefix-skipped, so line-based parsing misread
+    "daterange(reserved_from, reserved_to, '[]') WITH &&" and ") WHERE (status = ...)"
+    as bogus columns and reported drift against a live table that actually matched."""
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "001_create_reservations.sql").write_text(
+        """
+        CREATE TABLE IF NOT EXISTS reservations (
+            id SERIAL PRIMARY KEY,
+            equipment_item_id INT NOT NULL,
+            reserved_from DATE NOT NULL,
+            reserved_to DATE NOT NULL,
+            status reservation_status NOT NULL DEFAULT 'confirmed',
+            CONSTRAINT chk_reservation_dates CHECK (reserved_to >= reserved_from),
+            EXCLUDE USING gist (
+                equipment_item_id WITH =,
+                daterange(reserved_from, reserved_to, '[]') WITH &&
+            ) WHERE (status = 'confirmed')
+        );
+        """,
+        encoding="utf-8",
+    )
+    cur = _FakeCursor(
+        {
+            ("rental_app", "reservations"): [
+                "id",
+                "equipment_item_id",
+                "reserved_from",
+                "reserved_to",
+                "status",
+            ]
+        }
+    )
+    drift = check_ddl_column_drift(cur, app_schema="rental_app", sql_dir=sql_dir)
+    assert drift == []
+
+
 def test_check_ddl_column_drift_clean_when_columns_match(tmp_path: Path) -> None:
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()

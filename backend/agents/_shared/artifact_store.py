@@ -772,10 +772,12 @@ def classify_developer_readiness(
                        run store — publish best-effort rather than discarding work.
       - ``missing``:   no terminal handoff and no publishable artifacts — block.
 
-    ``stall_polls`` lets a dead developer (in_progress handoff whose file count has
-    stopped growing) resolve to ``partial`` quickly instead of blocking the whole
-    timeout — a still-writing developer keeps advancing its file count and is not
-    treated as stalled.
+    ``stall_polls`` applies only when there is **no** handoff file yet (or status is
+    empty/unknown) but artifacts already exist — so a crashed agent that never wrote
+    handoff can still resolve to ``partial``. An ``in_progress`` handoff is left alone
+    until the deadline: developer often spends many minutes in validate/fix loops
+    with a stable ``writtenFiles`` count; treating that as stalled PARTIAL was racing
+    frontend-agent ahead of a later ``failed`` handoff (and ahead of openapi.json).
     """
     import time
 
@@ -806,6 +808,12 @@ def classify_developer_readiness(
                 return DEV_READY_COMPLETED, handoff
             if status in {"failed", "error"}:
                 return DEV_READY_FAILED, handoff
+            # in_progress / unknown: keep waiting for a terminal status. Do not
+            # early-exit on a stable writtenFiles count — validate/fix loops
+            # often write zero new files for many minutes.
+            if status == "in_progress":
+                time.sleep(max(0.5, poll_interval_sec))
+                continue
             count = len(handoff.get("writtenFiles") or [])
             if count == last_count:
                 stable += 1
@@ -814,6 +822,15 @@ def classify_developer_readiness(
                 last_count = count
             if stable >= max(1, stall_polls):
                 return _non_terminal(handoff)
+        else:
+            # No handoff yet — stall on artifact presence so a dead agent that
+            # never finalizes can still publish best-effort.
+            if run_has_publishable_app_artifacts(run_id, target_app):
+                stable += 1
+                if stable >= max(1, stall_polls):
+                    return _non_terminal(None)
+            else:
+                stable = 0
         time.sleep(max(0.5, poll_interval_sec))
 
     return _non_terminal(_read())
