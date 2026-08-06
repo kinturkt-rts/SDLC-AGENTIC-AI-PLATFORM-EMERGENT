@@ -2749,10 +2749,8 @@ _DB_COLUMN_CATEGORY_MAP: dict[str, str] = {
     "jsonb": "json",
 }
 
-# Ordered ORM type-expression keyword -> category. Order only matters where a
-# keyword is a substring of another (e.g. "Time" in "TimestampTZ"); those cases
-# all resolve to the same category so the ambiguity is harmless.
 _ORM_TYPE_CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("ARRAY", "array"),
     ("pg_uuid_column", "string"),  # folded into string — see _DB_COLUMN_CATEGORY_MAP note
     ("PG_UUID", "string"),
     ("UUID", "string"),
@@ -2777,7 +2775,6 @@ _ORM_TYPE_CATEGORY_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("Time", "timestamp"),
     ("JSONB", "json"),
     ("JSON", "json"),
-    ("ARRAY", "array"),
 )
 
 _MODEL_TABLENAME_RE = re.compile(r'__tablename__\s*=\s*["\']([^"\']+)["\']')

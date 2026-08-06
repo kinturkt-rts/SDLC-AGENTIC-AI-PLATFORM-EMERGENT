@@ -17,7 +17,6 @@ import {
   Check,
   X,
   Send,
-  AlertTriangle,
   XCircle,
   ScrollText,
 } from 'lucide-react';
@@ -35,6 +34,7 @@ import { formatRelative, formatDuration } from '@/src/lib/format';
 import { TIMELINE_PHASES, phaseDisplayLabel, stepStatusHint } from '@/src/lib/pipeline-phases';
 import { PipelineHandoffsCard } from '@/src/features/runs/PipelineHandoffsCard';
 import { InputBriefCard } from '@/src/features/runs/InputBriefCard';
+import { FailedRunCard } from '@/src/features/runs/FailedRunCard';
 import { AgentMessagesCard } from '@/src/features/runs/AgentMessagesCard';
 import { OpenLiveAppButton } from '@/src/features/runs/OpenLiveAppButton';
 import { RecentTracker } from '@/src/components/common/RecentTracker';
@@ -214,19 +214,7 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
             </Card>
           ) : null}
 
-          {status === 'failed' ? (
-            <Card className="flex items-start gap-3 border-red-500/30 bg-red-500/[0.05] p-4">
-              <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-400">
-                <AlertTriangle className="h-4 w-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-foreground">Pipeline failed</p>
-                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-                  {run.error ?? 'See the phase timeline and event stream below for details.'}
-                </p>
-              </div>
-            </Card>
-          ) : null}
+          {status === 'failed' ? <FailedRunCard error={run.error} /> : null}
 
           {/* Inline HITL when waiting for a human */}
           {waitingStep ? (

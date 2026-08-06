@@ -21,14 +21,28 @@ if (-not $UserPoolId) {
     if (Test-Path $tfDir) {
         Push-Location $tfDir
         try {
+            # terraform often writes to stderr (box chars / backend warnings). With
+            # $ErrorActionPreference=Stop that becomes a terminating NativeCommandError.
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
             $UserPoolId = (terraform output -raw user_pool_id 2>$null)
+            if ($LASTEXITCODE -ne 0) { $UserPoolId = "" }
+            $ErrorActionPreference = $prevEap
         } finally {
             Pop-Location
         }
     }
 }
+# Fallback: same pool id wired into the control-plane ECS task definition.
 if (-not $UserPoolId) {
-    throw "COGNITO_USER_POOL_ID not set. Apply control-plane-auth Terraform first, then re-run."
+    $taskDef = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\control-plane-frontend\task-definition.json"
+    if (Test-Path $taskDef) {
+        $match = Select-String -Path $taskDef -Pattern '"COGNITO_USER_POOL_ID",\s*"value":\s*"([^"]+)"'
+        if ($match) { $UserPoolId = $match.Matches[0].Groups[1].Value }
+    }
+}
+if (-not $UserPoolId) {
+    throw "COGNITO_USER_POOL_ID not set. Pass -UserPoolId, set the env var, or apply control-plane-auth Terraform."
 }
 
 if (-not $Password) {
@@ -38,6 +52,8 @@ if (-not $Password) {
 
 Write-Host "Ensuring Cognito user $Email in pool $UserPoolId ..." -ForegroundColor Cyan
 
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 aws cognito-idp admin-create-user `
     --user-pool-id $UserPoolId `
     --username $Email `
@@ -46,7 +62,7 @@ aws cognito-idp admin-create-user `
     --message-action SUPPRESS `
     --region $Region `
     --profile $Profile 2>$null | Out-Null
-
+# Non-zero is OK when the user already exists — password set below is the real fix.
 aws cognito-idp admin-set-user-password `
     --user-pool-id $UserPoolId `
     --username $Email `
@@ -54,7 +70,9 @@ aws cognito-idp admin-set-user-password `
     --permanent `
     --region $Region `
     --profile $Profile
-if ($LASTEXITCODE -ne 0) { throw "admin-set-user-password failed" }
+$setCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+if ($setCode -ne 0) { throw "admin-set-user-password failed" }
 
 Write-Host "`nUser ready." -ForegroundColor Green
 Write-Host "  Email:    $Email"

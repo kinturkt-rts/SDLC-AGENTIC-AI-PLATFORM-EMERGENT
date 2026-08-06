@@ -620,3 +620,24 @@ def test_validate_relationship_secondary_noops_without_models_dir(tmp_path: Path
     service = tmp_path / "svc"
     service.mkdir()
     assert mod.validate_relationship_secondary(service) == []
+
+
+def test_orm_column_category_array_of_string_is_array_not_string() -> None:
+    """Regression: schema_parity false-failed every correctly-declared array column
+    (DB TEXT[] <-> ORM ARRAY(String)) because "String" matched before "ARRAY" in the
+    ordered keyword list. ARRAY must win over any inner type it wraps."""
+    mod = _load_agent_module()
+    assert mod._orm_column_category("ARRAY(String)") == "array"
+    assert mod._orm_column_category("ARRAY(Text)") == "array"
+    assert mod._orm_column_category("ARRAY(Integer)") == "array"
+    assert mod._orm_column_category("ARRAY(pg_uuid_column())") == "array"
+    # Non-array usages of the same inner keywords still resolve as before.
+    assert mod._orm_column_category("String") == "string"
+    assert mod._orm_column_category("Text") == "string"
+    assert mod._orm_column_category("Integer") == "integer"
+
+
+def test_db_column_category_array_matches_orm_array() -> None:
+    mod = _load_agent_module()
+    assert mod._db_column_category("ARRAY", "_text") == "array"
+    assert mod._orm_column_category("ARRAY(String)") == mod._db_column_category("ARRAY", "_text")

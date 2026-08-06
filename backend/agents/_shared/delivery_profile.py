@@ -208,14 +208,30 @@ def build_delivery_profile_from_paths(
     input_path: str | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Build delivery profile from input brief and/or PRD file paths."""
-    profiles: list[dict[str, Any]] = []
+    """Build delivery profile from input brief and/or PRD file paths.
+
+    requiresStreamlit is gated on the input brief, not the PRD: product-agent's own
+    Client-UI rule says React is the default and Streamlit is opt-in only when the
+    brief explicitly names it - but a PRD-writing LLM call can still violate that rule
+    for a brief that names no specific tech. When the input brief is available and its
+    own independent scan doesn't detect Streamlit, a PRD-only Streamlit claim is
+    downgraded so it can't silently override the platform's React default.
+    """
     input_text = _read_optional(repo_root, input_path, run_id=run_id)
     prd_text = _read_optional(repo_root, prd_path, run_id=run_id)
-    if input_text:
-        profiles.append(scan_delivery_text(input_text))
-    if prd_text:
-        profiles.append(scan_delivery_text(prd_text))
+
+    input_profile = scan_delivery_text(input_text) if input_text else None
+    prd_profile = scan_delivery_text(prd_text) if prd_text else None
+
+    if (
+        prd_profile
+        and prd_profile.get("requiresStreamlit")
+        and input_profile is not None
+        and not input_profile.get("requiresStreamlit")
+    ):
+        prd_profile = {**prd_profile, "requiresStreamlit": False, "uiPattern": None}
+
+    profiles = [p for p in (input_profile, prd_profile) if p]
     if not profiles:
         return merge_delivery_profiles()
     return merge_delivery_profiles(*profiles)
@@ -292,6 +308,18 @@ def sync_context_delivery_profile(
         or context.get("inputFile")
         or context.get("input_file")
     )
+    if not resolved_input:
+        # AgentCore/orchestrator-driven cloud runs don't always propagate inputPath into
+        # context.json even though the brief was uploaded to S3 at the conventional path -
+        # without this, the Streamlit-vs-brief guard above has no brief text to check
+        # against and can't catch a PRD that ignored the "never default to Streamlit" rule.
+        target_app = context.get("targetApp") or context.get("target_app")
+        if target_app:
+            from _shared.pipeline_context import input_rel_for_app
+
+            guessed = input_rel_for_app(str(target_app))
+            if _read_optional(repo_root, guessed, run_id=run_id):
+                resolved_input = guessed
     profile = build_delivery_profile_from_paths(
         repo_root,
         prd_path=context.get("prdPath") or context.get("prd_path"),

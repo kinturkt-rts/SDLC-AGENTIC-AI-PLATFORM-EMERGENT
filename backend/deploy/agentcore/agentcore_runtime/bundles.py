@@ -204,9 +204,7 @@ def frontend_agent_bundle() -> BundleFactory:
             id="generate_frontend",
             name="generate_frontend",
             description=(
-                "Generates a React + TypeScript frontend from a backend OpenAPI "
-                "spec and product/design context, consuming the Developer->Frontend "
-                "handoff (target_app, runId, openapi_path)."
+                "Generates a React + TypeScript frontend from a backend OpenAPI using Developer-Agent's handoff"
             ),
             tags=["frontend", "react", "typescript", "codegen"],
         )
