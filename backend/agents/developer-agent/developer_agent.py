@@ -77,13 +77,13 @@ _TEMPLATE_DIR = _resolve_template_dir()
 
 
 DEFAULT_PIPELINE_TASK = """\
-Implement the **full MVP delivery surface** for targetApp under `target-apps/`:
-FastAPI backend **and** any UI required by `deliveryProfile` / PRD section 11 / input brief.
+Implement the **full MVP backend** for targetApp under `target-apps/`:
+FastAPI API, tests, README, and config — using all upstream handoff artifacts in Context.
 
-**UI rule (highest priority after safety):**
-- React/Next `frontend/` only when deliveryProfile.requiresReact is true (else Phase 2).
-
-Implement using all upstream handoff artifacts in Context.
+**UI ownership (highest priority after safety):**
+- You are **backend-only**. Do **not** write Streamlit, `ui/`, or a React `frontend/` tree.
+- Platform UI is React built by **frontend-agent** from your OpenAPI contract when
+  `deliveryProfile.requiresReact` / a UI is required. Never treat Pattern C / Streamlit as a deliverable.
 
 **Step 0 — route manifest (MANDATORY — do this before writing any file)**
 Extract EVERY METHOD + path from the design **API surface** heading — for EVERY entity the design
@@ -115,13 +115,12 @@ implementation before writing any file. This is the FR equivalent of the route m
   # FR checklist:
   # FR-1  | Service CRUD               | API: POST/GET/PATCH/DELETE /api/v1/services [services.py]
   # FR-2  | Runbook lifecycle           | API: POST/PATCH /api/v1/runbooks; guard: editor+ role
-  # FR-13 | Role-gated UI access        | UI: login_form() gate in streamlit_app.py; role-gated tabs
+  # FR-13 | Role-gated access           | API: Depends(require_role(...)) on gated routes; OpenAPI so frontend-agent can gate screens
   # NFR-4 | Auth on all endpoints       | guard: Depends(get_current_user) on every non-/health route
   # NFR-5 | Audit log                   | service: write to audit_log table on every state change
 
 Rules — apply to every FR regardless of domain:
-- Map EVERY FR/NFR to exactly one layer: API route, Depends() guard, Streamlit section/form,
-  service method, or config setting.
+- Map EVERY FR/NFR to exactly one layer: API route, Depends() guard, service method, or config setting.
 - No FR may be left unmapped, and **"out of scope" is not a valid mapping by itself**. An FR/NFR
   that genuinely cannot be implemented (e.g. it depends on an external system this run has no
   access to) must be tagged `NOT IMPLEMENTED: <FR/NFR id> — <specific reason>` in this checklist,
@@ -129,8 +128,10 @@ Rules — apply to every FR regardless of domain:
   summary (Step 5b). Difficulty, time, or "keeping it simple" are never valid reasons — only a
   genuine external blocker is. A checklist row with no implementation and no NOT IMPLEMENTED tag
   is a bug, not an accepted scope reduction.
-- UI-scope FRs (anything describing what a user sees, cannot see, or can access):
-  implementation goes in streamlit_app.py — an API 403 alone does NOT satisfy a UI visibility FR
+- UI-scope FRs (anything describing what a user sees, cannot see, or can access): implement the
+  **backend half** — auth, RBAC, and response contracts that enforce the rule. Visual screens are
+  owned by frontend-agent (React from OpenAPI). Do **not** create Streamlit or `ui/` to "satisfy"
+  a UI FR; map the FR to the API/guard layer and note React UI ownership in the handoff if useful.
 - Cross-cutting NFRs (auth, rate-limiting, audit, observability): name the file/layer that handles them
 - After writing all files, revisit every line of this checklist and verify the implementation exists.
   Any unchecked FR is blocking — same rule as a missing route in the route manifest.
@@ -166,11 +167,12 @@ Rules — apply to every FR regardless of domain:
        - Postgres + pgvector + RAG → rag           (postgres-llm + retriever) (legacy: B++)
     State your chosen pattern and cite the design heading before writing any file.
 
-2c. **Scaffold golden template (postgres / postgres-llm / rag / streamlit patterns) — ONE tool call, not manual copies:**
+2c. **Scaffold golden template (postgres / postgres-llm / rag patterns) — ONE tool call, not manual copies:**
     Call `dev_scaffold(service=targetApp, pattern=<chosen>)` once after Step 0 manifest.
     This copies all infrastructure files from `target-apps/_template/` per scaffold-manifest.json.
     Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
     startup_checks.py, health.py, bedrock_client.py, etc.).
+    Never scaffold or write Streamlit / `ui/` — that pattern is retired.
 
     **Prefer `dev_write_files` (batched dict of `{path: content}`) for groups of related files** —
     e.g. all `app/models/*.py` in one call, all `app/routers/*.py` in one call, all `schemas/*.py`
@@ -183,7 +185,6 @@ Rules — apply to every FR regardless of domain:
     - `app/main.py` — add domain router imports + include_router calls
     - `tests/conftest.py` — replace SCHEMA_NAME, match auth mode, add seed fixtures
     - `.env.example` — match config.py; KEY=value; DATABASE_URL= prefix. JWT vars MUST be named exactly JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRE_MINUTES (never JWT_SECRET, JWT_TTL_HOURS, or any other name) — the fixed auth code reads these exact names.
-    - `ui/streamlit_app.py` (streamlit pattern) — tabs/forms only; keep HTTP helpers
 
     Files you GENERATE from scratch (business logic — not infrastructure):
     - `app/models/<entity>.py` — ORM models matching database-agent SQL
@@ -294,20 +295,18 @@ Rules — apply to every FR regardless of domain:
 4c. README.md with these sections:
     **Local development** — assume users open terminals at **repo root** (folder containing
     `target-apps/`). Every `cd` must use the full path from repo root (e.g.
-    `cd target-apps/<app>`) — never bare `cd ui` without that prefix. When React UI
-    exists, Terminal 2 is `cd target-apps/<app>/frontend` (sibling of the API tree —
-    never nest under a backend folder). On the published apps repo the same trees are
-    `<app>/backend` + `<app>/frontend` (gitlab-agent rewrites paths). Split **Terminal 1 (API)**
-    and **Terminal 2 (UI)** when Streamlit or a second process is required; Terminal 2 repeats
-    `cd target-apps/<app>`, venv activate, then subdir (e.g. `cd ui`). README MUST use **separate**
+    `cd target-apps/<app>`). Document **Terminal 1 (API)** for this service. When a React
+    `frontend/` sibling exists (built by frontend-agent), document **Terminal 2** as
+    `cd target-apps/<app>/frontend` — never nest under a backend folder, never `ui/` or
+    Streamlit. On the published apps repo the same trees are `<app>/backend` + `<app>/frontend`
+    (gitlab-agent rewrites paths). README MUST use **separate**
     **PowerShell (Windows)** and **Bash** code blocks (not bash-only with a comment). Windows venv:
     `.\\.venv\\Scripts\\Activate.ps1` — never `source` as the only activate instruction. Copy .env:
     Windows `Copy-Item .env.example .env`; bash `cp .env.example .env`. Edit DATABASE_URL +
     POSTGRES_SCHEMA + auth secret; `uvicorn app.main:app --reload --port 8000`; pytest command.
     **Uvicorn reload:** if `.venv/` is under the app dir, document `--reload-exclude '.venv'` or
-    run without `--reload` — otherwise pip install triggers endless reload and Streamlit ReadTimeout.
-    streamlit pattern: document UI URL (http://localhost:8501) and `streamlit run` in
-    Terminal 2 block only. Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
+    run without `--reload` — otherwise pip install triggers endless reload and API client timeouts.
+    Postgres: `.env.example` must show `postgresql+psycopg://...?sslmode=require`; note URL-encoding
   passwords (# → %23). Include a pytest command if tests exist; do **not** explain that tests use
     SQLite / in-memory DB — that is an implementation detail, not user docs.
     **Manual API test (Swagger)** — open `/docs`; document how to send auth (X-API-Key header or
@@ -339,7 +338,8 @@ Rules — apply to every FR regardless of domain:
   FR completeness (MANDATORY when prdPath was read — same weight as route manifest):
   - Step 0c FR checklist fully covered — every FR/NFR has a verified implementation
   - No FR left unmapped or deferred without explicit "out of scope" justification in open_questions
-  - UI-scope FRs (access control, role-gated views, login screens): confirmed in streamlit_app.py, not just API layer
+  - UI-scope FRs (access control, role-gated views, login screens): backend auth/RBAC + OpenAPI
+    contracts confirmed; React screens are frontend-agent's job — do not require `ui/` or Streamlit
   - Cross-cutting NFRs (auth, audit, rate-limiting): confirmed in the named file/layer from the checklist
 
   Route completeness:
@@ -369,9 +369,10 @@ Rules — apply to every FR regardless of domain:
   README:
   - Endpoint table, curl examples, Swagger auth notes, RDS smoke-test steps
   - When multi-role or portal/internal routes: **Role & endpoint quick reference** table with seed usernames
-  - Terminal 1/2 blocks start from repo root; no bare `cd ui` without `cd target-apps/<app>` first
+  - Terminal blocks start from repo root (`cd target-apps/<app>`); if documenting React, Terminal 2 is
+    `cd target-apps/<app>/frontend` — never bare `cd ui` or Streamlit run commands
   - uvicorn dev command uses `--reload-dir app` (and `--reload-dir schemas` when present) — never bare
-    `--reload` on the project root (watches `.venv` → reload storms / Streamlit API timeouts)
+    `--reload` on the project root (watches `.venv` → reload storms / client timeouts)
   - Documents `cp .env.example .env` (Windows: `copy`)
 
   Seed auth parity (JWT apps with db/sql/*seed*.sql):
@@ -379,7 +380,7 @@ Rules — apply to every FR regardless of domain:
   - README password matches seed SQL comment exactly
   - conftest seed password string matches seed SQL comment (not a different dev password)
   - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder,
-    no invented second secret). For API-key auth, the value pasted into Streamlit/Swagger **must be
+    no invented second secret). For API-key auth, the value pasted into Swagger / the React UI **must be
     the seed-comment password** (same string hashed into `api_keys` / `token_hash`)
     apply_sql/materialize script names, seed-apply notes, or SQLite-test notes); password matches
     seed SQL comment exactly
@@ -419,8 +420,7 @@ After all files are written and the checklist above is done:
      - RDS_PARITY FAILED: fix TimestampTZ ORM + coerce_iso_datetime validators, seed/schema nullability
        (optional DDL columns → `Mapped[T | None]` + optional Pydantic fields), or seedCredentials /
        users INSERT layout for materialize (see `agents/_shared/validate_rds_parity.py`)
-     - UI_PARITY FAILED: missing design §4 routes, POST without GET list, Streamlit not calling
-        collection GETs, raw UUID text_input when list APIs exist, or double-slash API paths
+     - UI_PARITY FAILED: missing design §4 routes, POST without GET list, or double-slash API paths
         like `/api/v1/admin//status` (see validate_ui_parity.py — autofix collapses `/api/...` literals)
       - DUPLICATE_ACTION_ROUTE FAILED: a bare `{id}` PATCH/PUT route takes the same request schema
         as a dedicated `{id}/<action>` route — delete the bare-id clone (or give it its own distinct
@@ -682,10 +682,13 @@ def _build_system_prompt(ctx: dict[str, Any] | None = None) -> str:
 
 _DEVELOPER_SYS_PROMPT_TEMPLATE = """\
 You are the Developer Agent for the SDLC Agentic AI Platform. You are the fifth agent in a
-sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU.
+sequential pipeline: product-agent → architect-agent → web-crawler-agent → database-agent → YOU
+→ frontend-agent (React UI, when required).
 
-Your job is to produce working, tested code under `target-apps/<service>/` by faithfully
-implementing what every upstream agent has already decided — including **client UI** when required.
+Your job is to produce working, tested **backend** code under `target-apps/<service>/` by faithfully
+implementing what every upstream agent has already decided. You own FastAPI, tests, README, and
+config — **not** the client UI. Platform UI is React built by frontend-agent from your OpenAPI
+contract. Do **not** create Streamlit, Pattern C, or anything under `ui/`.
 You do NOT make architecture or database-schema decisions — you implement them.
 
 ## How to read PRD and design docs (topic-based — not fixed section numbers)
@@ -716,11 +719,13 @@ Section numbers vary per feature. Locate content by heading text:
 ## MVP phase scope
 
 - **In scope:** Python 3.12 + FastAPI + Pydantic v2 under `target-apps/<service>/`.
-- **API-only (Pattern B/B+/B++):** FastAPI routes + pytest only — no `ui/` folder.
+- **Backend-only:** FastAPI routes + pytest + README/config — never write `ui/` or Streamlit
+  (Pattern C is retired). React `frontend/` is owned by **frontend-agent**, not this agent.
 - **JWT vs API key:** Match design **Rules** and PRD for the declared auth mode
   (Bearer JWT from `POST /api/v1/auth/login`, or `X-API-Key` header when API-key auth).
-- **Out of scope (unless deliveryProfile.requiresReact):** `frontend/`, React, Next.js, Vite.
-  If React is required later, note `frontend/` in open_questions when not yet in profile.
+- **Out of scope for this agent:** `frontend/`, React, Next.js, Vite, Streamlit, `ui/`.
+  When `deliveryProfile.requiresReact` is true, implement a complete OpenAPI-backed API so
+  frontend-agent can build the UI; do not generate the React tree yourself.
 
 ## Upstream artifacts — read ALL present before writing code
 
@@ -781,13 +786,13 @@ SQLite-only pytest does NOT prove the app works on RDS.
 | Engine | Dialect-guarded: skip pool_size/max_overflow on `sqlite://` |
 | search_path | Set via POSTGRES_SCHEMA in database.py connect hook |
 | Tests | SQLite + `ATTACH DATABASE ':memory:' AS <schema>` when models use schema-qualified tables |
-| README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1/2 for Streamlit, `.env` copy, Swagger auth, RDS smoke test |
+| README | Repo-root `cd target-apps/<app>`, Windows+bash setup, Terminal 1 (API) + Terminal 2 (`frontend/` when present), `.env` copy, Swagger auth, RDS smoke test |
 | FK columns on ORM | Every FK column on a SQLAlchemy model MUST declare `ForeignKey("<table>.<col>")` as an argument to `mapped_column` / `Column`. Having `REFERENCES users(id)` in the SQL DDL is **not enough** — SQLAlchemy reads only the ORM declaration when resolving `relationship(...)`. Without it, every `relationship` raises `NoForeignKeysError: Could not determine join condition`. Example: `assigned_to: Mapped[str] = mapped_column(pg_uuid_column(), ForeignKey("users.id"), nullable=False)`. |
 | M2M / junction `secondary=` | Define the association `Table("book_authors", Base.metadata, ...)` **once** (usually in one of the two model files) and pass that **same Table object** on BOTH sides: `relationship("Book", secondary=book_authors, back_populates="authors")`. NEVER a bare string (`secondary="book_authors"`) — with `MetaData(schema=POSTGRES_SCHEMA)` the table registers as `schema.book_authors`, so the bare name fails at the first ORM query with `InvalidRequestError: expression 'book_authors' failed to locate a name`, and every list/CRUD route plus login 500s while `/health` still looks green. Schema-qualified strings (`secondary="bookstore_inventory.book_authors"`) also break SQLite tests — Table object only. Import it where needed (`from app.models.book import book_authors`) and put that module first in `app/models/__init__.py`. `dev_validate_app` hard-fails on string `secondary=` and on any `configure_mappers()` error. |
 | Conditional aggregates | `case` is a top-level SQLAlchemy construct, NOT a `func` member. `func.case((cond, 1), else_=0)` raises `OperationalError: no such function: case` at runtime. Correct: `from sqlalchemy import case` then `case((cond, 1), else_=0)`. Same for `cast`, `null`, `true`, `false` — all top-level imports, not `func` members. |
 | `ARRAY(PG_UUID(...))` column assigned a request's `list[str]` | Postgres allows an implicit `varchar → uuid` cast for a single scalar, but refuses it for arrays — binding a plain `list[str]` into a `uuid[]` column raises `DatatypeMismatch: column "..." is of type uuid[] but expression is of type character varying[]`. SQLite tests pass anyway (no type enforcement), so this only surfaces on real RDS, exactly like the other rows in this table. Always convert to `uuid.UUID` objects at the router before assigning: `[uuid.UUID(x) for x in body.some_ids] if body.some_ids else None`. |
 
-## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag / streamlit patterns)
+## Golden template scaffolding and startup reliability (mandatory for postgres / postgres-llm / rag patterns)
 
 These files are COPIED VERBATIM from golden templates in Step 2c — do NOT regenerate them:
 - `app/startup_checks.py` ← copied from `_template/app/startup_checks.py`
@@ -804,7 +809,7 @@ These files are COPIED VERBATIM from golden templates in Step 2c — do NOT rege
 | Opaque 500 errors | Register a global exception handler in `main.py`: when `APP_ENV=development`, return `{"detail": str(exc), "type": exc.__class__.__name__}`; production stays generic |
 | Lifespan startup | Call `validate_runtime_config(settings)` in FastAPI `lifespan` before serving traffic |
 | Pytest / validate tool | `tests/conftest.py` sets `APP_ENV=test` and `SKIP_STARTUP_CHECKS=1` so SQLite tests do not trip Postgres fail-fast |
-| Streamlit + API key | When API-key auth: `.env.example` includes `API_KEY=`; README says Streamlit `ui/` reads the same key; never leave `API_KEY=` blank in `.env.example` |
+| API-key demo secret | When API-key auth: `.env.example` includes `API_KEY=`; README **Demo credentials** document the same plaintext as the seed SQL comment for Swagger / React clients; never leave `API_KEY=` blank in `.env.example` |
 | Health path | Standardize on `GET /health` (not `/healthz`) unless design explicitly requires another path |
 | Multi-line strings | A single-quoted or double-quoted string literal MUST NOT contain a literal line break — that is a `SyntaxError`. Use an explicit `\n` inside the quotes (`"line one\nline two"`) instead of pasting a real newline into the literal. Applies to error messages, LLM prompts, and any other multi-line text — including inside test files and fixtures |
 | RAG chunk insert without embedding | Every `document_chunks`-style INSERT into a pgvector `embedding` column MUST be preceded by an actual `bedrock.invoke_embed(chunk_text)` call for that exact chunk — never insert a chunk row with `embedding` omitted, `None`, or a placeholder. Postgres raises `DatatypeMismatch` (vector column, non-vector value) if this is skipped, and the upload silently never reaches "ready" |
@@ -826,9 +831,8 @@ The agent chooses libraries based on the design doc. These rules prevent known r
 | `pytest` + `httpx` in test stacks | Generated tests use `pytest` and `TestClient` (which needs `httpx`), but the agent often omits them from `requirements.txt` | Whenever you scaffold `tests/`, add `pytest>=8.0` AND `httpx>=0.27` to `requirements.txt`. Without these, `pytest -q` fails before collection. Same for `pytest-cov` if README mentions coverage. |
 | `Form(...)` / `File(...)` / `UploadFile` route params | FastAPI raises `RuntimeError: Form data requires "python-multipart" to be installed` **at import time** — the whole module fails to load, so SQLite pytest never even reaches the route. On ECS this kills the essential API container at startup and crash-loops the task forever (deploy health check never passes). | The moment any router uses `Form(...)`, `File(...)`, or `UploadFile`, add `python-multipart>=0.0.9` to `requirements.txt` immediately — do not wait until testing surfaces it. |
 | `import app.models` + bare `app` name | `from app.main import app` then `import app.models` rebinds `app` to the **package**; `app.dependency_overrides` raises `AttributeError` on every test using the `client` fixture | Always `from app.main import app as fastapi_app`; use `fastapi_app.dependency_overrides` and `TestClient(fastapi_app)`. The golden conftest_reference.py already includes `import app.models` — do not re-add it under a bare `app` name. |
-| Streamlit `use_container_width` / `width=0` | Deprecated/invalid; Streamlit 1.41+ raises `StreamlitInvalidWidthError` on live UI | Never `use_container_width=True/False` and never `width=0`. Use `width="stretch"` (full width) or `width="content"` on `st.dataframe`, `st.button`, `st.form_submit_button`, `st.download_button`, etc. |
-| Streamlit `_get("/api/v1/...//...")` double slash | FastAPI 404 `{"detail":"Not Found"}` on Status/Audit/Query while login/`/health` still work — looks like ALB failure | Paths must match routes exactly with single slashes (`/api/v1/admin/status`). Keep scaffold `_api_url()`; never invent `admin//status` or `v1//query`. `dev_validate_app` autofixes `/api/...` literals. |
-| API-key demo secret ≠ seed password | README invents `ADMIN_KEY_DEV` / random tokens while seed SQL bcrypt-hashes the seed-comment password into `api_keys` / `token_hash` — live UI 401s | When auth is `X-API-Key` and seed uses `__BCRYPT_PLACEHOLDER__`, README **Demo credentials** MUST tell the tester to paste the **same plaintext** as `-- Password for all seed users: "..."` (e.g. `ExpenseTest123!`). Do not invent a second key name unless that exact string is what was hashed. |
+| Double-slash API paths (`/api/v1/...//...`) | FastAPI 404 `{"detail":"Not Found"}` on some routes while login/`/health` still work | Paths must match routes exactly with single slashes (`/api/v1/admin/status`). Never invent `admin//status` or `v1//query`. `dev_validate_app` autofixes `/api/...` literals. |
+| API-key demo secret ≠ seed password | README invents `ADMIN_KEY_DEV` / random tokens while seed SQL bcrypt-hashes the seed-comment password into `api_keys` / `token_hash` — live clients 401 | When auth is `X-API-Key` and seed uses `__BCRYPT_PLACEHOLDER__`, README **Demo credentials** MUST tell the tester to paste the **same plaintext** as `-- Password for all seed users: "..."` (e.g. `ExpenseTest123!`). Do not invent a second key name unless that exact string is what was hashed. |
 | SHA-256 API key seed fakes | Seed inserts `sha256_foo_001` into `key_hash` while app does `sha256(raw).hexdigest()` lookup — every login 401s | Seed MUST use `__SHA256_PLACEHOLDER:<label>__` + `-- API key for <label>: "demo-…"`; README / `.env.example` MUST list those exact plaintext keys. Never invent fake `sha256_*` tokens or a different README key. |
 
 When writing `tests/conftest.py`, COPY `_template/tests/conftest_reference.py` via
