@@ -76,8 +76,9 @@ def scaffold_service(
     so regenerating an app never leaves a stale protected file (security.py,
     dependencies.py, routers/auth.py, schemas/auth.py, etc.) in place.
     customize_after_scaffold destinations (app-specific config.py, main.py,
-    .env.example, README.md, requirements.txt, tests/conftest.py, ...) are left
+    .env.example, requirements.txt, tests/conftest.py, ...) are left
     untouched unless force=True, which overwrites everything in the manifest.
+    README.md is NOT copied — the agent must GENERATE it (Demo accounts from seed).
     """
     manifest_path = template_dir / "scaffold-manifest.json"
     manifest = load_manifest(manifest_path)
@@ -165,7 +166,11 @@ def format_scaffold_report(result: dict[str, Any], *, service: str) -> str:
         lines.append(f"  * {prefix}{rel}{note}")
     lines.append("")
     lines.append(
-        "Then GENERATE domain code only: app/models/<entity>.py, app/routers/<domain>.py, "
-        "schemas/<domain>.py, app/services/prompts.py (B+), tests/test_<domain>.py, README.md"
+        "GENERATE required (not scaffolded): README.md — real setup docs + Demo accounts "
+        "from seed SQL password comment (never leave Service Template placeholder)."
+    )
+    lines.append(
+        "Then GENERATE domain code: app/models/<entity>.py, app/routers/<domain>.py, "
+        "schemas/<domain>.py, app/services/prompts.py (B+), tests/test_<domain>.py"
     )
     return "\n".join(lines)

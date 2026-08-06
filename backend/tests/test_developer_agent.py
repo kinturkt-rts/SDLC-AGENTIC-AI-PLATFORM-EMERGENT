@@ -309,17 +309,22 @@ def test_ensure_service_requirements_installed_runs_pip(
     assert calls[0][:4] == ["python", "-m", "pip", "install"]
 
 
-def test_ensure_delivery_files_copies_template_seed_files(
+def test_ensure_delivery_files_copies_env_example_not_template_readme(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Regression: handoff must NOT invent a Service Template README when the
+    agent skipped Step 4c — that shipped conference-speaker with no demo passwords."""
     mod = _load_agent_module()
     service = tmp_path / "target-apps" / "demo-api"
     service.mkdir(parents=True)
     template = tmp_path / "target-apps" / "_template"
     template.mkdir(parents=True)
     (template / ".env.example").write_text("APP_ENV=test\n", encoding="utf-8")
-    (template / "README.md").write_text("# Demo API\n", encoding="utf-8")
+    (template / "README.md").write_text(
+        "# Service Template\n> Replace this README when the developer-agent scaffolds\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "_TARGET_APPS", tmp_path / "target-apps")
     monkeypatch.setattr(mod, "_TEMPLATE_DIR", template)
@@ -331,9 +336,37 @@ def test_ensure_delivery_files_copies_template_seed_files(
         context=None,
     )
     assert "target-apps/demo-api/.env.example" in written
-    assert "target-apps/demo-api/README.md" in written
+    assert "target-apps/demo-api/README.md" not in written
     assert (service / ".env.example").read_text(encoding="utf-8") == "APP_ENV=test\n"
-    assert (service / "README.md").read_text(encoding="utf-8") == "# Demo API\n"
+    assert not (service / "README.md").is_file()
+
+
+def test_ensure_delivery_files_tracks_agent_generated_readme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-api"
+    service.mkdir(parents=True)
+    (service / "README.md").write_text(
+        "# Demo API\n\n## Demo accounts\n| admin | Secret123! |\n",
+        encoding="utf-8",
+    )
+    template = tmp_path / "target-apps" / "_template"
+    template.mkdir(parents=True)
+    (template / ".env.example").write_text("APP_ENV=test\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_TARGET_APPS", tmp_path / "target-apps")
+    monkeypatch.setattr(mod, "_TEMPLATE_DIR", template)
+    monkeypatch.setattr(mod, "_is_cloud_store", lambda: False)
+
+    written = mod._ensure_delivery_files(
+        "demo-api",
+        ["target-apps/demo-api/app/main.py"],
+        context=None,
+    )
+    assert "target-apps/demo-api/README.md" in written
+    assert "Secret123!" in (service / "README.md").read_text(encoding="utf-8")
 
 
 def test_verbatim_scaffold_suffixes_is_subset_of_manifest_force_refresh() -> None:

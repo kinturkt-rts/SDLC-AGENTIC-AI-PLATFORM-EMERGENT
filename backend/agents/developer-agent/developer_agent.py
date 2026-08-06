@@ -172,6 +172,9 @@ Rules — apply to every FR regardless of domain:
     This copies all infrastructure files from `target-apps/_template/` per scaffold-manifest.json.
     Do NOT call dev_read_file + dev_write_file for files the scaffold already copied (database.py,
     startup_checks.py, health.py, bedrock_client.py, etc.).
+    **README.md is NOT copied by scaffold** — GENERATE it in Step 4c with Demo accounts from the
+    seed SQL password comment. Leaving the old Service Template stub (or skipping README) fails
+    `dev_validate_app` (README_DEMO_ACCOUNTS).
     Never scaffold or write Streamlit / `ui/` — that pattern is retired.
 
     **Prefer `dev_write_files` (batched dict of `{path: content}`) for groups of related files** —
@@ -376,6 +379,8 @@ Rules — apply to every FR regardless of domain:
   - requirements.txt matches all actual imports (no missing, no extras)
 
   README:
+  - Must be GENERATED (scaffold does not provide it) — never leave "# Service Template" /
+    "Replace this README when the developer-agent scaffolds"
   - Endpoint table, curl examples, Swagger auth notes, RDS smoke-test steps
   - When multi-role or portal/internal routes: **Role & endpoint quick reference** table with seed usernames
   - Terminal blocks start from repo root (`cd target-apps/<app>`); if documenting React, Terminal 2 is
@@ -386,7 +391,8 @@ Rules — apply to every FR regardless of domain:
 
   Seed auth parity (JWT apps with db/sql/*seed*.sql):
   - `tests/test_seed_bcrypt.py` present and passes
-  - README password matches seed SQL comment exactly
+  - README **Demo accounts** / **Seed Users** table includes the exact seed SQL password comment
+    and at least one seed username — `dev_validate_app` fails README_DEMO_ACCOUNTS otherwise
   - conftest seed password string matches seed SQL comment (not a different dev password)
   - When seed SQL uses `__BCRYPT_PLACEHOLDER__`: README lists demo credentials only (no placeholder,
     no invented second secret). For API-key auth, the value pasted into Swagger / the React UI **must be
@@ -439,9 +445,9 @@ After all files are written and the checklist above is done:
         any auth router import/registration in main.py when authMode is api-key
       - API_KEY_ROUTE_USAGE FAILED (api-key mode only): no route applies Depends(require_api_key) —
         wire it onto every route design Rules require auth on
-      - AUTH_HEADER_NAMES FAILED (api-key mode only): design names a header (e.g. X-Admin-Key) that
-        nothing in app/auth.py or app/dependencies.py reads — add an APIKeyHeader-based dependency
-        for that exact header in app/auth.py; never substitute require_api_key's X-API-Key for it
+      - README_DEMO_ACCOUNTS FAILED: README missing, still Service Template stub, or Demo accounts
+        omit the seed SQL password / username — overwrite README.md with real setup + Demo accounts
+        table (exact `-- Password for all seed users: "…"` plaintext)
 
 **Step 6 — handoff summary (LAST)**
 1. stack — language, framework, pattern, DB driver(s).
@@ -3491,6 +3497,16 @@ def _run_validation_steps(
         else:
             _ok("seed_sha256")
 
+    from _shared.validate_readme import validate_readme_demo_accounts
+
+    readme_errors = validate_readme_demo_accounts(service_dir)
+    if readme_errors:
+        detail = "README_DEMO_ACCOUNTS FAILED (testers cannot log in without this):\n" + "\n".join(
+            f"  - {e}" for e in readme_errors
+        )
+        return _fail("readme_demo_accounts", detail)
+    _ok("readme_demo_accounts")
+
     from _shared.validate_rds_parity import validate_rds_parity, validate_rds_parity_warnings
 
     rds_errors = validate_rds_parity(service_dir)
@@ -3871,7 +3887,7 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
-_REQUIRED_DELIVERY_FILES = (".env.example", "README.md")
+_REQUIRED_ENV_DELIVERY_FILES = (".env.example",)
 
 
 def _ensure_delivery_files(
@@ -3880,12 +3896,16 @@ def _ensure_delivery_files(
     *,
     context: dict[str, Any] | None,
 ) -> list[str]:
-    """Guarantee .env.example and README.md exist and are tracked for publish."""
+    """Guarantee .env.example exists; track README only if the agent generated one.
+
+    Never copy ``_template/README.md`` — that stub ("Service Template") was publishing
+    empty docs with no Demo accounts when the model skipped Step 4c.
+    """
     slug = slugify(app)
     service_dir = _service_dir(slug)
     prefix = f"target-apps/{slug}/"
     out = list(written)
-    for name in _REQUIRED_DELIVERY_FILES:
+    for name in _REQUIRED_ENV_DELIVERY_FILES:
         rel = f"{prefix}{name}"
         dest = service_dir / name
         if not dest.is_file():
@@ -3898,6 +3918,18 @@ def _ensure_delivery_files(
             out.append(rel)
         if context is not None:
             write_repo_artifact(_cloud_artifact_rel(rel), dest.read_bytes(), context=context)
+
+    readme_rel = f"{prefix}README.md"
+    readme_dest = service_dir / "README.md"
+    if readme_dest.is_file():
+        if readme_rel not in out:
+            out.append(readme_rel)
+        if context is not None:
+            write_repo_artifact(
+                _cloud_artifact_rel(readme_rel),
+                readme_dest.read_bytes(),
+                context=context,
+            )
     return _dedupe_preserve_order(out)
 
 

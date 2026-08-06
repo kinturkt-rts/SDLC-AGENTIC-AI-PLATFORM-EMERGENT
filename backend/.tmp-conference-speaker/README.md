@@ -1,8 +1,6 @@
-# Service Template (REFERENCE ONLY — not copied by scaffold)
+# Service Template
 
-> developer-agent must GENERATE `target-apps/<app>/README.md` after seed.
-> Scaffold deliberately does **not** copy this file. A published app whose README
-> still says "Service Template" failed Step 4c / README_DEMO_ACCOUNTS validation.
+> Replace this README when the developer-agent scaffolds a real service.
 
 ## Layout
 
@@ -67,14 +65,29 @@ source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000 --reload-dir app --reload-dir schemas
 ```
 
-Use `--reload-dir` so pytest/package installs under `.venv` do not trigger reload storms.
+Use `--reload-dir` so pytest/package installs under `.venv` do not trigger reload storms (Streamlit health checks time out).
+
+If the app includes Streamlit (`ui/streamlit_app.py`), add **Terminal 2**:
+
+**PowerShell (Windows):**
+```powershell
+cd target-apps\<your-service>
+.\.venv\Scripts\Activate.ps1
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
+
+**Bash:**
+```bash
+cd target-apps/<your-service>
+source .venv/bin/activate
+cd ui
+pip install -r requirements.txt
+streamlit run streamlit_app.py --server.port 8501
+```
 
 API docs: http://localhost:8000/docs
-
-## Demo accounts
-
-Document seed usernames + the exact password from `db/sql/*seed*.sql`
-(`-- Password for all seed users: "…"`) in a table here.
 
 ## Test
 
