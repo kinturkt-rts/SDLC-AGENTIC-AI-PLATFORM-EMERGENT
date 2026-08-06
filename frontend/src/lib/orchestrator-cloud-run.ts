@@ -291,13 +291,16 @@ async function pollRunStatusUntilTerminal(
       const step = typeof doc.currentStep === 'string' ? doc.currentStep : null;
       if (step && step !== lastStep) {
         lastStep = step;
-        await appendLog(logPath, `[status-poll] currentStep: ${step}\n`);
+        // Sync step to run.json for the UI; skip pipeline-log chatter (looks like noise in activity).
         await updateRunJson(runId, { currentStep: step });
         invalidateRunsCache();
       }
       if (status && status !== lastStatus) {
         lastStatus = status;
-        await appendLog(logPath, `[status-poll] status: ${status}\n`);
+        // Only terminal statuses — reconcile reads these; "running" spam is not useful in the UI.
+        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+          await appendLog(logPath, `[status-poll] status: ${status}\n`);
+        }
       }
       if (status === 'completed') return { status: 'completed' };
       if (status === 'cancelled') {
@@ -369,18 +372,19 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
     const statusWaitSec = envInt('SDLC_PIPELINE_STATUS_WAIT_SEC', 7200);
     await appendLog(
       logPath,
-      `[status-poll] Async orchestrator accepted; polling runs/${runId}/run.json (timeout=${statusWaitSec}s)...\n`,
+      `[status-poll] Waiting for pipeline to finish (timeout=${statusWaitSec}s)…\n`,
     );
     const final = await pollRunStatusUntilTerminal(runId, logPath, statusWaitSec);
     if (final.status === 'completed') {
       if (taskOpts.skipGitlab || (await gitlabPublished(runId, app))) {
-        await appendLog(logPath, '[status-poll] Pipeline completed in cloud.\n');
+        await appendLog(logPath, '[status-poll] Pipeline completed.\n');
         await finalizeRunJson(runId, { status: 'completed' });
         return;
       }
+
       await appendLog(
         logPath,
-        '[status-poll] Orchestrator reports completed but no GitLab publish handoff found - running fallback verification.\n',
+        '[status-poll] Checking GitLab publish (handoff not visible yet)…\n',
       );
     } else if (final.status === 'cancelled') {
       await appendLog(logPath, '[status-poll] Pipeline cancelled.\n');
@@ -400,11 +404,11 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
       ) {
         await appendLog(
           logPath,
-          '[status-poll] Developer handoff is complete; attempting gitlab-agent fallback after orchestrator gitlab failure.\n',
+          '[status-poll] Retrying GitLab publish after pipeline failure…\n',
         );
         await invokeGitlabFallback(runId, app, logPath, timeoutSec);
         if (await gitlabPublished(runId, app)) {
-          await appendLog(logPath, '[status-poll] GitLab fallback recovered the run.\n');
+          await appendLog(logPath, '[status-poll] GitLab publish recovered.\n');
           await finalizeRunJson(runId, { status: 'completed', error: null });
           return;
         }
@@ -417,7 +421,7 @@ export async function runOrchestratorCloud(options: RunOrchestratorCloudOptions)
     } else {
       await appendLog(
         logPath,
-        '[status-poll] Timed out waiting for terminal run status - entering fallback verification path.\n',
+        '[status-poll] Timed out waiting for pipeline status — checking publish…\n',
       );
     }
   }

@@ -108,7 +108,7 @@ function PlatformSettingsCards({ settings }: { settings: PlatformSettings }) {
           />
           <SettingRow
             label="Default flow"
-            value="Product → Architect → Database → Developer → GitLab → Deploy"
+            value="Product → Architect → Database → Developer → Frontend → GitLab → Deploy"
           />
         </dl>
       </Card>

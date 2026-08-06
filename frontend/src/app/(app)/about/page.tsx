@@ -95,7 +95,7 @@ export default function AboutPage() {
           <h3 className="text-sm font-semibold text-foreground">How a run works</h3>
         </div>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Product → Architect → Database → Developer → GitLab → Deploy
+          Product → Architect → Database → Developer → Frontend → GitLab → Deploy
         </p>
         <p className="mt-3 text-sm text-muted-foreground">
           Prefer dark mode or other preferences? Adjust them in{' '}

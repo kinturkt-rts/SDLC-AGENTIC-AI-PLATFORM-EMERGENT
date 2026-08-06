@@ -24,6 +24,7 @@ import { TokenUsageChart } from '@/src/features/tokens/TokenUsageChart';
 import { usePipelineTelemetry, useProjects, useRuns } from '@/src/lib/queries';
 import { formatDuration, formatRelative } from '@/src/lib/format';
 import {
+  AGENT_IDS,
   AGENT_TOKEN_ACCENT,
   AGENT_TOKEN_ICON,
   expectedModelForAgent,
@@ -221,7 +222,7 @@ export function TokensProjectView({
             <StatCard
               label="Wall time"
               value={formatDuration(Math.round(totals?.elapsedSec ?? 0))}
-              sub={`${reportingAgents.length}/4 pipeline agents reported`}
+              sub={`${reportingAgents.length}/${AGENT_IDS.length} pipeline agents reported`}
               icon={Clock}
             />
             <StatCard
@@ -232,7 +233,7 @@ export function TokensProjectView({
             />
             <StatCard
               label="Deploy time"
-              value={data?.deploySec != null ? formatDuration(data.deploySec) : '—'}
+              value={data?.deploySec != null ? formatDuration(data.deploySec) : '-'}
               sub={
                 data?.deployStatus === 'live'
                   ? 'GitLab publish → live URL'

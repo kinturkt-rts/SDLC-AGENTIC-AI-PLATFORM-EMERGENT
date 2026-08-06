@@ -5,6 +5,7 @@ import {
   ComposedChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -17,6 +18,12 @@ import type { AgentTelemetryRow } from '@/src/lib/pipeline-telemetry';
 
 function shortAgentName(name: string): string {
   return name.replace(/ Agent$/, '');
+}
+
+function formatSpendLabel(v: number): string {
+  if (v <= 0) return '$0';
+  if (v < 0.01) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
 }
 
 interface ChartTooltipProps {
@@ -33,8 +40,8 @@ function ChartTooltip({ active, payload }: ChartTooltipProps) {
       <p className="mt-1 text-muted-foreground">
         {formatTokenCount(row.input)} in · {formatTokenCount(row.output)} out
       </p>
-      <p className="text-muted-foreground">{formatTokenCount(row.tokens)} billed</p>
-      <p className="text-emerald-400">${row.cost.toFixed(4)} spend</p>
+      <p className="text-muted-foreground">{formatTokenCount(row.tokens)} billed (in+out)</p>
+      <p className="text-emerald-400">{formatSpendLabel(row.cost)} est. spend (incl. cache)</p>
     </div>
   );
 }
@@ -52,10 +59,12 @@ export function TokenUsageChart({ agents }: { agents: AgentTelemetryRow[] }) {
   return (
     <Card className="border-white/[0.06] bg-card/80 p-4">
       <h2 className="text-sm font-semibold text-foreground">Tokens &amp; cost by agent</h2>
-      <p className="mt-0.5 text-[11px] text-muted-foreground">Billed tokens (bars) and spend USD (line) per pipeline agent</p>
-      <div className="mt-4 h-[220px] w-full">
+      <p className="mt-0.5 text-[11px] text-muted-foreground">
+        Bars = billed tokens (input+output). Line = est. USD incl. cache. Opus agents often dwarf Sonnet spend on the same axis.
+      </p>
+      <div className="mt-4 h-[240px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 4, right: 4, left: -12, bottom: 0 }} barCategoryGap="20%">
+          <ComposedChart data={data} margin={{ top: 16, right: 8, left: -12, bottom: 0 }} barCategoryGap="20%">
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.06)" />
             <XAxis
               dataKey="name"
@@ -95,7 +104,15 @@ export function TokenUsageChart({ agents }: { agents: AgentTelemetryRow[] }) {
               strokeWidth={2}
               dot={{ r: 3, fill: 'rgb(52 211 153)' }}
               activeDot={{ r: 5 }}
-            />
+            >
+              <LabelList
+                dataKey="cost"
+                position="top"
+                offset={8}
+                formatter={(v: number) => formatSpendLabel(Number(v))}
+                style={{ fill: 'rgb(52 211 153)', fontSize: 10 }}
+              />
+            </Line>
           </ComposedChart>
         </ResponsiveContainer>
       </div>

@@ -8,6 +8,7 @@ const KNOWN_AGENTS = new Set<string>([
   'developer-agent',
   'frontend-agent',
   'gitlab-agent',
+  'devops-agent',
   'qa-agent',
 ]);
 
@@ -35,6 +36,11 @@ const NOISE_LINE_RES: RegExp[] = [
   /^info:strands\b/i,
   /Strands.*experimental/i,
   /^ping\b/i,
+  // Control-plane poll chatter (keep terminal status-poll lines for operators).
+  /^\[status-poll\]\s+currentStep:/i,
+  /^\[status-poll\]\s+status:\s*running\b/i,
+  /^\[status-poll\]\s+Waiting for pipeline to finish/i,
+  /^\[status-poll\]\s+Async orchestrator accepted/i,
 ];
 
 export interface ParsedCloudWatchActivity {
@@ -100,6 +106,18 @@ export function parseCloudWatchActivityLine(
       summary: truncate(body),
       kind: /error|failed|exception/i.test(body) ? 'error' : 'agent',
       agentId,
+    };
+  }
+
+  // Control-plane tags like [status-poll] / [gitlab-fallback] — show body only.
+  const controlPlane = trimmed.match(/^\[(status-poll|gitlab-fallback|dev-fallback|gitlab|cloud-invoke)\]\s*(.+)$/i);
+  if (controlPlane) {
+    const body = controlPlane[2].trim();
+    if (!body) return null;
+    return {
+      summary: truncate(body),
+      kind: /error|failed|exception/i.test(body) ? 'error' : 'agent',
+      agentId: fallbackAgent,
     };
   }
 

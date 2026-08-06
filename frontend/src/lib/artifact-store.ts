@@ -11,7 +11,7 @@ import { loadBackendEnv } from './backend-env';
 import { cachedAsync, invalidateCacheKey } from './request-cache';
 
 const S3_INDEX_CACHE_KEY = 's3RunArtifactIndex';
-/** Short TTL so phase completion (and current agent) stays near real-time. */
+
 const S3_INDEX_TTL_MS = 4_000;
 
 let _s3Client: S3Client | null = null;

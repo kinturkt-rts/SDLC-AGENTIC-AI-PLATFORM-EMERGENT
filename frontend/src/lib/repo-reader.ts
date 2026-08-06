@@ -708,6 +708,13 @@ function parseLogLine(line: string): { agent: AgentName; message: string } {
     if (normalized) {
       return { agent: normalized, message: agentMatch[2] || line };
     }
+    // Control-plane tags ([status-poll], [gitlab-fallback], …) — not agents; drop the tag in UI.
+    if (
+      /^(status-poll|gitlab-fallback|dev-fallback|gitlab|cloud-invoke)$/i.test(raw) &&
+      agentMatch[2]
+    ) {
+      return { agent: 'orchestrator-agent', message: agentMatch[2] };
+    }
   }
   return { agent: 'orchestrator-agent', message: line };
 }
@@ -2463,7 +2470,7 @@ export async function listPipelines(): Promise<PipelineDefinition[]> {
       id: 'standard-sdlc',
       name: 'Standard SDLC',
       description:
-        'End-to-end delivery: Product → Architect → Database → Developer → GitLab publish → AWS Deploy. Deploy puts a live URL in front of users.',
+        'End-to-end delivery: Product → Architect → Database → Developer → Frontend → GitLab publish → AWS Deploy. Deploy puts a live URL in front of users.',
       phases: TIMELINE_PHASES.map((phase) => ({
         phase,
         agent: PHASE_AGENT[phase],

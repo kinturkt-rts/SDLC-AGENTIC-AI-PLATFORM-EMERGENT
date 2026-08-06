@@ -21,12 +21,8 @@ function projectTitle(slug: string): string {
   return titleCase(slug.replace(/-/g, ' '));
 }
 
-export const DEFAULT_PIPELINE_AGENTS = [
-  'product-agent',
-  'architect-agent',
-  'database-agent',
-  'developer-agent',
-] as const;
+/** Bedrock pipeline agents (Product → … → Frontend). Keep in sync with AGENT_IDS. */
+export const DEFAULT_PIPELINE_AGENTS = AGENT_IDS;
 
 export interface AgentTelemetrySnapshot {
   agent: string;

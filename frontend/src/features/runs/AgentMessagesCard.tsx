@@ -16,6 +16,7 @@ const AGENT_LABEL: Record<string, string> = {
   'developer-agent': 'Developer',
   'frontend-agent': 'Frontend',
   'gitlab-agent': 'GitLab',
+  'devops-agent': 'DevOps',
   'qa-agent': 'QA',
   'security-agent': 'Security',
 };
