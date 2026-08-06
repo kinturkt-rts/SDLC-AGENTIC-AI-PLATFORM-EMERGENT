@@ -1585,6 +1585,13 @@ def _validate_dev_write_path(file_path: Path) -> str | None:
             "Error: cannot write .env or .env.* secret files — "
             "write .env.example with placeholders; users copy to .env locally"
         )
+    if "ui" in parts:
+        return (
+            "Error: Streamlit is retired on this platform — developer-agent owns nothing "
+            "under ui/. This platform's UI is a React frontend built by frontend-agent from "
+            "the OpenAPI contract, not by developer-agent. If the design doc's Stack table "
+            "says anything other than React, stop and flag it instead of hand-writing a UI."
+        )
     if (
         _current_auth_mode() == "api-key"
         and name == "auth.py"

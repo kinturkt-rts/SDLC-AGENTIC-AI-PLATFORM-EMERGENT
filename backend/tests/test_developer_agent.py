@@ -215,6 +215,35 @@ def test_validate_dev_write_path_blocks_env_and_qa_artifacts(tmp_path: Path) -> 
     assert mod._validate_dev_write_path(service / ".venv" / "pyvenv.cfg") is not None
 
 
+def test_validate_dev_write_path_blocks_ui_directory_broadly(tmp_path: Path) -> None:
+    """Streamlit is retired — developer-agent must never write anything under ui/.
+
+    The block is broad (any "ui" path segment), not just the two known Streamlit
+    filenames, so an LLM inventing a different Streamlit file (e.g. a multipage-app
+    page under ui/pages/) is caught too. Normal writes elsewhere are unaffected —
+    React lives under frontend/, built by frontend-agent, never by developer-agent."""
+    mod = _load_agent_module()
+    service = tmp_path / "target-apps" / "demo-svc"
+    (service / "app").mkdir(parents=True)
+    (service / "schemas").mkdir(parents=True)
+    (service / "tests").mkdir(parents=True)
+
+    blocked_streamlit = mod._validate_dev_write_path(service / "ui" / "streamlit_app.py")
+    assert blocked_streamlit is not None
+    assert "retired" in blocked_streamlit.lower()
+    assert "frontend-agent" in blocked_streamlit
+
+    blocked_variant = mod._validate_dev_write_path(
+        service / "ui" / "pages" / "dashboard.py"
+    )
+    assert blocked_variant is not None
+
+    assert mod._validate_dev_write_path(service / "app" / "main.py") is None
+    assert mod._validate_dev_write_path(service / "schemas" / "items.py") is None
+    assert mod._validate_dev_write_path(service / "tests" / "test_items.py") is None
+    assert mod._validate_dev_write_path(service / "requirements.txt") is None
+
+
 def test_validate_dev_write_path_blocks_verbatim_scaffold_files(tmp_path: Path) -> None:
     """Golden template files must come from dev_scaffold, not hand-written content —
     regression for a hand-rewritten app/startup_checks.py that shipped a syntax error."""
