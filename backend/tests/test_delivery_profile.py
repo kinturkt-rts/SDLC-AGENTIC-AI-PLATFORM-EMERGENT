@@ -44,9 +44,90 @@ def test_scan_backend_only_via_is_not_no_frontend() -> None:
     assert profile["requiresReact"] is True
 
 
+def test_scan_http_client_calls_fastapi_backend_only_not_no_frontend() -> None:
+    """Regression (vehicle-scheduling / sales-performance): product-agent writes
+    'HTTP client calls FastAPI backend only' in architecture sections meaning
+    client→API isolation. Bare 'backend only' must not suppress a React SPA."""
+    profile = scan_delivery_text(
+        "## 11. Client UI\n"
+        "Primary UI: **React SPA** under `frontend/`.\n\n"
+        "## Architecture notes\n"
+        "The browser HTTP client calls FastAPI backend only; no direct DB access "
+        "from the UI layer.\n"
+    )
+    assert profile["noFrontendExplicit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiRequired"] is True
+
+
+def test_scan_full_prd_react_spa_with_backend_only_architecture_phrase() -> None:
+    """Full-PRD fixture: React SPA required, architecture uses 'backend only' for
+    call isolation. Short-string tests missed this because they never included both."""
+    prd = """
+# Vehicle Scheduling — Product Requirements
+
+## 1. Summary
+Internal fleet booking for employees and fleet managers.
+
+## 2. Users
+- Fleet Manager, Employee, Admin
+
+## 11. Client UI
+| Surface | Choice | Notes |
+| --- | --- | --- |
+| Primary UI | **React SPA** | Vite + TypeScript under `frontend/` |
+| UI location | `frontend/` (React) | HTTP client calls FastAPI backend only — never import `app/` from the UI |
+
+## Out of scope
+Mobile native apps, SSO federation.
+"""
+    profile = scan_delivery_text(prd)
+    assert profile["noFrontendExplicit"] is False
+    assert profile["requiresReact"] is True
+    assert profile["uiRequired"] is True
+    assert frontend_required_from_delivery_profile(profile) is True
+
+
+def test_scan_full_prd_sales_dashboard_backend_only_phrase() -> None:
+    """Second full-PRD shape (sales-performance style dashboard + backend only)."""
+    prd = """
+# Sales Performance Dashboard PRD
+
+Operators need a web dashboard of pipeline and win-rate metrics.
+
+Stack expectation: React frontend, FastAPI API, Postgres.
+
+Architecture: dashboard charts load via the HTTP client; the client calls the
+FastAPI backend only (no embedding of SQL in the browser).
+"""
+    profile = scan_delivery_text(prd)
+    assert profile["noFrontendExplicit"] is False
+    assert profile["requiresReact"] is True
+    assert frontend_required_from_delivery_profile(profile) is True
+
+
 def test_scan_genuine_backend_only_still_detected() -> None:
     profile = scan_delivery_text("This is a backend-only service, no UI needed.")
     assert profile["noFrontendExplicit"] is True
+
+
+def test_scan_backend_only_service_noun_still_detected() -> None:
+    """Strong form (parallel to api-only app|service) — still no frontend."""
+    profile = scan_delivery_text(
+        "Deliver a backend-only service exposing REST endpoints for partner systems."
+    )
+    assert profile["noFrontendExplicit"] is True
+    assert profile["uiRequired"] is False
+
+
+def test_scan_bare_backend_only_without_ui_markers_is_not_explicit() -> None:
+    """Bare 'backend only' alone is insufficient (same policy as bare 'api only').
+    Silent / ambiguous briefs stay noFrontendExplicit=False so the platform
+    default React gate still runs frontend-agent."""
+    profile = scan_delivery_text(
+        "Expose vehicle availability through the FastAPI backend only."
+    )
+    assert profile["noFrontendExplicit"] is False
 
 
 def test_scan_ignores_negated_streamlit() -> None:

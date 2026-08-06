@@ -47,9 +47,15 @@ _GENERIC_UI_NEGATED = re.compile(
     + r"\b(?:web ui|browser ui|client-facing portal|dashboard|portal|web app)\b",
     re.IGNORECASE,
 )
+# Strong delivery phrasing only — never bare "api only" / "backend only", which
+# appear in PRD architecture rows ("HTTP client calls FastAPI backend only",
+# "http client to api only") meaning client→API isolation, not "no UI".
 _API_ONLY_DELIVERY = re.compile(
     r"\bapi[- ]only\s+(?:app|delivery|service|backend|mode)\b|"
-    r"\b(?:deliver|ship|build)\s+(?:as\s+)?api[- ]only\b",
+    r"\b(?:deliver|ship|build)\s+(?:as\s+)?api[- ]only\b|"
+    r"\bbackend[- ]only\s+(?:app|delivery|service|api|mode)\b|"
+    r"\b(?:deliver|ship|build)\s+(?:as\s+)?backend[- ]only\b|"
+    r"\bbackend[- ]only\s+(?:is\s+)?needed\b",
     re.IGNORECASE,
 )
 
@@ -57,7 +63,6 @@ _API_ONLY_DELIVERY = re.compile(
 _NO_FRONTEND_EXPLICIT = re.compile(
     r"\bno\s+frontend\b|"
     r"\bwithout\s+(?:a\s+)?frontend\b|"
-    r"\bbackend[- ]only\b(?!\s+(?:via|through|by)\b)|"
     r"\bno\s+(?:ui|user\s+interface|client\s+ui|web\s+ui)\b",
     re.IGNORECASE,
 )
@@ -84,7 +89,10 @@ def scan_delivery_text(text: str) -> dict[str, Any]:
     """Infer delivery profile flags from PRD, input brief, or design markdown.
 
     Decision order (highest priority first):
-      1. Explicit "no frontend" / API-only / backend-only -> no UI at all, full stop.
+      1. Explicit "no frontend" / "API-only app|service|…" / "backend-only
+         app|service|…" / "just a backend" (with no UI markers) -> no UI.
+         Bare "backend only" / "api only" alone are NOT signals — PRDs use those
+         for client→API call isolation ("HTTP client calls FastAPI backend only").
       2. A UI is required — Streamlit mention, explicit React mention, or a generic
          "web UI" phrase, none negated — -> React. Streamlit has been retired as a
          deliverable: mentioning it still means "a UI is required" but always
