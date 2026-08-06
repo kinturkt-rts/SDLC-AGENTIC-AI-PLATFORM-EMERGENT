@@ -103,11 +103,6 @@ def _detect_ui_framework(app_dir: Path, context: dict[str, Any] | None = None) -
         app_dir / "frontend" / "package.json"
     ).is_file():
         return "react"
-    # Profile hints alone never enable UI infra — that would create a UI ECS
-    # service with no image to build. Artifacts above are the ground truth.
-    profile = (context or {}).get("deliveryProfile") or {}
-    if isinstance(profile, dict) and profile.get("requiresStreamlit"):
-        return "streamlit" if (app_dir / "ui").is_dir() else "none"
     return "none"
 
 
