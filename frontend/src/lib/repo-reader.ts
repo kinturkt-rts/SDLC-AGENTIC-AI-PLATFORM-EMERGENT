@@ -1301,8 +1301,6 @@ async function buildPipelineRunFromLive(
   };
 }
 
-/** completed/failed/cancelled runs are immutable - safe to cache indefinitely (until
- * process restart). 'awaiting_deploy' is excluded: deploy can still flip pass/fail. */
 function isImmutableLiveStatus(status: string | undefined | null): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
@@ -1319,7 +1317,8 @@ async function buildPipelineRunFromLiveCached(
   if (!isImmutableLiveStatus(live.status)) {
     return buildPipelineRunFromLive(slug, live, opts);
   }
-  const cacheKey = `runBuild:${live.runId}:${opts?.includeFailureLogFallback ? 'full' : 'basic'}`;
+  const stateFingerprint = `${live.status}:${live.finishedAt ?? ''}:${live.error ?? ''}`;
+  const cacheKey = `runBuild:${live.runId}:${stateFingerprint}:${opts?.includeFailureLogFallback ? 'full' : 'basic'}`;
   return cachedAsync(cacheKey, TERMINAL_RUN_BUILD_CACHE_TTL_MS, () =>
     buildPipelineRunFromLive(slug, live, opts),
   );
@@ -1342,11 +1341,6 @@ export interface RunGuardCandidate {
   lastActivityMs: number;
 }
 
-/**
- * Raw run.json scan for the /runs/start guard — no artifact probes, handoff reads
- * or GitLab CI calls. listRuns() enriches every run, which grew past the client's
- * start timeout once the store held 100+ runs.
- */
 export async function listRunGuardCandidates(): Promise<RunGuardCandidate[]> {
   const ids = new Set<string>(await listUuidRunIds());
   if (isS3Store()) {
@@ -1374,7 +1368,7 @@ export async function listRunGuardCandidates(): Promise<RunGuardCandidate[]> {
       if (!slug || isHiddenAppSlug(slug)) continue;
 
       const startedMs = live.startedAt ? Date.parse(live.startedAt) : 0;
-      // Cached S3 index — no extra request per run.
+
       const s3Ms = isS3Store() ? await getS3RunLastModifiedMs(runId) : 0;
       candidates.push({
         runId: live.runId || runId,
@@ -1691,6 +1685,16 @@ export async function listArtifacts(): Promise<Artifact[]> {
   return cachedAsync(ARTIFACTS_CACHE_KEY, HEAVY_LIST_TTL_MS, listArtifactsUncached);
 }
 
+/**
+ * Artifact ids double as React keys, so they must be unique per file. A truncated run id
+ * collided across runs sharing a prefix (fe-e2e-care-1/2/3 all became "fe-e2e-c"), and the
+ * local variant keyed on basename alone, so docs/PRD/x.md and docs/design/x.md collided.
+ * Duplicate keys made the Kind filter leave stale cards on screen.
+ */
+function artifactId(uniquePath: string): string {
+  return `art-${uniquePath.replace(/[^a-zA-Z0-9._-]+/g, '_')}`;
+}
+
 async function listArtifactsUncached(): Promise<Artifact[]> {
   if (isS3Store()) {
     const runEntries = await listS3RunAppEntries();
@@ -1715,7 +1719,7 @@ async function listArtifactsUncached(): Promise<Artifact[]> {
         }
 
         artifacts.push({
-          id: `art-${runId.slice(0, 8)}-${relPath.replace(/[^a-zA-Z0-9._-]+/g, '_')}`,
+          id: artifactId(`${runId}/${relPath}`),
           name: base,
           kind,
           projectId: slug,
@@ -1771,7 +1775,7 @@ async function listArtifactsUncached(): Promise<Artifact[]> {
       const kind = c.kind ?? artifactKindForPath(rel);
       const base = path.basename(rel);
       artifacts.push({
-        id: `art-${slug}-${base}`,
+        id: artifactId(rel),
         name: base,
         kind,
         projectId: slug,

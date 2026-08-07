@@ -1269,7 +1269,7 @@ export default function DashboardPage() {
 
       {/* ── 3. SDLC Pipeline ────────────────────────── */}
       <Card className="overflow-hidden border-white/[0.06] bg-card/80">
-        <SectionHeader title="Current SDLC Pipeline" href="/pipelines" icon={Activity} />
+        <SectionHeader title="Current SDLC Pipeline" href="/runs" icon={Activity} />
         {runningRun ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2 text-[11px] text-muted-foreground">
             <span>
