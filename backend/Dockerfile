@@ -8,8 +8,8 @@
 # Regenerate per-agent copies: scripts/sync-agentcore-dockerfiles.ps1
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim-bookworm
 
-ARG AGENTCORE_AGENT=orchestrator-agent
-ARG INSTALL_NODE=false
+ARG AGENTCORE_AGENT=frontend-agent
+ARG INSTALL_NODE=true
 # devops-agent only: terraform CLI for devops_validate (init -backend=false + validate).
 ARG INSTALL_TERRAFORM=false
 ARG TERRAFORM_VERSION=1.15.8
@@ -27,11 +27,10 @@ RUN apt-get update \
         graphviz \
     && rm -rf /var/lib/apt/lists/*
 
-RUN if [ "$INSTALL_NODE" = "true" ]; then \
-      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-      && apt-get install -y --no-install-recommends nodejs \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g firecrawl-mcp \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN if [ "$INSTALL_TERRAFORM" = "true" ]; then \
       apt-get update \

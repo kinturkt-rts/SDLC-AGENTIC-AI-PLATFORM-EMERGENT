@@ -374,7 +374,7 @@ foreach ($agent in $TargetAgents) {
         python $publishScript
         if ($LASTEXITCODE -ne 0) {
             $DeployFailures += $awsName
-            Write-Warning "Template publish failed for $awsName — skipping agent deploy."
+            Write-Warning "Template publish failed for $awsName - skipping agent deploy."
             continue
         }
     }
@@ -402,7 +402,7 @@ print(json.dumps(peers, separators=(',', ':')))
                 $agent.extra = @($agent.extra) + @("AGENTCORE_PEER_RUNTIME_ARNS=$peerMap")
                 Write-Host "Orchestrator sdlcPipeline peers: $peerMap" -ForegroundColor DarkGray
             } else {
-                Write-Warning "runtimes.json sdlcPipeline has no specialist ARNs — deploy specialists first, then re-run orchestrator_agent."
+                Write-Warning "runtimes.json sdlcPipeline has no specialist ARNs - deploy specialists first, then re-run orchestrator_agent."
             }
         }
     }
@@ -432,7 +432,7 @@ print(json.dumps(peers, separators=(',', ':')))
                 $agent.extra = @($agent.extra) + @("AGENTCORE_PEER_RUNTIME_ARNS=$peerMap")
                 Write-Host "Demo orchestrator peers: $peerMap" -ForegroundColor DarkGray
             } else {
-                Write-Warning "runtimes.demo.json has no specialist ARNs yet — deploy specialists first, then re-run orchestrator_agent_demo."
+                Write-Warning "runtimes.demo.json has no specialist ARNs yet - deploy specialists first, then re-run orchestrator_agent_demo."
             }
         }
     }
