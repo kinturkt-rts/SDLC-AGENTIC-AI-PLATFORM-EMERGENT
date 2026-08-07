@@ -39,7 +39,6 @@ from _shared.context_cli import load_context_extra, parse_context_args
 from _shared.db_handoff import write_db_handoff
 from _shared.env import load_repo_env
 from _shared.mcp_clients import mongodb_mcp_client, postgres_mcp_tool_params
-from _shared.runner import coding_model_id
 from _shared.pipeline_context import (
     TargetAppRequiredError,
     _is_cloud_store,
@@ -651,8 +650,17 @@ def _max_output_tokens() -> int:
     )
 
 
-def _coding_model() -> BedrockModel:
-    model_id = coding_model_id()
+def _model_id(ctx: dict[str, Any] | None = None) -> str:
+    """Same MODEL_ID as Claude Sonnet 4.6; pipeline retries pass modelOverride (Haiku fallback)."""
+    if ctx:
+        override = str(ctx.get("modelOverride") or "").strip()
+        if override:
+            return override
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
+
+
+def _coding_model(ctx: dict[str, Any] | None = None) -> BedrockModel:
+    model_id = _model_id(ctx)
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     max_tokens = _max_output_tokens()
     return BedrockModel(
@@ -770,7 +778,7 @@ def _build_agent(
         agent_id=AGENT_NAME,
         name=AGENT_NAME,
         description="Designs SQL/NoSQL schemas, migrations, and DB execution plans for target apps.",
-        model=_coding_model(),
+        model=_coding_model(ctx),
         system_prompt=_build_system_prompt(ctx),
         tools=tools,
         callback_handler=callback,
@@ -829,7 +837,7 @@ def run_task(
             telemetry = RunTelemetry(
                 AGENT_NAME,
                 target_app=app,
-                model_id=coding_model_id(),
+                model_id=_model_id(ctx),
                 run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
             )
             agent = _build_agent(toolset, ctx, telemetry=telemetry)
@@ -1135,7 +1143,7 @@ def main() -> None:
 
     task = args.task or DEFAULT_PIPELINE_TASK
 
-    model_id = coding_model_id()
+    model_id = _model_id(context)
     print(f"[database-agent] Model: {model_id}", file=sys.stderr)
     if use_postgres:
         params = context.get("postgresMcpParams") or {}

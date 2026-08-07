@@ -151,8 +151,8 @@ Each agent in `backend/agents/<name>/<name>_agent.py` follows this pattern:
 |----------|---------|
 | `AWS_PROFILE` | All agents (SSO — preferred over static keys) |
 | `AWS_REGION` | Bedrock model; default `us-east-2` |
-| `MODEL_ID` | product/architect/gitlab agents |
-| `CODING_MODEL_ID` | database/developer agents (code-heavy; typically Opus) |
+| `MODEL_ID` | product/architect/database/frontend/gitlab agents |
+| `CODING_MODEL_ID` | developer-agent only (code-heavy; typically Opus) — falls back to `MODEL_ID` if unset |
 | `BEDROCK_READ_TIMEOUT` | Streaming timeout (default 600s) |
 | `ARTIFACT_STORE` | `local` or `s3` |
 | `ARTIFACT_S3_BUCKET` | Required when `ARTIFACT_STORE=s3` |

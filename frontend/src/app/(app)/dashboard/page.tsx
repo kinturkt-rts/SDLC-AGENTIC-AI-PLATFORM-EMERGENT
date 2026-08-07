@@ -994,15 +994,6 @@ function InputRequirementsCard() {
               <p className="mt-1 font-mono text-[10px] text-muted-foreground" title={startedRunId}>
                 Run {startedRunId.slice(0, 8)}…
               </p>
-              <Link
-                href={`/runs/${startedRunId}`}
-                className={cn(
-                  'mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline',
-                  runStatus === 'completed' ? 'text-emerald-400' : runStatus === 'failed' ? 'text-red-400' : 'text-teal-400',
-                )}
-              >
-                {runTerminal ? 'View run details' : 'View run progress'} <ArrowRight className="h-3 w-3" />
-              </Link>
             </div>
           )}
         </div>

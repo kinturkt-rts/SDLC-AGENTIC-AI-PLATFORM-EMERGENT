@@ -128,6 +128,12 @@ DEFAULT_DEVELOPER_RETRY_ATTEMPTS = 1
 # Fallback model for developer retries (DEVELOPER_AGENT_FALLBACK_MODEL_ID).
 # Same Sonnet 4.6 ID as product/architect agents (MODEL_ID) — lighter than CODING_MODEL_ID.
 DEFAULT_DEVELOPER_FALLBACK_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+# Re-attempts after the first database-agent failure (SDLC_DATABASE_RETRY_ATTEMPTS).
+DEFAULT_DATABASE_RETRY_ATTEMPTS = 1
+# Fallback model for database-agent retries (DATABASE_AGENT_FALLBACK_MODEL_ID).
+# Haiku 4.5's actual Bedrock cross-region inference profile ID (confirmed via
+# `aws bedrock list-inference-profiles` - "claude-haiku-4-5" alone is not a valid ID).
+DEFAULT_DATABASE_FALLBACK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 @dataclass
@@ -897,27 +903,72 @@ class SdlcPipelineRunner:
     def _step_database(self) -> None:
         if self.run_id:
             self._hydrate_run_context()
-        if self.transport == "local":
-            args = [
-                "agents/database-agent/database_agent.py",
-                "--target-app",
-                self.feature,
-                "--context-file",
-                self.context_file,
-                "--task",
-                DB_AGENT_TASK,
-                "--full-regen",
-            ]
-            if not self.options.skip_postgres:
-                args.append("--with-postgres")
-            self._run_python(args, step="database-agent")
-        else:
-            task = DB_AGENT_TASK
-            self._invoke_a2a(
-                "database-agent",
-                task,
-                step="database-agent",
-                extra_context={"fullRegen": True},
+
+        total_attempts = self._database_retry_attempts() + 1
+        fallback_model = self._database_fallback_model()
+        last_error: PipelineStepError | None = None
+
+        for attempt in range(total_attempts):
+            attempt_task = DB_AGENT_TASK
+            use_fallback = attempt > 0 and bool(fallback_model)
+            if attempt > 0:
+                logger.warning(
+                    "[database-agent] retry %d/%d%s after failure: %s",
+                    attempt,
+                    total_attempts - 1,
+                    f" with fallback model {fallback_model}" if use_fallback else "",
+                    last_error,
+                )
+                attempt_task = (
+                    f"{DB_AGENT_TASK}\n\nRETRY NOTE: the previous database-agent attempt failed "
+                    f"({last_error}). Re-generate the SQL migrations and seed data completely, "
+                    "and ensure db_validate_sql passes before finishing."
+                )
+            try:
+                if self.transport == "local":
+                    args = [
+                        "agents/database-agent/database_agent.py",
+                        "--target-app",
+                        self.feature,
+                        "--context-file",
+                        self.context_file,
+                        "--task",
+                        attempt_task,
+                        "--full-regen",
+                    ]
+                    if not self.options.skip_postgres:
+                        args.append("--with-postgres")
+                    self._run_python(
+                        args,
+                        step="database-agent",
+                        env_overrides=(
+                            {"MODEL_ID": fallback_model} if use_fallback else None
+                        ),
+                    )
+                else:
+                    extra_context: dict[str, Any] = {"fullRegen": True}
+                    if use_fallback:
+                        extra_context["modelOverride"] = fallback_model
+                    self._invoke_a2a(
+                        "database-agent",
+                        attempt_task,
+                        step="database-agent",
+                        extra_context=extra_context,
+                    )
+                last_error = None
+                break
+            except PipelineStepError as exc:
+                last_error = exc
+                logger.warning(
+                    "[database-agent] attempt %d/%d failed: %s",
+                    attempt + 1,
+                    total_attempts,
+                    exc,
+                )
+
+        if last_error is not None:
+            raise PipelineStepError(
+                f"database-agent failed after {total_attempts} attempt(s): {last_error}"
             )
 
         if self.transport == "a2a" and self.run_id:
@@ -1052,6 +1103,22 @@ class SdlcPipelineRunner:
         raw = os.getenv("DEVELOPER_AGENT_FALLBACK_MODEL_ID")
         if raw is None:
             return DEFAULT_DEVELOPER_FALLBACK_MODEL_ID
+        return raw.strip()
+
+    @staticmethod
+    def _database_retry_attempts() -> int:
+        raw = os.getenv("SDLC_DATABASE_RETRY_ATTEMPTS", "").strip()
+        try:
+            return max(0, int(raw)) if raw else DEFAULT_DATABASE_RETRY_ATTEMPTS
+        except ValueError:
+            return DEFAULT_DATABASE_RETRY_ATTEMPTS
+
+    @staticmethod
+    def _database_fallback_model() -> str:
+        """Haiku fallback on database-agent retries; empty string disables the model switch."""
+        raw = os.getenv("DATABASE_AGENT_FALLBACK_MODEL_ID")
+        if raw is None:
+            return DEFAULT_DATABASE_FALLBACK_MODEL_ID
         return raw.strip()
 
     def _step_developer(self) -> None:

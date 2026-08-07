@@ -203,7 +203,7 @@ def test_a2a_invoke_error_detects_failed_task() -> None:
     assert a2a_invoke_error(result) == "Agent execution failed"
 
 
-def test_hydrate_run_context_uses_docs_layout_from_s3(
+def test_hydrate_run_context_from_s3(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -299,7 +299,6 @@ def test_sync_delivery_profile_survives_hydrate_run_context(
     assert runner.context["deliveryProfile"]["requiresStreamlit"] is False
     assert runner.context["deliveryProfile"]["requiresReact"] is True
 
-    # Simulate what _step_architect() does immediately afterward.
     runner._hydrate_run_context()
 
     assert runner.context["deliveryProfile"]["requiresStreamlit"] is False
@@ -483,16 +482,11 @@ def test_update_run_json_preserves_triggered_by_seeded_in_s3(
     assert captured["data"]["triggeredBy"] == "kintur.shah@resolvetech.com"
 
 
-def test_update_run_json_mark_step_skipped_survives_completion(
+def test_update_run_json_mark_step_skipped(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Regression: _default_steps() seeds frontend-agent "queued" from CLI flags alone
-    (with_frontend defaults True) before deliveryProfile is resolved. When the real,
-    deliveryProfile-based decision (_frontend_required) turns out to be "skip", run()
-    calls _update_run_json(mark_step_skipped="frontend-agent") — that must stick through
-    the final completed-run pass, not get blanket-flipped to "completed" for a frontend
-    build that never happened."""
+
     monkeypatch.setenv("ARTIFACT_STORE", "local")
     monkeypatch.setenv("REPO_ROOT", str(tmp_path))
     monkeypatch.setattr("agents._shared.sdlc_pipeline.load_repo_env", lambda: None)
@@ -524,9 +518,6 @@ def test_parse_pipeline_request_from_a2a_message() -> None:
     assert opts.target_app == "team-faq-bot"
     assert opts.run_id == "smoke-004"
     assert opts.transport == "a2a"
-
-
-# ── RDS apply (AgentCore / S3 materialize path) ───────────────────────────────
 
 
 def test_run_sql_artifact_keys_filters_sql(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -784,10 +775,6 @@ def test_step_developer_retries_with_fallback_model(
         runner._step_developer()
 
     assert len(calls) == 2
-    # fullRegen is intentional on EVERY A2A developer attempt, not just retries — it
-    # signals developer-agent to clear the app tree before a clean regeneration (a
-    # no-op in cloud/S3 mode; see _clear_app_tree's _is_cloud_store() guard). Do not
-    # "fix" this back to expecting None on the first call.
     assert calls[0]["extra_context"] == {"fullRegen": True}
     assert calls[1]["extra_context"] == {
         "fullRegen": True,
@@ -795,6 +782,88 @@ def test_step_developer_retries_with_fallback_model(
     }
     assert "RETRY NOTE" in calls[1]["task"]
     assert "developer-agent" in runner.agents_run
+
+
+def _make_a2a_database_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "demo-api"
+    runner.root = repo_root
+    runner.context = {"targetApp": "demo-api", "runId": run_id}
+    runner.options = PipelineOptions(target_app="demo-api", transport="a2a")
+    runner.agents_run = []
+    runner.artifacts = {}
+    return runner
+
+
+def test_step_database_retries_with_fallback_model(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First database-agent failure retries once with the lightweight fallback model."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("SDLC_DATABASE_RETRY_ATTEMPTS", "1")
+    monkeypatch.setenv("DATABASE_AGENT_FALLBACK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    runner = _make_a2a_database_runner(repo_root, "run-db-retry-001")
+
+    calls: list[dict] = []
+
+    def invoke_side_effect(agent_name, task, **kwargs):
+        calls.append({"task": task, **kwargs})
+        if len(calls) == 1:
+            raise PipelineStepError("database-agent A2A failed: boom")
+
+    with (
+        patch.object(runner, "_hydrate_run_context"),
+        patch.object(runner, "_invoke_a2a", side_effect=invoke_side_effect),
+        patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_database()
+
+    assert len(calls) == 2
+    assert calls[0]["extra_context"] == {"fullRegen": True}
+    assert calls[1]["extra_context"] == {
+        "fullRegen": True,
+        "modelOverride": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    }
+    assert "RETRY NOTE" in calls[1]["task"]
+    assert "database-agent" in runner.agents_run
+
+
+def test_step_database_fails_after_all_retry_attempts(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When every attempt fails the step raises with the attempt count."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_PIPELINE_TRANSPORT", "a2a")
+    monkeypatch.setenv("SDLC_DATABASE_RETRY_ATTEMPTS", "1")
+
+    runner = _make_a2a_database_runner(repo_root, "run-db-retry-002")
+
+    with (
+        patch.object(runner, "_hydrate_run_context"),
+        patch.object(
+            runner,
+            "_invoke_a2a",
+            side_effect=PipelineStepError("database-agent A2A failed: boom"),
+        ) as invoke_mock,
+        patch.object(runner, "_merge_run_context_from_s3"),
+        patch.object(runner, "_after_agent_step"),
+        pytest.raises(PipelineStepError, match="failed after 2 attempt"),
+    ):
+        runner._step_database()
+
+    assert invoke_mock.call_count == 2
+    assert "database-agent" not in runner.agents_run
 
 
 def _make_a2a_gitlab_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
@@ -814,11 +883,7 @@ def test_step_gitlab_a2a_embeds_apps_layout_context(
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A2A publish call must pass gitlabPublishLayout=apps (the default) via
-    extra_context, not a hand-rolled Context: block in the task string - _invoke_a2a
-    already appends its own single Context: block (targetApp/runId included via
-    _context_for_agent); a second one in the task text would stack and break JSON
-    parsing on gitlab-agent's receiving end (this was a real production bug)."""
+
     monkeypatch.setenv("REPO_ROOT", str(repo_root))
     monkeypatch.setenv("ARTIFACT_STORE", "s3")
     monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
@@ -935,9 +1000,7 @@ def test_step_developer_handoff_timeout_triggers_retry(
 
 
 def test_frontend_required_ignores_requires_streamlit_after_consolidation() -> None:
-    """requiresStreamlit can never be true from the classifier anymore (see
-    delivery_profile.py's scan_delivery_text), and _frontend_required() no longer
-    special-cases it — only noFrontendExplicit can skip frontend-agent now."""
+
     runner = object.__new__(SdlcPipelineRunner)
     runner.context = {"deliveryProfile": {"requiresReact": False, "requiresStreamlit": True}}
     assert runner._frontend_required() is True

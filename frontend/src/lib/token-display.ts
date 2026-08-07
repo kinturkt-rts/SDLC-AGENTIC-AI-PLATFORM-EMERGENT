@@ -12,12 +12,10 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-/** Agents that call Bedrock in the default pipeline (matches MODEL_ID / CODING_MODEL_ID).
- *  DevOps / GitLab are script + MCP only — not listed here. */
 export const PIPELINE_MODELS = [
   { agentId: 'product-agent', shortName: 'Product', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
   { agentId: 'architect-agent', shortName: 'Architect', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
-  { agentId: 'database-agent', shortName: 'Database', model: 'Claude Opus 4.6', family: 'opus' as const },
+  { agentId: 'database-agent', shortName: 'Database', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
   { agentId: 'developer-agent', shortName: 'Developer', model: 'Claude Opus 4.6', family: 'opus' as const },
   { agentId: 'frontend-agent', shortName: 'Frontend', model: 'Claude Sonnet 4.6', family: 'sonnet' as const },
 ] as const;
