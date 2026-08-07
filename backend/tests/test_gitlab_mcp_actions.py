@@ -639,3 +639,60 @@ def test_write_pipeline_run_marker_skips_without_run_id(tmp_path: Path) -> None:
     (tmp_path / "target-apps" / feature).mkdir(parents=True)
     assert write_pipeline_run_marker(feature, "  ", root=tmp_path) is None
     assert write_pipeline_run_marker(feature, "", root=tmp_path) is None
+
+
+def test_publish_single_commit_enabled_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from _shared.gitlab_mcp_actions import publish_single_commit_enabled
+
+    monkeypatch.delenv("GITLAB_PUBLISH_SINGLE_COMMIT", raising=False)
+    assert publish_single_commit_enabled() is True
+    monkeypatch.setenv("GITLAB_PUBLISH_SINGLE_COMMIT", "false")
+    assert publish_single_commit_enabled() is False
+
+
+def test_commit_actions_sets_base64_encoding_for_binaries() -> None:
+    from _shared.gitlab_mcp_actions import _commit_actions
+
+    batch = [
+        {"path": "app/main.py", "content": "cHJpbnQoMSk=", "binary": True},
+        {"path": "README.md", "content": "# hi\n", "binary": False},
+    ]
+    actions = _commit_actions(batch, set())
+    assert actions[0]["encoding"] == "base64"
+    assert "encoding" not in actions[1]
+    assert actions[0]["action"] == "create"
+    assert actions[1]["action"] == "create"
+
+
+def test_publish_single_commit_one_mcp_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    from _shared import gitlab_mcp_actions as mod
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_call(session: object, tool: str, payload: dict) -> dict:
+        calls.append((tool, payload))
+        return {"id": "abc123", "short_id": "abc123"}
+
+    monkeypatch.setattr(mod, "call_gitlab_mcp_tool", _fake_call)
+
+    files = [
+        {"path": "app/main.py", "content": "cHJpbnQoMSk=", "binary": True},
+        {"path": "docs/PRD.md", "content": "# PRD\n", "binary": False},
+        {"path": "static/logo.png", "content": "iVBORw0KGgo=", "binary": True},
+    ]
+    existing: set[str] = set()
+    commit_ids = asyncio.run(
+        mod._publish_single_commit(
+            None,
+            project_id="309",
+            branch="sdlc/demo",
+            slug="demo",
+            files=files,
+            existing_paths=existing,
+        )
+    )
+    assert commit_ids == ["abc123"]
+    assert len(calls) == 1
+    assert calls[0][0] == "gitlab_commit_create"
+    assert len(calls[0][1]["actions"]) == 3
+    assert existing == {"app/main.py", "docs/PRD.md", "static/logo.png"}

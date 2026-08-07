@@ -1,0 +1,184 @@
+SDLC Agentic AI — Day-to-Day Commands
+
+================================================================
+PART-1  DEV
+================================================================
+
+--- AWS SSO ---
+aws sso login --profile eks-admin-user
+
+--- Working directory ---
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\backend"
+
+--- Redeploy all pipeline agents ---
+
+.\scripts\deploy-agentcore-agents.ps1 -SkipConfigure
+
+--- Redeploy one agent ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents product_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents architect_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents database_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents developer_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents frontend_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents gitlab_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents orchestrator_agent -SkipConfigure
+
+--- Redeploy several agents ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents developer_agent,frontend_agent,orchestrator_agent -SkipConfigure
+
+--- Redeploy optional agents ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents devops_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents qa_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents security_agent -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents web_crawler_agent -SkipConfigure
+
+--- First-time configure (only when needed) ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents developer_agent -Configure
+.\scripts\sync-agentcore-dockerfiles.ps1
+
+--- Control-plane frontend redeploy ---
+
+.\scripts\push-frontend-ecr.ps1
+.\scripts\deploy-frontend-ecs.ps1
+
+--- Control-plane frontend image-only + force rollout ---
+
+.\scripts\push-frontend-ecr.ps1
+aws ecs update-service --cluster sdlc-agentic-ai --service sdlc-control-plane --force-new-deployment --region us-east-2 --profile eks-admin-user
+
+--- Control-plane frontend verify ---
+
+aws ecs describe-services --cluster sdlc-agentic-ai --services sdlc-control-plane --region us-east-2 --profile eks-admin-user --query "services[0].deployments"
+Invoke-WebRequest -Uri "http://sdlc-control-plane-alb-804473930.us-east-2.elb.amazonaws.com/api/health" -UseBasicParsing
+
+--- Target-app deploy ---
+
+.\scripts\deploy-target-app.ps1 -Feature desk-job-app
+.\scripts\deploy-target-app.ps1 -Feature desk-job-app -PlanOnly
+
+--- Target-app destroy ---
+
+.\scripts\deploy-target-app.ps1 -Feature customer-loyalty-system -Destroy
+
+--- Publish scaffold template to S3 ---
+
+python .\scripts\publish-template-to-s3.py
+
+--- GitLab MCP (shared) ---
+
+.\scripts\push-gitlab-mcp-ecr.ps1
+.\scripts\deploy-gitlab-mcp-ecs.ps1
+
+--- Local control-plane UI ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\frontend"
+npm run dev
+
+--- Local full pipeline ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\backend"
+.\scripts\run-sdlc-local.ps1 -Feature desk-job-app -InputFile inputs\desk-job-app.txt
+
+--- Backend tests ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\backend"
+python -m pytest tests\ -q --tb=line
+
+--- Orchestrator smoke ---
+
+python .\scripts\invoke-orchestrator-smoke.py
+
+--- CloudWatch target-app logs ---
+
+python .\scripts\fetch-cloudwatch-logs.py --feature desk-job-app
+
+
+================================================================
+PART-2  DEMO
+================================================================
+
+--- AWS SSO ---
+
+aws sso login --profile eks-admin-user
+
+--- Working directory ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\backend"
+
+--- Redeploy all demo pipeline agents ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Demo -SkipConfigure
+
+--- Redeploy one demo agent ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents product_agent_demo -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents architect_agent_demo -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents database_agent_demo -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents developer_agent_demo -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents gitlab_agent_demo -SkipConfigure
+.\scripts\deploy-agentcore-agents.ps1 -Agents orchestrator_agent_demo -SkipConfigure
+
+--- Redeploy several demo agents ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents developer_agent_demo,orchestrator_agent_demo -SkipConfigure
+
+--- Sync demo runtimes.json after agent deploys ---
+
+python .\scripts\sync-runtimes-demo.py
+
+--- First-time configure demo agent (only when needed) ---
+
+.\scripts\deploy-agentcore-agents.ps1 -Agents developer_agent_demo -Configure
+.\scripts\sync-agentcore-dockerfiles.ps1
+
+--- Control-plane frontend redeploy (demo) ---
+
+.\scripts\push-frontend-ecr.ps1 -Demo
+.\scripts\deploy-frontend-ecs.ps1 -Demo
+
+--- Control-plane frontend image-only + force rollout (demo) ---
+
+.\scripts\push-frontend-ecr.ps1 -Demo
+aws ecs update-service --cluster sdlc-agentic-ai --service sdlc-control-plane-demo --force-new-deployment --region us-east-2 --profile eks-admin-user
+
+--- Control-plane frontend verify (demo) ---
+
+aws ecs describe-services --cluster sdlc-agentic-ai --services sdlc-control-plane-demo --region us-east-2 --profile eks-admin-user --query "services[0].deployments"
+Invoke-WebRequest -Uri "http://sdlc-cp-demo-alb-373023640.us-east-2.elb.amazonaws.com/api/health" -UseBasicParsing
+
+--- Target-app deploy ---
+
+.\scripts\deploy-target-app.ps1 -Feature desk-job-app
+.\scripts\deploy-target-app.ps1 -Feature desk-job-app -PlanOnly
+
+--- Target-app destroy ---
+
+.\scripts\deploy-target-app.ps1 -Feature desk-job-app -Destroy
+
+--- Publish scaffold template to S3 ---
+
+python .\scripts\publish-template-to-s3.py
+
+--- GitLab MCP (shared) ---
+
+.\scripts\push-gitlab-mcp-ecr.ps1
+.\scripts\deploy-gitlab-mcp-ecs.ps1
+
+--- Local control-plane UI ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\frontend"
+npm run dev
+
+--- Local full pipeline ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\backend"
+.\scripts\run-sdlc-local.ps1 -Feature desk-job-app -InputFile inputs\desk-job-app.txt
+
+--- Backend tests ---
+
+cd "c:\Juno Projects\sdlc-agentic-ai-platform\backend"
+python -m pytest tests\ -q --tb=line

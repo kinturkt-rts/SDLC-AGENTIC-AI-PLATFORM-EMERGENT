@@ -137,9 +137,24 @@ def test_publish_batch_size_smaller_for_http(monkeypatch: pytest.MonkeyPatch) ->
     assert len(_batch_files([{"path": "a"}] * 45)) == 3
 
 
-def test_gitlab_mcp_publish_url_candidates_prefers_direct_alb(
+def test_gitlab_mcp_publish_url_candidates_excludes_cloudfront_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT", raising=False)
+    monkeypatch.setenv("GITLAB_MCP_URL", "https://example.cloudfront.net/mcp")
+    monkeypatch.setenv(
+        "GITLAB_MCP_HTTP_DIRECT_URL",
+        "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp",
+    )
+    urls = gitlab_mcp_publish_url_candidates()
+    assert urls == ["http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp"]
+    assert all("cloudfront.net" not in u for u in urls)
+
+
+def test_gitlab_mcp_publish_url_candidates_allow_cloudfront_emergency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT", "true")
     monkeypatch.setenv("GITLAB_MCP_URL", "https://example.cloudfront.net/mcp")
     monkeypatch.setenv(
         "GITLAB_MCP_HTTP_DIRECT_URL",
@@ -148,6 +163,19 @@ def test_gitlab_mcp_publish_url_candidates_prefers_direct_alb(
     urls = gitlab_mcp_publish_url_candidates()
     assert urls[0] == "http://gitlab-mcp-alb-123.us-east-2.elb.amazonaws.com/mcp"
     assert "cloudfront.net" in urls[1]
+
+
+def test_require_gitlab_mcp_publish_url_raises_without_direct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from _shared.gitlab_mcp_client import require_gitlab_mcp_publish_url
+
+    monkeypatch.delenv("GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT", raising=False)
+    monkeypatch.setenv("GITLAB_MCP_URL", "https://example.cloudfront.net/mcp")
+    monkeypatch.delenv("GITLAB_MCP_HTTP_URL", raising=False)
+    monkeypatch.delenv("GITLAB_MCP_HTTP_DIRECT_URL", raising=False)
+    with pytest.raises(GitLabMcpError, match="direct GitLab MCP URL"):
+        require_gitlab_mcp_publish_url()
 
 
 def test_gitlab_mcp_endpoints_config_has_direct_and_cloudfront_urls() -> None:
@@ -160,7 +188,9 @@ def test_gitlab_mcp_endpoints_config_has_direct_and_cloudfront_urls() -> None:
     assert direct.endswith("/mcp")
     assert cloudfront.endswith("/mcp")
     assert "cloudfront.net" in cloudfront
-    assert data["usage"]["gitlabAgentPublish"].startswith("directMcpUrl")
+    assert "directMcpUrl" in data["usage"]["gitlabAgentPublish"]
+    assert data["runtimeEnv"]["gitlabAgent"]["GITLAB_PUBLISH_SINGLE_COMMIT"] == "true"
+    assert data["runtimeEnv"]["gitlabAgent"]["GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT"] == "false"
 
 
 def test_gitlab_mcp_uses_cloudfront(monkeypatch: pytest.MonkeyPatch) -> None:

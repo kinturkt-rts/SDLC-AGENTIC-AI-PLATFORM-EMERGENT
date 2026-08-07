@@ -1,4 +1,4 @@
-﻿# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
+# Deploy all SDLC agents to Amazon Bedrock AgentCore Runtime.
 # Prereqs: pip install bedrock-agentcore-starter-toolkit, AWS credentials, Bedrock model access.
 
 param(
@@ -146,10 +146,14 @@ function Get-GitLabAgentMcpEnv {
     $config = Get-Content $configPath -Raw | ConvertFrom-Json
     if (-not $config.directMcpUrl) { return @() }
     $direct = $config.directMcpUrl.Trim()
+    # Publish must hit ALB (not CloudFront) and use one Git commit per app —
+    # per-file CloudFront publishes flood GitLab Sidekiq PostReceive org-wide.
     return @(
         "GITLAB_MCP_URL=$direct",
         "GITLAB_MCP_HTTP_DIRECT_URL=$direct",
-        "GITLAB_MCP_HTTP_BATCH_SIZE=20"
+        "GITLAB_MCP_HTTP_BATCH_SIZE=20",
+        "GITLAB_PUBLISH_SINGLE_COMMIT=true",
+        "GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT=false"
     )
 }
 

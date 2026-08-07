@@ -680,3 +680,19 @@ def test_parse_frontend_file_map_json_extracts_object_from_prose() -> None:
 def test_parse_frontend_file_map_json_returns_none_for_pure_prose() -> None:
     fa = _load_agent_module()
     assert fa._parse_frontend_file_map_json("Looking at the OpenAPI spec, I need to cover:") is None
+
+
+def test_max_output_tokens_default_raised_above_32000(monkeypatch) -> None:
+    """Regression: _generate_and_write() returns the whole app as one JSON blob in a
+    single completion (zero tool calls) - multisite-construction-ops hard-failed with
+    MaxTokensReachedException at 32000/32000 tokens before a single file was parsed."""
+    fa = _load_agent_module()
+    monkeypatch.delenv("FRONTEND_AGENT_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("BEDROCK_MAX_OUTPUT_TOKENS", raising=False)
+    assert fa._max_output_tokens() > 32000
+
+
+def test_max_output_tokens_honors_env_override(monkeypatch) -> None:
+    fa = _load_agent_module()
+    monkeypatch.setenv("FRONTEND_AGENT_MAX_TOKENS", "48000")
+    assert fa._max_output_tokens() == 48000

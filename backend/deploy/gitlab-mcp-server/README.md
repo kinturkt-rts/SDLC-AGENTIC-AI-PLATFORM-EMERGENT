@@ -7,10 +7,18 @@ Shared [jmrplens/gitlab-mcp-server](https://github.com/jmrplens/gitlab-mcp-serve
 ## Architecture
 
 ```
-gitlab-agent / qa-agent / Cursor / Gateway
+Apps-repo PUBLISH (gitlab-agent)
               │
               ▼
-    CloudFront HTTPS  (GITLAB_MCP_URL)  ← canonical
+    Direct ALB HTTP  (GITLAB_MCP_HTTP_DIRECT_URL)  ← required
+              │
+              ▼
+         ECS Fargate :8080/mcp  →  one gitlab_commit_create (all files)
+
+IDE / qa reads
+              │
+              ▼
+    CloudFront HTTPS  (GITLAB_MCP_URL)
               │
               ▼
          ALB HTTP  ──►  ECS Fargate :8080/mcp
@@ -18,12 +26,19 @@ gitlab-agent / qa-agent / Cursor / Gateway
 
 | Client | Env var | URL |
 |--------|---------|-----|
-| **All agents + IDE** (primary) | `GITLAB_MCP_URL` | `https://d1cvmpnnohwpj8.cloudfront.net/mcp` |
-| **Fallback** (403 from CloudFront) | `GITLAB_MCP_HTTP_DIRECT_URL` | ALB `/mcp` |
+| **gitlab-agent publish** | `GITLAB_MCP_URL` + `GITLAB_MCP_HTTP_DIRECT_URL` | **ALB `/mcp` only** (both set to direct) |
+| **IDE / qa reads** | `GITLAB_MCP_URL` | CloudFront HTTPS |
+| **Emergency only** | `GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT=true` | Allows CloudFront in publish candidate list |
+
+## Sidekiq-safe publish (mandatory)
+
+- `GITLAB_PUBLISH_SINGLE_COMMIT=true` (default): **one Git commit** per app = **one** Sidekiq `PostReceive`.
+- Never publish via CloudFront for apps-repo: the old WAF path used one-file-per-commit and saturated org Sidekiq (~18–21s PostReceive × N files).
+- `[skip ci]` does **not** stop `PostReceive` — only CI pipelines.
 
 ## CloudFront WAF
 
-WAF is configured on the CloudFront distribution: `GenericLFI_BODY` is excluded so MCP publish POST bodies are not blocked. If you recreate the distribution, exclude that rule on Web ACL `CreatedByCloudFront-0a676d76` or rely on `GITLAB_MCP_HTTP_DIRECT_URL` (ALB fallback; gitlab-agent retries automatically on 403).
+WAF is configured on the CloudFront distribution: `GenericLFI_BODY` is excluded for large MCP POST bodies on read paths. **Publish still must use ALB** — do not re-enable CloudFront publish.
 
 ## Deploy ECS + ALB
 
@@ -39,14 +54,4 @@ Update `gitlab-mcp-endpoints.json` if ALB DNS changes.
 .\scripts\deploy-agentcore-agents.ps1 -Agents gitlab_agent -SkipConfigure
 ```
 
-Sets `GITLAB_MCP_URL` (CloudFront) and optional `GITLAB_MCP_HTTP_DIRECT_URL` (ALB fallback) from config.
-
-## Verify CloudFront publish
-
-```powershell
-.\.venv\Scripts\python.exe agents/gitlab-agent/gitlab_agent.py `
-  --target-app gitlab-pipeline-smoke `
-  --context-file agents/pipeline/gitlab-pipeline-smoke.context.json
-```
-
-Uses CloudFront first; retries via ALB if WAF returns 403.
+Sets both MCP URLs to the ALB direct endpoint, plus `GITLAB_PUBLISH_SINGLE_COMMIT=true`.

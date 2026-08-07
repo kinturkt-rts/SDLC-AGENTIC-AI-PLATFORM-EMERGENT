@@ -90,12 +90,7 @@ _DOLLAR_BLOCK = re.compile(r"\$\$.*?\$\$", re.DOTALL)
 
 def split_sql_statements(sql: str) -> list[str]:
     """Split SQL on semicolons outside strings and DO $$ ... $$ blocks."""
-    lines: list[str] = []
-    for line in sql.splitlines():
-        if line.strip().startswith("--"):
-            continue
-        lines.append(line)
-    cleaned = "\n".join(lines)
+    cleaned = _strip_sql_comments(sql)
 
     protected = cleaned
     placeholders: dict[str, str] = {}

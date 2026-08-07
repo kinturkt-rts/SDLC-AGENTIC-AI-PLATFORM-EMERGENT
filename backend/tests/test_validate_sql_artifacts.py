@@ -385,7 +385,7 @@ def test_check_ddl_column_drift_detects_renamed_column(tmp_path: Path) -> None:
         """,
         encoding="utf-8",
     )
-    # Live table predates the code/uuid redesign: integer PK, short_code instead of code.
+
     cur = _FakeCursor({("contacts_api", "departments"): ["id", "name", "short_code", "created_at"]})
     drift = check_ddl_column_drift(cur, app_schema="contacts_api", sql_dir=sql_dir)
     assert len(drift) == 1
@@ -519,10 +519,8 @@ def test_parse_create_table_columns_enrollments_ddl_real_fixture() -> None:
         "enrolled_at",
         "updated_at",
     }
-    # The column carrying an inline CHECK is the case most likely to regress if the
-    # table-level-constraint skip is made too aggressive.
+
     assert "grade_points" in names
-    # No bogus pseudo-column from the tight UNIQUE(...) constraint line.
     assert not any("(" in name for name in names)
 
 
@@ -563,14 +561,7 @@ def test_parse_create_table_columns_keeps_column_with_inline_check() -> None:
 
 
 def test_check_ddl_column_drift_ignores_table_level_unique_without_space(tmp_path: Path) -> None:
-    """Regression: compliance-management incident (run abfee325-...).
-
-    A table-level ``UNIQUE(document_id, version_number)`` constraint with no
-    space before the parenthesis used to slip past ``_SKIP_COLUMN_PREFIXES``
-    (whose exact-token check only matched a bare "UNIQUE"), getting misparsed
-    as a literal column named "UNIQUE(document_id," — a false-positive drift
-    that failed the whole database-agent step for a schema with no real drift.
-    """
+    """Regression: compliance-management incident (run abfee325-...)"""
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()
     (sql_dir / "001_create_document_versions.sql").write_text(
@@ -591,15 +582,7 @@ def test_check_ddl_column_drift_ignores_table_level_unique_without_space(tmp_pat
 
 
 def test_check_seed_conflict_on_ruled_tables_detects_incident(tmp_path: Path) -> None:
-    """Regression: insurance-claims incident (run 49b51e3a-...).
-
-    009_add_history_no_update_delete_rule.sql adds UPDATE/DELETE rules to
-    claim_history for an append-only pattern; 010_seed.sql then seeds that
-    same table with ON CONFLICT DO NOTHING. PostgreSQL rejects ON CONFLICT on
-    any table with any rule, regardless of the rule's own event type — this
-    fails even on a freshly-reset schema, so it's a real generation bug, not
-    a drift/staleness issue.
-    """
+    """Regression: insurance-claims incident (run 49b51e3a-...)"""
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()
     (sql_dir / "007_create_claim_history.sql").write_text(
@@ -681,3 +664,20 @@ def test_split_sql_statements_still_importable_after_move() -> None:
     stmts = split_sql_statements("INSERT INTO a VALUES ('x;y'); INSERT INTO b VALUES (1);")
     assert len(stmts) == 2
     assert "x;y" in stmts[0]
+
+
+def test_split_sql_statements_ignores_semicolon_in_trailing_comment() -> None:
+    """Regression: a `col INT, -- 0=Sun … 6=Sat; NULL when not applicable` trailing"""
+
+    sql = (
+        "CREATE TABLE IF NOT EXISTS chores (\n"
+        "    id UUID PRIMARY KEY,\n"
+        "    recurrence_day_of_week INT, -- 0=Sun … 6=Sat; NULL when not applicable\n"
+        "    recurrence_day_of_month INT\n"
+        ");\n"
+        "CREATE INDEX IF NOT EXISTS idx_x ON chores (id);\n"
+    )
+    stmts = split_sql_statements(sql)
+    assert len(stmts) == 2
+    assert "recurrence_day_of_month" in stmts[0]
+    assert stmts[0].rstrip().endswith(")")

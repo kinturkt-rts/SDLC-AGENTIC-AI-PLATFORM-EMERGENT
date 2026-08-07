@@ -76,10 +76,12 @@
         "GITLAB_API_URL": "https://code.junodev.net/api/v4",
         "GITLAB_PROJECT_PATH": "junolabs/sdlc-agentic-ai-platform/sdlc-agentic-ai-platform",
         "GITLAB_BASE_BRANCH": "main",
-        "GITLAB_MCP_URL": "Streamable HTTP MCP (CloudFront). See config/agentcore/gitlab-mcp-endpoints.json.",
-        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp for gitlab-agent publish (preferred over CloudFront)."
+        "GITLAB_MCP_URL": "Streamable HTTP MCP. gitlab-agent publish forces direct ALB — see gitlab-mcp-endpoints.json.",
+        "GITLAB_MCP_HTTP_DIRECT_URL": "ECS ALB /mcp — required for apps-repo publish (never CloudFront).",
+        "GITLAB_PUBLISH_SINGLE_COMMIT": "true (default) — one Git commit per app publish; protects Sidekiq.",
+        "GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT": "false (default) — emergency only."
       },
-      "notes": "ECS HTTP MCP only (no local stdio binary). gitlab-agent prefers GITLAB_MCP_HTTP_DIRECT_URL for publish; CloudFront for read/IDE. WAF GenericLFI_BODY excluded on CloudFront Web ACL.",
+      "notes": "ECS HTTP MCP only. Apps-repo publish: direct ALB + single commit. CloudFront for IDE/read only. [skip ci] does not stop PostReceive.",
       "ecrImage": "061836593297.dkr.ecr.us-east-2.amazonaws.com/bedrock-agentcore-gitlab_agent:gitlab_mcp",
       "usedBy": ["gitlab-agent", "qa-agent (optional MR comments)"]
     },

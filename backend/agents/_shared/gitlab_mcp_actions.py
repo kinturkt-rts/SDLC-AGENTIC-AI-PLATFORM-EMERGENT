@@ -19,10 +19,12 @@ from .gitlab_mcp_client import (
     GitLabMcpError,
     _list_repository_tree_async,
     call_gitlab_mcp_tool,
+    gitlab_mcp_is_cloudfront_url,
     gitlab_mcp_publish_url_candidates,
     gitlab_mcp_session,
     gitlab_mcp_uses_cloudfront,
     list_existing_blob_paths,
+    require_gitlab_mcp_publish_url,
     use_gitlab_mcp_http,
     using_gitlab_mcp_url,
 )
@@ -35,6 +37,10 @@ _HTTP_FILE_API_HINT = (
     "CloudFront/WAF returned 403 on the MCP POST body. "
     "Set GITLAB_MCP_HTTP_DIRECT_URL to the ALB /mcp URL (see config/agentcore/gitlab-mcp-endpoints.json)."
 )
+# Publish must create exactly one Git commit so GitLab Sidekiq PostReceive runs once
+# (not once per file). [skip ci] does not stop PostReceive — only CI pipelines.
+_PUBLISH_SINGLE_COMMIT_DEFAULT = True
+
 
 _WAF_LOCALHOST_HTTP = re.compile(r"https?://localhost(?=[:/])", re.IGNORECASE)
 
@@ -180,7 +186,11 @@ def _build_publish_file(dest_rel: str, data: bytes) -> dict[str, Any]:
 
 
 def _publish_batch_size() -> int:
-    """CloudFront/WAF: one file per request. Direct ALB: batched commits (default 20)."""
+    """Legacy batch sizing for non-publish helpers / tests.
+
+    Apps-repo publish uses ``_publish_single_commit`` (all files, one commit)
+    and ignores this when ``GITLAB_PUBLISH_SINGLE_COMMIT`` is enabled (default).
+    """
     if use_gitlab_mcp_http():
         default = "1" if gitlab_mcp_uses_cloudfront() else str(_BATCH_SIZE)
         raw = os.getenv("GITLAB_MCP_HTTP_BATCH_SIZE", default).strip()
@@ -189,6 +199,15 @@ def _publish_batch_size() -> int:
         except ValueError:
             return 1 if gitlab_mcp_uses_cloudfront() else _BATCH_SIZE
     return _BATCH_SIZE
+
+
+def publish_single_commit_enabled() -> bool:
+    """One Git commit per publish (default on). Disable only for emergency debugging."""
+    raw = os.getenv(
+        "GITLAB_PUBLISH_SINGLE_COMMIT",
+        "true" if _PUBLISH_SINGLE_COMMIT_DEFAULT else "false",
+    ).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 PublishLayout = Literal["monorepo", "apps"]
 
@@ -856,7 +875,10 @@ async def _publish_files_via_file_api(
     existing_paths: set[str],
     skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
-    """Upload one file per MCP call (required for HTTP MCP behind restrictive WAF)."""
+    """Upload one file per MCP call (legacy / emergency only — floods Sidekiq).
+
+    Prefer ``_publish_single_commit``. Kept for ``GITLAB_PUBLISH_SINGLE_COMMIT=false``.
+    """
     commit_ids: list[str] = []
     for item in files:
         path = item["path"].lstrip("/")
@@ -881,6 +903,50 @@ async def _publish_files_via_file_api(
     return commit_ids
 
 
+async def _publish_single_commit(
+    session: Any,
+    *,
+    project_id: str,
+    branch: str,
+    slug: str,
+    files: list[dict[str, Any]],
+    existing_paths: set[str],
+) -> list[str]:
+    """Push every publish file in exactly one Git commit (one Sidekiq PostReceive).
+
+    Text and binary paths are included as commit actions (binaries as base64).
+    This is the only Sidekiq-safe publish path for the shared apps repo.
+    """
+    if not files:
+        return []
+
+    message = _publish_commit_message(slug)
+    commit_result = await call_gitlab_mcp_tool(
+        session,
+        "gitlab_commit_create",
+        {
+            "project_id": project_id,
+            "branch": branch,
+            "commit_message": message,
+            "actions": _commit_actions(files, existing_paths),
+        },
+    )
+    for item in files:
+        existing_paths.add(item["path"].lstrip("/"))
+    commit_id = commit_result.get("id") or commit_result.get("short_id")
+    if not commit_id:
+        raise GitLabMcpError(
+            "gitlab_commit_create returned no commit id — publish aborted to avoid "
+            "retrying with per-file commits that flood Sidekiq."
+        )
+    print(
+        f"[gitlab-mcp] single-commit publish for '{slug}': "
+        f"{len(files)} files → commit {commit_id}",
+        flush=True,
+    )
+    return [str(commit_id)]
+
+
 async def _publish_text_file_batches(
     session: Any,
     *,
@@ -891,7 +957,18 @@ async def _publish_text_file_batches(
     existing_paths: set[str],
     skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
-    # CloudFront WAF limits POST bodies — one file per MCP call. Direct ALB uses batched commits.
+    """Legacy multi-batch text publish (disabled when single-commit mode is on)."""
+    if publish_single_commit_enabled():
+        return await _publish_single_commit(
+            session,
+            project_id=project_id,
+            branch=branch,
+            slug=slug,
+            files=text_files,
+            existing_paths=existing_paths,
+        )
+
+    # Emergency multi-commit path only (GITLAB_PUBLISH_SINGLE_COMMIT=false).
     if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
         return await _publish_files_via_file_api(
             session,
@@ -1074,12 +1151,10 @@ def _publish_commit_message(slug: str) -> str:
 class _SkipCiCommitTracker:
     """Marks every publish commit except the last with ``[skip ci]``.
 
-    A publish behind CloudFront/WAF pushes one commit per file (see
-    ``_publish_batch_size``); each push otherwise triggers its own GitLab
-    pipeline on the ``sdlc/<slug>`` branch, racing and auto-cancelling on the
-    shared resource_group. Skipping CI for every commit but the true final one
-    means GitLab creates exactly one pipeline per publish, for the complete
-    file set.
+    Only used on the emergency multi-commit path
+    (``GITLAB_PUBLISH_SINGLE_COMMIT=false``). Default single-commit publish
+    creates one pipeline naturally. Note: ``[skip ci]`` never stops Sidekiq
+    ``PostReceive`` — only CI pipeline creation.
     """
 
     def __init__(self, total_commits: int) -> None:
@@ -1102,7 +1177,11 @@ async def _publish_binary_files(
     existing_paths: set[str],
     skip_ci_tracker: "_SkipCiCommitTracker | None" = None,
 ) -> list[str]:
-    """jmrplens commit_create schema has no per-action encoding; use file_create/update."""
+    """Legacy per-file binary upload (emergency only when single-commit is off).
+
+    Prefer ``_publish_single_commit``, which includes binaries as base64 actions
+    in the same Git commit (GitLab Commits API ``encoding=base64``).
+    """
     return await _publish_files_via_file_api(
         session,
         project_id=project_id,
@@ -1332,40 +1411,60 @@ async def publish_feature_async(
             )
             return
 
-        text_files, binary_files = _split_publish_files(files)
-
-        if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
-            text_commit_count = len(text_files)
+        if publish_single_commit_enabled():
+            # One gitlab_commit_create for the whole tree (text + binary).
+            # This is the only Sidekiq-safe path for the shared apps repo.
+            published = await _publish_single_commit(
+                session,
+                project_id=project_id,
+                branch=publish_branch,
+                slug=slug,
+                files=files,
+                existing_paths=existing_paths,
+            )
+            commits.extend(published)
+            if len(published) != 1:
+                raise GitLabMcpError(
+                    f"Single-commit publish for '{slug}' produced {len(published)} "
+                    f"commit id(s); refusing multi-commit Sidekiq flood pattern."
+                )
         else:
-            text_commit_count = len(_batch_files(text_files)) if text_files else 0
-        total_commits = text_commit_count + len(binary_files)
-        # Only worth tracking when a publish produces more than one commit —
-        # that's the case that would otherwise trigger one GitLab pipeline per commit.
-        skip_ci_tracker = _SkipCiCommitTracker(total_commits) if total_commits > 1 else None
-
-        commits.extend(
-            await _publish_text_file_batches(
-                session,
-                project_id=project_id,
-                branch=publish_branch,
-                slug=slug,
-                text_files=text_files,
-                existing_paths=existing_paths,
-                skip_ci_tracker=skip_ci_tracker,
+            text_files, binary_files = _split_publish_files(files)
+            if use_gitlab_mcp_http() and gitlab_mcp_uses_cloudfront():
+                text_commit_count = len(text_files)
+            else:
+                text_commit_count = len(_batch_files(text_files)) if text_files else 0
+            total_commits = text_commit_count + len(binary_files)
+            skip_ci_tracker = (
+                _SkipCiCommitTracker(total_commits) if total_commits > 1 else None
             )
-        )
-
-        commits.extend(
-            await _publish_binary_files(
-                session,
-                project_id=project_id,
-                branch=publish_branch,
-                slug=slug,
-                binary_files=binary_files,
-                existing_paths=existing_paths,
-                skip_ci_tracker=skip_ci_tracker,
+            print(
+                f"[gitlab-mcp] WARNING: GITLAB_PUBLISH_SINGLE_COMMIT=false — "
+                f"publishing '{slug}' as ~{total_commits} commits (Sidekiq risk).",
+                flush=True,
             )
-        )
+            commits.extend(
+                await _publish_text_file_batches(
+                    session,
+                    project_id=project_id,
+                    branch=publish_branch,
+                    slug=slug,
+                    text_files=text_files,
+                    existing_paths=existing_paths,
+                    skip_ci_tracker=skip_ci_tracker,
+                )
+            )
+            commits.extend(
+                await _publish_binary_files(
+                    session,
+                    project_id=project_id,
+                    branch=publish_branch,
+                    slug=slug,
+                    binary_files=binary_files,
+                    existing_paths=existing_paths,
+                    skip_ci_tracker=skip_ci_tracker,
+                )
+            )
 
         if open_mr:
             title = f"feat({slug}): SDLC pipeline output"
@@ -1383,17 +1482,49 @@ async def publish_feature_async(
                 },
             )
 
-    mcp_urls = gitlab_mcp_publish_url_candidates() if use_gitlab_mcp_http() else []
-    attempt_urls: list[str | None] = mcp_urls if mcp_urls else [None]
+    # Force direct ALB for HTTP publish — never CloudFront (per-file flood history).
+    attempt_urls: list[str | None]
+    used_mcp_url: str | None = None
+    try:
+        if use_gitlab_mcp_http():
+            attempt_urls = gitlab_mcp_publish_url_candidates()
+            if not attempt_urls:
+                require_gitlab_mcp_publish_url()  # raises clear config error
+            # Soft-fail if someone enabled CloudFront emergency: still prefer ALB first.
+            if attempt_urls and gitlab_mcp_is_cloudfront_url(attempt_urls[0]):
+                print(
+                    "[gitlab-mcp] WARNING: publish MCP URL is CloudFront; "
+                    "set GITLAB_MCP_HTTP_DIRECT_URL to ALB to avoid Sidekiq floods.",
+                    flush=True,
+                )
+        else:
+            attempt_urls = [None]
+    except GitLabMcpError as exc:
+        return _publish_error(slug, publish_branch, cfg, exc)
+
     last_exc: BaseException | None = None
     publish_started = time.monotonic()
 
     for index, mcp_url in enumerate(attempt_urls):
         try:
             if mcp_url:
+                # Never retry a failed ALB publish via CloudFront — that path
+                # historically forced one-commit-per-file and saturated Sidekiq.
+                if gitlab_mcp_is_cloudfront_url(mcp_url) and index > 0:
+                    return _publish_error(
+                        slug,
+                        publish_branch,
+                        cfg,
+                        GitLabMcpError(
+                            "Publish failed on direct MCP; refusing CloudFront "
+                            "fallback (would risk per-file commits / Sidekiq flood). "
+                            f"Last error: {_mcp_error_message(last_exc) if last_exc else 'unknown'}"
+                        ),
+                    )
                 async with using_gitlab_mcp_url(mcp_url):
                     async with gitlab_mcp_session() as session:
                         await _run_publish(session)
+                used_mcp_url = mcp_url
             else:
                 async with gitlab_mcp_session() as session:
                     await _run_publish(session)
@@ -1401,12 +1532,43 @@ async def publish_feature_async(
         except (GitLabMcpError, BaseExceptionGroup) as exc:
             last_exc = exc
             has_fallback = index < len(attempt_urls) - 1
-            if not (_is_cloudfront_waf_403(exc) and has_fallback):
+            next_url = attempt_urls[index + 1] if has_fallback else None
+            # Only retry when next candidate is still a non-CloudFront URL.
+            can_retry = (
+                has_fallback
+                and next_url is not None
+                and not gitlab_mcp_is_cloudfront_url(next_url)
+                and _is_cloudfront_waf_403(exc)
+            )
+            if not can_retry:
                 return _publish_error(slug, publish_branch, cfg, exc)
     else:
         if last_exc is not None:
             return _publish_error(slug, publish_branch, cfg, last_exc)
-        return _publish_error(slug, publish_branch, cfg, GitLabMcpError("GitLab MCP publish failed"))
+        return _publish_error(
+            slug, publish_branch, cfg, GitLabMcpError("GitLab MCP publish failed")
+        )
+
+    if (
+        not already_published
+        and publish_single_commit_enabled()
+        and len(commits) > 1
+    ):
+        return {
+            "ok": False,
+            "error": (
+                f"Publish produced {len(commits)} commits but single-commit mode "
+                "requires exactly 1 (Sidekiq PostReceive guard)."
+            ),
+            "targetApp": slug,
+            "branch": publish_branch,
+            "gitlabProject": cfg["project"],
+            "gitlabBaseBranch": cfg["base"],
+            "commits": commits,
+            "commitCount": len(commits),
+            "fileCount": len(files),
+            "mcpUrl": used_mcp_url,
+        }
 
     mr_url = str(mr_result.get("web_url") or "")
     branch_url = _branch_tree_url(project_web_url, publish_branch) if project_web_url else None
@@ -1425,7 +1587,8 @@ async def publish_feature_async(
         "commitCount": len(commits),
         "fileCount": len(files),
         "elapsedSec": elapsed_sec,
-        "mcpUrl": attempt_urls[0] if attempt_urls and attempt_urls[0] else None,
+        "singleCommit": publish_single_commit_enabled(),
+        "mcpUrl": used_mcp_url,
         "mergeRequestUrl": mr_url or None,
         "mergeRequestIid": mr_result.get("iid"),
         "repoUrl": project_web_url,

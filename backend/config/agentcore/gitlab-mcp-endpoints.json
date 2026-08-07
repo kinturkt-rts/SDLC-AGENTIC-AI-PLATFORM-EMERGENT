@@ -1,5 +1,5 @@
 {
-  "description": "Shared GitLab MCP HTTP endpoints for the Juno SDLC platform (no secrets). CloudFront is the canonical URL for agents, IDE, and AgentCore Gateway.",
+  "description": "Shared GitLab MCP HTTP endpoints for the Juno SDLC platform (no secrets). CloudFront is for IDE/read paths; apps-repo publish MUST use direct ALB + single commit.",
   "region": "us-east-2",
   "accountId": "061836593297",
   "ecs": {
@@ -17,25 +17,28 @@
   "directMcpUrl": "http://gitlab-mcp-alb-245900667.us-east-2.elb.amazonaws.com/mcp",
   "waf": {
     "status": "fixed",
-    "note": "GenericLFI_BODY excluded on CloudFront Web ACL CreatedByCloudFront-0a676d76 (one-time AWS console/CLI change)."
+    "note": "GenericLFI_BODY excluded on CloudFront Web ACL CreatedByCloudFront-0a676d76 (one-time AWS console/CLI change). Publish still must not use CloudFront — historical per-file path flooded Sidekiq PostReceive."
   },
   "usage": {
-    "gitlabAgentPublish": "directMcpUrl (batched commits; ALB bypasses CloudFront WAF)",
+    "gitlabAgentPublish": "directMcpUrl only + one gitlab_commit_create per app (GITLAB_PUBLISH_SINGLE_COMMIT=true); never CloudFront",
     "qaAgentGitLabTools": "cloudFront.mcpUrl",
     "cursorIdeMcp": "cloudFront.mcpUrl",
     "agentcoreGatewayTarget": "cloudFront.mcpUrl",
-    "albFallback": "directMcpUrl"
+    "albFallback": "directMcpUrl (not used as CloudFront fallback for publish)"
   },
   "runtimeEnv": {
     "gitlabAgent": {
       "GITLAB_MCP_URL": "directMcpUrl",
       "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl",
-      "GITLAB_MCP_HTTP_BATCH_SIZE": "20"
+      "GITLAB_MCP_HTTP_BATCH_SIZE": "20",
+      "GITLAB_PUBLISH_SINGLE_COMMIT": "true",
+      "GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT": "false"
     },
     "defaultAgents": {
       "GITLAB_MCP_URL": "cloudFront.mcpUrl",
-      "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl (fallback on WAF 403)",
-      "GITLAB_MCP_HTTP_BATCH_SIZE": "1"
+      "GITLAB_MCP_HTTP_DIRECT_URL": "directMcpUrl",
+      "GITLAB_MCP_HTTP_BATCH_SIZE": "1",
+      "note": "Non-publish agents may use CloudFront for reads; publish path always prefers GITLAB_MCP_HTTP_DIRECT_URL"
     }
   }
 }

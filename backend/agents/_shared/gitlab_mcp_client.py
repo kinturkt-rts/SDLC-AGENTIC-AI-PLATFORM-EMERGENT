@@ -110,14 +110,59 @@ def gitlab_mcp_is_cloudfront_url(url: str) -> bool:
 
 
 def gitlab_mcp_publish_url_candidates() -> list[str]:
-    """MCP URLs for artifact publish — prefer direct ALB (batched commits) over CloudFront/WAF."""
-    candidates = gitlab_mcp_url_candidates()
+    """MCP URLs for artifact publish — direct ALB only by default.
+
+    CloudFront is excluded from publish: the WAF path historically forced
+    one-file-per-commit uploads, which floods GitLab Sidekiq ``PostReceive``
+    and stalls other projects' MRs. Set ``GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT=true``
+    only for emergency fallback (still uses single-commit when possible).
+    """
+    allow_cloudfront = os.getenv(
+        "GITLAB_MCP_PUBLISH_ALLOW_CLOUDFRONT", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str) -> None:
+        normalized = normalize_gitlab_mcp_http_url(raw)
+        if normalized in seen:
+            return
+        if gitlab_mcp_is_cloudfront_url(normalized) and not allow_cloudfront:
+            return
+        seen.add(normalized)
+        urls.append(normalized)
+
+    # Prefer explicit direct ALB first.
     direct_raw = os.getenv("GITLAB_MCP_HTTP_DIRECT_URL", "").strip()
-    if not direct_raw:
-        return candidates
-    direct = normalize_gitlab_mcp_http_url(direct_raw)
-    rest = [url for url in candidates if url != direct]
-    return [direct, *rest]
+    if direct_raw:
+        _add(direct_raw)
+
+    for key in ("GITLAB_MCP_URL", "GITLAB_MCP_HTTP_URL"):
+        raw = os.getenv(key, "").strip()
+        if raw:
+            _add(raw)
+
+    if not urls and allow_cloudfront:
+        for raw_url in gitlab_mcp_url_candidates():
+            if raw_url not in seen:
+                seen.add(raw_url)
+                urls.append(raw_url)
+
+    return urls
+
+
+def require_gitlab_mcp_publish_url() -> str:
+    """Resolve the MCP URL used for publish, or raise a clear configuration error."""
+    urls = gitlab_mcp_publish_url_candidates()
+    if urls:
+        return urls[0]
+    raise GitLabMcpError(
+        "Apps-repo publish requires a direct GitLab MCP URL (ALB), not CloudFront. "
+        "Set GITLAB_MCP_HTTP_DIRECT_URL to the ALB /mcp endpoint "
+        "(see config/agentcore/gitlab-mcp-endpoints.json). "
+        "Per-file CloudFront publishes flood Sidekiq PostReceive for the whole GitLab instance."
+    )
 
 
 def _raw_gitlab_mcp_http_url() -> str | None:

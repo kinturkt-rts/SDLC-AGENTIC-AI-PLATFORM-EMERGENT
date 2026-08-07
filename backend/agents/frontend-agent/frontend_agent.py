@@ -702,13 +702,23 @@ Return ONLY the JSON. No markdown, no explanation.
 SYS_PROMPT = _build_frontend_system_prompt(None)
 
 
+def _max_output_tokens() -> int:
+    """Bedrock output cap"""
+    return int(
+        os.getenv(
+            "FRONTEND_AGENT_MAX_TOKENS",
+            os.getenv("BEDROCK_MAX_OUTPUT_TOKENS", "64000"),
+        )
+    )
+
+
 def _model() -> BedrockModel:
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
     model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     return BedrockModel(
         model_id=model_id,
         region_name=os.getenv("AWS_REGION", "us-east-2"),
-        max_tokens=32000,
+        max_tokens=_max_output_tokens(),
         streaming=True,
         cache_config=CacheConfig(strategy="auto"),
         cache_tools="default",
@@ -721,31 +731,11 @@ def _model() -> BedrockModel:
 
 
 def build_frontend_agent() -> Agent:
-    """Reusable, app-agnostic frontend agent — for the AgentCore bundle.
-
-    Matches build_devops_agent()'s shape: a long-lived Agent built once and
-    reused across every invocation, with no tools (frontend-agent has none —
-    it returns a JSON file map as plain text, unlike devops/web-crawler's
-    @tool-backed agents) and no per-run state (no callback_handler/telemetry —
-    those are per-invocation, same as devops/web-crawler bake none in either).
-
-    Unlike run_task()'s per-invocation Agent (which bakes one target app's
-    authMode into the system prompt via _build_frontend_system_prompt(ctx)),
-    this factory's system prompt is _frontend_base_system_prompt() — the
-    generic rules only. Per-app data (OpenAPI spec, PRD, design doc, target
-    app name, authMode) is NOT available at construction time here; today only
-    run_task()'s CLI/pipeline path supplies it, via the user message it builds
-    separately (see run_task's PRODUCT BRIEF/DESIGN NOTES/OPENAPI SPEC message).
-    Delivering that same per-app data to an AgentCore-invoked instance of this
-    agent is not yet wired — see this task's report for that gap.
-    """
+    """Reusable, app-agnostic frontend agent - for the AgentCore bundle. """
     return Agent(
         agent_id=AGENT_NAME,
-        name=AGENT_NAME,
-        description=(
-            "Generates a React + TypeScript frontend from a backend OpenAPI spec "
-            "and product/design context."
-        ),
+        name=AGENT_NAME,   
+        description="Generates a React + TypeScript frontend from a backend OpenAPI spec and product/design context.",
         model=_model(),
         system_prompt=_frontend_base_system_prompt(),
     )
