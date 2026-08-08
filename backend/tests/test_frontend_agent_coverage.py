@@ -696,3 +696,25 @@ def test_max_output_tokens_honors_env_override(monkeypatch) -> None:
     fa = _load_agent_module()
     monkeypatch.setenv("FRONTEND_AGENT_MAX_TOKENS", "48000")
     assert fa._max_output_tokens() == 48000
+
+
+def test_resolve_app_dir_uses_repo_root_in_local_mode(monkeypatch) -> None:
+    fa = _load_agent_module()
+    monkeypatch.delenv("ARTIFACT_STORE", raising=False)
+    app_dir = fa._resolve_app_dir("demo-app")
+    assert app_dir == fa._REPO_ROOT / "target-apps" / "demo-app"
+
+
+def test_resolve_app_dir_uses_writable_tmp_dir_in_s3_mode(monkeypatch) -> None:
+    """Regression: _REPO_ROOT/target-apps/... is baked into the AgentCore image and
+    read-only there - run_task() used to write generated frontend files straight into
+    it, which crashed with OSError: [Errno 30] Read-only file system the first time a
+    run actually reached the write step (feedback-systenm, run a912dda4). s3 mode must
+    resolve to a genuinely writable /tmp dir instead, shaped like target-apps/<slug>
+    so relative-path reporting stays identical to local mode."""
+    fa = _load_agent_module()
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    app_dir = fa._resolve_app_dir("demo-app")
+    assert app_dir != fa._REPO_ROOT / "target-apps" / "demo-app"
+    assert app_dir.parts[-2:] == ("target-apps", "demo-app")
+    assert app_dir.is_dir()  # _resolve_app_dir must create it, not just compute the path

@@ -3,9 +3,9 @@ Frontend agent: generates a React + TypeScript frontend for a target app.
 
 It scaffolds the frontend template (pattern "F") into target-apps/<app>/frontend/,
 then uses the model to generate real screens from the product brief, the design
-doc, and the backend's OpenAPI spec. Generated files are written under
-target-apps/<app>/frontend/.
+doc, and the backend's OpenAPI spec
 """
+
 
 import argparse
 import importlib.util
@@ -44,15 +44,10 @@ from _shared.telemetry import RunTelemetry, usage_from_event
 load_repo_env()
 
 AGENT_NAME = "frontend-agent"
-A2A_PORT = 9111  # reserved for later
-
+A2A_PORT = 9111
 _TEMPLATE_DIR = _REPO_ROOT / "target-apps" / "_template"
 
 
-# ------------------------------------------------------------------
-# Load scaffold.py by file path, because its folder "developer-agent"
-# has a hyphen and cannot be imported normally.
-# ------------------------------------------------------------------
 def _load_scaffold():
     path = _REPO_ROOT / "agents" / "developer-agent" / "scaffold.py"
     spec = importlib.util.spec_from_file_location("scaffold_mod", path)
@@ -62,8 +57,9 @@ def _load_scaffold():
 
 
 _JWT_AUTH_SCREEN_SECTION = """\
-- Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, getCurrentUser, hasRole, isCurrentUser, and isSessionValid, which read the backend URL from VITE_API_URL and automatically attach the auth token from localStorage. Import and use those.
+- Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, apiUpload, getCurrentUser, hasRole, isCurrentUser, and isSessionValid, which read the backend URL from VITE_API_URL and automatically attach the auth token from localStorage. Import and use those.
 - For EACH endpoint, use the api helper that matches the HTTP method declared in the OpenAPI spec for that exact path: GET -> apiGet, POST -> apiPost, PUT -> apiPut, PATCH -> apiPatch, DELETE -> apiDelete. Do NOT substitute one method for another (e.g. never call apiPut on a PATCH endpoint) — a method mismatch causes a 405 error at runtime. Never use raw fetch() for API calls; always use the api helpers so auth and the base URL are handled.
+- For any endpoint whose OpenAPI spec takes multipart/form-data (a file upload — request body is UploadFile/File(...) rather than JSON), use apiUpload(path, formData) from api.ts, NEVER a hand-written fetch() call. apiUpload attaches the real auth token the same way apiGet/apiPost do. A hand-rolled fetch() for uploads has shipped with the wrong localStorage key before, silently sending no Authorization header at all and 401ing even for a valid admin login — build a FormData with .append() for the file and each field, then call apiUpload<T>(path, formData). Do not set a Content-Type header yourself; the browser sets the multipart boundary.
 - Prefer passing the path as a string or template literal DIRECTLY to apiGet/apiPost/etc. (e.g. apiGet<T>('/api/v1/items') or apiGet<T>(`/api/v1/items/${id}`)). If you must build a query string, keep the `/api/v1/...` prefix inside the literal passed to the helper (or assigned to the variable you pass) so static coverage checks can see it.
 - Do NOT pass a token argument to any api helper. They read the token from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
@@ -87,8 +83,9 @@ _JWT_AUTH_SCREEN_SECTION = """\
 
 
 _API_KEY_AUTH_SCREEN_SECTION = """\
-- Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, getCurrentUser, hasRole, isCurrentUser, isSessionValid, hasTwoRoles, login, and clearCredential. The api helpers read the backend URL from VITE_API_URL and automatically attach the stored credential under whichever header the chosen role maps to. Import and use those.
+- Do NOT create or overwrite src/api.ts. It already exists and exports apiGet, apiPost, apiPut, apiPatch, apiDelete, apiUpload, getCurrentUser, hasRole, isCurrentUser, isSessionValid, hasTwoRoles, login, and clearCredential. The api helpers read the backend URL from VITE_API_URL and automatically attach the stored credential under whichever header the chosen role maps to. Import and use those.
 - For EACH endpoint, use the api helper that matches the HTTP method declared in the OpenAPI spec for that exact path: GET -> apiGet, POST -> apiPost, PUT -> apiPut, PATCH -> apiPatch, DELETE -> apiDelete. Do NOT substitute one method for another (e.g. never call apiPut on a PATCH endpoint) — a method mismatch causes a 405 error at runtime. Never use raw fetch() for API calls; always use the api helpers so auth and the base URL are handled.
+- For any endpoint whose OpenAPI spec takes multipart/form-data (a file upload — request body is UploadFile/File(...) rather than JSON), use apiUpload(path, formData) from api.ts, NEVER a hand-written fetch() call. apiUpload attaches the real credential the same way apiGet/apiPost do. A hand-rolled fetch() for uploads has shipped with the wrong localStorage key before, silently sending no auth header at all and 401ing even for a valid login — build a FormData with .append() for the file and each field, then call apiUpload<T>(path, formData). Do not set a Content-Type header yourself; the browser sets the multipart boundary.
 - Prefer passing the path as a string or template literal DIRECTLY to apiGet/apiPost/etc. (e.g. apiGet<T>('/api/v1/items') or apiGet<T>(`/api/v1/items/${id}`)). If you must build a query string, keep the `/api/v1/...` prefix inside the literal passed to the helper (or assigned to the variable you pass) so static coverage checks can see it.
 - Do NOT pass a token argument to any api helper. They read the credential from localStorage themselves. Never write apiGet(path, token) or similar.
 - For action endpoints that take no payload (e.g. an archive/approve/reject action), the body argument is optional — call apiPost(path) or apiPatch(path) with no second argument rather than inventing a body.
@@ -110,27 +107,14 @@ _API_KEY_AUTH_SCREEN_SECTION = """\
 
 
 def _frontend_base_system_prompt() -> str:
-    """Generic, app-agnostic frontend-generation system prompt — no target-app
-    context of any kind (no OpenAPI spec, no PRD/design text, no target-app
-    name, no authMode). Defaults to the JWT auth screen/api.ts section, same
-    as _build_frontend_system_prompt(ctx) does when ctx has no authMode.
-
-    Used by build_frontend_agent() for the AgentCore bundle: that Agent is
-    constructed once and reused across every invocation, so its system prompt
-    can never bake in one specific app's authMode the way run_task()'s
-    per-invocation Agent does — only the CLI/pipeline path has a concrete ctx
-    to derive authMode from.
-    """
+    """Generic, app-agnostic frontend-generation system prompt"""
+    
     return _SYS_PROMPT_TEMPLATE.replace("{{AUTH_SCREEN_SECTION}}", _JWT_AUTH_SCREEN_SECTION)
 
 
 def _build_frontend_system_prompt(ctx: dict | None = None) -> str:
-    """Render SYS_PROMPT with the auth-mode-specific screen/api.ts section.
+    """Render SYS_PROMPT with the auth-mode-specific screen/api.ts section"""
 
-    Deterministic on context authMode (set by auth_profile.py, never an LLM
-    judgment) — defaults to "jwt", byte-identical to the prompt before authMode
-    existed. Only authMode == "api-key" swaps in the paste-key-screen alternative.
-    """
     auth_mode = str((ctx or {}).get("authMode") or "jwt").strip().lower()
     if auth_mode != "api-key":
         return _frontend_base_system_prompt()
@@ -698,7 +682,6 @@ relative to the frontend folder. Example:
 Return ONLY the JSON. No markdown, no explanation.
 """
 
-# Backwards-compat alias: jwt-mode prompt (default). Prefer _build_frontend_system_prompt(ctx).
 SYS_PROMPT = _build_frontend_system_prompt(None)
 
 
@@ -1230,6 +1213,47 @@ def _validate_method_mismatch_gate(
     )
 
 
+_RAW_FETCH_RE = re.compile(r"\bfetch\s*\(")
+
+
+def _validate_raw_fetch_gate(frontend_dir: Path) -> tuple[bool, str]:
+    """Fail when a generated screen calls fetch() directly instead of an api.ts helper.
+
+    Regression: ai-support-bot's document-upload screen needed multipart/form-data,
+    apiPost only sends JSON, so the LLM free-invented its own fetch() call and its
+    own token lookup — and got the localStorage key wrong (a fallback the login
+    screen never writes to), so uploads 401'd for every user including admins.
+    api.ts now exports apiUpload for exactly this case; nothing under
+    src/components/ should ever need to call fetch() itself. src/api.ts and
+    src/api_apikey.ts are excluded by the *.tsx scan below (they are .ts, and are
+    template-owned/protected anyway).
+    """
+    src = frontend_dir / "src"
+    if not src.is_dir():
+        return True, "[raw-fetch-gate] PASSED (no src/)"
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.tsx")):
+        if "components/ui/" in path.as_posix():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if _RAW_FETCH_RE.search(text):
+            offenders.append(path.relative_to(frontend_dir).as_posix())
+    if offenders:
+        return False, (
+            "[raw-fetch-gate] FAILED: these files call fetch() directly instead of "
+            "an api.ts helper — auth headers and the base URL are NOT attached "
+            "automatically, and hand-rolled token lookups have shipped with the "
+            "wrong localStorage key before (silent 401s even for a valid admin "
+            "login):\n  - "
+            + "\n  - ".join(offenders)
+            + "\nFix: use apiGet/apiPost/apiPut/apiPatch/apiDelete for JSON "
+            "endpoints, or apiUpload(path, formData) for multipart/form-data (file "
+            "upload) endpoints. Never call fetch() yourself and never read the auth "
+            "token from localStorage directly."
+        )
+    return True, "[raw-fetch-gate] PASSED"
+
+
 def _validate_role_source_gate(frontend_dir: Path, auth_mode: str = "jwt") -> tuple[bool, str]:
     """Deterministic backstop: api-key apps must resolve the caller's real role
     from the backend, not from a user-chosen placeholder.
@@ -1690,28 +1714,35 @@ def _clear_frontend_generated(frontend_dir: Path) -> None:
         )
 
 
+def _resolve_app_dir(slug: str) -> Path:
+    """_REPO_ROOT/target-apps/... is baked into the AgentCore image and read-only """    
+    
+    if artifact_store.is_s3_store():
+        app_dir = Path(tempfile.mkdtemp(prefix=f"frontend-agent-out-{slug}-")) / "target-apps" / slug
+        app_dir.mkdir(parents=True, exist_ok=True)
+        return app_dir
+    return _REPO_ROOT / "target-apps" / slug
+
+
 def run_task(
     target_app: str,
     context: dict,
     *,
     full_regen: bool = False,
     openapi_source_path: str | Path | None = None,
-) -> None:
+) -> Path:
     app = resolve_target_app(target_app, context)
     slug = slugify(app)
 
     ctx = merge_run_handoff_context(context, include_db_paths=False)
     auth_mode = str(ctx.get("authMode") or "jwt").strip().lower()
 
-    app_dir = _REPO_ROOT / "target-apps" / slug
+    app_dir = _resolve_app_dir(slug)
     frontend_dir = app_dir / "frontend"
 
     if full_regen:
         _clear_frontend_generated(frontend_dir)
 
-    # 1. Scaffold the frontend template into <app>/frontend/
-    # jwt (default) is byte-identical to today: pattern "F". api-key swaps in
-    # "F-api-key" (api_apikey.ts copied as api.ts instead of the JWT variant).
     scaffold = _load_scaffold()
     frontend_pattern = "F-api-key" if auth_mode == "api-key" else "F"
     result = scaffold.scaffold_service(
@@ -1723,20 +1754,13 @@ def run_task(
     if result["missing"]:
         print(f"[frontend-agent] WARNING missing template files: {result['missing']}")
 
-    # 2. Gather inputs: brief, design, openapi spec
     prd_path = ctx.get("prdPath")
     design_path = ctx.get("designDocPath")
     if openapi_source_path is not None:
-        # Handoff-driven invoke (see handle_developer_handoff): consume the caller's
-        # pointer instead of rediscovering app_dir/openapi.json. Relative paths are
-        # resolved against the repo root, same convention as prdPath/designDocPath.
+
         candidate = Path(openapi_source_path)
         openapi_path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate)
     elif ctx.get("openApiPath"):
-        # context.json's own pointer (set by developer-agent), same resolution
-        # convention as prdPath/designDocPath just above. Falls back to the
-        # app_dir default below for older context.json files that predate this
-        # field, so existing apps keep working unchanged.
         candidate = Path(str(ctx["openApiPath"]))
         openapi_path = candidate if candidate.is_absolute() else (_REPO_ROOT / candidate)
     else:
@@ -1752,9 +1776,6 @@ def run_task(
             f"Run the backend/developer step first so the spec exists."
         )
 
-    # 2b. api-key mode only: resolve which header the pasted key is sent under,
-    # deterministically from the backend's own contract — never an LLM guess.
-    # Must run after scaffold (2b overwrites what scaffold_service force-copied).
     if auth_mode == "api-key":
         design_header_names = extract_named_headers(design)
         ranked = _rank_api_key_header_names(openapi, design_header_names)
@@ -1777,8 +1798,6 @@ def run_task(
             print(f"[frontend-agent] API key header ({source}): {header_name} (single-tier — no role selector)")
         _write_api_key_header_env(frontend_dir, header_name, secondary_header_name)
 
-    # 3. Build the user message for the model
-    # TEMP small-test scope, remove after Step 2
     user_message = (
         f"PRODUCT BRIEF:\n{brief}\n\n"
         f"DESIGN NOTES:\n{design}\n\n"
@@ -1786,14 +1805,6 @@ def run_task(
         f"Generate the React screens now. Return only the JSON file map."
     )
 
-    # ==============================================================================
-# PIECE 3: The retry loop. This REPLACES the current code in run_task() that
-# runs from "# 4. Call the model" through the end of the write loop.
-# Everything above it in run_task (scaffold, gather inputs, build user_message)
-# stays exactly as it is. Paste this where the old generation/write code was.
-# ==============================================================================
- 
-    # 4. Generate with a build-validation retry loop (mirrors developer agent).
     max_retries = int(os.getenv("FRONTEND_AGENT_VALIDATE_RETRIES", "2"))
     telemetry: RunTelemetry | None = None
     agent_error: BaseException | None = None
@@ -1830,11 +1841,11 @@ def run_task(
                 method_passed, method_report = _validate_method_mismatch_gate(
                     frontend_dir, openapi_path
                 )
+                fetch_passed, fetch_report = _validate_raw_fetch_gate(frontend_dir)
                 coverage_passed, coverage_report = _validate_route_coverage_gate(
                     frontend_dir, openapi_path, auth_mode
                 )
-                # WARN-always: printed every attempt, pass or fail, on both the
-                # CLI path and the handoff path (both go through run_task()).
+
                 print(f"[frontend-agent] {coverage_report}")
                 if (
                     gate_passed
@@ -1844,6 +1855,7 @@ def run_task(
                     and dialog_passed
                     and payload_passed
                     and method_passed
+                    and fetch_passed
                     and coverage_passed
                 ):
                     print(f"[frontend-agent] {report}")
@@ -1854,6 +1866,7 @@ def run_task(
                     print(f"[frontend-agent] {dialog_report}")
                     print(f"[frontend-agent] {payload_report}")
                     print(f"[frontend-agent] {method_report}")
+                    print(f"[frontend-agent] {fetch_report}")
                     print("[frontend-agent] BUILD PASSED. Frontend generated successfully.")
                     return
                 if not gate_passed:
@@ -1870,6 +1883,8 @@ def run_task(
                     passed, report = payload_passed, payload_report
                 elif not method_passed:
                     passed, report = method_passed, method_report
+                elif not fetch_passed:
+                    passed, report = fetch_passed, fetch_report
                 else:
                     passed, report = coverage_passed, coverage_report
                     coverage_gap_data = _route_coverage_report(frontend_dir, openapi_path, auth_mode)
@@ -1884,11 +1899,6 @@ def run_task(
                 )
                 raise SystemExit(1)
 
-            # Feed the errors back for the next attempt. Stateless retry: send the
-            # build errors and ask for corrected files. Do NOT resend the full spec.
-            # Escalate if the SAME error (file+line+code) survived from the previous
-            # attempt unfixed — the generic "fix all errors" prompt already failed to
-            # fix it once, so ask for a targeted fix at the exact lines instead.
             current_error_locations = _error_locations(report)
             repeated = current_error_locations & previous_error_locations
             if repeated:
@@ -1919,26 +1929,7 @@ def run_task(
                 pass
     if agent_error is not None:
         raise agent_error
-
-
-# ==============================================================================
-# AgentCore direct-invoke handler (standalone runtime, no orchestrator).
-#
-# Mirrors developer_agent.py's shape: _prompt_to_text() normalizes whatever the
-# Strands/A2A layer hands the agent into a plain string; a deterministic Python
-# function (not an LLM turn) parses it and calls the same run_task() the CLI
-# uses; the whole thing never raises — every failure path returns a structured
-# {"status": "error", ...} result instead, matching gitlab-agent's
-# run_publish_for_agentcore ("no LLM" pattern) and developer_agent.py's
-# _execute_developer_pipeline_message.
-#
-# Stage 2b: in s3 mode (ARTIFACT_STORE=s3), handle_developer_handoff fetches
-# openapi.json + context.json from S3 by app slug (same runs/<runId>/<slug>/...
-# convention developer_agent.py's dev_read_file uses) instead of reading the
-# handoff's local openapi_path — see _fetch_inputs_from_s3 below. Local mode
-# (ARTIFACT_STORE unset/local) is untouched: it still reads the handoff's
-# openapi_path straight off local disk, exactly as Stage 1 did.
-# ==============================================================================
+    return frontend_dir
 
 
 def _prompt_to_text(message: Any) -> str:
@@ -1957,15 +1948,8 @@ def _prompt_to_text(message: Any) -> str:
 
 
 def parse_frontend_handoff(message: Any) -> dict[str, Any]:
-    """Parse a Developer->Frontend handoff object out of a raw invoke message.
+    """Parse a Developer->Frontend handoff object out of a raw invoke message"""
 
-    The payload IS the handoff JSON object (unlike the "task text\\n\\nContext:\\n{json}"
-    hybrid other agents parse) — accepts a dict directly (already-parsed payload), a bare
-    JSON string, or the same "...\\n\\nContext:\\n{json}" hybrid for tolerance if the
-    invoke path ever wraps it that way. Returns {} for anything unparseable rather than
-    raising, so a malformed invoke degrades to handle_developer_handoff's own
-    "target_app is required" error path instead of crashing here.
-    """
     if isinstance(message, dict):
         return message
     text = _prompt_to_text(message).strip()
@@ -1990,22 +1974,11 @@ def parse_frontend_handoff(message: Any) -> dict[str, Any]:
 
 
 def _fetch_inputs_from_s3(slug: str, run_id: str) -> tuple[dict[str, Any], Path]:
-    """S3-mode input resolution: fetch context.json + openapi.json by app slug under the
-    run's S3 prefix (runs/<runId>/<slug>/...) — the same key convention developer_agent.py's
-    dev_read_file uses for PRD/design/DB-handoff reads. The handoff's openapi_path is a
-    local filesystem path and is deliberately ignored here: it cannot resolve on a remote
-    runtime with no repo checkout, so this fetches by slug instead of by that path.
-
-    Lands the fetched spec at a local temp file so run_task's unchanged, local-file-only
-    read (via its openapi_source_path override) can consume it without any change to
-    run_task's own generation logic — the fetch happens entirely here, before run_task runs.
-    """
+    """S3-mode input resolution: fetch context.json + openapi.json by app slug under the run's S3 prefix (runs/<runId>/<slug>/...)"""
+    
     context = artifact_store.get_context(run_id, target_app=slug) or {"targetApp": slug}
     context.setdefault("targetApp", slug)
 
-    # Prefer context.json's own pointer (set by developer-agent); fall back to the
-    # slug-derived default for older context.json files written before this field
-    # existed. Both resolve to the identical S3 key today (<slug>/openapi.json).
     openapi_key = str(context.get("openApiPath") or f"{slug}/openapi.json")
     openapi_bytes = artifact_store.get_artifact(run_id, openapi_key)
 
@@ -2015,23 +1988,11 @@ def _fetch_inputs_from_s3(slug: str, run_id: str) -> tuple[dict[str, Any], Path]
     return context, tmp_openapi
 
 
-# ==============================================================================
-# backend_integration check (report-only, static-only): does the generated
-# frontend call any route that isn't declared in the app's openapi.json?
-# Never starts a server, never makes a real HTTP call — pure text/JSON scraping
-# and set comparison. A "mismatch" here must never raise or change control flow;
-# every call site below only feeds the returned dict's "backend_integration" field.
-# ==============================================================================
-
 _FRONTEND_API_CALL_RE = re.compile(
     r"\bapi(Get|Post|Put|Patch|Delete)\s*(?:<[^>]*>)?\s*\(\s*"
     r"(?:`([^`]*)`|'([^']*)'|\"([^\"]*)\")"
 )
 
-# apiGet(url) where url was previously assigned a path literal/template in-file.
-# Generated screens sometimes build query strings into a variable first; the
-# coverage gate must still see the underlying /api/v1/... path (claims-ops
-# audit-log failure).
 _FRONTEND_API_VAR_CALL_RE = re.compile(
     r"\bapi(Get|Post|Put|Patch|Delete)\s*(?:<[^>]*>)?\s*\(\s*"
     r"([A-Za-z_][A-Za-z0-9_]*)\s*[,)]"
@@ -2051,20 +2012,8 @@ _METHOD_BY_CALL_SUFFIX = {
 
 
 def _normalize_frontend_call_path(raw: str) -> str | None:
-    """Reduce a scraped template/string literal (e.g. ``/api/v1/books/${book.id}``,
-    ``/api/v1/books${query}``, ``/categories?limit=100``) to a comparable route
-    template, or None if nothing path-like survives.
-
-    Rules, derived from real generated call sites (see STEP 0 of this change):
-    - A literal ``?`` always starts a query string — everything from there is
-      dropped (query params are never part of a route match).
-    - A ``${...}`` interpolation immediately preceded by ``/`` is a path-param
-      segment (e.g. ``/products/${productId}`` -> ``/products/{*}``).
-    - Any other ``${...}`` (not preceded by ``/`` — e.g. ``/books${query}``
-      where ``query`` itself renders a leading ``?``) is treated as an unknown
-      suffix and dropped, same as a literal ``?`` — conservative by design: we
-      never guess what a bare interpolation expands to.
-    """
+    """Reduce a scraped template/string literal (e.g. ``/api/v1/books/${book.id}``, ``/api/v1/books${query}``, ``/categories?limit=100``) to a comparable route template, or None if nothing path-like survives."""
+    
     out: list[str] = []
     i = 0
     n = len(raw)
@@ -2092,8 +2041,7 @@ def _normalize_frontend_call_path(raw: str) -> str | None:
 
 
 def _normalize_openapi_path(path: str) -> str:
-    """``/api/v1/books/{book_id}`` -> ``/api/v1/books/{*}`` — same placeholder
-    shape _normalize_frontend_call_path produces, so param names never matter."""
+
     normalized = re.sub(r"\{[^}]+\}", "{*}", str(path).strip())
     if not normalized.startswith("/"):
         normalized = "/" + normalized
@@ -2108,6 +2056,7 @@ def _scrape_frontend_api_calls(frontend_dir: Path) -> list[tuple[str, str]]:
     raw_path is the un-normalized literal/template text, normalized by the caller.
     Skips node_modules and api.ts/api_apikey.ts themselves (those DEFINE the
     helpers with a bare `path: string` parameter, not a call with a real path)."""
+    
     calls: list[tuple[str, str]] = []
     src_dir = frontend_dir / "src"
     if not src_dir.is_dir():
@@ -2124,7 +2073,7 @@ def _scrape_frontend_api_calls(frontend_dir: Path) -> list[tuple[str, str]]:
             method = _METHOD_BY_CALL_SUFFIX[m.group(1)]
             raw_path = next(g for g in m.groups()[1:] if g is not None)
             calls.append((method, raw_path))
-        # Resolve apiGet(url) when url was assigned a path literal in this file.
+
         assigns: dict[str, str] = {}
         for am in _PATH_VAR_ASSIGN_RE.finditer(text):
             raw = next(g for g in am.groups()[1:] if g is not None)
@@ -2140,18 +2089,8 @@ def _scrape_frontend_api_calls(frontend_dir: Path) -> list[tuple[str, str]]:
 
 
 def _load_spec_routes(openapi_path: Path) -> set[tuple[str, str]] | None:
-    """Load openapi_path and return the set of (METHOD, normalized_path) routes
-    it declares, or None if the file is missing, unreadable as an object, or
-    declares no real-HTTP-method routes.
+    """Load openapi_path and return the set of (METHOD, normalized_path) routes it declares, or None if the file is missing, unreadable as an object, or declares no real-HTTP-method routes."""
 
-    Extracted from _check_backend_integration's original inline logic (no
-    behavior change) so both that function and _validate_route_coverage_gate
-    share exactly one implementation of "openapi.json -> normalized route set".
-    Deliberately does NOT catch unexpected exceptions itself (e.g. malformed
-    JSON raises here) — callers that want the old catch-all-degrade-to-"not_run"
-    behavior wrap this call in their own try/except, exactly as the
-    pre-extraction inline code did inside _check_backend_integration's try block.
-    """
     if not openapi_path.is_file():
         return None
     spec = json.loads(openapi_path.read_text(encoding="utf-8", errors="replace"))
@@ -2172,14 +2111,8 @@ def _load_spec_routes(openapi_path: Path) -> set[tuple[str, str]] | None:
 
 
 def _check_backend_integration(frontend_dir: Path, openapi_path: Path) -> tuple[str, list[str]]:
-    """Static-only check: do the generated frontend's scraped API calls map to
-    routes declared in the app's openapi.json? Never starts a server, never
-    makes a real HTTP call. Returns (status, mismatches) where status is one of
-    "validated" / "mismatch" / "not_run". Conservative: any input we can't
-    confidently parse, or zero real calls scraped, yields "not_run" rather than
-    a claimed "validated" we didn't actually perform. Wrapped so a bug in this
-    brand-new, report-only check can never break the frontend step that calls it.
-    """
+    """Static-only check: do the generated frontend's scraped API calls map to routes declared in the app's openapi.json? Never starts a server, never makes a real HTTP call. Returns (status, mismatches) where status is one of "validated" / "mismatch" / "not_run"."""
+
     try:
         spec_routes = _load_spec_routes(openapi_path)
         if not spec_routes:
@@ -2211,66 +2144,35 @@ def _check_backend_integration(frontend_dir: Path, openapi_path: Path) -> tuple[
         return "not_run", []
 
 
-# ==============================================================================
-# Route coverage gate (forward direction): does every backend route have SOME
-# generated UI wiring? Complements _check_backend_integration (which checks the
-# reverse direction: does every frontend call map to a real backend route).
-# Reuses _load_spec_routes, _scrape_frontend_api_calls, and both normalizers
-# unchanged — see this task's design report for why those are safe to share.
-# ==============================================================================
-
 _INFRA_EXCLUDED_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/"),
     ("GET", "/health"),
 })
 
-# JWT apps decode identity client-side (api.ts's getCurrentUser() reads the
-# token) and never call this route from a component; api-key apps genuinely
-# call it from api.ts's login() to resolve the caller's real role, so it must
-# NOT be excluded there. Inferred from auth_mode, never a general allowlist.
+
 _JWT_DECODED_CLIENT_SIDE_ROUTE: tuple[str, str] = ("GET", "/api/v1/users/me")
 
-# Percentage-based blocking: ON. Backstop for a real gap the entity-level rule
-# can't see on its own — a whole CLASS of screens missing (e.g. every entity's
-# GET-by-id detail route skipped) spreads its misses across many entities, so
-# no single entity goes "fully uncovered" and blocking_entities stays empty.
-# 15% is chosen so a couple of scraper blind-spot false positives (the scraper
-# can only ever over-report gaps, never under-report — see module docstring)
-# don't trip it on an otherwise-healthy app: one stray missed route in a
-# ~20-30 route app is roughly 3-5%, comfortably under 15%. Five missed routes
-# of the same shape (property-manage's real case: every entity's detail route
-# skipped, 5/24 = 20.8% uncovered) is a systemic gap, not scraper noise, and
-# DOES trip it.
 _ROUTE_COVERAGE_PCT_BLOCK_ENABLED = True
 _ROUTE_COVERAGE_PCT_BLOCK_THRESHOLD = 15.0
 
 
 def _excluded_routes_for_coverage(auth_mode: str) -> frozenset[tuple[str, str]]:
-    # Same "anything not literally api-key defaults to jwt" convention already
-    # used throughout this file (_build_frontend_system_prompt, run_task).
     if auth_mode != "api-key":
         return _INFRA_EXCLUDED_ROUTES | {_JWT_DECODED_CLIENT_SIDE_ROUTE}
     return _INFRA_EXCLUDED_ROUTES
 
 
 def _entity_for_route(path: str) -> str:
-    """First meaningful path segment, stripping a leading /api/v<N>/ prefix —
-    the convention every generated backend uses (see this file's own system
-    prompt examples: /api/v1/users, /api/v1/products, ...). Two routes sharing
-    an entity even when one is a sub-path action both group together, e.g.
-    '/api/v1/maintenance-requests' and '/api/v1/maintenance-requests/{*}/assign'
-    both group under 'maintenance-requests'.
-    """
+    """First meaningful path segment, stripping a leading /api/v<N>/ prefix"""
+    
     stripped = re.sub(r"^/api/v\d+/", "/", path)
     segments = [s for s in stripped.split("/") if s]
     return segments[0] if segments else path
 
 
 def _is_entity_root_route(path: str) -> bool:
-    """True when `path` is exactly the entity's collection root — no further
-    sub-path segment beyond the entity name itself. '/api/v1/owners' is root;
-    '/api/v1/maintenance-requests/{*}/assign' and '/api/v1/users/me' are not
-    (each has a segment beyond the entity name)."""
+    """True when `path` is exactly the entity's collection root"""
+    
     stripped = re.sub(r"^/api/v\d+/", "/", path)
     segments = [s for s in stripped.split("/") if s]
     return len(segments) == 1
@@ -2280,27 +2182,8 @@ def _route_coverage_report(
     frontend_dir: Path, openapi_path: Path, auth_mode: str = "jwt"
 ) -> dict[str, Any] | None:
     """Forward-direction coverage: for every in-scope backend route, was it hit
-    by at least one scraped frontend call (same METHOD, same normalized path)?
-
-    Returns None when there's nothing confident to check (no openapi routes
-    left after exclusion) — callers must treat None as "pass, nothing to
-    report", never as a gap, mirroring _check_backend_integration's own
-    not_run conservatism. Does not itself scrape frontend calls when there are
-    zero in-scope routes, so a frontend-less/route-less app never fails here.
-
-    BLOCK RULE (final): an entity blocks (ends up in blocking_entities) when it
-    is fully uncovered (zero of its routes matched) AND either (a) it has more
-    than one route, so "fully uncovered" is a real signal distinct from "one
-    missed route" — the scraper's blind spots (see module docstring above) can
-    only produce a false NEGATIVE on a single call, never fabricate hits across
-    every route of a multi-route entity — OR (b) it has exactly one route and
-    that route is a plain GET/POST directly on the entity's collection root
-    (e.g. GET/POST /api/v1/leases). A single-route entity whose lone route is a
-    sub-path action (PUT .../{id}/assign, GET .../me) never blocks on its own:
-    for such an entity "fully uncovered" and "this one route the scraper missed"
-    are the exact same fact, so blocking on it would just be blocking on the
-    scraper's own blind spot, not a genuine missing-feature signal.
-    """
+    by at least one scraped frontend call (same METHOD, same normalized path)"""
+    
     spec_routes = _load_spec_routes(openapi_path)
     if not spec_routes:
         return None
@@ -2408,13 +2291,8 @@ def _validate_route_coverage_gate(
 
 
 def _route_coverage_retry_message(report: str, data: dict[str, Any]) -> str:
-    """Retry prompt for a coverage-gate block. Two distinct trigger reasons feed
-    this same message: a fully-uncovered blocking entity (data["blocking_entities"]
-    non-empty), or the uncovered-percentage threshold (blocking_entities can be
-    EMPTY here — a systemic gap like "every entity's detail route missing"
-    spreads across many entities, so no single one goes fully uncovered). Fall
-    back to every entity with any uncovered route at all so the percentage-
-    triggered case still lists something concrete, not an empty gap list."""
+    """Retry prompt for a coverage-gate block"""
+    
     entities_to_list = data["blocking_entities"] or sorted(
         e for e, b in data["entities"].items() if b["uncovered"]
     )
@@ -2442,24 +2320,8 @@ def _route_coverage_retry_message(report: str, data: dict[str, Any]) -> str:
 
 
 def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
-    """AgentCore direct-invoke entrypoint: consume the Developer->Frontend handoff,
-    run the same generation run_task() already does for the CLI, and return Kintur's
-    frontend OUTPUT contract.
+    """AgentCore direct-invoke entrypoint: consume the Developer->Frontend handoff"""
 
-    Additive only — reuses run_task()'s exact scaffold + model + build-validation
-    retry loop via its openapi_source_path override; no generation logic is
-    duplicated or rewritten here. Never raises: every failure path (missing
-    target_app, missing/unreadable openapi input, an S3 fetch failure, a build that
-    never passes) returns {"status": "error", ...} instead of propagating an
-    exception, so a bad direct invoke surfaces as a clean structured result.
-
-    Dual-mode input resolution, mirroring the S3 output upload's own gating:
-    - local mode (ARTIFACT_STORE unset/local): reads the handoff's openapi_path and
-      the pipeline context straight off local disk, exactly as before — untouched.
-    - s3 mode (ARTIFACT_STORE=s3): fetches context.json + openapi.json from S3 by
-      app slug (see _fetch_inputs_from_s3) instead of trusting the handoff's local
-      path, which cannot exist on a remote runtime.
-    """
     target_app = str(
         payload.get("target_app") or payload.get("targetApp") or ""
     ).strip()
@@ -2500,27 +2362,16 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
             }
         resolved_app = slug
     else:
-        # Same context resolution the CLI's main() uses (resolve_cli_context with
-        # no explicit --context-file) so prdPath/designDocPath/authMode resolve
-        # identically to a local pipeline run — auto-loads
-        # agents/pipeline/<slug>.context.json when present. Byte-for-byte the
-        # same as Stage 1: no S3 awareness in this branch at all.
         context, resolved_app = resolve_cli_context(target_app, None, no_auto_context=False)
         openapi_source_path = payload.get("openapi_path")
 
-    # Pass 1 of the strict developer->frontend handoff (additive-only): when the
-    # caller's payload carries the new "auth" field (developer-agent's authMode
-    # pass-through), prefer it over whatever resolve_cli_context/_fetch_inputs_from_s3
-    # found on their own — same "prefer new field when present, fall back to current
-    # behaviour when absent" rule openapi_source_path already follows above. Absent,
-    # context's own authMode (or run_task's own "jwt" default) is untouched.
     if payload.get("auth"):
         context["authMode"] = str(payload["auth"]).strip().lower()
     if payload.get("modelOverride"):
         context["modelOverride"] = str(payload["modelOverride"]).strip()
 
     try:
-        run_task(
+        frontend_dir = run_task(
             resolved_app,
             context,
             full_regen=True,
@@ -2531,21 +2382,16 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - never let a bad invoke crash the runtime
         return {"status": "error", "target_app": target_app, "error": f"{type(exc).__name__}: {exc}"}
 
-    frontend_dir = _REPO_ROOT / "target-apps" / slug / "frontend"
     artifact_files = sorted(
         p
         for p in frontend_dir.rglob("*")
         if p.is_file() and "node_modules" not in p.parts and p.name != ".env"
     )
-    artifacts = [p.relative_to(_REPO_ROOT).as_posix() for p in artifact_files]
+
+    artifacts_root = frontend_dir.parent.parent.parent
+    artifacts = [p.relative_to(artifacts_root).as_posix() for p in artifact_files]
 
     if artifact_store.is_s3_store():
-        # run_id was already validated non-empty above (same gate that drove the
-        # input fetch) — reused here, not recomputed, so the output lands under
-        # the identical runs/<runId>/<slug>/ folder the input fetch just read
-        # from. Never raises: a failed output upload becomes a clean error
-        # result, matching this handler's own established contract, rather than
-        # crashing the runtime after a successful generation.
         try:
             _upload_frontend_output_if_s3(slug, run_id, frontend_dir, artifact_files)
         except Exception as exc:  # noqa: BLE001 - never let a bad invoke crash the runtime
@@ -2555,18 +2401,8 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
                 "error": f"could not upload frontend output to S3: {exc}",
             }
 
-    # Prefer the handoff's own frontend_folder pointer when present (same per-mode
-    # value target_app_root_rel(slug)+"/frontend" produces on the developer side);
-    # fall back to today's hardcoded string when absent. Reporting-only — frontend_dir
-    # above (the real local scratch dir every mode writes to before any S3 upload)
-    # is unchanged, so this cannot affect what was actually read, written, or uploaded.
     reported_frontend_path = str(payload.get("frontend_folder") or f"target-apps/{slug}/frontend")
 
-    # Resolve the same openapi.json this run actually generated against, mirroring
-    # run_task's own openapi_source_path/ctx["openApiPath"]/app_dir-default priority
-    # order (run_task returns None, so it never hands that resolved path back —
-    # this duplicates only the *lookup*, not any generation behaviour). Report-only:
-    # _check_backend_integration always degrades to ("not_run", []) rather than raise.
     if openapi_source_path is not None:
         resolved_openapi_path = Path(openapi_source_path)
         if not resolved_openapi_path.is_absolute():
@@ -2581,11 +2417,6 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
         frontend_dir, resolved_openapi_path
     )
 
-    # Report-only here, same as backend_integration above — the route-coverage
-    # GATE (which can block/retry) only runs inside run_task()'s loop; this is
-    # just that gate's report data surfaced in the handoff result, matching the
-    # backend_integration metadata pattern. Wrapped so a bug here can never
-    # break this "never raises" handler.
     auth_mode_for_coverage = str(context.get("authMode") or "jwt").strip().lower()
     try:
         route_coverage_data = _route_coverage_report(
@@ -2627,17 +2458,8 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
 def _upload_frontend_output_if_s3(
     slug: str, run_id: str, frontend_dir: Path, artifact_files: list[Path]
 ) -> list[str]:
-    """Upload generated frontend files to S3 as siblings of context.json/openapi.json —
-    runs/<runId>/<slug>/frontend/... — so gitlab-agent (or anything else) can publish
-    from the same run folder Kintur's contract requires.
-
-    Deliberately does NOT reuse sync_repo_paths_to_run/artifact_paths_for_agent (the
-    orchestrator-only sync path): that helper computes its rel path relative to
-    repo_root(), which for this directory is target-apps/<slug>/frontend/... — a
-    different prefix than context.json/openapi.json use (<slug>/...). Computing the
-    rel path relative to frontend_dir itself, as done here, keeps the same <slug>/...
-    convention every other artifact in this run already uses.
-    """
+    """Upload generated frontend files to S3 as siblings of context.json/openapi.json"""
+    
     uploaded: list[str] = []
     for path in artifact_files:
         rel_under_frontend = path.relative_to(frontend_dir).as_posix()
@@ -2648,11 +2470,8 @@ def _upload_frontend_output_if_s3(
 
 
 def _execute_frontend_invoke_message(message: Any) -> str:
-    """Text-in/text-out wrapper for AgentCore's A2A transport (parse -> handle -> JSON text).
-
-    Kept separate from handle_developer_handoff() so tests/local proofs can call the
-    dict-in/dict-out function directly without going through message-text parsing.
-    """
+    """Text-in/text-out wrapper for AgentCore's A2A transport (parse -> handle -> JSON text)"""
+    
     payload = parse_frontend_handoff(message)
     result = handle_developer_handoff(payload)
     return json.dumps(result, indent=2)
@@ -2671,18 +2490,8 @@ def _agent_result_from_text(text: str) -> Any:
 
 
 def build_frontend_pipeline_agent() -> Agent:
-    """AgentCore mode: handle_developer_handoff on each A2A message (mirrors
-    developer_agent.py's build_developer_pipeline_agent — same monkeypatch shape).
-
-    build_frontend_agent() (above) is the bare, tool-less, generic Agent — correct
-    for local dev/inspection, but on its own an AgentCore invoke would just reach
-    the LLM directly with no tools, never calling run_task(). This factory takes
-    that same base Agent and replaces its __call__/stream_async with the
-    deterministic handler built in this session's earlier stages
-    (parse_frontend_handoff -> handle_developer_handoff -> run_task), so a real
-    AgentCore invoke actually generates, fetches/uploads via S3 in s3 mode, and
-    returns Kintur's structured output contract instead of a chat reply.
-    """
+    """AgentCore mode: handle_developer_handoff on each A2A message"""
+    
     agent = build_frontend_agent()
 
     def frontend_invoke(message: Any, **kwargs: Any) -> str:

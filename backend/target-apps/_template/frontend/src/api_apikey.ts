@@ -103,6 +103,17 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return handle<T>(res, "DELETE", path);
 }
 
+// Multipart/form-data (file upload) endpoints. Never set Content-Type here —
+// the browser must generate its own boundary for FormData bodies.
+export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: formData,
+  });
+  return handle<T>(res, "POST", path);
+}
+
 export interface CurrentUser {
   id: string;
   roles: string[];
