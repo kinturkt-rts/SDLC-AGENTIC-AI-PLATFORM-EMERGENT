@@ -1,14 +1,4 @@
-#!/usr/bin/env python3
-"""Ensure infrastructure/environments/dev/<app>/main.tf exists for destroy/deploy.
-
-DevOps deploys write Terraform state to S3, but the local TF root is often missing
-on another machine (not committed, or wiped). Destroy then fails with
-"No Terraform root". This script rebuilds a compatible main.tf from remote state.
-
-Usage:
-  python scripts/ensure-target-app-tf-root.py --app shift-summary-bot
-  python scripts/ensure-target-app-tf-root.py --app desk-booking --force
-"""
+"""Ensure infrastructure/environments/dev/<app>/main.tf exists for destroy/deploy"""
 
 from __future__ import annotations
 
@@ -229,19 +219,8 @@ def _infer_flags(state: dict) -> tuple[bool, bool, bool, str, str | None]:
 
 
 def _infer_ui_framework(app: str, enable_ui: bool, health_path: str | None) -> str | None:
-    """Prefer on-disk React/Streamlit artifacts; fall back to the remote-state health path.
-
-    Returns "none" when the app has no UI, "streamlit"/"react" when determined, or
-    None when enable_ui is true but nothing determines the framework - callers must
-    not guess in that case (see --ui-framework on the CLI).
-
-    The health-path fallback is exhaustive, not a heuristic: target-app-ecs/main.tf's
-    local.ui_health ternary only ever writes one of two literal ALB health-check paths
-    for var.ui_framework - "/<app>/healthz" (react) or "/<app>/_stcore/health" (anything
-    else) - so a successfully parsed health_path fully determines the framework. A
-    missing health_path means state parsing found no health check at all, which is a
-    different situation from "state confirms streamlit" and must not be conflated with it.
-    """
+    """Prefer on-disk React/Streamlit artifacts; fall back to the remote-state health path"""
+    
     if not enable_ui:
         return "none"
     app_dir = BACKEND / "target-apps" / app

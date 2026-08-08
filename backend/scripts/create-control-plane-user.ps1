@@ -1,5 +1,5 @@
 # Create a Cognito user for the control-plane UI (admin-only pool).
-#
+
 # Usage:
 #   aws sso login --profile eks-admin-user
 #   .\scripts\create-control-plane-user.ps1 -Email you@company.com
@@ -21,8 +21,6 @@ if (-not $UserPoolId) {
     if (Test-Path $tfDir) {
         Push-Location $tfDir
         try {
-            # terraform often writes to stderr (box chars / backend warnings). With
-            # $ErrorActionPreference=Stop that becomes a terminating NativeCommandError.
             $prevEap = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             $UserPoolId = (terraform output -raw user_pool_id 2>$null)
@@ -33,7 +31,7 @@ if (-not $UserPoolId) {
         }
     }
 }
-# Fallback: same pool id wired into the control-plane ECS task definition.
+
 if (-not $UserPoolId) {
     $taskDef = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\control-plane-frontend\task-definition.json"
     if (Test-Path $taskDef) {
@@ -46,7 +44,6 @@ if (-not $UserPoolId) {
 }
 
 if (-not $Password) {
-    # Cognito policy: min 10, upper, lower, number
     $Password = "Welcome-" + ([guid]::NewGuid().ToString("N").Substring(0, 8)) + "aA1"
 }
 

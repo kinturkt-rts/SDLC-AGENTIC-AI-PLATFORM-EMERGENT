@@ -1,18 +1,4 @@
-"""Run a target-app's pytest suite against a throwaway Postgres schema.
-
-Used by the local PowerShell pipeline (run-sdlc-local.ps1's Invoke-LocalVerify)
-in place of running pytest directly on SQLite. SQLite silently accepts values a
-real Postgres native enum would reject, which made ORM-vs-DDL drift (a column
-the SQL declares as a native ENUM but the ORM types as a plain String) invisible
-to pytest. See agents/_shared/pg_test_schema.py for the setup/teardown mechanics
-(the same ones developer_agent.py's own validation gate uses) and
-target-apps/_template/tests/conftest_reference.py for why generated apps'
-conftest.py now requires a real Postgres DATABASE_URL.
-
-Usage (from backend/, REPO venv — this script imports _shared and scripts/
-apply_sql_to_rds, neither of which is installed in a target-app's own venv):
-  python scripts/run_app_tests_pg.py --target-app support-sla-desk
-"""
+"""Run a target-app's pytest suite against a throwaway Postgres schema"""
 
 from __future__ import annotations
 
@@ -34,13 +20,7 @@ from _shared.pg_test_schema import setup_temp_pg_test_schema, teardown_temp_pg_s
 
 
 def _python_for_app(app_dir: Path) -> str:
-    """App's own venv if present, else the repo venv, else bare "python" on PATH.
 
-    Unlike this script itself (which must run on the repo venv to import
-    _shared/scripts), the pytest subprocess needs the APP's own installed
-    dependencies (fastapi, sqlalchemy, psycopg, the app's requirements.txt) —
-    mirrors developer_agent.py's _python_for_service.
-    """
     if platform.system() == "Windows":
         venv_python = app_dir / ".venv" / "Scripts" / "python.exe"
         repo_python = _REPO_ROOT / ".venv" / "Scripts" / "python.exe"
@@ -75,9 +55,6 @@ def run_app_tests_pg(target_app: str) -> int:
             if schema:
                 env["POSTGRES_SCHEMA"] = schema
         else:
-            # No db/sql/ (DB-less or non-Postgres app pattern) — nothing to build a
-            # throwaway schema from; same harmless fallback developer_agent.py's
-            # _validation_env uses for this case.
             env["DATABASE_URL"] = "sqlite:///:memory:"
 
         python_cmd = _python_for_app(app_dir)
@@ -88,10 +65,6 @@ def run_app_tests_pg(target_app: str) -> int:
         )
         return result.returncode
     finally:
-        # Guaranteed teardown even if pytest fails, times out (no timeout is set
-        # here — the PowerShell caller has no timeout on this step either), or
-        # the subprocess itself crashes: this finally is host-side Python, never
-        # skipped by anything happening inside the pytest child process.
         if schema:
             teardown_temp_pg_schema(schema)
 

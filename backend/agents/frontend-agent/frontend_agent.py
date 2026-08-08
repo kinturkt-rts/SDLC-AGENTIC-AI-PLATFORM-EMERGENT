@@ -712,9 +712,18 @@ def _max_output_tokens() -> int:
     )
 
 
-def _model() -> BedrockModel:
+def _model_id(ctx: dict[str, Any] | None = None) -> str:
+    """Same MODEL_ID lookup as the other agents; pipeline retries pass modelOverride (Haiku fallback)."""
+    if ctx:
+        override = str(ctx.get("modelOverride") or "").strip()
+        if override:
+            return override
+    return os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6").strip()
+
+
+def _model(ctx: dict[str, Any] | None = None) -> BedrockModel:
     read_timeout = int(os.getenv("BEDROCK_READ_TIMEOUT", "600"))
-    model_id = os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    model_id = _model_id(ctx)
     return BedrockModel(
         model_id=model_id,
         region_name=os.getenv("AWS_REGION", "us-east-2"),
@@ -1792,11 +1801,11 @@ def run_task(
         telemetry = RunTelemetry(
             AGENT_NAME,
             target_app=app,
-            model_id=os.getenv("MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
+            model_id=_model_id(ctx),
             run_id=str(ctx.get("runId") or ctx.get("run_id") or "").strip() or None,
         )
         agent = Agent(
-            model=_model(),
+            model=_model(ctx),
             system_prompt=_build_frontend_system_prompt(ctx),
             callback_handler=_FrontendCallbackHandler(telemetry=telemetry),
         )
@@ -2507,6 +2516,8 @@ def handle_developer_handoff(payload: dict[str, Any]) -> dict[str, Any]:
     # context's own authMode (or run_task's own "jwt" default) is untouched.
     if payload.get("auth"):
         context["authMode"] = str(payload["auth"]).strip().lower()
+    if payload.get("modelOverride"):
+        context["modelOverride"] = str(payload["modelOverride"]).strip()
 
     try:
         run_task(

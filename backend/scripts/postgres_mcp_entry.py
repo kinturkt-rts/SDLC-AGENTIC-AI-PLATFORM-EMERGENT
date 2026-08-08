@@ -1,12 +1,4 @@
-"""Postgres MCP stdio entry with optional env-based credentials.
-
-awslabs.postgres-mcp-server pgwire only reads passwords from RDS MasterUserSecret
-(Secrets Manager). Self-managed RDS master passwords are not supported upstream.
-
-When MasterUserSecret is absent, this entrypoint allows:
-  - POSTGRES_MCP_SECRET_ARN  — manual Secrets Manager secret
-  - POSTGRES_MCP_DB_USER + POSTGRES_MCP_DB_PASSWORD — local dev only (.env.local)
-"""
+"""Postgres MCP stdio entry with optional env-based credentials"""
 
 from __future__ import annotations
 

@@ -195,6 +195,14 @@ Under `dbOutputDir` (from Context — typically `<service>/db/` in cloud, `targe
     ```
   - The apply script auto-patches bare checks as a safety net, but always generate the correct form.
 - **Postgres extensions before indexes:** `CREATE EXTENSION IF NOT EXISTS pg_trgm` (and any other extension) must run in an early migration **before** any index using `gin_trgm_ops` or extension-specific operator classes — never only in seed files.
+- **`ALTER TABLE ... ADD CONSTRAINT` has NO `IF NOT EXISTS` support in Postgres** — unlike `CREATE TABLE`/`CREATE INDEX`/`CREATE EXTENSION`, `ADD CONSTRAINT IF NOT EXISTS` is a syntax error (`syntax error at or near "EXISTS"`), not a no-op. For an idempotent constraint add, wrap it in a `DO $$` block instead:
+  ```sql
+  DO $$ BEGIN
+      ALTER TABLE users ADD CONSTRAINT fk_users_linked_technician
+          FOREIGN KEY (technician_id) REFERENCES technicians (id);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
+  ```
 - **pgvector / VECTOR columns (RAG, dedup, semantic search):** When design §2/§3 uses `vector(n)`, HNSW, or cosine similarity:
   - First migration MUST be `001_enable_pgvector.sql` (before any `VECTOR(...)` column or `vector_cosine_ops` index).
   - Use this template verbatim — **do not** `SET search_path` before `CREATE EXTENSION` (RDS requires extension in `public`):

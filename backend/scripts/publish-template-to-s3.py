@@ -1,9 +1,5 @@
-"""Publish target-apps/_template to S3 for AgentCore developer-agent scaffolding.
+"""Publish target-apps/_template to S3 for AgentCore developer-agent scaffolding"""
 
-Usage (from backend/):
-  python scripts/publish-template-to-s3.py
-  python scripts/publish-template-to-s3.py --version v1.0.0
-"""
 from __future__ import annotations
 
 import argparse

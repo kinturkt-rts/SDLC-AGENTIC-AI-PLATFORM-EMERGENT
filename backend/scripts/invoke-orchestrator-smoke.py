@@ -1,36 +1,5 @@
-"""Smoke invoke for orchestrator-agent AgentCore runtime (deterministic pipeline).
+"""Smoke invoke for orchestrator-agent AgentCore runtime (deterministic pipeline)"""
 
-Default: full cloud chain (product → architect → database → RDS apply in orchestrator
-→ developer → gitlab). Brief is uploaded to S3 from this machine; all agent work runs
-on AgentCore.
-
-Add frontend-agent (after developer, before gitlab) with --with-frontend:
-  python scripts/invoke-orchestrator-smoke.py --app recipe-vault --run-id fe-smoke-1 --with-frontend --timeout 3600
-
-Cloud orchestrator returns PIPELINE_ASYNC_STARTED immediately — this script now polls
-S3 run.json until a terminal status before gitlab-fallback, so frontend/developer
-work is not raced.
-
-After a frontend run, verify artifacts:
-  aws s3 ls s3://$ARTIFACT_S3_BUCKET/runs/<runId>/<app>/frontend/ --recursive
-  aws s3 ls s3://$ARTIFACT_S3_BUCKET/runs/<runId>/<app>/ | findstr openapi
-
-Control run without frontend (current Dashboard behavior):
-  python scripts/invoke-orchestrator-smoke.py --app recipe-vault --run-id ctrl-1 --timeout 3600
-
-The Next.js dashboard (ARTIFACT_STORE=s3) invokes orchestrator via AgentCore SDK
-directly — no local Python subprocess. This script remains for CLI/manual use
-until the control plane sends with_frontend.
-
-DB + RDS only (skips developer/gitlab):
-  python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --full
-
-Local RDS fallback (dev only — use when orchestrator cannot reach public RDS):
-  python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --skip-postgres --apply-rds-local
-
-Connectivity check only (skip all agent steps):
-  python scripts/invoke-orchestrator-smoke.py --app inventory-app --run-id smoke-2 --skip-product --skip-architect --skip-db --skip-developer
-"""
 from __future__ import annotations
 
 import argparse
@@ -572,7 +541,7 @@ def main() -> None:
         _update_run_json(args.run_id, status="failed", error=gl_error)
     elif orch_status == "success" and "pipeline failed" not in orch_text_lower:
         if not args.skip_gitlab:
-            # Orchestrator succeeded but no gitlab handoff — fallback should have run
+
             _update_run_json(
                 args.run_id,
                 status="failed",

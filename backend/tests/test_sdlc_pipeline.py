@@ -866,6 +866,89 @@ def test_step_database_fails_after_all_retry_attempts(
     assert "database-agent" not in runner.agents_run
 
 
+def _make_a2a_frontend_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
+    runner = object.__new__(SdlcPipelineRunner)
+    runner.transport = "a2a"
+    runner.run_id = run_id
+    runner.feature = "recipe-vault"
+    runner.root = repo_root
+    runner.context = {
+        "deliveryProfile": {"requiresReact": True},
+        "openApiPath": "recipe-vault/openapi.json",
+        "runId": run_id,
+    }
+    runner.options = PipelineOptions(target_app="recipe-vault", transport="a2a")
+    runner.agents_run = []
+    runner.artifacts = {}
+    return runner
+
+
+def test_step_frontend_retries_with_fallback_model(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First frontend-agent failure retries once with the lightweight fallback model."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_FRONTEND_RETRY_ATTEMPTS", "1")
+    monkeypatch.setenv("FRONTEND_AGENT_FALLBACK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    runner = _make_a2a_frontend_runner(repo_root, "run-fe-retry-001")
+
+    calls: list[dict] = []
+
+    def invoke_side_effect(agent_name, task, **kwargs):
+        calls.append({"task": task, **kwargs})
+        if len(calls) == 1:
+            raise PipelineStepError("frontend-agent A2A failed: boom")
+        return json.dumps({"status": "success", "target_app": "recipe-vault"})
+
+    with (
+        patch.object(runner, "_ensure_openapi_for_frontend"),
+        patch.object(runner, "_invoke_a2a", side_effect=invoke_side_effect),
+        patch.object(runner, "_ensure_frontend_artifacts"),
+        patch.object(runner, "_after_agent_step"),
+    ):
+        runner._step_frontend()
+
+    assert len(calls) == 2
+    first_body = json.loads(calls[0]["task"])
+    assert "modelOverride" not in first_body
+    second_body = json.loads(calls[1]["task"])
+    assert second_body["modelOverride"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert "frontend-agent" in runner.agents_run
+
+
+def test_step_frontend_fails_after_all_retry_attempts(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When every attempt fails the step raises with the attempt count."""
+    monkeypatch.setenv("REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ARTIFACT_STORE", "s3")
+    monkeypatch.setenv("ARTIFACT_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("SDLC_FRONTEND_RETRY_ATTEMPTS", "1")
+
+    runner = _make_a2a_frontend_runner(repo_root, "run-fe-retry-002")
+
+    with (
+        patch.object(runner, "_ensure_openapi_for_frontend"),
+        patch.object(
+            runner,
+            "_invoke_a2a",
+            side_effect=PipelineStepError("frontend-agent A2A failed: boom"),
+        ) as invoke_mock,
+        patch.object(runner, "_ensure_frontend_artifacts"),
+        patch.object(runner, "_after_agent_step"),
+        pytest.raises(PipelineStepError, match="failed after 2 attempt"),
+    ):
+        runner._step_frontend()
+
+    assert invoke_mock.call_count == 2
+    assert "frontend-agent" not in runner.agents_run
+
+
 def _make_a2a_gitlab_runner(repo_root: Path, run_id: str) -> SdlcPipelineRunner:
     runner = object.__new__(SdlcPipelineRunner)
     runner.transport = "a2a"

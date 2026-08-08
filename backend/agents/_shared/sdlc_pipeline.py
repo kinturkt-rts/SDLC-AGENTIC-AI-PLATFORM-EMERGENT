@@ -123,17 +123,20 @@ PIPELINE_STEPS: tuple[str, ...] = (
 DEFAULT_A2A_TIMEOUT_SEC = 600
 DEFAULT_DEVELOPER_A2A_TIMEOUT_SEC = 2400
 DEFAULT_FRONTEND_A2A_TIMEOUT_SEC = 2400
-# Re-attempts after the first developer-agent failure (SDLC_DEVELOPER_RETRY_ATTEMPTS).
 DEFAULT_DEVELOPER_RETRY_ATTEMPTS = 1
-# Fallback model for developer retries (DEVELOPER_AGENT_FALLBACK_MODEL_ID).
-# Same Sonnet 4.6 ID as product/architect agents (MODEL_ID) — lighter than CODING_MODEL_ID.
+
+# Fallback model is Claude Sonnet 4.6 for Developer Agent retries
 DEFAULT_DEVELOPER_FALLBACK_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
-# Re-attempts after the first database-agent failure (SDLC_DATABASE_RETRY_ATTEMPTS).
+
 DEFAULT_DATABASE_RETRY_ATTEMPTS = 1
-# Fallback model for database-agent retries (DATABASE_AGENT_FALLBACK_MODEL_ID).
-# Haiku 4.5's actual Bedrock cross-region inference profile ID (confirmed via
-# `aws bedrock list-inference-profiles` - "claude-haiku-4-5" alone is not a valid ID).
+
+# Fallback model is Claude Haiku 4.5 for Database Agent retries
 DEFAULT_DATABASE_FALLBACK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+DEFAULT_FRONTEND_RETRY_ATTEMPTS = 1
+
+# Fallback model is Claude Haiku 4.5 for Frontend Agent retries
+DEFAULT_FRONTEND_FALLBACK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 @dataclass
@@ -229,7 +232,7 @@ def planned_steps(options: PipelineOptions) -> list[str]:
 def _should_run_gitlab(options: PipelineOptions) -> bool:
     if options.skip_gitlab:
         return False
-    # A2A/AgentCore: gitlab-agent runtime holds GITLAB_* secrets; orchestrator only schedules the step.
+
     if resolve_transport(options.transport) == "a2a":
         return True
     token = os.getenv("GITLAB_PERSONAL_ACCESS_TOKEN") or os.getenv("GITLAB_TOKEN")
@@ -360,7 +363,6 @@ class SdlcPipelineRunner:
             artifacts=dict(self.artifacts),
         )
 
-    # ── run.json persistence ───────────────────────────────────
 
     def _run_json_path(self) -> Path | None:
         if not self.run_id:
@@ -411,6 +413,7 @@ class SdlcPipelineRunner:
             },
         ]
 
+
     def _mirror_run_json_to_s3(self, data: dict[str, Any]) -> None:
         """Publish run.json to runs/<runId>/ so the frontend can poll run state.
 
@@ -430,6 +433,7 @@ class SdlcPipelineRunner:
         except Exception:
             logger.warning("Could not mirror run.json to S3", exc_info=True)
 
+
     def _update_run_json(
         self,
         *,
@@ -439,25 +443,15 @@ class SdlcPipelineRunner:
         finished: bool = False,
         mark_step_skipped: str | None = None,
     ) -> None:
-        """Update local run.json (and its S3 mirror) so the frontend can track progress.
+        """Update local run.json (and its S3 mirror) so the frontend can track progress"""
 
-        mark_step_skipped: the frontend-agent step is seeded "queued" at run start from
-        the CLI flags alone (_should_run_frontend), before deliveryProfile is resolved —
-        the real run/skip decision (_frontend_required) isn't known yet. When that later
-        decision turns out to be "skip", the step must be flipped to "skipped" here,
-        otherwise the unconditional "finished and status == completed" pass below marks
-        every non-skipped step completed, falsely reporting a frontend build that never ran.
-        """
         rj = self._run_json_path()
         if not rj:
             return
         try:
             data: dict[str, Any] = {}
             if is_s3_store() and self.run_id:
-                # The AgentCore container running this step has its own empty local
-                # disk on first write - without this, fields the frontend seeded into
-                # the S3 run.json before invoking the orchestrator (e.g. triggeredBy)
-                # get silently dropped the moment this container's first update lands.
+
                 try:
                     from .artifact_store import get_artifact_text
 
@@ -485,13 +479,7 @@ class SdlcPipelineRunner:
                 data["finishedAt"] = datetime.now(timezone.utc).isoformat()
             if data.get("steps"):
                 agent_order = [s["name"] for s in data["steps"]]
-                # current_step can be an internal-only pseudo-step (e.g. "rds-apply",
-                # "seed-materialize") that runs between database-agent and developer-agent
-                # but isn't one of the 6 UI-facing steps. Only advance the displayed
-                # currentStep/index for a name that's actually in the steps array — an
-                # unrecognized name would otherwise resolve to index -1, and on failure
-                # "i > current_idx" is then true for every step, wiping the whole array
-                # to "queued" even though earlier steps genuinely completed.
+
                 if current_step is not None and current_step in agent_order:
                     data["currentStep"] = current_step
                 current = data.get("currentStep")
@@ -517,7 +505,6 @@ class SdlcPipelineRunner:
         except Exception as exc:
             logger.warning("Could not update run.json: %s", exc)
 
-    # ── pipeline lifecycle ───────────────────────────────────
 
     def _begin_run(self) -> None:
         """Orchestrator: allocate runId, register DynamoDB index, export env for specialists."""
@@ -567,6 +554,7 @@ class SdlcPipelineRunner:
             self.context["prdPath"] = prd_rel_path_for_app(self.feature)
         self._save_context()
 
+
     def _normalize_docs_layout_paths(self) -> None:
         """Align design/diagram paths when PRD uses docs/ layout (cloud v1)."""
         prd = str(self.context.get("prdPath") or "")
@@ -575,6 +563,7 @@ class SdlcPipelineRunner:
             return
         self.context["designDocPath"] = f"docs/design/{slug}.md"
         self.context["diagramPaths"] = [f"docs/generated-diagrams/{slug}.png"]
+
 
     def _save_context(self) -> None:
         self.ctx_path.parent.mkdir(parents=True, exist_ok=True)
@@ -607,6 +596,7 @@ class SdlcPipelineRunner:
         from .pipeline_context import normalize_handoff_paths
 
         normalize_handoff_paths(self.context)
+
 
     def _run_python(
         self,
@@ -863,8 +853,6 @@ class SdlcPipelineRunner:
         update_fields = {"diagramPaths": diagram_paths, "designDocPath": design_rel}
         db_schema_handoff_rel = self.context.get("dbSchemaHandoffPath")
         if db_schema_handoff_rel:
-            # Best-effort structured DB contract (see architect_agent.py::_generate_database_handoff).
-            # Absent on any run where generation failed - database-agent falls back to §3/§6.
             update_fields["dbSchemaHandoffPath"] = str(db_schema_handoff_rel)
         self._update_context(update_fields)
         self._delivery_check("design")
@@ -899,6 +887,7 @@ class SdlcPipelineRunner:
             }
         )
         self.agents_run.append("web-crawler-agent")
+
 
     def _step_database(self) -> None:
         if self.run_id:
@@ -1121,6 +1110,22 @@ class SdlcPipelineRunner:
             return DEFAULT_DATABASE_FALLBACK_MODEL_ID
         return raw.strip()
 
+    @staticmethod
+    def _frontend_retry_attempts() -> int:
+        raw = os.getenv("SDLC_FRONTEND_RETRY_ATTEMPTS", "").strip()
+        try:
+            return max(0, int(raw)) if raw else DEFAULT_FRONTEND_RETRY_ATTEMPTS
+        except ValueError:
+            return DEFAULT_FRONTEND_RETRY_ATTEMPTS
+
+    @staticmethod
+    def _frontend_fallback_model() -> str:
+        """Haiku fallback on frontend-agent retries; empty string disables the model switch."""
+        raw = os.getenv("FRONTEND_AGENT_FALLBACK_MODEL_ID")
+        if raw is None:
+            return DEFAULT_FRONTEND_FALLBACK_MODEL_ID
+        return raw.strip()
+
     def _step_developer(self) -> None:
         if self.run_id:
             self._hydrate_run_context()
@@ -1196,12 +1201,6 @@ class SdlcPipelineRunner:
         if self.transport == "a2a" and self.run_id:
             self._merge_run_context_from_s3()
 
-        # Local subprocess transport never writes ctx["openApiPath"] back into this
-        # orchestrator's context.json (developer_agent.py's own put_context() call
-        # only fires when it resolves a runId, i.e. the S3/A2A path) — so mirror
-        # prdPath/designDocPath's own pattern here: derive the pointer path and set
-        # it at the orchestrator level too. Skip if the A2A merge above already
-        # pulled a value from S3 (do not overwrite a value developer-agent set).
         if not self.context.get("openApiPath"):
             openapi_local_path = (
                 self.root / target_app_root_rel(self.feature).replace("/", os.sep) / "openapi.json"
@@ -1294,11 +1293,6 @@ class SdlcPipelineRunner:
         from .pipeline_context import developer_handoff_rel_for_app
 
         rel = developer_handoff_rel_for_app(self.feature)
-        # Async developer runs return an ack in seconds and stream work to S3
-        # for as long as the implementation takes, so this poll — not the A2A
-        # response — is the primary completion signal. The stall window must be
-        # generous: LLM turns between file writes (and the final summary turn)
-        # can legitimately go many minutes with no new writtenFiles.
         timeout = float(os.getenv("SDLC_DEVELOPER_HANDOFF_WAIT_SEC", "5400"))
         poll_interval = float(os.getenv("SDLC_DEVELOPER_HANDOFF_POLL_SEC", "15"))
         stall_polls = int(os.getenv("SDLC_DEVELOPER_STALL_POLLS", "40"))
@@ -1461,12 +1455,6 @@ class SdlcPipelineRunner:
                 args.extend(["--gitlab-base", self.options.gitlab_base])
             self._run_python(args, step="gitlab-agent")
         else:
-            # Apps-repo and monorepo both use sdlc/<app> so GitLab CI deploy rules match.
-            # gitlab-agent's A2A handler (parse_publish_request) reads targetApp/runId/
-            # gitlabPublishLayout from the single "Context:\n<json>" block _invoke_a2a
-            # appends via extra_context - do not embed a second Context block in the task
-            # text here, it stacks with _invoke_a2a's own and breaks JSON parsing on the
-            # receiving end (silently drops runId, which skips S3 materialization).
             branch_hint = f"sdlc/{self.feature}"
             task = f"Publish SDLC artifacts for {self.feature} to GitLab branch {branch_hint}."
             extra = {"gitlabPublishLayout": "apps" if apps_repo else "monorepo"}
@@ -1509,7 +1497,7 @@ class SdlcPipelineRunner:
                 if self.run_id and is_s3_store()
                 else gitlab_handoff_rel_for_app(self.feature)
             )
-        # Deduped republish returns already-published (ok:true) — treat as success.
+
         publish_status = str((handoff or {}).get("status") or "").strip().lower()
         if not handoff or publish_status not in {"published", "already-published"}:
             detail = (handoff or {}).get("error") or "no gitlab handoff produced"
@@ -1571,8 +1559,7 @@ class SdlcPipelineRunner:
         """Block frontend until openapi.json is in S3 (developer used to upload after handoff)."""
         if not self.run_id:
             return
-        # Prefer the real developer failure over a 180s openapi timeout when
-        # validation never reached health-smoke (no openapi was ever written).
+
         if is_s3_store():
             try:
                 from .artifact_store import get_artifact_text
@@ -1710,34 +1697,68 @@ class SdlcPipelineRunner:
         )
 
     def _step_frontend(self) -> None:
+        total_attempts = self._frontend_retry_attempts() + 1
+        fallback_model = self._frontend_fallback_model()
+        last_error: PipelineStepError | None = None
         skipped = False
-        if self.transport == "local":
-            self._run_python(
-                [
-                    "agents/frontend-agent/frontend_agent.py",
-                    "--target-app",
-                    self.feature,
-                    "--context-file",
-                    self.context_file,
-                    "--full-regen",
-                ],
-                step="frontend-agent",
+
+        for attempt in range(total_attempts):
+            use_fallback = attempt > 0 and bool(fallback_model)
+            if attempt > 0:
+                logger.warning(
+                    "[frontend-agent] retry %d/%d%s after failure: %s",
+                    attempt,
+                    total_attempts - 1,
+                    f" with fallback model {fallback_model}" if use_fallback else "",
+                    last_error,
+                )
+            try:
+                if self.transport == "local":
+                    self._run_python(
+                        [
+                            "agents/frontend-agent/frontend_agent.py",
+                            "--target-app",
+                            self.feature,
+                            "--context-file",
+                            self.context_file,
+                            "--full-regen",
+                        ],
+                        step="frontend-agent",
+                        env_overrides=(
+                            {"MODEL_ID": fallback_model} if use_fallback else None
+                        ),
+                    )
+                else:
+                    self._ensure_openapi_for_frontend()
+                    handoff = self._frontend_a2a_handoff_payload()
+                    if use_fallback:
+                        handoff["modelOverride"] = fallback_model
+                    text = self._invoke_a2a(
+                        "frontend-agent",
+                        json.dumps(handoff),
+                        step="frontend-agent",
+                        attach_context=False,
+                    )
+                    status = self._assert_frontend_a2a_ok(text)
+                    skipped = status == "skipped"
+                    if not skipped:
+                        self._ensure_frontend_artifacts()
+                last_error = None
+                break
+            except PipelineStepError as exc:
+                last_error = exc
+                logger.warning(
+                    "[frontend-agent] attempt %d/%d failed: %s",
+                    attempt + 1,
+                    total_attempts,
+                    exc,
+                )
+
+        if last_error is not None:
+            raise PipelineStepError(
+                f"frontend-agent failed after {total_attempts} attempt(s): {last_error}"
             )
-        else:
-            # AgentCore expects bare handoff JSON (target_app + run_id), not prose +
-            # camelCase pipeline Context — see frontend_agent.parse_frontend_handoff.
-            self._ensure_openapi_for_frontend()
-            handoff = self._frontend_a2a_handoff_payload()
-            text = self._invoke_a2a(
-                "frontend-agent",
-                json.dumps(handoff),
-                step="frontend-agent",
-                attach_context=False,
-            )
-            status = self._assert_frontend_a2a_ok(text)
-            skipped = status == "skipped"
-            if not skipped:
-                self._ensure_frontend_artifacts()
+
         # A legitimate skip (deliveryProfile chose Streamlit / no frontend) must not be
         # recorded as if frontend-agent ran — it never wrote a frontend/ folder, so
         # marking this "completed" both lies to the run timeline and points
@@ -1759,10 +1780,7 @@ class SdlcPipelineRunner:
         if input_file:
             args.extend(["--input-file", input_file.replace("\\", "/")])
         self._run_python(args, step="delivery-profile-sync")
-        # The sync above writes deliveryProfile only to the on-disk context file
-        # (via a subprocess). Pull it into the in-memory context immediately so a
-        # later _hydrate_run_context() (which merges S3 context and re-saves) does
-        # not silently drop it before it reaches architect/developer over A2A.
+
         if self.ctx_path.is_file():
             on_disk = read_context_json(self.ctx_path)
             if on_disk.get("deliveryProfile"):
